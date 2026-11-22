@@ -29,7 +29,7 @@ const DAY_GAP = 30;
 // DAY_TICK_STEPS are the time axis' tick spacings, seconds, smallest first.
 const DAY_TICK_STEPS = [300, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
 // DAY_TERMS names a refused term in words.
-const DAY_TERMS = {ttft: "prefill's TTFT", tpot: "decode's TPOT", decodeKnee: "decode's knee"};
+const DAY_TERMS = {ttft: "prefill's TTFT", tpot: "decode's TPOT", decodeKnee: "decode's knee", window: "the busiest bucket"};
 
 // dayTime is an RFC 3339 time as seconds since the epoch.
 function dayTime(s) { return Date.parse(s) / 1000; }
@@ -143,7 +143,7 @@ function dayRoleValue(which, role) {
 // panel: the fleet it had, judged whole at the bucket's rate, falls short
 // (verdict under), and the role was sized (decode sized alone washes decode
 // only). The wash follows the verdict, never a role's count against the
-// fewest replicas found: another mix may serve the rate.
+// cheapest fleet found: another mix may serve the rate.
 function dayUnderIn(b, role) {
   return b.status === "sized" && b.verdict === "under" && b.needed && b.needed[role] != null;
 }
@@ -376,7 +376,9 @@ function daySummaryText(plan) {
   const hours = hs => hs.length ? hs.map(h => dayClock(dayTime(h), days)).join(", ") : "none";
   if (s.peakNeeded) {
     out.push(`Needed at the busiest bucket ${dayNeededText(s.peakNeeded)}; at the quietest ${dayNeededText(s.minNeeded)}.`);
-    out.push("The fewest replicas in all: another mix may serve the rate too. The fleet the bucket had is judged whole, at the bucket's rate.");
+    const g = s.sizedOnGpus;
+    out.push((g ? `The fewest GPUs, at ${g.prefill} a prefill and ${g.decode} a decode replica` : "The fewest replicas in all") +
+      ": another mix may serve the rate too. The fleet the bucket had is judged whole, at the bucket's rate.");
     if (s.neededGpuHours != null) out.push(`Over the ${c.sized} sized buckets: GPU-hours needed ${s.neededGpuHours.toFixed(1)}, had ${s.hadGpuHours.toFixed(1)}.`);
     else if (c.prefillNotPriced) out.push(`No GPU-hours of the need: prefill is not priced in ${c.prefillNotPriced} of the ${c.sized} sized buckets.`);
     out.push(`Hours under (SLO risk): ${hours(s.underHours)}. Hours over (waste): ${hours(s.overHours)}.`);

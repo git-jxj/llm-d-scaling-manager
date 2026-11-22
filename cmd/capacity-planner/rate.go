@@ -50,6 +50,7 @@ func sloToRate(ctx context.Context, args []string, out, warn io.Writer) error {
 		if target, err = parseTPOT(*tpot); err != nil {
 			return err
 		}
+		warnTPOTPercentile(warn, *tpot)
 	}
 	if f.set["assume-tpot-ratio"] && target.Percentile == 0 {
 		return usagef("--assume-tpot-ratio needs a percentile TPOT target (--tpot 4ms@p90)")
@@ -162,7 +163,8 @@ func rateQuery(target whatif.TPOTTarget, headroom float64, r resolvedRatio) what
 func decodeRate(pv pricedVariant, query whatif.RateQuery, r resolvedRatio) whatif.Result {
 	res := withRatioRefusal(whatif.RateForTPOT(pv.decode, query), r.refused)
 	res = pv.band(res, func(d whatif.Decode) whatif.Result { return whatif.RateForTPOT(d, query) })
-	return pv.qualify(onRatio(res, r.ratio, r.flags))
+	pct := query.Target.Percentile > 0 && query.Target.Percentile < 1
+	return pv.qualify(onRatio(res, r.ratio, pv.tpotFlags(r, pct)))
 }
 
 // kneeRefusal is decode's knee's refusal, nil where the knee prices: decode's

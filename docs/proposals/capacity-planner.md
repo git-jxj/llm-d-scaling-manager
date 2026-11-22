@@ -188,7 +188,7 @@ The rule: **no number on screen without what it rests on.**
     the replay switch `slo-ttft-prompt-support` on (off by default), not
     while the histogram holds every prompt within 1.6 times the mean.
 - **Refusals are gaps, never zeros.** A curve point the engine refuses is
-  absent, with the reason on hover (`Saturated`, `AboveDecodeOnset`,
+  absent, with the reason on hover (`Saturated`, `PastLowerBoundKnee`, `AboveDecodeOnset`,
   `TargetBelowFloor`). A refused limit prints the reason in place of a number.
   This is the API's job as much as the page's: a refusal is a different JSON
   shape from an answer, as `whatif.Result` is sealed in Go.
