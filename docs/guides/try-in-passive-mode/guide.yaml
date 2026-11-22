@@ -123,6 +123,38 @@ share:
       kubectl patch configmap scaling-manager-settings -n ${CONTROLLER_NAMESPACE} --type merge \
         -p '{"data":{"passive":"false"}}'
 
+dset:
+  lws:
+    note: External roles need LeaderWorkerSet v0.10.0 or later, its CRDs and its controller. The first must list disaggregatedsetrolescalers; the second prints the controller image.
+    run: |
+      kubectl api-resources --api-group=disaggregatedset.x-k8s.io
+      kubectl get deployments -A -l app.kubernetes.io/name=lws \
+        -o jsonpath='{range .items[*]}{.spec.template.spec.containers[0].image}{"\n"}{end}'
+  vars:
+    note: The DisaggregatedSet and the model it serves.
+    run: |
+      export SET=<your DisaggregatedSet>
+      export MODEL_ID=<the model it serves>
+  writer:
+    note: Static roles only. The grant (cluster admin) and the switch. Passive, the writer reads the roles and writes nothing.
+    run: |
+      smt admin-setup -n ${NAMESPACE} --dset-role-writer
+      smt install -n ${NAMESPACE} --prometheus-url <url> --dset-role-writer
+  annotate:
+    note: Static roles only. Opt the set in; max-replicas is groups per role.
+    run: |
+      kubectl annotate disaggregatedset ${SET} -n ${NAMESPACE} \
+        scaling-manager.llmd.ai/role-writer=true \
+        scaling-manager.llmd.ai/model-id=${MODEL_ID} \
+        scaling-manager.llmd.ai/min-replicas=1 \
+        scaling-manager.llmd.ai/max-replicas=<max>
+  held:
+    note: The replicas of each role, and of each role scaler. They do not change while the model is passive.
+    run: |
+      kubectl get disaggregatedset ${SET} -n ${NAMESPACE} \
+        -o jsonpath='{range .spec.roles[*]}{.name}={.spec.replicas} {end}{"\n"}'
+      kubectl get disaggregatedsetrolescalers -n ${NAMESPACE}
+
 checkout:
   install:
     note: The same passive install from a checkout of the release tag.
