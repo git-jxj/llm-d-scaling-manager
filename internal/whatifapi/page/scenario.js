@@ -724,7 +724,8 @@ function reportView(r) {
         s.extrapolated ? `Extrapolated: ${s.extrapolatedWhy}.` : "",
         s.loadShape ? `The load's cycles (${s.loadShape.cycles}, cycles ${s.loadShape.fromCycle}-${s.loadShape.toCycle}) ran at IL ${Math.round(s.loadShape.inputTokens)}, OL ${Math.round(s.loadShape.outputTokens)}` +
           (s.loadShape.mismatch ? ": SHAPE/LOAD MISMATCH, the load is priced at a shape more than 20% off the traffic that made it; ask the shape load to price it at its own." : ".") : "",
-        `Knees: prefill ${rate(c.prefillKnee)}, decode ${rate(c.decodeKnee)}; the fleet's is ${rate(c.fleetKnee)}, set by ${String((c.fleetKnee || {}).binds || "")}. ` +
+        `Knees: prefill ${rate(c.prefillKnee)}, decode ${rate(c.decodeKnee)}` +
+          (c.decodeKnee && c.decodeKnee.validation ? ` (decode knee ${c.decodeKnee.validation.label})` : "") + `; the fleet's is ${rate(c.fleetKnee)}, set by ${String((c.fleetKnee || {}).binds || "")}. ` +
           `Operating point ${rate(c.operating)}; the most that meets every target ${rate(c.maxAtSLO)}.`,
         `At the load: ${decodeUse(u.decode)}; ${prefillUse(u.prefill)}.`,
         ...roleLines(s.verdict),
@@ -776,10 +777,21 @@ function pct(x) {
 
 // decodeUse is decode's utilization at the load, in words.
 function decodeUse(d) {
-  if (!d || !d.kvFill || d.kvFill.value == null) return "decode " + refusalText(d && d.kvFill);
+  const pull = kvPullUse(d && d.kvPull);
+  if (!d || !d.kvFill || d.kvFill.value == null) return "decode " + refusalText(d && d.kvFill) + pull;
   const wait = d.waitProbability && d.waitProbability.value != null ? `, ${pct(d.waitProbability.value)} of requests wait for a slot` : "";
   const slots = d.slotsOccupied && d.slotsOccupied.value != null ? `, ${Math.round(d.slotsOccupied.value)} of ${d.slots} batch slots busy` : "";
-  return `decode KV ${pct(d.kvFill.value)} full (of ${pct(d.bandTop)} usable)${slots}${wait}`;
+  return `decode KV ${pct(d.kvFill.value)} full (of ${pct(d.bandTop)} usable)${slots}${wait}${pull}`;
+}
+
+// kvPullUse is the KV pull's load on the decode pods, in words, "" with none.
+// It stands where decode's KV fill is refused: a pull at or past 100% is the
+// reason a TTFT is.
+function kvPullUse(k) {
+  if (!k) return "";
+  if (k.utilization >= 1) return `; KV pull ${pct(k.utilization)} busy per decode pod, saturated`;
+  return `; KV pull ${pct(k.utilization)} busy per decode pod` +
+    (k.setsTTFT ? ", the larger mean wait in TTFT (it sits on the decode pods)" : "");
 }
 
 // prefillUse is prefill's utilization at the load, in words.
@@ -821,13 +833,14 @@ function verdictLine(v, fallback, has) {
   return {verdict: word, text, rest, needs, unmet: !!(v && v.needed && v.needed.unmet), trust: (v && v.trust) || ""};
 }
 
-// NEEDS_CLAUSE is the "needs P prefill + D decode (has p + d), or a + b"
-// clause of a summary, with the fleet needed at each f after it
-// (fSensitivityText).
-const NEEDS_CLAUSE = /;?\s*needs [^;()]*\(has \d+ \+ \d+\)(,? or \d+ \+ \d+)*(; (the same at f [\d.]+ to [\d.]+|at f [\d.]+ (needs \d+ \+ \d+|no fleet holds)(, at f [\d.]+ (needs \d+ \+ \d+|no fleet holds))*))?/;
+// NEEDS_CLAUSE is the "needs P prefill + D decode (has p + d), N decode if
+// the decode knee reads E% high, or a + b" clause of a summary, with the
+// fleet needed at each f after it (fSensitivityText).
+const NEEDS_CLAUSE = /;?\s*needs [^;()]*\(has \d+ \+ \d+\)(, (more than )?\d+ decode if the decode knee reads \d+% high)?(,? or \d+ \+ \d+)*(; (the same at f [\d.]+ to [\d.]+|at f [\d.]+ (needs \d+ \+ \d+|no fleet holds)(, at f [\d.]+ (needs \d+ \+ \d+|no fleet holds))*))?/;
 
 // neededText is the fleet a verdict needs, in words: "needs 3 prefill +
-// 4 decode (has 2 + 2)", "or 4 + 3" for each alternative, "at least" where
+// 4 decode (has 2 + 2)", the decode count if the decode knee reads as high
+// as its label allows, "or 4 + 3" for each alternative, "at least" where
 // the prefill side is not priced, or the bound no fleet within serves.
 function neededText(n, has, verdict) {
   // A right-sized fleet carries a needed fleet only for its spare or a
@@ -841,9 +854,10 @@ function neededText(n, has, verdict) {
   }
   if (n.unmet) return `no fleet up to ${n.maxReplicas} replicas serves this (${n.unmet} does not reach the load)`;
   const now = has ? ` (has ${has.prefill} + ${has.decode})` : "";
-  if (n.decodeOnly) return `needs at least ${n.decode} decode${has ? ` (has ${has.decode})` : ""}; prefill is not priced`;
+  const bound = n.decodeAtErrorBound > n.decode ? `, ${n.decodeAtErrorBound >= n.maxReplicas ? "at least " : ""}${n.decodeAtErrorBound} decode if the decode knee reads ${Math.round((n.decodeKneeError || 0) * 100)}% high` : "";
+  if (n.decodeOnly) return `needs at least ${n.decode} decode${has ? ` (has ${has.decode})` : ""}${bound}; prefill is not priced`;
   const alt = (n.alternatives || []).map(a => `or ${a.prefill} + ${a.decode}`).join(", ");
-  return `needs ${n.prefill} prefill + ${n.decode} decode${now}` + (alt ? ", " + alt : "") + fSensitivityText(n);
+  return `needs ${n.prefill} prefill + ${n.decode} decode${now}${bound}` + (alt ? ", " + alt : "") + fSensitivityText(n);
 }
 
 // fSensitivityText is the fleet needed at each fixed prefill imbalance f, as

@@ -82,7 +82,7 @@ estimate from cycles 1-226, not a guarantee; see basis (-o json)
 
 These are the proposal's figures, at `cv` 1. [As built](#ttft-as-built) the CLI
 assumes S1's `cv` 2, prints no TTFT band and adds a `prefill knee` row: the same
-commands read 376 ms and 0.15 r/s, the 20 ms a hop the recording has no fit of
+commands read 373 ms and 0.25 r/s, the 20 ms a hop the recording has no fit of
 ([the decode term](slo-capacity-planner-ttft.md#as-built-the-decode-term)). The prefill
 pod is priced as processor sharing
 ([as built](slo-capacity-planner-ttft.md#as-built-processor-sharing)), but past a prompt
@@ -119,6 +119,75 @@ closed form (Little's law, residence `OL·ITL(k)`):
     k(λ_rep) = λ_rep·OL·B / ( C/KVreq − λ_rep·OL·A )
 
 valid while the denominator is positive and `n` is under the cap.
+
+**Residence from the KV pull, behind a switch (#301).** A P/D decode replica
+holds a request's KV from the start of its pull, not from its first token, so
+its residence is `H + (OL − 1)·ITL(k)`, `H` the decode engine's TTFT at the
+prompt (`whatif.Decode.HeldBefore`), which ends at the first output token, so
+that step is in it; the fill is
+`k = λ_rep·(H + (OL − 1)·B) / (C/KVreq − λ_rep·(OL − 1)·A)`, with the same
+residence in the admission chain and the knee. A TTFT read with requests
+waiting on decode capacity is a queue, and a waiting request holds no KV: it is
+not used, nor is an unread one or one from a window whose decode backlog is
+unread, and the figures are flagged `ResidenceUnread`. An engine that does not
+export `num_requests_waiting_by_reason{reason="capacity"}` (vLLM releases
+before it, other engines) never says why its requests wait, so its backlog is
+always unread and the switch prices no residence there: the figures stay at the
+closed form, the low (optimistic) side, flagged. `H` is read at the
+recorded load and held at every rate, and it times the batch slots too, where a
+request pulling its KV holds cache but not yet a running slot: a knee the slots
+bind is priced low. With `H = 0` every figure is the closed form
+above, exactly. At 8k prompts and 26 output tokens `H` is about a third of the
+residence; at 1000/1000 under 1%. Planner-only replay switch
+`decode-residence-pull`, off. Where `H` is at least one step `ITL(k)` it only
+raises the fill, so no TPOT reads lower with it (the knee and the rate for a
+target do drop); alone it moves the 0.6B staircase's mean TPOT further over (r1 B,
+1.36 to 1.56 of measured), where the line already reads high. Beside
+`itl-hold-steady-slope` and `itl-line-at-floor` it lifts the bursty phases they
+read low (r2 C at Ca² 4, mean TPOT 0.79 to 0.85, steps read low 18 to 3 of 30):
+it should go on with them (nothing enforces it).
+
+**The fill a request sees under clustered arrivals, behind a switch (#291 (b)).**
+Little's law gives the time-average fill; a request is counted where requests
+arrive, and clustered arrivals put more of them beside it. For a stationary
+stream with interarrival squared coefficient of variation `Ca²` the arrivals
+expected beside a typical one, beyond the rate's share, number `Ca² − 1` (the
+counts' variance over a long window is `Ca²` times their mean); each of `N_d`
+decode replicas, taking a share at random, holds `e = (Ca² − 1)/N_d` of them, all
+taken as overlapping the request's residence (hundreds of steps against clusters
+of a few interarrival times; where the residence is short this reads high). As a
+fill that is `ε = e·KVreq/C`, and the request's steps run at `ITL(k + ε)`, so the
+fill is the fixed point `k = λ_rep·(H + S·B + S·A·ε) / (C/KVreq − λ_rep·S·A)`,
+`S` the steps, and the mean TPOT is `ITL(min(k + ε, k_full))`. TTFT reads the
+decode's first step (and the decode term) at the same fill, and the
+below-band and extrapolated-fill flags are judged there too. The line was
+fitted at the engines' own arrivals (Poisson on every recording that states
+none), so only the excess over Poisson is priced: `Ca² ≤ 1` prices none. The
+knee is unchanged (a full batch is no fuller), and so is the decode admission
+chain, which stays Poisson. It reads the `Ca²` stated with `--arrival-cv2`,
+flagged `AssumedArrivalCV2` on the decode figures. Planner-only replay switch
+`decode-burst-fill`, off. With the hold, the lift and the residence on, the
+staircase's bursty C phases at `Ca²` 4 read a mean TPOT of 0.98 to 1.06 of what
+was measured (from 0.84 to 0.89 without it), and the Qwen3-32B C phases 1.04.
+It stays off because, with all four on, other figures still read under what
+was measured (the status is kept on issue #291). The per-cycle rates of a held
+step are not used: their spread is the counts' noise (`cv² ≈ Ca²/(60λ)`), well
+under the clustering inside a cycle.
+
+The pull also loads the decode pods while their KV fill reads near idle: with
+processor sharing on (the CLI's default) the pull is a stage on each decode pod,
+`E[I]·κ/BW` of work at `λ/N_d`. The report's decode utilization carries it as a
+`KV pull` row (`utilization.decode.kvPull`: the stage's utilization per pod and its
+mean wait), on a P/D fleet with a decode line and a transfer, and says when it is
+the larger wait in TTFT, on its own larger than decode admission's and than the
+prefill side's. The row stands where the TTFT is refused, with its utilization
+and no wait: at 1 or above the pull saturates the decode pods, the refusal's
+reason; and at a prompt spread past processor sharing's, where first come's larger
+price is taken and no pull stage is priced, with its utilization and no wait
+(`unpriced` says which). Where the pull is the larger mean wait, that wait sits on
+the decode pods, not the prefill pods: on the 0.6B warm-up at 9 prefill, decode 2, 3
+and 4 gave p95 TTFT 322, 218 and 198 ms at a KV fill under 0.01. A missed TTFT names
+the pull, not decode admission, in the verdict's reason.
 
 Corrections: on the decode side `KVreq` is the measured resident KV per running request, or the whole context `IL + D·OL/2` with no reading (a prefix hit saves decode KV only where running requests share the blocks). The analyzers price `KVreq = ILeff + D·OL/2` with the output spread
 `D = E[O²]/E[O]²` (ev-shindin/llm-scaling-manager#276), read from the output-length histogram, in the saturation
@@ -216,6 +285,18 @@ p99.9 each read the same bucket's edge, 21.79 ms, and the window's bucket is 6.7
 times the mean. No figure there answers the percentile asked. A refusal of the
 engine's own, such as `TPOTQuantileUnbounded`, is returned as it is.
 
+A coarse `R_q` is refused as well, `TPOTBucketTooWide`, on a variant whose decode
+step is host-bound: a line with a measured intercept (an ols fit, a pinned or held
+`B` that is not the default; not the least ITL above the band, not a borrowed line)
+whose `B`, and its floor read below the band, are under 5 ms. On the 0.6B staircase
+such a line priced p90 TPOT at the mean while the fleet measured a p90 1.3 times and
+a p95 1.6 times its mean: the tail is host jitter (scheduling, sampling,
+detokenizing), not the fill the line models, and the coarse bucket's grid would set
+the percentile (#291). The refusal is per variant, so a variant with no line or a
+slow step beside it still prices; it replaces only a figure, never a refusal the
+library gave, so an overloaded fleet still reads `Saturated`; and it carries the
+read's flags, `EngineTPOTHistogram` included where the engine's histogram was read.
+
 The collector reads the engine's buckets and not its `_sum`, so the window's mean is
 each row's `AvgITL`, weighted by its requests, the assumption the mean TPOT target
 already makes. An answer from it is flagged `EngineTPOTHistogram`, and the row says
@@ -224,6 +305,38 @@ already makes. An answer from it is flagged `EngineTPOTHistogram`, and the row s
 the case is held on built windows (`TestEngineTPOT_TheOrder`). A refusal priced on
 `R_q` keeps what it rests on, `EngineTPOTHistogram`, `CoarseTPOTBucket` or
 `AssumedTPOTRatio`, as an answer does.
+
+**R_q by censored likelihood, behind a switch (#279).** Read at the `q`
+bucket's upper edge and then at an order-statistic margin, the planner's p90/p50
+read 1.55 on the Qwen3-32B shape-A phase against a measured 1.27 to 1.31 (#279,
+at v0.12.2; 1.57 in this branch's replay).
+`whatif.TPOTRatioCensored` fits every window a lognormal at the window's own
+mean (`_sum/_count`) with one log-spread `σ` shared by all, each bucket count the
+mass between two edges, and reads `R_q` as that lognormal's `q`-quantile over its
+mean, `exp(σ·z_q − σ²/2)`, with no margin and never above the edge reading;
+`byFill` is learned the same way. A window whose every request sits in one
+bucket does not identify `σ` (its likelihood rises as `σ` falls): fitted alone,
+the windows' median read a ratio of 1.01 on the Qwen3-32B shape-A phase, p90
+TPOT 22 ms against a measured 38. Pooled, the windows that spill into the next
+bucket set `σ`, where the second-fullest bucket holds real mass (3 requests and
+2% of the window: a sliver past an edge would set it for every window pooled);
+with none, or a fit at the floor of the `σ` range, the edge reading stands. By
+fill, each bucket is fitted on its own windows, never above that bucket's own
+edge reading, and one whose windows do not identify `σ` takes the global `R_q`
+capped there. Flags and refusals are the edge reading's; a fitted read is not
+replaced by a coarse engine histogram's edge reading where the router's buckets
+are coarse, since the fit is what reads inside them, but a fine engine reading
+stands over it, as without the switch: it is a measurement where the fit is a
+model of one, and the switch then never refuses a host-bound variant's
+percentile that it priced off. Requests past a window's last
+finite edge are a cell of their own. Planner-only replay switch `tpot-ratio-censored`, off: on the
+Qwen3-32B shape-A phase it reads p90 over p50 at about 1.22 where the edge read 1.57
+(against a measured 1.27 to 1.31),
+and the router's 10, 20 and 40 ms buckets hold the measured p50 and p90 in the
+same bucket in nearly every step, so the backtest cannot say which is right
+(both unresolvable); on the shorter-output phases it moves the p90 from about
+the interpolated measured figure (19 ms) to 14 to 15 ms. Nothing there shows it
+reads at or over the truth, so it stays off.
 
 **Without a histogram**, a percentile TPOT is refused (`NoTPOTHistogram`).
 `--assume-tpot-ratio R` gives a flagged answer instead. Recommendation: refuse
@@ -469,12 +582,11 @@ From the `ols-sweep` golden: the last published line (`A` = 0.004438,
 one decode pod. `IL` = `OL` = 1000, no prefix hits. `a` = 10.1 ms plus the
 2.5 ms overhead, from the golden. (That 10.1 ms is an intercept fitted
 against the long-window prompt mean; P1's fit against the effective prompt
-gives 8.36 ms and the least overhead 2.68 ms, so `a` is 11.04 ms, not 12.6
-([end-to-end TTFT](slo-capacity-planner-ttft.md#what-is-derivable-today));
-the planner adds the median overhead, and its `a` is 13.24 ms (issue
-#306). The example is left as computed: `a` enters only the request's own
+gives 8.36 ms and the overhead 2.68 ms, so `a` is 11.04 ms, not 12.6
+([end-to-end TTFT](slo-capacity-planner-ttft.md#what-is-derivable-today)).
+The example is left as computed: `a` enters only the request's own
 latency, not utilization or the knee, so the TTFT figures and the TTFT
-floor below would each read about 0.6 ms higher in the planner.) **`V_P` = 30,000 tok/s is assumed**: the
+floor below would each read about 1.6 ms lower.) **`V_P` = 30,000 tok/s is assumed**: the
 golden's prefill pod never queued, so the tool refuses `V_P` from it. Prompt
 spread: coefficient of variation 1, assumed. Flow control inferred off. The
 figures are reproduced by two independent scripts.
@@ -725,9 +837,11 @@ mutation-checked:
 ### Calibration envelope, as built
 
 Every figure the planner prints carries the envelope's verdict
-(`whatif.Envelope`, `internal/signals/whatif/envelope.go`): `validated: error
-LO..HI% (RANGE, n=N; SOURCE)` when a measured row's region holds it, `OUTSIDE
-VALIDATED REGION (why)` when none does. Validated means measured, not accurate.
+(`whatif.Envelope`, `internal/signals/whatif/envelope.go`): `validated
+in-sample: error LO..HI% (RANGE, n=N[ load levels, M readings]; SOURCE)` when
+a measured row's region holds it (`validated on a holdout` for a row whose run
+never tuned the planner, `EnvelopeRow.Holdout`), `OUTSIDE VALIDATED REGION
+(why)` when none does. Validated means measured, not accurate.
 For an operator's reading:
 [how accurate each figure is](../guides/capacity-planner/accuracy.md).
 
@@ -759,8 +873,9 @@ until a run prices it:
 A row also says what kind of range its error is, and over how many independent
 readings:
 
-- p10-p90 with min-max, for 5 or more point readings;
-- min-max, under 5;
+- p10-p90 with min-max, for 10 or more independent load levels (readings
+  that repeat a level count once: `EnvelopeRow.Independent`);
+- min-max, under 10;
 - a bracket between ladder steps;
 - one-sided, where the run stopped short.
 
@@ -827,9 +942,9 @@ the run's frozen curve.
 | decode-knee | 1000-token prompts, 1000 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 1 | -4..+2% | bracket | 1 |  | on |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 4 | -7..-4% | bracket | 1 |  | on |
-| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +2..+15% | p10-p90, min-max +1..+18% | 12 at 6 load levels | 0.400 to 0.900 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -2..+1% | p10-p90, min-max -3..+1% | 12 at 6 load levels | 0.096 to 0.215 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -4..-2% | p10-p90, min-max -5..-1% | 10 at 6 load levels | 0.096 to 0.203 | any |
+| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +1..+18% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -3..+1% | min-max | 6 load levels (12 readings) | 0.096 to 0.215 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -5..-1% | min-max | 6 load levels (10 readings) | 0.096 to 0.203 | any |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 4 | at most +3% | one-sided | 1 |  | off |
 | rate-at-ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | -6..+0% | bracket | 1 | 0.825 to 0.875 | off, on |
@@ -838,15 +953,15 @@ the run's frozen curve.
 | rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
 | rate-at-ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | at most +0% | one-sided | 2 | 0.740 to 0.875 | off, on |
 | rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | at most +2% | one-sided | 2 | 0.740 to 0.875 | off, on |
-| ttft mean | 1000-token prompts, 1000 out, Ca^2 1 | -14..+11% | p10-p90, min-max -15..+11% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | -9..+8% | p10-p90, min-max -11..+11% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | -10..+7% | p10-p90, min-max -11..+10% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft mean | 8000-token prompts, 200 out, Ca^2 1 | +10..+86% | p10-p90, min-max +7..+141% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | +7..+103% | p10-p90, min-max +4..+152% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | +9..+99% | p10-p90, min-max -4..+171% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft mean | 8000-token prompts, 200 out, Ca^2 4 | +16..+88% | p10-p90, min-max +9..+122% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
-| ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | +39..+128% | p10-p90, min-max +25..+164% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
-| ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | +40..+143% | p10-p90, min-max +31..+184% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
+| ttft mean | 1000-token prompts, 1000 out, Ca^2 1 | -15..+11% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | -11..+11% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | -11..+10% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft mean | 8000-token prompts, 200 out, Ca^2 1 | +7..+141% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | +4..+152% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | -4..+171% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft mean | 8000-token prompts, 200 out, Ca^2 4 | +9..+122% | min-max | 6 load levels (9 readings) | 0.400 to 0.850 | off, on |
+| ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | +25..+164% | min-max | 6 load levels (9 readings) | 0.400 to 0.850 | off, on |
+| ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | +31..+184% | min-max | 6 load levels (9 readings) | 0.400 to 0.850 | off, on |
 <!-- envelope-table: end -->
 
 The TTFT readings are 6 load levels, each with flow control off and on (C on: 3
@@ -1069,7 +1184,7 @@ Every answer is an `Answer{Value, Band, Basis, Flags}` or an
 | `TokenGapPercentile` | A percentile over token gaps (ITL); per-request TPOT percentiles are supported |
 | `NoTPOTHistogram` | A per-request TPOT percentile with no router or engine TPOT histogram holding an observation (the router's needs `usage` on responses) and no `--assume-tpot-ratio` |
 | `TPOTQuantileUnbounded` | The TPOT `q` quantile falls in the histogram's `+Inf` bucket |
-| `TPOTBucketTooWide` | A TPOT percentile the engine's histogram was asked for, the router's holding no observation, with a `q` bucket wider than the window's mean (`whatif.MaxEngineBucketWidth`): the bucket's edge, whatever `q` was asked. It names `--assume-tpot-ratio`, and keeps `EngineTPOTHistogram` and `CoarseTPOTBucket` |
+| `TPOTBucketTooWide` | A TPOT percentile priced on a host-bound decode variant (its measured intercept and its floor under 5 ms, as a sub-1B model's) whose `R_q` was read off coarse buckets: its tail is host jitter the line does not model. It is decided per variant, never replaces a refusal the library gave (`Saturated` stands), and carries the read's flags. Or a TPOT percentile the engine's histogram was asked for, the router's holding no observation, with a `q` bucket wider than the window's mean (`whatif.MaxEngineBucketWidth`): the bucket's edge, whatever `q` was asked. It names `--assume-tpot-ratio`, and keeps `EngineTPOTHistogram` and `CoarseTPOTBucket` |
 | `TargetBelowFloor` | The target is below what any number of replicas reaches |
 | `FlowControlUnknown` | Flow control on and the detector's thresholds unknown |
 | `AboveDecodeOnset` | A TTFT asked at or above the decode gate's onset with flow control on, where the gate is not work conserving and TTFT is not priced |
@@ -1256,11 +1371,12 @@ TTFT: the decode answers are as they were.
 | `--ttft-percentile 90` | `replicas-to-slo`: the percentile. Default: the policy's `slo.ttft`, else 90. On `slo-to-rate`, beside a plain `--ttft` |
 | `--assume-vp 30000` | `V_P`, prompt tokens per second, in place of the learned one, as every `--assume-*` flag overrides the recording. Neither rescaled nor margined |
 | `--assume-prompt-cv 1` | The prompt's `cv`, 0 to 3, in place of the measured one or the default 2, flagged `AssumedPromptSpread`, with any measured figure beside it (`promptCVRead` in the JSON). At 0 the JSON's `promptCV` is absent and `promptCVSource` says `assumed` |
-| `--arrival-cv2 4` | `Ca²` at the prefill queue, above 0, in place of Poisson's 1, flagged `AssumedArrivalCV2`. 0 is refused: P3 reads it as Poisson. Decode's admission chain has no `Ca²`, so on a decode line it stays Poisson, and `AssumedPoissonArrivals` stays. The closing note then quotes no P2 row: those were read at Poisson. Assumed, and not validated: the one bursty bucket says nothing of the model at any other `Ca²` ([the staircase](slo-capacity-planner-ttft.md#ground-truth-and-the-staircase)) |
+| `--arrival-cv2 4` | `Ca²` at the prefill queue, above 0, in place of Poisson's 1, flagged `AssumedArrivalCV2`. 0 is refused: P3 reads it as Poisson. Decode's admission chain has no `Ca²`, so on a decode line it stays Poisson, and `AssumedPoissonArrivals` stays; with the replay switch `decode-burst-fill` a `--arrival-cv2` above 1 reads the decode's TPOT at the fill a request sees beside the clustered arrivals, flagged `AssumedArrivalCV2`. The closing note then quotes no P2 row: those were read at Poisson. Assumed, and not validated: the one bursty bucket says nothing of the model at any other `Ca²` ([the staircase](slo-capacity-planner-ttft.md#ground-truth-and-the-staircase)) |
 | `--assume-router-hop 8ms` | The hop between the router and the engines, in place of the learned or default one, flagged `RouterHopAssumed` |
 | `--prefill N` | Prefill pods to price; 0 takes the serving pods at the cycle |
 | `--prefill-variant V` | The prefill variant to price, when the model has several: the CLI prices one fleet, and a usage error says so otherwise. It gets the whole rate, named as assumed |
 | `--assume-a 11ms` | `a`, the fixed latency one request pays on a prefill pod, in place of the learned one, flagged `AssumedA` and printed `a ASSUMED`, with any learned figure beside it (`a 8.00 ms ASSUMED, learned 13.24 ms`, and `fixedLatencyLearned` in the JSON). For a fleet of one prompt length, which gives P1 no fit |
+| `--assume-transfer-base 20ms` | The fixed part of the KV transfer per request; the rest of the measured transfer scales with the tokens moved. Held at the measured transfer; ignored with none. Default 0: all of it scales. Named on the `assumed` row, not raised as a flag; it puts the figures outside the validated region. `replicas-to-slo` and `slo-to-rate` only: `at-replicas` refuses it, and backtest, the day plan and the API do not take it |
 
 **Where each input comes from.**
 
@@ -1272,7 +1388,7 @@ TTFT: the decode answers are as they were.
 | Prompt | `--assume-input-tokens`, else computed tokens over requests on the prefill rows, over the last 20 cycles with traffic | The decode variant's `IL·(1 − hit)`, named. Neither is `NoTraffic` |
 | `cv` | The computed-token histogram (Q1), pooled over the prompt's cycles and pods, through the window S1 keeps too (`whatif.PromptWindow`). Held at 3 and named `clamped` past the histogram's last bound. A recording made before Q1 has none. `--assume-prompt-cv` overrides all of it | 2, flagged `AssumedPromptSpread` (S1) |
 | Arrivals | `--arrival-cv2`, on the prefill queue | Poisson, flagged `AssumedPoissonArrivals`, the S1 flag, kept in `cmd/capacity-planner` because P3 has none |
-| `T_xfer` | Decode rows' `AvgKVTransferTime` over the measured prompt | Left out, flagged `TransferOmitted` |
+| `T_xfer` | Decode rows' `AvgKVTransferTime` over the measured prompt; with `--assume-transfer-base`, that base per request and the rest over the measured prompt | Left out, flagged `TransferOmitted` |
 | Decode term | With a decode line: `D` and `R` as the recording's cycles teach them ([the decode term](slo-capacity-planner-ttft.md#as-built-the-decode-term)), in place of `T_xfer` and `ITL` | `D`: a quiet row's figure held at slope 10, flagged `DecodeStepSlopeAssumed`, or the old sum, flagged `DecodeTermOmitted`. `R`: 20 ms, or `--assume-router-hop`, flagged `RouterHopAssumed`. Each is named on the `assumed` row with why no fit stands, and in `ttft` in the JSON with the term as priced |
 | Decode side | The decode variant's line, if `whatif.KneeRate` prices it | The decode engine's `AvgTTFT`, readings above 0 only: the largest of the last 5 cycles, with that cycle's prompt, flagged `DecodeEngineMeasured`. A cycle with no reading holds an empty slot, so the figure ages out of an idle tail. Else left out, flagged `DecodeSideOmitted` and `DecodeTTFTUnmeasured` |
 | Flow control | On when the scheduler queue exists at the cycle, S1's rule (`domain.AnalyzerInput.FlowControlSeries`). A pool or a wait histogram does not count: both are filled only while recording, and wait buckets read at rate 0 within a run's first 3 to 4 minutes on runs `goldens.yaml` describes as off, cause not known (74 cycles across five committed recordings) | Off, flagged `FlowControlInferredOff`. On takes the upstream thresholds 5 and 0.8, and is named as assumed. On with no decode line is answered, flagged `DecodeOnsetUnchecked`; S1 refuses that case, a planner reads the flag. `--flow-control` is not built |
@@ -1321,29 +1437,28 @@ named under `bound by`.
 
 ```
 prefill knee    30.00 r/s   [25.50 .. 34.50] N_p 1 x V_P 30000 / (f 1 x 1000 tokens); UNVALIDATED; V_P ASSUMED
-TTFT p90        375.6 ms    [304.8 .. 491.4] end to end; UNVALIDATED; V_P ASSUMED
+TTFT p90        373.4 ms    [302.6 .. 489.1] end to end; UNVALIDATED; V_P ASSUMED
                 (bands: V_P +-15%, a sweep, not a confidence interval)
-                (345.6 ms if prefill and decode waits were independent)
-                (floor 135.5 ms, pooled 333.6 ms, worst pod utilization 0.377)
-ttft inputs     V_P 30000 ASSUMED; a 13.24 ms learned; f 1 (one pod); N_p 1 (--prefill); prompt 1000 tokens (assumed); decode by its line, term omitted, hop assumed
+                (343.4 ms if prefill and decode waits were independent)
+                (floor 133.3 ms, pooled 331.4 ms, worst pod utilization 0.377)
+ttft inputs     V_P 30000 ASSUMED; a 11.04 ms learned; f 1 (one pod); N_p 1 (--prefill); prompt 1000 tokens (assumed); decode by its line, term omitted, hop assumed
 assumed         V_P 30000 tok/s (--assume-vp); prompt 1000 tokens (--assume-input-tokens); prompt cv 2 (no computed-prompt histogram); decode term omitted (no fit, TooFewDecodeMinutes, and no quiet decode row): T_xfer + ITL stands for it; router hop 20 ms (no fit: NoRouterMean); --assume-router-hop supplies one; flow control off (no queue series); Poisson arrivals
 ```
 
 That is the worked example with the CLI's `cv` of 2 and an assumed 20 ms hop. At
 that spread the price is the larger of processor sharing's and the first-come
-queue's (flag `SpreadBeyondProcessorSharing`), here first come's, so 376 ms where
+queue's (flag `SpreadBeyondProcessorSharing`), here first come's, so 373 ms where
 the page, at `cv` 1 on the old sum, has 160 ms (processor sharing alone reads 250
-ms); `a` is the planner's 13.24 ms (the median overhead, issue #306). Question 1 at
-200 ms p95 reads 0.15 r/s where the page has 11.10, and the JSON's note says
-the assumed term moved it from 1.08. `--assume-prompt-cv 1`, the page's `cv`,
-reads 9.45 (processor sharing's, the larger there), and `--arrival-cv2 4` on
-top of it 4.11 (`TestInputs_TheWorkedExampleAtTheStatedInputs`; 10.73 and
-4.68 first come).
+ms); `a` is P1's 11.04 ms. Question 1 at 200 ms p95 reads 0.25 r/s where the page
+has 11.10, and the JSON's note says the assumed term moved it from 1.19.
+`--assume-prompt-cv 1`, the page's `cv`, reads 9.64 (processor sharing's, the
+larger there), and `--arrival-cv2 4` on top of it 4.21
+(`TestInputs_TheWorkedExampleAtTheStatedInputs`; 10.80 and 4.80 first come).
 `TestTTFT_TheWorkedExampleFromTheRecording` puts `cv` 1, the old sum and the
 first-come queue back on the fleet the CLI read, and gets the page's figures within
-1 ms, 0.6 ms higher: the planner's `a` is 0.6 ms above the page's. `TestTTFT_HandComputedAtCV2` holds a figure at
+1 ms, 1.6 ms lower as the page says. `TestTTFT_HandComputedAtCV2` holds a figure at
 `cv` 2 through the command, priced first come, to a calculation that reads no Go:
-4.755796 s on run 4 at `--assume-vp 130000` (about 2.46 s as processor sharing).
+4.752942 s on run 4 at `--assume-vp 130000` (2.46 s as processor sharing).
 Both check the arithmetic. Neither validates the model. The `ttft-*.golden`
 files are regression pins, read back from the code.
 
@@ -1398,7 +1513,9 @@ spread, with no flag asking, so `schemaVersion` is `2`. The TTFT priced as
 processor sharing ([the TTFT page](slo-capacity-planner-ttft.md#as-built-processor-sharing))
 changed what `parts.engineWait` means (the prefill pods' stretch, not the busiest
 pod's first-come wait), added `parts.kvPullWait`, and left `parts.waitScale` and
-`parts.waitOffset` at 0, so `schemaVersion` is `3`.
+`parts.waitOffset` at 0, so `schemaVersion` is `3`. Naming the KV pull in decode
+utilization added `parts.kvPullUtilization` beside `parts.kvPullWait`; the key is
+new and additive, so `schemaVersion` stays `3`.
 
 **Replay.** `learnreplay.State` gains `Prefill`, `FlowControlSeries` and each
 variant's `DecodeTTFT` (`state_ttft.go`). They are read from the cycles' rows and
@@ -1696,11 +1813,14 @@ roles[].results.knee.answer.unit string
 roles[].results.knee.answer.validation object
 roles[].results.knee.answer.validation.errorHi number
 roles[].results.knee.answer.validation.errorLo number
+roles[].results.knee.answer.validation.holdout boolean
 roles[].results.knee.answer.validation.label string
+roles[].results.knee.answer.validation.levels number
 roles[].results.knee.answer.validation.outside string
 roles[].results.knee.answer.validation.readings number
 roles[].results.knee.answer.validation.shape string
 roles[].results.knee.answer.validation.source string
+roles[].results.knee.answer.validation.spread string
 roles[].results.knee.answer.validation.validated boolean
 roles[].results.knee.answer.value number
 roles[].results.knee.refused object
@@ -1733,11 +1853,14 @@ roles[].results.meanTPOT.answer.unit string
 roles[].results.meanTPOT.answer.validation object
 roles[].results.meanTPOT.answer.validation.errorHi number
 roles[].results.meanTPOT.answer.validation.errorLo number
+roles[].results.meanTPOT.answer.validation.holdout boolean
 roles[].results.meanTPOT.answer.validation.label string
+roles[].results.meanTPOT.answer.validation.levels number
 roles[].results.meanTPOT.answer.validation.outside string
 roles[].results.meanTPOT.answer.validation.readings number
 roles[].results.meanTPOT.answer.validation.shape string
 roles[].results.meanTPOT.answer.validation.source string
+roles[].results.meanTPOT.answer.validation.spread string
 roles[].results.meanTPOT.answer.validation.validated boolean
 roles[].results.meanTPOT.answer.value number
 roles[].results.meanTPOT.refused object
@@ -1770,11 +1893,14 @@ roles[].results.operatingRate.answer.unit string
 roles[].results.operatingRate.answer.validation object
 roles[].results.operatingRate.answer.validation.errorHi number
 roles[].results.operatingRate.answer.validation.errorLo number
+roles[].results.operatingRate.answer.validation.holdout boolean
 roles[].results.operatingRate.answer.validation.label string
+roles[].results.operatingRate.answer.validation.levels number
 roles[].results.operatingRate.answer.validation.outside string
 roles[].results.operatingRate.answer.validation.readings number
 roles[].results.operatingRate.answer.validation.shape string
 roles[].results.operatingRate.answer.validation.source string
+roles[].results.operatingRate.answer.validation.spread string
 roles[].results.operatingRate.answer.validation.validated boolean
 roles[].results.operatingRate.answer.value number
 roles[].results.operatingRate.refused object
@@ -1807,11 +1933,14 @@ roles[].results.percentileTPOT.answer.unit string
 roles[].results.percentileTPOT.answer.validation object
 roles[].results.percentileTPOT.answer.validation.errorHi number
 roles[].results.percentileTPOT.answer.validation.errorLo number
+roles[].results.percentileTPOT.answer.validation.holdout boolean
 roles[].results.percentileTPOT.answer.validation.label string
+roles[].results.percentileTPOT.answer.validation.levels number
 roles[].results.percentileTPOT.answer.validation.outside string
 roles[].results.percentileTPOT.answer.validation.readings number
 roles[].results.percentileTPOT.answer.validation.shape string
 roles[].results.percentileTPOT.answer.validation.source string
+roles[].results.percentileTPOT.answer.validation.spread string
 roles[].results.percentileTPOT.answer.validation.validated boolean
 roles[].results.percentileTPOT.answer.value number
 roles[].results.percentileTPOT.refused object
@@ -1844,11 +1973,14 @@ roles[].results.rate.answer.unit string
 roles[].results.rate.answer.validation object
 roles[].results.rate.answer.validation.errorHi number
 roles[].results.rate.answer.validation.errorLo number
+roles[].results.rate.answer.validation.holdout boolean
 roles[].results.rate.answer.validation.label string
+roles[].results.rate.answer.validation.levels number
 roles[].results.rate.answer.validation.outside string
 roles[].results.rate.answer.validation.readings number
 roles[].results.rate.answer.validation.shape string
 roles[].results.rate.answer.validation.source string
+roles[].results.rate.answer.validation.spread string
 roles[].results.rate.answer.validation.validated boolean
 roles[].results.rate.answer.value number
 roles[].results.rate.refused object
@@ -1880,6 +2012,7 @@ roles[].results.ttft.answer.parts.decodeWaitProbability number
 roles[].results.ttft.answer.parts.engineWait number
 roles[].results.ttft.answer.parts.firstStep number
 roles[].results.ttft.answer.parts.independent number
+roles[].results.ttft.answer.parts.kvPullUtilization number
 roles[].results.ttft.answer.parts.kvPullWait number
 roles[].results.ttft.answer.parts.onsets object
 roles[].results.ttft.answer.parts.onsets.decode number
@@ -1901,11 +2034,14 @@ roles[].results.ttft.answer.unit string
 roles[].results.ttft.answer.validation object
 roles[].results.ttft.answer.validation.errorHi number
 roles[].results.ttft.answer.validation.errorLo number
+roles[].results.ttft.answer.validation.holdout boolean
 roles[].results.ttft.answer.validation.label string
+roles[].results.ttft.answer.validation.levels number
 roles[].results.ttft.answer.validation.outside string
 roles[].results.ttft.answer.validation.readings number
 roles[].results.ttft.answer.validation.shape string
 roles[].results.ttft.answer.validation.source string
+roles[].results.ttft.answer.validation.spread string
 roles[].results.ttft.answer.validation.validated boolean
 roles[].results.ttft.answer.value number
 roles[].results.ttft.refused object
@@ -1954,6 +2090,7 @@ roles[].ttft.promptCV number
 roles[].ttft.promptCVRead number
 roles[].ttft.promptCVSource string
 roles[].ttft.promptFromCycle number
+roles[].ttft.promptHitRate number
 roles[].ttft.promptSource string
 roles[].ttft.promptToCycle number
 roles[].ttft.promptTokens number
@@ -1973,8 +2110,11 @@ roles[].ttft.transferSource string
 roles[].ttft.vp number
 roles[].ttft.vpLearned number
 roles[].ttft.vpOrigin string
+roles[].ttft.vpPromptHitRate number
 roles[].ttft.vpPromptTokens number
 roles[].ttft.vpSource string
+roles[].ttft.vpWholePromptTokens number
+roles[].ttft.wholePromptTokens number
 roles[].variant string
 schemaVersion number
 selfCheck object

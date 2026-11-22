@@ -68,14 +68,22 @@ type answerFlags struct {
 	// refuses per-bucket answers.
 	ttft, ttftPercentile, prefillVariant, inputBucket string
 	assumeVP, assumePromptCV, arrivalCV2              float64
-	assumeRouterHop                                   time.Duration
-	prefill                                           int
-	set                                               map[string]bool
+	// statedPromptMaxRatio is the bound of the histogram a stated cv was
+	// read from (whatifapi.Knobs.PromptMaxRatio): a backtest's step. No
+	// flag sets it; 0 is none.
+	statedPromptMaxRatio float64
+	assumeRouterHop      time.Duration
+	prefill              int
+	set                  map[string]bool
 	// prefixHit is a stated prefix-cache hit rate, nil the measured one (a
 	// report shape, at-replicas --shape).
 	prefixHit *float64
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
+	// assumeTransferBase is --assume-transfer-base, a TTFT flag (ttft.go,
+	// transferPerToken): the KV transfer's fixed part per request; 0, the
+	// default, prices none, as before.
+	assumeTransferBase time.Duration
 	// flowControl is --flow-control, a TTFT flag (ttft.go): the router's flow
 	// control stated, on or off, in place of its inference from the queue series.
 	flowControl string
@@ -97,6 +105,10 @@ type answerFlags struct {
 	// (ttft.go): on by default (whatif.DefaultPlannerImbalanceAcrossCounts),
 	// where the SLO analyzer's is off.
 	imbalanceAcrossCounts bool
+	// loadAwareRouter is --load-aware-router, a TTFT flag (ttft.go): f
+	// falls to 1 at the pooled prefill knee (whatif.Prefill.LoadAwareRouter);
+	// off by default (whatif.DefaultPlannerLoadAwareRouter).
+	loadAwareRouter bool
 	// fixedImbalance, above zero, is f at every prefill count above one,
 	// assumed: the report's sensitivity to f (fSensitivity). No flag sets
 	// it.
@@ -148,12 +160,14 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.IntVar(&f.prefill, "prefill", 0, "prefill replicas to price; 0 takes the recorded count")
 	fs.StringVar(&f.prefillVariant, "prefill-variant", "", "the prefill variant to price, when the model has several")
 	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency one request pays on a prefill pod (11ms), in place of the learned one (flagged)")
+	fs.DurationVar(&f.assumeTransferBase, "assume-transfer-base", 0, "replicas-to-slo and slo-to-rate only: the fixed part of the KV transfer per request, e.g. 20ms; the rest of the measured transfer scales with the tokens moved. Held at the measured transfer; ignored with none. Default 0: all of it scales (named on the assumed line)")
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "opt-in, validated at one staircase step: price the flow-control gate past the prefill onset, its wait at the router and behind the burst it releases to one prefill pod (FlowControlWaitPriced); off, the wait is flagged AboveFlowControlOnset, a miss")
 	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "opt-in, measured on router v1.0.0 only, at six bursty steps: take the router's wait past the prefill onset, up to 0.9 of the prefill knee, as inside the processor-sharing prefill price, so the figure stands (FlowControlWaitPriced) and a rate answer may pass the onset; reads short on router v0.11.0")
 	fs.BoolVar(&f.psOnsets, "ps-onsets", whatif.DefaultPSOnsets, "experimental, unvalidated: place the prefill flow-control onset on the processor-sharing model, the prompts past --prefill-running-cap counted as waiting")
 	fs.IntVar(&f.prefillRunningCap, "prefill-running-cap", 0, "with --ps-onsets, the most prompts a prefill pod computes at once (about max_num_batched_tokens over the prompt); 0 (unknown, the default) takes the lower of processor sharing at 1 and first come")
 	fs.BoolVar(&f.chargeDecodeGate, "charge-decode-gate", whatif.DefaultChargeDecodeGate, "experimental, unvalidated, slo-to-rate only: charge the time the decode flow-control gate is closed below its onset to the rate answer")
 	fs.StringVar(&f.inputBucket, "input-bucket", "", "not supported: per-bucket answers are the planner's M1")
+	fs.BoolVar(&f.loadAwareRouter, "load-aware-router", whatif.DefaultPlannerLoadAwareRouter, "state that the router scores each pod's queue (llm-d's EPP queue scorer): f is held to the load it was learned at, then falls to 1 at full load, so the prefill knee is the pooled one less the margin and f prices only the latency below it; off by default, because no recording says what the router scores")
 	fs.BoolVar(&f.imbalanceAcrossCounts, "imbalance-across-counts", whatif.DefaultPlannerImbalanceAcrossCounts, fmt.Sprintf("at a prefill count P1 has not learned, price f off a curve fitted to the counts it learned; with none learned, and with =false, max(%g, f) (flagged AssumedImbalance either way)", whatif.ImbalanceFloor))
 	f.window.registerWindow(fs)
 	fs.Lookup("prometheus").Usage = "answer from a window of this Prometheus (base URL), captured and generated in memory, in place of --recording"
@@ -554,6 +568,14 @@ func noRoleHint(variants []pricedVariant) string {
 		"(capture --role-of, or a role label such as llm-d.ai/role)", len(variants))
 }
 
+// residenceUnread is a P/D decode figure priced, on
+// saturation.SwitchDecodeResidencePull, without the KV pull in its residence:
+// the decode engine read no finite TTFT, read it with requests waiting on
+// decode capacity, whose wait holds no KV, or read it in a window whose
+// decode backlog is unread (always, on an engine without
+// num_requests_waiting_by_reason).
+const residenceUnread whatif.Flag = "ResidenceUnread"
+
 // decodeVariants is the variants a question prices: every variant that is not
 // prefill (decode, and aggregated, whose line prices decode too), or the one
 // --variant names.
@@ -603,6 +625,33 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			// it. A B from the floor puts the line through the floor itself.
 			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL},
 			AssumedB:  pv.itlB.Applied,
+		}
+		if st.DecodeResidencePull && domain.CanonicalRole(vs.Role) == domain.RoleDecode && slices.ContainsFunc(st.Variants, func(v learnreplay.VariantState) bool {
+			return domain.CanonicalRole(v.Role) == domain.RolePrefill
+		}) {
+			// A P/D decode holds the KV from the pull: the decode engine's
+			// TTFT at the prompt priced (saturation.SwitchDecodeResidencePull).
+			// One read with requests waiting on decode capacity is a queue,
+			// and a waiting request holds no KV; a window whose decode rows
+			// did not say why they waited (BacklogUnread) may be one. Neither
+			// is priced, nor is an unread or non-finite TTFT, and the
+			// figures say so (residenceUnread). An aggregated variant
+			// prefills its own prompt and holds no pull.
+			if et := vs.DecodeTTFT.EngineTTFT; et.Waiting == 0 && !vs.DecodeTTFT.BacklogUnread &&
+				whatif.Finite(et.At(pv.shape.ILeff)) && et.At(pv.shape.ILeff) > 0 {
+				pv.decode.HeldBefore = et.At(pv.shape.ILeff)
+			} else {
+				pv.flags = append(pv.flags, residenceUnread)
+			}
+		}
+		if st.DecodeBurstFill && f.set["arrival-cv2"] && f.arrivalCV2 > 1 {
+			// Clustered arrivals put more sequences beside a request than
+			// the time average (saturation.SwitchDecodeBurstFill): its
+			// TPOT is read at that fill, from the Ca^2 stated, and says so.
+			// The decode admission chain stays Poisson (DecodeAdmission):
+			// its wait probability is not raised with the fill.
+			pv.decode.ArrivalCV2 = f.arrivalCV2
+			pv.flags = append(pv.flags, assumedArrivalCV2)
 		}
 		if t := batchTerm(vs, pv.itlB.Applied); !t.IsZero() {
 			pv.decode.Batch = t
@@ -775,7 +824,9 @@ func (pv pricedVariant) qualify(r whatif.Result) whatif.Result {
 			flags = append(flags, fl)
 		}
 	}
-	if top, ok := pv.observedFillMax(); ok && a.Basis.Fill > top && !slices.Contains(flags, whatif.ExtrapolatedFill) {
+	// The line is read at the fill a request sees, above Basis.Fill where
+	// arrivals cluster (decode-burst-fill), so that is the fill checked.
+	if top, ok := pv.observedFillMax(); ok && pv.decode.SeenFill(a.Basis.Fill) > top && !slices.Contains(flags, whatif.ExtrapolatedFill) {
 		flags = append(flags, whatif.ExtrapolatedFill)
 	}
 	a.Flags = flags
@@ -821,14 +872,90 @@ func (f *answerFlags) headroomFor(p *config.ScalingPolicy) float64 {
 // the engine's is the answer (whatif.EngineTPOTRatio): it says more than that
 // no histogram exists. Any other refusal of the router's stands: it says that
 // data is wrong. A refusal comes back as the Result the percentile answers
-// with.
+// with. A coarse R_q is refused per variant where that variant's decode step
+// is host-bound (onHostBound).
 func (f *answerFlags) tpotRatioFor(st *learnreplay.State, q float64) (whatif.TPOTRatio, []whatif.Flag, *whatif.Unanswerable) {
 	if f.set["assume-tpot-ratio"] {
 		return whatif.TPOTRatio{Value: f.tpotRatio, Assumed: true}, nil, nil
 	}
+	return f.tpotRatioRead(st, q)
+}
+
+// hostBoundRefusal refuses a TPOT percentile priced on vs where its R_q was
+// read off coarse buckets (whatif.CoarseTPOTBucket) and the variant's decode
+// step is host-bound: its line's intercept B measured (whatif.MeasuredIntercept,
+// not the least ITL above the band) and, with its floor below the band where
+// one was read, under hostBoundITL. The bucket grid then sets R_q, and the
+// tail it stands for is host jitter the line does not model: on the 0.6B
+// staircase the planner priced p90 TPOT at the mean while the fleet measured
+// a p90 1.3x and a p95 1.6x its mean (#291). Nil where it prices: an
+// assumed or refused R_q, fine buckets, or a line with no measured
+// intercept says nothing about the host. pv's line where --assume-itl-b
+// stated its intercept is the operator's, not a reading: onHostBound skips
+// it.
+func hostBoundRefusal(vs learnreplay.VariantState, r resolvedRatio) *whatif.Unanswerable {
+	if r.refused != nil || r.ratio.Assumed || !slices.Contains(r.flags, whatif.CoarseTPOTBucket) {
+		return nil
+	}
+	if vs.Tier == whatif.TierAboveBand || !whatif.MeasuredIntercept(vs.Tier, vs.Line) || !(vs.Line.B > 0) {
+		return nil
+	}
+	b := max(vs.Line.B, vs.BelowBandITL)
+	if b >= hostBoundITL {
+		return nil
+	}
+	hist := "router's"
+	if slices.Contains(r.flags, whatif.EngineTPOTHistogram) {
+		hist = "engine's"
+	}
+	return &whatif.Unanswerable{Reason: whatif.TPOTBucketTooWide,
+		Detail: fmt.Sprintf("the decode step is host-bound (the line's intercept and floor at most %.2f ms, under %.0f ms) and the %s TPOT histogram's "+
+			"q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; "+
+			"pass --assume-tpot-ratio for a flagged answer, or ask for the mean", b*1000, hostBoundITL*1000, hist)}
+}
+
+// onHostBound is res, a TPOT percentile priced on pv at R_q, refused where
+// pv's decode step is host-bound (hostBoundRefusal). Only a figure is
+// replaced: a refusal the library gave (Saturated, AboveDecodeOnset and the
+// rest) says more about the fleet than the histogram does, and stands. The
+// refusal carries no flags of its own; onRatio adds the read's.
+func onHostBound(res whatif.Result, pv pricedVariant, r resolvedRatio) whatif.Result {
+	if _, ok := res.(whatif.Answer); !ok || pv.itlB.Applied {
+		return res
+	}
+	if u := hostBoundRefusal(pv.state, r); u != nil {
+		return *u
+	}
+	return res
+}
+
+// tpotRatioRead is R_q as the histograms read it (tpotRatioFor). Where the
+// censored fit reads the router's buckets (saturation.SwitchTPOTRatioCensored),
+// it reads inside a coarse bucket rather than at its edge, so a coarse
+// engine's edge reading does not replace it: the switch is the remedy for
+// the coarse grid. A fine engine reading is a measurement where the fit is a
+// model of one, and stands as without the switch, so the switch never
+// refuses (hostBoundRefusal) what it priced off. Where the fit does not
+// read, the router's edge reading falls back to the engine's as without the
+// switch.
+func (f *answerFlags) tpotRatioRead(st *learnreplay.State, q float64) (whatif.TPOTRatio, []whatif.Flag, *whatif.Unanswerable) {
+	f.engineTPOT = false
 	r, flags, refused := whatif.TPOTRatio{}, []whatif.Flag(nil), &whatif.Unanswerable{Reason: whatif.NoTPOTHistogram,
 		Detail: "the recording carries no TPOT histogram; pass --assume-tpot-ratio for a flagged answer"}
-	if len(st.TPOTWindows) > 0 {
+	switch {
+	case len(st.TPOTWindows) > 0 && st.TPOTRatioCensored:
+		var fitted bool
+		r, flags, refused, fitted = whatif.TPOTRatioCensoredFit(st.TPOTWindows, q)
+		if fitted {
+			if slices.Contains(flags, whatif.CoarseTPOTBucket) && len(st.EngineTPOTWindows) > 0 {
+				if er, eflags, erefused := whatif.EngineTPOTRatio(st.EngineTPOTWindows, q); erefused == nil && !slices.Contains(eflags, whatif.CoarseTPOTBucket) {
+					f.engineTPOT = true
+					return er, eflags, nil
+				}
+			}
+			return r, flags, refused
+		}
+	case len(st.TPOTWindows) > 0:
 		r, flags, refused = whatif.TPOTRatioFromWindows(st.TPOTWindows, q)
 	}
 	coarse := refused == nil && slices.Contains(flags, whatif.CoarseTPOTBucket)

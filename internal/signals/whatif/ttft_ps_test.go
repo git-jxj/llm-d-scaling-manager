@@ -25,13 +25,13 @@ func psFleet(cv, ca2 float64) TTFTFleet {
 // the prompt is its mean.
 func TestPS_ExpectationOverThePromptIsTheGammas(t *testing.T) {
 	for _, cv := range []float64{0, 0.0577, 1, 3} {
-		nearRel(t, "E[u]", ePoly{{c: 1, n: 1}}.expect(cv), 1, 1e-12)
-		nearRel(t, "E[u^2]", ePoly{{c: 1, n: 2}}.expect(cv), 1+cv*cv, 1e-12)
+		nearRel(t, "E[u]", ePoly{{c: 1, n: 1}}.expect(cv, 0), 1, 1e-12)
+		nearRel(t, "E[u^2]", ePoly{{c: 1, n: 2}}.expect(cv, 0), 1+cv*cv, 1e-12)
 		want := math.Exp(-0.7)
 		if cv > 0 {
 			want = math.Pow(1+0.7*cv*cv, -1/(cv*cv))
 		}
-		nearRel(t, "E[exp(-0.7 u)]", ePoly{{c: 1, a: 0.7}}.expect(cv), want, 1e-12)
+		nearRel(t, "E[exp(-0.7 u)]", ePoly{{c: 1, a: 0.7}}.expect(cv, 0), want, 1e-12)
 	}
 }
 
@@ -47,7 +47,7 @@ func TestPS_OneStageIsTheKnownSojourn(t *testing.T) {
 		st := newPSStage(rho/es, es, 1, 1)
 		for _, u := range []float64{0.3, 1, 4} {
 			x := u * es
-			nearRel(t, "mean extra", st.extra().expect(0)*u, x*rho/(1-rho), 1e-12)
+			nearRel(t, "mean extra", st.extra().expect(0, 0)*u, x*rho/(1-rho), 1e-12)
 			mu := 1 / es
 			d := 1 - rho
 			mm1 := 2*rho*x/(mu*d*d*d) - 2*rho*(1-math.Exp(-d*mu*x))/(mu*mu*d*d*d*d)
@@ -169,6 +169,7 @@ func TestPS_TheMeanIsTheStretchesAndTheWork(t *testing.T) {
 	pull := p.PromptTokens * p.TransferSecondsPerToken
 	rd := rate / 2 * pull
 	nearRel(t, "pull stretch", r.Parts.KVPullWait, pull*rd/(1-rd), 1e-12)
+	nearRel(t, "pull utilization", r.Parts.KVPullUtilization, rd, 1e-12)
 	sum := r.Parts.EngineWait + r.Parts.KVPullWait + r.Parts.OwnPrefill + r.Parts.DecodeWait + r.Parts.DecodeEngine + r.Parts.RouterHop
 	nearRel(t, "mean", r.Seconds, sum, 1e-12)
 }
@@ -462,4 +463,43 @@ func nearRel(t *testing.T, what string, got, want, tol float64) {
 func isRefusal(r Result, reason Reason) bool {
 	u, ok := r.(Unanswerable)
 	return ok && u.Reason == reason
+}
+
+// KVPullUtilization is the TTFT's own pull utilization where the TTFT prices
+// the pull, stands at or past 1 where the TTFT refuses a saturated pull, and
+// is 0 where no pull stage is priced: first come, no decode line, or no
+// transfer.
+func TestPS_KVPullUtilizationIsTheTTFTs(t *testing.T) {
+	fl := psFleet(0.0577, 1)
+	for _, rate := range []float64{1, 10, 28.3} {
+		nearRel(t, "pull utilization", KVPullUtilization(fl, rate), psTTFT(t, fl, rate, 0).Parts.KVPullUtilization, 1e-12)
+	}
+	sat := psFleet(0.0577, 1)
+	sat.Decode.Replicas = 1
+	sat.Prefill.TransferSecondsPerToken = 2e-5
+	if !isRefusal(TTFTAt(sat, 7, 0), Saturated) {
+		t.Fatalf("want the saturated pull refused: %+v", TTFTAt(sat, 7, 0))
+	}
+	if got := KVPullUtilization(sat, 7); got < 1 {
+		t.Errorf("a saturated pull reads %g, want at least 1", got)
+	}
+	// Past MaxPSPromptCV first come's larger mean is priced, with no pull
+	// stage: the part reads 0 and the pull's load stands.
+	wide := psFleet(2, 1)
+	wideTTFT := psTTFT(t, wide, 10, 0)
+	if !slices.Contains(wideTTFT.Flags, SpreadBeyondProcessorSharing) || wideTTFT.Parts.KVPullUtilization != 0 {
+		t.Errorf("cv 2: want first come priced, no pull part: flags %v, part %g", wideTTFT.Flags, wideTTFT.Parts.KVPullUtilization)
+	}
+	nearRel(t, "cv 2 pull utilization", KVPullUtilization(wide, 10), KVPullUtilization(psFleet(0.0577, 1), 10), 1e-12)
+	fc := psFleet(0.0577, 1)
+	fc.ProcessorSharing = false
+	noDecode := psFleet(0.0577, 1)
+	noDecode.Decode = nil
+	noXfer := psFleet(0.0577, 1)
+	noXfer.Prefill.TransferSecondsPerToken = 0
+	for name, f := range map[string]TTFTFleet{"first come": fc, "no decode line": noDecode, "no transfer": noXfer} {
+		if got := KVPullUtilization(f, 10); got != 0 {
+			t.Errorf("%s: %g, want 0", name, got)
+		}
+	}
 }

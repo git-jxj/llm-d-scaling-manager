@@ -133,7 +133,8 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
 // SwitchITLAdaptiveBandFloor,
 // SwitchITLHoldSteadySlope, SwitchITLLineAtFloor, SwitchMoEBusiestRank,
-// SwitchITLBatchTerm,
+// SwitchITLBatchTerm, SwitchTPOTRatioCensored,
+// SwitchDecodeResidencePull, SwitchDecodeBurstFill,
 // SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
 // SwitchK2BatchAtITLTarget,
 // SwitchITLBaselineFromFloor, SwitchITLFloorBaselineHeld,
@@ -298,6 +299,18 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// (itl_line_at_floor.go). Off from the constructor; the analyzer
 		// does not read it.
 		SwitchITLLineAtFloor: &a.itlLineAtFloor,
+		// The planner's R_q by interval-censored maximum likelihood
+		// (tpot_ratio_censored.go). Off from the constructor; the analyzer
+		// does not read it.
+		SwitchTPOTRatioCensored: &a.tpotRatioCensored,
+		// The planner's decode residence from the KV pull
+		// (decode_residence_pull.go). Off from the constructor; the
+		// analyzer does not read it.
+		SwitchDecodeResidencePull: &a.decodeResidencePull,
+		// The planner's decode fill under clustered arrivals
+		// (decode_burst_fill.go). Off from the constructor; the analyzer
+		// does not read it.
+		SwitchDecodeBurstFill: &a.decodeBurstFill,
 		// Issue llm-d-incubation/llm-d-scaling-manager#201: a decode's
 		// derived k2 charges its budget the prompt it computes
 		// (decode_budget.go), and a landed request is a decode's backlog

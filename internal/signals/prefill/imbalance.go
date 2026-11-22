@@ -137,10 +137,10 @@ func (ks *keyState) noteImbalance(shares []share, allAdmitted bool, now time.Tim
 func (est *Estimate) imbalance(ks *keyState, shares []share, serving int, busy bool) {
 	est.FPodsLast = serving
 	est.FSamples = len(ks.f)
-	est.FByPods, est.FSamplesByPods = imbalanceByPods(ks.f, busy)
+	est.FByPods, est.FSamplesByPods, est.FLoadByPods = imbalanceByPods(ks.f, busy)
 	est.FMultiRank = slices.ContainsFunc(ks.f, func(s fSample) bool { return s.multiRank })
 	if len(ks.f) >= MinImbalanceMinutes {
-		est.F = median(minuteFs(ks.f, busy))
+		est.F, est.FLoad = median(minuteFs(ks.f, busy)), median(minuteLoads(ks.f, busy))
 		return
 	}
 	switch {
@@ -154,25 +154,38 @@ func (est *Estimate) imbalance(ks *keyState, shares []share, serving int, busy b
 }
 
 // imbalanceByPods is the median f at each pod count, of the minutes taken at
-// that count only, for the counts with at least MinImbalanceMinutes, and how
-// many minutes each count kept. Both nil when no minute was kept. With busy,
-// each count's median is of its own busiest minutes (busiestMinutes).
-func imbalanceByPods(fs []fSample, busy bool) (map[int]float64, map[int]int) {
+// that count only, for the counts with at least MinImbalanceMinutes, how
+// many minutes each count kept, and the median load of the minutes each f
+// is the median of. All nil when no minute was kept. With busy, each count's
+// medians are of its own busiest minutes (busiestMinutes).
+func imbalanceByPods(fs []fSample, busy bool) (map[int]float64, map[int]int, map[int]float64) {
 	if len(fs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	byPods := map[int][]fSample{}
 	for _, s := range fs {
 		byPods[s.pods] = append(byPods[s.pods], s)
 	}
-	f, samples := map[int]float64{}, make(map[int]int, len(byPods))
+	f, samples, load := map[int]float64{}, make(map[int]int, len(byPods)), map[int]float64{}
 	for pods, xs := range byPods {
 		samples[pods] = len(xs)
 		if len(xs) >= MinImbalanceMinutes {
-			f[pods] = median(minuteFs(xs, busy))
+			f[pods], load[pods] = median(minuteFs(xs, busy)), median(minuteLoads(xs, busy))
 		}
 	}
-	return f, samples
+	return f, samples, load
+}
+
+// minuteLoads is the load of each minute minuteFs reads.
+func minuteLoads(fs []fSample, busy bool) []float64 {
+	if busy {
+		fs = busiestMinutes(fs)
+	}
+	out := make([]float64, len(fs))
+	for i, s := range fs {
+		out[i] = s.load
+	}
+	return out
 }
 
 // BusyMinuteShare is the share of the busiest minute's computed tokens per

@@ -49,7 +49,7 @@ func (f *answerFlags) foldFits(decodeVariant, prefillVariant string) []whatifapi
 	out := make([]whatifapi.FoldFit, 0, len(f.folds))
 	for c, st := range f.folds {
 		out = append(out, whatifapi.FoldFit{Cycle: c, At: st.At, Pricer: &servedState{st: st, decodeVariant: decodeVariant,
-			prefillVariant: prefillVariant, hint: f.hintSource(), imbalanceAcrossCounts: f.imbalanceAcrossCounts}})
+			prefillVariant: prefillVariant, hint: f.hintSource(), imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter}})
 	}
 	return out
 }
@@ -121,15 +121,19 @@ func (f *answerFlags) stated() (*whatifapi.Stated, error) {
 		{"ps-onsets", strconv.FormatBool(f.psOnsets), f.psOnsets != whatif.DefaultPSOnsets},
 		{"prefill-running-cap", strconv.Itoa(f.prefillRunningCap), f.prefillRunningCap != 0},
 		{"charge-decode-gate", strconv.FormatBool(f.chargeDecodeGate), f.chargeDecodeGate != whatif.DefaultChargeDecodeGate},
+		{"assume-transfer-base", f.assumeTransferBase.String(), f.assumeTransferBase != 0},
 	} {
 		if f.set[o.name] && o.moved {
 			st.Other = append(st.Other, "--"+o.name+"="+o.value)
 		}
 	}
-	// The fits do price with --imbalance-across-counts (foldFits): replayed,
-	// and outside the validated region.
+	// The fits do price with --imbalance-across-counts and --load-aware-router
+	// (foldFits): replayed, and outside the validated region.
 	if f.set["imbalance-across-counts"] && f.imbalanceAcrossCounts != whatif.DefaultPlannerImbalanceAcrossCounts {
 		st.Replayed, st.Outside = append(st.Replayed, "--imbalance-across-counts="+strconv.FormatBool(f.imbalanceAcrossCounts)), true
+	}
+	if f.set["load-aware-router"] && f.loadAwareRouter != whatif.DefaultPlannerLoadAwareRouter {
+		st.Replayed, st.Outside = append(st.Replayed, "--load-aware-router="+strconv.FormatBool(f.loadAwareRouter)), true
 	}
 	return st, nil
 }

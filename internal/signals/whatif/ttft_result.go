@@ -144,7 +144,9 @@ const (
 	// VPShapeMoved is a V_P read at a mean prompt more than MaxVPShapeRatio
 	// from the one asked, either way, or at one not known, with no curve to
 	// rescale it by: the V_P is held, and on a longer prompt it reads high
-	// and over-promises. No caller acts on it.
+	// and over-promises. It is raised too, curve or not, where the prefix
+	// hits moved from those V_P was read at (Prefill.prefixMoved): the
+	// cached tokens' attention is not in E[I_eff]. No caller acts on it.
 	VPShapeMoved Flag = "VPShapeMoved"
 	// FlowControlInferredOff is flow control taken as off because its queue
 	// series does not exist (a scrape gap looks the same).
@@ -179,8 +181,9 @@ const (
 	DecodeOnsetUnchecked Flag = "DecodeOnsetUnchecked"
 	// SpreadBeyondProcessorSharing is a TTFT priced with
 	// TTFTFleet.ProcessorSharing at a prompt spread past MaxPSPromptCV, wider
-	// than any run has validated processor sharing at: the figure is the
-	// larger of processor sharing's and the first-come queue's.
+	// than any run has validated processor sharing at, that no bound on the
+	// longest prompt clears (Prefill.BeyondProcessorSharing): the figure is
+	// the larger of processor sharing's and the first-come queue's.
 	SpreadBeyondProcessorSharing Flag = "SpreadBeyondProcessorSharing"
 )
 
@@ -316,6 +319,11 @@ type TTFTParts struct {
 	// TTFTFleet.ProcessorSharing prices it, with a decode line. The pull's
 	// own work is in OwnPrefill.
 	KVPullWait float64
+	// KVPullUtilization is the KV pull stage's utilization on one decode
+	// pod: the rate over the decode pods times the prompt's pull time,
+	// E[I] * kappa/BW. 0 where KVPullWait is not priced. The decode KV fill
+	// leaves it out: a pod can pull near its limit at a fill near 0.
+	KVPullUtilization float64
 	// OwnPrefill is a + E[I_eff]/V_P, plus the part of decode's term that
 	// goes with the prompt: T_xfer on the old sum, the per-token parts of D
 	// and R with a DecodeTerm. It follows the prompt's quantile.

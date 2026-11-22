@@ -289,7 +289,49 @@ computed tokens a pod or more (`saturation.SwitchPrefillFBusyMinutes`): the
 router spreads light load less evenly, and on the public staircase the median
 of every minute read `f` 1.23, where the busy minutes' raw shares were 1.01 to
 1.06 and their `f` 1.00, so the knee read about 20% low (issue #266). Below the knee the busy minutes' `f` prices
-the worst pod's queue a little low. Sticky routing
+the worst pod's queue a little low.
+
+**`f` by load** (issue #300). On every recording that learned `f`, the
+de-biased `f` of each minute falls as the pods fill. By the minute's mean pod
+utilization `ρ` (computed tokens a pod over `V_P`), median `f`, two pods, a
+band of fewer than five minutes left blank, and 0.6-0.7, where no recording
+kept five. Phases B and C learned no `V_P`; their ρ uses the warm-up's:
+
+| recording | ρ < 0.1 | 0.1-0.2 | 0.2-0.3 | 0.3-0.4 | 0.4-0.5 | 0.5-0.6 | 0.7-0.8 | 0.8+ | busy minutes (`ρ_m`) |
+|---|---|---|---|---|---|---|---|---|---|
+| 0.6B warm-up | 1.50 | | | | 1.00 | 1.00 | | 1.00 | 1.000 (0.59) |
+| 0.6B phase B | | 1.19 | 1.09 | 1.04 | 1.01 | | | | 1.021 (0.42) |
+| 0.6B phase C | | 1.14 | 1.08 | 1.05 | 1.03 | | | | 1.035 (0.42) |
+| Qwen3-32B capture | | | | 1.16 | 1.10 | 1.00 | 1.01 | 1.00 | 1.000 (0.93) |
+
+So the busy minutes' `f` is the `f` at the rates a knee and a headroom are
+priced at: at and above `ρ_m` the minutes read it or less. Below `ρ_m` they read
+more, and there the held `f` prices TTFT low, but the queue is short: at ρ 0.15
+on phase B, `f` 1.19 against 1.02 moves the busiest pod from 0.18 to 0.15
+utilization, about 1 ms of a 50 ms TTFT. A recording that never got busy reads
+its light minutes' `f`, which is high, and prices every higher rate safe.
+`prefill.Estimate.FLoad` (and `FLoadByPods`) is the load `f` was read at.
+
+**A load-aware router** (`--load-aware-router`, `Prefill.LoadAwareRouter`,
+opt-in). A router that scores the pods' queues (llm-d's EPP queue scorer)
+sends less to a pod as its queue grows, so near the pooled knee the busiest
+pod's share is the mean share. With the flag, `f` is held up to `ρ_m`
+(`ImbalanceUtilization`, `FLoad` over `V_P` at the question's prompt) and past
+it falls linearly to 1 at `ρ = 1`. At a count whose `f` comes off the curve,
+`ρ_m` is the load of the minutes `F` was read from, at the counts learned. With
+no load read, `f` is held:
+
+    f(ρ) = 1 + (f − 1)(1 − ρ)/(1 − ρ_m)
+
+The knee is then where `f(ρ)·ρ` reaches `1 − margin`: the pooled knee, but for
+the margin, unless `f − 1 > 1 − ρ_m`, a pod too hot for the idle capacity left
+to absorb, which saturates first. `f` prices only the latency below the knee.
+The linear fall is a stated shape: the table above has it falling, not its
+form near the knee. No recording says what the router scores (the backtest's
+`notRecordedConfig`), so the flag is the operator's statement, and it is off by
+default.
+
+Sticky routing
 (one pod wins a whole refresh window `w`) averages back toward 1 per minute; the
 worst pod then gets `Ca² ≈ 1 + λ_w·w`, uncapped.
 
@@ -462,6 +504,8 @@ that is itself wrong (the exponential tail, Poisson arrivals, an omitted
 | `AssumedDecodeStepSlope`, `AssumedRouterHopSeconds` (no fit) | Under-promises if they stand above the fleet's true figures, which is the point. Each is flagged, and a refusal or a move of 25% that one alone decides says so. A long prompt may hop further than 20 ms |
 | `V_P` from a lower bound | Under-promises. The planner floors it at the rate the pods were seen to compute and gives no figure past a knee priced from it (`PastLowerBoundKnee`) |
 | A mix of prompt lengths priced at its mean on a convex prefill curve ([a limit of P3](#prefill-capacity)) | Over-promises: an even 8k/52k mix at a `V_P` read at 30k is priced 32% under its prefill time. The rescale ([after P2](#as-built-p3-after-p2)) moves `V_P` to the mean, not the mix, and `VPShapeMoved`, comparing means, does not flag it |
+| `V_P` rescaled on computed tokens alone at a prefix hit (`slo-ttft-prefix-attention` off) | Over-promises: the cached tokens' attention is left out, about 1.7x on `V_P` at 32k with a 75% hit against fresh 8k. Flagged `VPShapeMoved` where the hit rate moved from the one `V_P` was read at. No committed run has hits, so this is not measured |
+| `V_P` rescaled at a prefix hit (`slo-ttft-prefix-attention` on) on P1's low-load curve | Over-promises if the low-load minutes had hits: the curve is fitted on `I_eff`, so `b` absorbs about `2c·h` of the cached tokens' attention and the rescale `s(I_vp)/s(I)` flattens, reading `V_P` high. The fit assumes a hit rate near 0 at low load. No committed run has hits, so this is not measured |
 | `V_P` rescaled along the curve with no fixed cost per step, `s(I_vp)/s(I)` | Under-promises for a longer prompt only if P1's low-load `b` and `c` are the busy step's per-token cost, which is not measured: on run 2 at 37k it read 1.5% above the served `V_P` (over-promises), covered by the margin only from `ρ` 0.6. No-act (`VPScaledToPrompt`) until a second point confirms it. Held (not raised) for a shorter prompt |
 | The decode engine's TTFT added at its mean to every percentile | Over-promises at the tail by `(r − 1)·D`, `r` decode's p90 over its mean, 1.1–1.8 on the P2 runs (coarse buckets): up to about 20% of the router's p90 at `r` 1.8 (37k: about 127 ms of 0.795 s, 16%; 1k: about 10 ms of 0.047 s, 21%). At each level's own measured `r` it is less: 37k `r` 1.48, about 76 ms (10%); 1k `r` 1.54, about 7 ms (14%) |
 | The decode engine's TTFT held at the rate it was measured at | Either way: `RateForTTFT` extrapolates to other rates with `D` frozen, and decode's own queue at a higher rate is not in it |
@@ -989,6 +1033,40 @@ saturated.
   prompt is more than `MaxVPShapeRatio` (1.2x) from `I_vp` either way, or
   `I_vp` is unknown. This is S1's rule, moved into P3 so that every caller
   gets it. An assumed `V_P` is neither rescaled nor flagged.
+- **Prefix hits** (issue #311). `I_vp` and `E[I_eff]` are computed tokens.
+  vLLM computes `I − h` of a prompt with `h` cached tokens, but each
+  computed token attends over the `h` cached ones as well. Its mean context
+  is `h + I_eff/2`, not `I_eff/2`, so the curve's argument is `I_eff + 2h`.
+  At 32k with a 75% hit a pod computes the 8k a fresh 8k prompt does, so
+  nothing rescales or flags, but on a curve with `c·8k = 0.13·b` a token
+  costs 1.91 units, not 1.13: `V_P` reads about 1.7x high. What ships:
+  - On by default: P1 records the whole prompt and the hit rate of the
+    minutes `V_P` rests on (`Estimate.VPWholePromptTokens`,
+    `VPPromptHitRate`), and P3 raises `VPShapeMoved` where the question's
+    hit rate is more than 0.1 from it, or its whole prompt more than 1.2x
+    from it with a hit rate above 0.1 on either side (`Prefill.prefixMoved`,
+    `MaterialPrefixHitMove`, stated, not measured). With no hit rate above
+    0.1 on either side nothing new is raised. A state that recorded no
+    whole prompt prices and flags as before.
+  - Off, behind the planner-only switch `slo-ttft-prefix-attention`: the
+    rescale reads `I_eff + 2h` at `I_vp` and at the question
+    (`Prefill.PrefixAttention`, `attentionSpan`), `h = I_eff·hit/(1 − hit)`
+    from each side's measured hit rate, where either is above 0.1. It is
+    not read as the whole prompt less `I_eff`: the two are read over
+    different windows, and their drift with no cache would read as cached
+    context. The planner nets an assumed prompt by a stated hit rate,
+    else the prefill variant's, not the decode variant's; and the KV
+    transfer scales with the tokens it moves, `I·(1 − decode hit)`.
+  - `--assume-transfer-base` states a fixed part of the KV transfer per
+    request (vLLM sees the NIXL pull complete at the next decode step, 15
+    to 30 ms). The recording holds one mean transfer, not its split, so the
+    base is not measured: it defaults to 0, as before, and the measured
+    mean less it goes with the tokens moved. It is named on the `assumed`
+    row, not raised as a flag, and is on `replicas-to-slo` and
+    `slo-to-rate` only: `at-replicas` refuses it, and backtest, the day
+    plan and the API do not take it.
+
+  No committed recording has a prefix hit, so none of this is measured.
 
 ### 3. A margin on `V_P` near the knee
 
@@ -1750,6 +1828,71 @@ about four times the spread measured) the TTFT is the larger of processor
 sharing's and the first-come queue's, flagged `SpreadBeyondProcessorSharing`,
 until a run at a wide spread validates processor sharing there. S1's assumed
 cv 2 is always past it.
+
+**The prompt's support.** The cv a histogram reads is the widest its buckets
+allow: 8000-token prompts in a (5000, 10000] bucket read cv 0.31 against a
+true 0.06, so every 8k answer was flagged although processor sharing held on
+those steps, and the gamma of cv 0.31 put 19.8% of the prompts above 10000
+tokens, where the bucket proves there are none (p90 own time about 13% high
+on Qwen3-32B 8k). With the switch `slo-ttft-prompt-support` on (planner-only,
+off by default), the planner reads the longest prompt the histogram allows, the highest bucket bound that
+holds requests, over the mean (`whatif.PromptSpread.MaxRatio`), and prices it
+(`Prefill.PromptMaxRatio`):
+
+- the prompt is its gamma censored at that bound: the mass past it sits on it,
+  so no own time is longer than a prompt the histogram proves exists. The
+  gamma is stretched first (`holdScale`), so the held prompt's mean is still
+  the measured mean: censoring alone would read it 4.3% short at cv 0.31
+  held at 1.25, 3.4% at cv 0.61 held at 2;
+- processor sharing is priced alone, whatever the cv, while the bound is at
+  most 1.6 times the mean (`whatif.MaxPSPromptSupport`, under the 1.67 at
+  which the gamma at cv 0.25 has its 99th percentile) and the arrivals are no
+  burstier than Poisson (`Ca²` at most 1): no prompt is long enough for
+  chunked prefill to serve it first come. The 8k steps sit at 1.25. At `Ca²` 4
+  (the 8000-token phase run that bursty, backtested at `--arrival-cv2 4`)
+  processor sharing alone read p50 7% under (0.93) where the larger of it and
+  first come held, so a bursty step keeps the cv's rule, and is priced as
+  with the switch off: the router's wait is not priced in the prefill
+  (`--price-router-wait`, `--router-wait-in-prefill`) and the onset is the
+  lower of processor sharing and first come. The cut at 1 is where the
+  evidence brackets it (`Ca²` 1 held, 4 did not), not a calibrated threshold.
+
+With no bound (mass past the last bucket, or no histogram) the gamma runs on
+and the cv decides, as before. The queue's `Cs²` stays the cv read, the
+widest the buckets allow.
+
+**Off by default, in the planner too.** A backtest prices each step at its
+own histogram's cv and bound (`whatifapi.Knobs.PromptMaxRatio`). On the
+Qwen3-32B and 0.6B staircase backtests (the split, and the phases fitted on
+their warm-ups), turning the switch on moves 14 TTFT figures that read at or
+above measured to under it, the lowest at 0.92 of measured (15 before the
+bound cleared processor sharing only at Poisson arrivals). The hold moves
+them, not processor sharing: with the bound kept from clearing processor
+sharing at all, the same 14 go under at the same ratios, and with the bound
+clearing it but no hold, nothing at `Ca²` 1 moves by more than 1%; at `Ca²` 4 it read p50 under,
+which is why the bound now clears only at `Ca²` up to 1. The wait
+side cannot be what reads them low either: at `Ca²` up to 1 the
+processor-sharing stages do not read `Cs²` (`psBurst`, and the variance's
+`max(1, Cs²)`), and a held `Cs²` on first come would only lower its price.
+
+The processor-sharing tail is not what reads low. Against the tandem
+simulation of bucket B (two prefill pods, `Ca²` 1, 13.3 to 31.6 r/s), with
+the prompt drawn from the held gamma itself (cv 0.3 held at 1.25), the model
+reads p90 +0.6 to +1.9% and p95 -2.3 to +0.3% of the simulation; against a
+simulation at the true prompt (cv 0.058) it reads p90 +5.0 to +8.7% and p95
++3.2 to +8.0% (+8.7 to +16.5% unheld). So the held model is still above an
+exact processor-sharing fleet serving the prompts the pods were sent, and
+the pods' measured tail is above that: the cv the buckets' width reads was
+standing in for a spread of the service time itself, which no term prices.
+
+The 14 also sit inside the measurement's resolution: each one's predicted
+and measured figure fall in the same bucket of the router's TTFT histogram
+((0.1, 0.25] s on the 0.6B 8000-token phases; (0.25, 0.5], (1, 2.5] and
+(5, 7.5] s on Qwen3-32B; (0.04, 0.06] s on a 0.6B 1000-token phase), and the
+measured percentile is interpolated inside that bucket. The switch stays off
+under the rule that nothing reading at or above measured goes under; a
+priced service-time spread, or scoring a step at the histogram's own
+resolution, is what would turn it on.
 
 **Checked against a simulation** of the same tandem stages
 (`TestPS_AgainstATandemSimulation`, 180,000 requests a point, `V_P` unmargined):

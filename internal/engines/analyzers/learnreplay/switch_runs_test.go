@@ -645,6 +645,16 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// it moves nothing either: both S1 goldens price with no transfer reading
 	// to drop. Its unit test holds it (heldBy).
 	slo.SwitchTTFTMeasuredTransfer: nil,
+	// The prompt held at the longest its histogram allows, planner-only (off
+	// from the constructor) and not in PlannerSwitches, so it moves no
+	// golden: no replay turns it on. Its unit tests hold it (heldBy).
+	slo.SwitchTTFTPromptSupport: nil,
+	// A prefix hit's cost in the planner (issue
+	// llm-d-incubation/llm-d-scaling-manager#311), planner-only and off,
+	// not in PlannerSwitches: the analyzer prices nothing with it, and no
+	// committed recording has a prefix hit, so it moves no golden. Its unit
+	// tests hold it (heldBy).
+	slo.SwitchTTFTPrefixAttention: nil,
 
 	// Learner PR 5c, on main after 5b (602054e98): the replicaStartSeconds
 	// seed is the prior (SwitchStartReadsSeed), and the first starts blend
@@ -1237,7 +1247,21 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
 	saturation.SwitchITLHoldSteadySlope:     nil,
 	saturation.SwitchITLLineAtFloor:         nil,
-	saturation.SwitchPrefillVPFloorServed:   nil,
+	// llm-d-incubation/llm-d-scaling-manager#279: R_q by interval-censored
+	// maximum likelihood. Planner-only, off; read by the planner's answer,
+	// not the replay, so no learner golden moves. Its unit tests hold it.
+	saturation.SwitchTPOTRatioCensored: nil,
+	// llm-d-incubation/llm-d-scaling-manager#301: a P/D decode's residence
+	// holds the decode engine's TTFT. Planner-only, off; read by the
+	// planner's answer, not the replay, so no learner golden moves. Its
+	// unit tests hold it.
+	saturation.SwitchDecodeResidencePull: nil,
+	// llm-d-incubation/llm-d-scaling-manager#291 (b): the decode fill a
+	// request sees beside clustered arrivals. Planner-only, off; read by the
+	// planner's answer at a stated Ca^2, not the replay, so no learner
+	// golden moves. Its unit tests hold it.
+	saturation.SwitchDecodeBurstFill:      nil,
+	saturation.SwitchPrefillVPFloorServed: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1619,7 +1643,7 @@ var heldBy = map[string][]heldTest{
 		{"../../../../cmd/capacity-planner", "TestBusiestRankCapacity_PricesTheMeanAtTheTopOverTheRatio"},
 	},
 	// The capacity planner's switches: each runs the switch on and off and
-	// asserts both, and the first holds all thirteen off from the constructor.
+	// asserts both, and the first holds all sixteen off from the constructor.
 	saturation.SwitchPrefillALowLoadPerRank: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestLowLoadPerRank_AGroupOfQuietEnginesIsLowLoad"},
@@ -1698,6 +1722,36 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestBootstrapLines_ResamplesAreLiftedAsTheLineIs"},
 		{".", "TestITLLineAtFloor_TheStaircaseLineThroughItsFloor"},
 		{".", "TestITLLineAtFloor_OnlyAPDDecodeRole"},
+	},
+	saturation.SwitchTPOTRatioCensored: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/whatif", "TestTPOTRatioCensored_ReadsTheBucketMassNotItsEdge"},
+		{"../../../signals/whatif", "TestTPOTRatioCensored_RefusesAsTheEdgeReadDoes"},
+		{"../../../signals/whatif", "TestTPOTRatioCensored_OneBucketKeepsTheEdgeReading"},
+		{"../../../signals/whatif", "TestTPOTRatioCensored_PooledWindowsSetTheSpread"},
+		{"../../../signals/whatif", "TestTPOTRatioCensored_ASliverDoesNotSetTheSpread"},
+		{"../../../signals/whatif", "TestTPOTRatioCensored_ByFillNeverAboveTheBucketsOwnEdge"},
+		{"../../../signals/whatif", "TestTPOTRatioCensored_KeepsTheMassPastTheLastEdge"},
+		{"../../../../cmd/capacity-planner", "TestTPOTRatio_TheCensoredReadOnTheSwitch"},
+		{"../../../../cmd/capacity-planner", "TestTPOTRatio_TheCensoredReadIsNotSwappedForACoarseEngine"},
+		{"../../../../cmd/capacity-planner", "TestTPOTRatio_AFineEngineStandsOverTheFit"},
+		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
+	},
+	saturation.SwitchDecodeResidencePull: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/whatif", "TestDecode_ResidenceHoldsTheKVFromThePull"},
+		{"../../../signals/whatif", "TestDecode_ResidenceOfOneTokenIsTheTTFT"},
+		{"../../../signals/whatif", "TestDecode_ResidenceRefusesABadHeldBefore"},
+		{"../../../../cmd/capacity-planner", "TestDecodeResidence_TheDecodeEngineTTFTOnTheSwitch"},
+		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
+	},
+	saturation.SwitchDecodeBurstFill: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/whatif", "TestDecode_ClusteredArrivalsRaiseTheFillARequestSees"},
+		{"../../../signals/whatif", "TestDecode_RateForTPOTInvertsTheClusteredFill"},
+		{"../../../signals/whatif", "TestDecode_TheClusteredFillStopsAtTheFullBatch"},
+		{"../../../../cmd/capacity-planner", "TestDecodeBurst_TheStatedCa2OnTheSwitch"},
+		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OnFromTheConstructor"},
@@ -1944,6 +1998,26 @@ var heldBy = map[string][]heldTest{
 	// with no reading, it stands.
 	slo.SwitchTTFTMeasuredTransfer: {
 		{"../slo", "TestTTFT_TransferOmittedStandsUntilAReading"},
+	},
+	// The prompt's support: the second runs the switch on and off and
+	// asserts both; the whatif tests hold what the bound prices.
+	slo.SwitchTTFTPromptSupport: {
+		{"../slo", "TestTTFT_ThePromptSupportOffFromTheConstructor"},
+		{"../slo", "TestTTFT_ThePromptSupportSwitch"},
+		{"../../../signals/whatif", "TestTTFT_ThePromptsSupportDecidesProcessorSharing"},
+		{"../../../signals/whatif", "TestOwnTime_HeldAtTheLongestPrompt"},
+	},
+	// A prefix hit's cost: off from the constructor, the switch reaching the
+	// planner's prefill state, the rescale it prices, and the planner's
+	// prefill work and transfer on and off.
+	slo.SwitchTTFTPrefixAttention: {
+		{"../slo", "TestTTFT_ThePrefixAttentionOffFromTheConstructor"},
+		{".", "TestStateAt_ThePrefixAttentionSwitchReachesThePrefillState"},
+		{"../../../signals/whatif", "TestVPRescale_PrefixAttentionReadsTheCachedContext"},
+		{"../../../signals/whatif", "TestVPRescale_PrefixAttentionTakesTheCachedTokensFromTheHit"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionPricesThePrefillVariantsHit"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionAStatedHitGovernsThePrefill"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionMovesTheTransferByTheDecodeHit"},
 	},
 	// Issue ev-shindin/llm-scaling-manager#275's lift: an aggregated figure sizes once the GPS check has
 	// agreed. Both run the switch on and fail with it off: the first checks

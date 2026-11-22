@@ -44,7 +44,9 @@ const (
 // The self-check's rules: a figure is inconsistent with its recording when
 // its median ratio lies outside [selfCheckBiasFail, selfCheckBiasHi], fewer than
 // selfCheckWithinLo of its steps are within BacktestTolerance, more than
-// selfCheckLowShare read low or any one under selfCheckFloor, its worst
+// selfCheckLowShare read low or any one under selfCheckFloor, its p90 (where
+// the figure is judged at the mean) reads low in half or more of its scored
+// steps, where it has selfCheckMinSteps or more, its worst
 // tenth near the knee reads outside [selfCheckFloor, selfCheckNearKneeHi],
 // or it called the fleet overloaded where it served unqueued
 // (selfcheck_rules.go); weak when its median ratio lies under
@@ -92,8 +94,10 @@ type SelfCheck struct {
 	Line  string `json:"line"`
 	Why   string `json:"why,omitempty"`
 	Trust string `json:"trust,omitempty"`
-	// TTFT and TPOT are the p90 figures scored over every fold's judged
-	// steps; absent where not scored.
+	// TTFT and TPOT are the figures scored over every fold's judged steps,
+	// each at the statistic selfCheckScore takes (the mean, else p90, else
+	// p50, the first scored in selfCheckMinSteps or more steps); absent
+	// where not scored.
 	TTFT *SelfCheckFigure `json:"ttft,omitempty"`
 	TPOT *SelfCheckFigure `json:"tpot,omitempty"`
 	// Untrusted names the figures an inconsistent self-check says not to
@@ -383,6 +387,10 @@ type SelfCheckFigure struct {
 	NearKneeUnsettled int `json:"nearKneeUnsettled,omitempty"`
 	// Refused is the other refusals, by reason.
 	Refused map[string]int `json:"refused"`
+	// p90Steps and p90Low are the p90's scored steps and those read more
+	// than BacktestTolerance low, where the figure is judged at its mean
+	// (the p90-low rule, figureRules).
+	p90Steps, p90Low int
 }
 
 // SelfCheckFold is one fold: the fit up to FitTo, the test from TestFrom to
@@ -522,15 +530,25 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 	return sc
 }
 
-// selfCheckFigure is the p90 score among scores, over judged steps.
+// selfCheckFigure is the score the self-check judges among scores, over
+// judged steps (selfCheckScore); the p90's where none was scored, for its
+// refusals. Beside a figure judged at its mean it keeps the p90's scored
+// and low steps, for the p90-low rule.
 func selfCheckFigure(scores []BacktestScore, judged int) *SelfCheckFigure {
-	i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 })
-	if i < 0 {
-		return nil
+	p90 := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 })
+	p := selfCheckScore(scores)
+	if p == nil {
+		if p90 < 0 {
+			return nil
+		}
+		p = &scores[p90]
 	}
-	s := scores[i]
+	s := *p
 	f := &SelfCheckFigure{Statistic: s.Statistic, Steps: s.All.Steps, Bias: s.All.Bias, Low: s.All.Low, Judged: judged,
 		Overloaded: s.Refused[string(whatif.Saturated)], PastKnee: s.PastKnee, Refused: map[string]int{}}
+	if p90 >= 0 && s.Statistic == statisticMean {
+		f.p90Steps, f.p90Low = scores[p90].All.Steps, scores[p90].All.Low
+	}
 	if s.All.Within != nil {
 		f.Within = int(math.Round(*s.All.Within * float64(s.All.Steps)))
 	}
@@ -540,6 +558,28 @@ func selfCheckFigure(scores []BacktestScore, judged int) *SelfCheckFigure {
 		}
 	}
 	return f
+}
+
+// selfCheckScore is the score the self-check judges a figure at: the first
+// of primaryStats (the mean, then the p90 and p50) scored in
+// selfCheckMinSteps or more steps, else the one scored in the most (the
+// first of primaryStats on a tie); nil where none was scored. A mean over a
+// few steps does not stand in for a percentile scored over many.
+func selfCheckScore(scores []BacktestScore) *BacktestScore {
+	var most *BacktestScore
+	for _, stat := range primaryStats {
+		i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == stat })
+		if i < 0 || scores[i].All.Steps == 0 {
+			continue
+		}
+		if scores[i].All.Steps >= selfCheckMinSteps {
+			return &scores[i]
+		}
+		if most == nil || scores[i].All.Steps > most.All.Steps {
+			most = &scores[i]
+		}
+	}
+	return most
 }
 
 // judge sets the status, the line, why, what to trust and the issue.
@@ -557,8 +597,8 @@ func (sc *SelfCheck) judge(e *inputsEntry, span time.Duration, info SelfCheckInf
 		}
 		if f.Judged > 0 && f.PastKnee != nil && float64(f.Overloaded) >= selfCheckSaturated*float64(f.Judged) {
 			rule := SelfCheckRule{Name: strings.ToLower(x.name) + "-overloaded", Passed: false,
-				Detail: fmt.Sprintf("the planner called the fleet overloaded in %d of %d judged steps, where the fleet served with a p90 %s of %s to %s",
-					f.Overloaded, f.Judged, x.name, secondsWords(f.PastKnee.Lo), secondsWords(f.PastKnee.Hi))}
+				Detail: fmt.Sprintf("the planner called the fleet overloaded in %d of %d judged steps, where the fleet served with a %s %s of %s to %s",
+					f.Overloaded, f.Judged, f.Statistic, x.name, secondsWords(f.PastKnee.Lo), secondsWords(f.PastKnee.Hi))}
 			sc.Checks = append(sc.Checks, rule)
 			bad = append(bad, rule.Detail)
 			trustNot = append(trustNot, x.what)
@@ -569,23 +609,23 @@ func (sc *SelfCheck) judge(e *inputsEntry, span time.Duration, info SelfCheckInf
 		}
 		if f.Steps < selfCheckMinSteps || f.Bias == nil {
 			sc.Checks = append(sc.Checks, SelfCheckRule{Name: strings.ToLower(x.name) + "-scored", Passed: false,
-				Detail: fmt.Sprintf("p90 %s scored in %d steps, fewer than %d: not judged", x.name, f.Steps, selfCheckMinSteps)})
+				Detail: fmt.Sprintf("%s %s scored in %d steps, fewer than %d: not judged", f.Statistic, x.name, f.Steps, selfCheckMinSteps)})
 			continue
 		}
 		judged = append(judged, x.name)
 		within := float64(f.Within) / float64(f.Steps)
-		parts = append(parts, fmt.Sprintf("p90 %s within 20%% in %d of %d steps at %d load levels (median ratio %.2f)", x.name, f.Within, f.Steps,
+		parts = append(parts, fmt.Sprintf("%s %s within 20%% in %d of %d steps at %d load levels (median ratio %.2f)", f.Statistic, x.name, f.Within, f.Steps,
 			f.Levels, *f.Bias))
 		name := strings.ToLower(x.name)
 		rules, failed, loose := sc.figureRules(name, x.name, f, within)
 		sc.Checks = append(sc.Checks, rules...)
 		switch {
 		case len(failed) > 0:
-			bad = append(bad, fmt.Sprintf("p90 %s: %s", x.name, strings.Join(failed, "; ")))
+			bad = append(bad, fmt.Sprintf("%s %s: %s", f.Statistic, x.name, strings.Join(failed, "; ")))
 			trustNot = append(trustNot, x.what)
 			sc.Untrusted = append(sc.Untrusted, name)
 		case len(loose) > 0:
-			weak = append(weak, fmt.Sprintf("p90 %s: %s", x.name, strings.Join(loose, "; ")))
+			weak = append(weak, fmt.Sprintf("%s %s: %s", f.Statistic, x.name, strings.Join(loose, "; ")))
 			trustOK = append(trustOK, x.what+" (loosely)")
 		default:
 			trustOK = append(trustOK, x.what)
@@ -650,6 +690,13 @@ func (sc *SelfCheck) figureRules(name, label string, f *SelfCheckFigure, within 
 	low := float64(f.Low) / float64(f.Steps)
 	rule("low", low <= selfCheckLowShare,
 		fmt.Sprintf("read more than 20%% low in %d of %d steps (%.0f%%), want %.0f%% or fewer", f.Low, f.Steps, low*100, selfCheckLowShare*100))
+	// A mean within its tolerance can hide a tail read low: where the p90
+	// was scored in enough steps, it reading low in half of them or more is
+	// inconsistent too.
+	if f.p90Steps >= selfCheckMinSteps {
+		rule("p90-low", 2*f.p90Low < f.p90Steps,
+			fmt.Sprintf("its p90 read more than 20%% low in %d of %d steps, want fewer than half", f.p90Low, f.p90Steps))
+	}
 	if f.MinRatio != nil {
 		rule("floor", *f.MinRatio >= selfCheckFloor,
 			fmt.Sprintf("the lowest step read %.2f of measured, want %.2f or more", *f.MinRatio, selfCheckFloor))
@@ -737,7 +784,7 @@ func selfCheckIssueURL(sc *SelfCheck, e *inputsEntry, info SelfCheckInfo) string
 		if x.f.Bias != nil {
 			bias = fmt.Sprintf("%.2f", *x.f.Bias)
 		}
-		fmt.Fprintf(&b, "%s p90: steps %d, within20 %d, median ratio %s, read low %d, judged %d, overloaded %d", x.name, x.f.Steps, x.f.Within,
+		fmt.Fprintf(&b, "%s %s: steps %d, within20 %d, median ratio %s, read low %d, judged %d, overloaded %d", x.name, x.f.Statistic, x.f.Steps, x.f.Within,
 			bias, x.f.Low, x.f.Judged, x.f.Overloaded)
 		fmt.Fprintf(&b, ", levels %d, served past knee %d", x.f.Levels, x.f.ServedPastKnee)
 		for _, r := range slices.Sorted(maps.Keys(x.f.Refused)) {

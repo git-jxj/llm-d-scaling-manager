@@ -38,6 +38,7 @@ func PrefillFromEstimate(est prefill.Estimate) (Prefill, *Unanswerable) {
 	p := Prefill{
 		VP: est.VP, VPLowerBound: est.VPLowerBound, VPAboveSlopeBound: est.VPAboveSlopeBound,
 		FixedLatency: est.A, VPPromptTokens: est.VPPromptTokens, VPMargin: DefaultVPMargin,
+		VPWholePromptTokens: est.VPWholePromptTokens, VPPromptHitRate: est.VPPromptHitRate,
 	}
 	if est.AModel == prefill.AModelQuadratic {
 		p.CurveSlope, p.CurveCurvature = est.ASlope, est.ACurve
@@ -46,4 +47,24 @@ func PrefillFromEstimate(est prefill.Estimate) (Prefill, *Unanswerable) {
 		p.Imbalance = est.F
 	}
 	return p, nil
+}
+
+// ImbalanceUtilizationAt is the mean prefill pod utilization f was read at,
+// for f at pods (Prefill.ImbalanceUtilization): P1's load at that count over
+// vp, the learned V_P (Prefill.VP; prefillPlan.rhoM rescales it to the
+// question's prompt), where it learned one there, else the load of the
+// minutes its F is the median of, else 0 (none read). Held to
+// MaxImbalanceUtilization.
+func ImbalanceUtilizationAt(est prefill.Estimate, pods int, vp float64) float64 {
+	if !(vp > 0) || !Finite(vp) {
+		return 0
+	}
+	load, ok := est.FLoadByPods[pods]
+	if _, learned := est.FByPods[pods]; !ok || !learned {
+		load = est.FLoad
+	}
+	if !(load > 0) || !Finite(load) {
+		return 0
+	}
+	return min(load/vp, MaxImbalanceUtilization)
 }

@@ -160,12 +160,15 @@
             ],
             "validation": {
               "validated": true,
-              "label": "validated: error -2..+1% (p10-p90, min-max -3..+1%, n=12 at 6 load levels; q32 staircase)",
+              "label": "validated in-sample: error -3..+1% (min-max, n=6 load levels, 12 readings; q32 staircase)",
               "source": "q32 staircase",
               "shape": "8000-token prompts, 200 out, Ca^2 1",
-              "errorLo": -0.022639057179420663,
-              "errorHi": 0.005997936162890238,
-              "readings": 12
+              "errorLo": -0.0265944871629753,
+              "errorHi": 0.006849223516752545,
+              "spread": "min-max",
+              "readings": 12,
+              "levels": 6,
+              "holdout": false
             }
           }
         }
@@ -194,6 +197,10 @@
         "vpSource": "learned",
         "vpOrigin": "peak-under-queue",
         "vpPromptTokens": 7984.303256867742,
+        "vpWholePromptTokens": 7984.303256867742,
+        "vpPromptHitRate": 0,
+        "wholePromptTokens": 8000,
+        "promptHitRate": 0,
         "fixedLatencySeconds": 0.014291269449856045,
         "fixedLatencySource": "learned",
         "imbalance": 1,
@@ -287,6 +294,7 @@
               "decodeShare": 7.571071657197904e-41,
               "engineWait": 2.7999856228438675,
               "kvPullWait": 0.000905271875344851,
+              "kvPullUtilization": 0.038691564092232504,
               "ownPrefill": 0.6392774925981248,
               "decodeWait": 1.1207887655833125e-41,
               "firstStep": 0,

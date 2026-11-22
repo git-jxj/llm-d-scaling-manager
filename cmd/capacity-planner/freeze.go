@@ -224,7 +224,7 @@ func runFreeze(ctx context.Context, args []string, out, warn io.Writer) error {
 		return err
 	}
 	a := answerFlags{question: "freeze", recording: f.recording, cycle: "last", warn: warn,
-		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts}
+		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
 	name, src, err := a.recordingSource(ctx)
 	if err != nil {
 		return err
@@ -235,13 +235,7 @@ func runFreeze(ctx context.Context, args []string, out, warn io.Writer) error {
 		return err
 	}
 	sum := src.sum
-	// The driver's prompts share no prefix: a warm-up's hit rate is not theirs.
-	// The CLI would price it; the file says what was dropped.
-	hitRates := map[string]float64{}
-	for i := range st.Variants {
-		hitRates[st.Variants[i].Variant] = st.Variants[i].Shape.PrefixHitRate
-		st.Variants[i].Shape.PrefixHitRate = 0
-	}
+	hitRates := dropWarmUpHits(st)
 	file := frozenFile{Version: frozenVersion, RecordingSHA256: hex.EncodeToString(sum[:]), SpecSHA256: specSum,
 		Cycle: st.Cycle, Cycles: st.Cycles, TPOTRatio: []frozenRatio{}}
 	for _, p := range spec.Percentiles {
@@ -271,6 +265,27 @@ func runFreeze(ctx context.Context, args []string, out, warn io.Writer) error {
 		return exitStatus(whatif.ExitRefused)
 	}
 	return nil
+}
+
+// dropWarmUpHits zeroes the prefix-cache hit rates the recording read, and
+// returns each variant's as read. The driver's prompts share no prefix: a
+// warm-up's hit rate is not theirs. The CLI would price it; the file says
+// what was dropped. V_P's whole prompt and hit rate go too
+// (prefill.Estimate.VPWholePromptTokens, VPPromptHitRate): left beside the
+// zeroed shapes, a V_P read at a warm-up's hits would be flagged
+// VPShapeMoved against the driver's none (whatif.Prefill.prefixMoved), a
+// flag the frozen file did not carry before the hits were recorded. With
+// the whole prompt unknown, V_P is shaped and flagged as before.
+func dropWarmUpHits(st *learnreplay.State) map[string]float64 {
+	hitRates := map[string]float64{}
+	for i := range st.Variants {
+		hitRates[st.Variants[i].Variant] = st.Variants[i].Shape.PrefixHitRate
+		st.Variants[i].Shape.PrefixHitRate = 0
+	}
+	for i := range st.Prefill {
+		st.Prefill[i].Estimate.VPWholePromptTokens, st.Prefill[i].Estimate.VPPromptHitRate = 0, 0
+	}
+	return hitRates
 }
 
 // readFreezeSpec reads and checks a spec, and hashes its bytes.
@@ -356,16 +371,28 @@ type frozenPercentileTPOT struct {
 	Seconds    float64       `json:"seconds"`
 	Fill       float64       `json:"fill"`
 	Flags      []whatif.Flag `json:"flags,omitempty"`
+	// Refused is why the percentile is not priced where the warm-up's
+	// histogram cannot place it on this decode variant (hostBoundRefusal),
+	// Seconds 0: the analyzer then scores no stand-in for it either.
+	Refused string `json:"refused,omitempty"`
 }
 
 // percentileTPOTs is decode's TPOT at each percentile at rate, priced on R_q
-// as the warm-up learned it, at the fill the rate runs at.
-func percentileTPOTs(st *learnreplay.State, d whatif.Decode, rate float64, percentiles []float64) []frozenPercentileTPOT {
+// as the warm-up learned it, at the fill the rate runs at. vs is the decode
+// variant priced, nil with none: a percentile on a host-bound one is refused
+// as the CLI refuses it (hostBoundRefusal).
+func percentileTPOTs(st *learnreplay.State, vs *learnreplay.VariantState, d whatif.Decode, rate float64, percentiles []float64) []frozenPercentileTPOT {
 	out := make([]frozenPercentileTPOT, 0, len(percentiles))
 	for _, p := range percentiles {
 		r, flags, u := whatif.TPOTRatioFromWindows(st.TPOTWindows, p/100)
 		if u != nil {
 			continue
+		}
+		if vs != nil {
+			if hb := hostBoundRefusal(*vs, resolvedRatio{ratio: r, flags: flags}); hb != nil {
+				out = append(out, frozenPercentileTPOT{Percentile: p, Flags: flags, Refused: refusalText(*hb)})
+				continue
+			}
 		}
 		q := whatif.ReplicasQuery{Rate: rate, PercentileTarget: &whatif.TPOTTarget{Percentile: p / 100, Ratio: r}}
 		if a, ok := whatif.SLOAtReplicas(d, q).PercentileTPOT.(whatif.Answer); ok {
@@ -392,7 +419,7 @@ func gateOf(st *learnreplay.State) frozenGate {
 		g.VP = g.VP || ps.EstimateRead && ps.Estimate.VP > 0 && ps.Estimate.VPRefused == ""
 		g.A = g.A || ps.EstimateRead && ps.Estimate.ARefused == ""
 	}
-	f := answerFlags{question: "freeze", cycle: "last", imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts}
+	f := answerFlags{question: "freeze", cycle: "last", imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
 	if variants, err := f.decodeVariants(st); err == nil {
 		g.DecodeLine = slices.ContainsFunc(variants, func(pv pricedVariant) bool {
 			_, ok := whatif.KneeRate(pv.decode).(whatif.Answer)
@@ -433,7 +460,11 @@ func (f *freezeFlags) priceBucket(st *learnreplay.State, spec *freezeSpec, b fre
 		if m, ok := whatif.SLOAtReplicas(*off.Decode, whatif.ReplicasQuery{Rate: out.OperatingRate}).MeanTPOT.(whatif.Answer); ok {
 			out.MeanTPOT = m.Value
 		}
-		out.PercentileTPOT = percentileTPOTs(st, *off.Decode, out.OperatingRate, spec.Percentiles)
+		var vs *learnreplay.VariantState
+		if pf.pv != nil && !pf.pv.itlB.Applied {
+			vs = &pf.pv.state
+		}
+		out.PercentileTPOT = percentileTPOTs(st, vs, *off.Decode, out.OperatingRate, spec.Percentiles)
 	}
 	for _, p := range spec.Percentiles {
 		t, why := pricedTarget(off, on, out.OperatingRate, p, spec.TargetFloorMargin, held[b.Name])
@@ -463,7 +494,7 @@ func (f *freezeFlags) bucketFleet(st *learnreplay.State, spec *freezeSpec, b fre
 	}
 	a := answerFlags{question: "freeze", cycle: "last", decode: b.Decode, prefill: b.Prefill,
 		inputTokens: b.Prompt, outputTokens: b.Output, assumeVP: f.assumeVP, seed: 1,
-		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
+		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter, set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true}}
 	if f.assumeVP > 0 {
 		a.set["assume-vp"] = true
 	}

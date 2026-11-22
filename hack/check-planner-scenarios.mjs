@@ -603,6 +603,15 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   const vs = verdictLine({verdict: "UNDER-PROVISIONED", needed: {prefill: 5, decode: 5, maxReplicas: 32},
     summary: "UNDER-PROVISIONED: 1.6x the fleet knee (38.1 r/s); needs 5 prefill + 5 decode (has 2 + 2)."}, "", has);
   check("a short growth sentence loses only the clause", vs.rest === "1.6x the fleet knee (38.1 r/s).", vs.rest);
+  const bound = {prefill: 3, decode: 3, decodeAtErrorBound: 6, decodeKneeError: 0.991, maxReplicas: 32};
+  check("the chip gives the decode count at the knee's error bound", neededText(bound, has) ===
+    "needs 3 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 99% high", neededText(bound, has));
+  const vb = verdictLine({verdict: "UNDER-PROVISIONED", needed: bound,
+    summary: "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 3 pods)."}, "", has);
+  check("the sentence does not keep the bound count", vb.rest === "at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates (prefill f 1.5 assumed at 3 pods).", vb.rest);
+  const vo = verdictLine({verdict: "OVER-PROVISIONED", needed: {prefill: 2, decode: 2, decodeAtErrorBound: 3, decodeKneeError: 0.991, maxReplicas: 32},
+    summary: "OVER-PROVISIONED: at the stated load of 20.0 r/s, decode: one fewer holds; prefill: no spare (52.9% under its operating point); needs 2 prefill + 2 decode (has 2 + 3), 3 decode if the decode knee reads 99% high."}, "", {prefill: 2, decode: 3});
+  check("an OVER sentence does not hang the bound count on prefill", vo.rest === "at the stated load of 20.0 r/s, decode: one fewer holds; prefill: no spare (52.9% under its operating point).", vo.rest);
   check("each role says whether it has a replica to spare", JSON.stringify(roleLines({roles: [{role: "decode", spare: true, detail: "3 decode hold"},
     {role: "prefill", spare: false}]})) === JSON.stringify(["Decode: has a replica to spare (3 decode hold).", "Prefill: no replica to spare."]));
   check("a p95 that is the peak says so", loadLine({rate: {value: 12}, statistic: "p95", p95IsPeak: true, p95: 12, peak: 12, cyclesWithTraffic: 9})
@@ -616,6 +625,15 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
     utilization: {decode: {}, prefill: {}}, table: [Object.assign(row("10r/s", 10, {value: 0.5, flags: ["BelowFittedBand"]}, {value: 0.007}, "met"))]}]}).rows[0].cells[0].parts[0] === "TTFT 500 ms");
   check("decode use reads in words", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8, slotsOccupied: {value: 48.2}, slots: 228, waitProbability: {value: 0.004}}) ===
     "decode KV 17% full (of 80% usable), 48 of 228 batch slots busy, 0% of requests wait for a slot", ctx.decodeUse({kvFill: {value: 0.168}, bandTop: 0.8}));
+  check("a KV pull that sets TTFT is named", ctx.decodeUse({kvFill: {value: 0.006}, bandTop: 0.8, kvPull: {utilization: 0.62, wait: 0.05, setsTTFT: true}}) ===
+    "decode KV 1% full (of 80% usable); KV pull 62% busy per decode pod, the larger mean wait in TTFT (it sits on the decode pods)",
+    ctx.decodeUse({kvFill: {value: 0.006}, bandTop: 0.8, kvPull: {utilization: 0.62, wait: 0.05, setsTTFT: true}}));
+  check("a KV pull that does not set TTFT is not named as its wait", ctx.decodeUse({kvFill: {value: 0.006}, bandTop: 0.8, kvPull: {utilization: 0.2, wait: 0.001, setsTTFT: false}}) ===
+    "decode KV 1% full (of 80% usable); KV pull 20% busy per decode pod",
+    ctx.decodeUse({kvFill: {value: 0.006}, bandTop: 0.8, kvPull: {utilization: 0.2, wait: 0.001, setsTTFT: false}}));
+  check("a saturating KV pull stands beside a refused KV fill", ctx.decodeUse({kvFill: {refused: {reason: "Saturated"}}, kvPull: {utilization: 1.3, setsTTFT: false}}).endsWith(
+    "; KV pull 130% busy per decode pod, saturated"),
+    ctx.decodeUse({kvFill: {refused: {reason: "Saturated"}}, kvPull: {utilization: 1.3, setsTTFT: false}}));
   check("prefill use reads in words", ctx.prefillUse({pooled: {value: 0.6312}, worstPod: {value: 0.71}}) === "prefill 63% busy pooled, 71% on the busiest pod");
   check("a verdict word is set apart from its sentence", v.verdicts[1].verdict === "OVER-PROVISIONED" && v.verdicts[1].rest.startsWith("if all 47.4 r/s were 1k/1k requests, one prefill"));
   check("a refusal code in a reason reads in words", v.details[0].lines.includes("The numbers: TTFT p95 router-queued misses 2000.0 ms"),
@@ -680,7 +698,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 329;
+const EXPECTED_CASES = 335;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

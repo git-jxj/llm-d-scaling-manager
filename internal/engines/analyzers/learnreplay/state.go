@@ -82,6 +82,19 @@ type State struct {
 	// every cycle up to Cycle that recorded one, pooled over the rows, oldest
 	// first (engineTPOTWindow): the fall-back for TPOTWindows.
 	EngineTPOTWindows []whatif.TPOTWindow
+	// TPOTRatioCensored says R_q is read from TPOTWindows by
+	// interval-censored maximum likelihood (saturation.SwitchTPOTRatioCensored,
+	// whatif.TPOTRatioCensored), not at the q bucket's upper edge.
+	TPOTRatioCensored bool
+	// DecodeResidencePull says a P/D decode's residence holds the decode
+	// engine's TTFT before its OL steps (saturation.SwitchDecodeResidencePull,
+	// whatif.Decode.HeldBefore).
+	DecodeResidencePull bool
+	// DecodeBurstFill says a decode figure priced at a stated arrival Ca^2
+	// above 1 reads its TPOT at the fill a request sees beside the
+	// clustered arrivals (saturation.SwitchDecodeBurstFill,
+	// whatif.Decode.ArrivalCV2).
+	DecodeBurstFill bool
 	// Prefill is each prefill variant at the cycle, by name, as a TTFT
 	// question reads it (state_ttft.go).
 	Prefill []PrefillState
@@ -102,6 +115,11 @@ type State struct {
 	// it (QueryModelArrivalRate): 0 where it read none, which a failed query
 	// and an idle cycle both read as.
 	ArrivalRates []float64
+	// ServingReplicas is each variant's serving replicas at every cycle up
+	// to Cycle, by variant, aligned with ArrivalRates: the cycle's
+	// CurrentReplicas less its PendingReplicas, -1 at a cycle whose input
+	// did not name the variant. It is the fleet that carried each rate.
+	ServingReplicas map[string][]int
 	// CycleTimes is the clock of every cycle up to Cycle, oldest first, one
 	// per ArrivalRates entry: where the recording has holes
 	// (whatifapi.WindowGapsOf).
@@ -317,6 +335,44 @@ type shapeSample struct {
 // and its p90 TPOT up to 22% under there (32% on the first warm-up's
 // B-onset, 39% on the bursty C phases), so both stay off.
 //
+// saturation.SwitchDecodeResidencePull, planner-only, holds a P/D decode's
+// KV from the pull (issue llm-d-incubation/llm-d-scaling-manager#301): alone
+// it adds no step read under measured, but it raises the over-reads; with
+// the hold and the lift it brings most of the bursty phases' under-reads
+// back. It goes on with those two or not at all, so it stays off with them.
+// saturation.SwitchTPOTRatioCensored, planner-only, reads R_q from the
+// bucket counts, not the bucket's upper edge (issue
+// llm-d-incubation/llm-d-scaling-manager#279): it reads a p90 TPOT lower
+// than the edge does, and on the Qwen3-32B recordings lower than the
+// measured p90 interpolated in its bucket, so it is off until a backtest
+// shows it at or above what was measured.
+//
+// saturation.SwitchDecodeBurstFill, planner-only, reads a decode's TPOT at
+// the fill a request sees beside clustered arrivals, from a stated
+// --arrival-cv2 (issue llm-d-incubation/llm-d-scaling-manager#291 (b)): at
+// Poisson, and with no Ca^2 stated, it moves no figure. It brings the
+// bursty phases' mean TPOT back to what was measured, but it is off: with
+// it, the hold, the lift and the residence all on, other figures still read
+// under what was measured.
+//
+// saturation.SwitchPlannerCapAtStepBudget is planner-only and not listed
+// either: no recording holds an engine whose step budget runs fewer
+// sequences than its cap (MTP, wide EP), so there is no backtest to turn it
+// on with (issue llm-d-incubation/llm-d-scaling-manager#302).
+//
+// slo.SwitchTTFTPromptSupport is planner-only too but not listed (issue
+// llm-d-incubation/llm-d-scaling-manager#304): it holds the prompt at the
+// longest its computed-token histogram allows, keeping the measured mean,
+// and a bound at whatif.MaxPSPromptSupport or under prices processor sharing
+// alone at Poisson arrivals. On the Qwen3-32B and 0.6B staircase backtests,
+// each step priced at its own histogram's cv and bound, 14 TTFT figures that
+// read at or above measured read under it, the lowest at 0.92 of measured.
+// The hold moves them, not processor sharing (the same 14 go under with the
+// bound kept from clearing it), and each lands in the same router histogram
+// bucket as its measured figure: the bucket-wide cv was standing in for a
+// spread of the service time that no term prices. It stays off until one
+// does (docs/proposals/slo-capacity-planner-ttft.md).
+//
 // saturation.SwitchMoEBusiestRank is not listed either: it reads a
 // data-parallel MoE engine's line at its busiest rank (issue
 // llm-d-incubation/llm-d-scaling-manager#312), and its only evidence is
@@ -458,12 +514,18 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		batch    = newBatchSamples(opts.Switches[PackageSaturation][saturation.SwitchITLBatchTerm])
 		cycleAt  = map[time.Time]int{}
 		arrivals []float64
+		serving  = map[string][]int{}
 		times    []time.Time
 		ranges   = map[string]ShapeRange{}
 		series   = map[string][]CycleShape{}
 	)
+	ttft.promptSupport = opts.Switches[PackageSLO][slo.SwitchTTFTPromptSupport]
 	// Read once: the switches are set before the replay starts.
 	lineAtFloor := opts.Switches[PackageSaturation][saturation.SwitchITLLineAtFloor]
+	censored := opts.Switches[PackageSaturation][saturation.SwitchTPOTRatioCensored]
+	residence := opts.Switches[PackageSaturation][saturation.SwitchDecodeResidencePull]
+	burst := opts.Switches[PackageSaturation][saturation.SwitchDecodeBurstFill]
+	ttft.prefixAttention = opts.Switches[PackageSLO][slo.SwitchTTFTPrefixAttention]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false
@@ -496,6 +558,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		}
 		fill, fillOK := decodeFill(in.ReplicaMetrics, rolesOf(in), busiest)
 		arrivals = append(arrivals, in.ArrivalRate)
+		noteServing(serving, in.VariantStates, len(arrivals))
 		times = append(times, ev.Now)
 		if w, ok := tpotWindow(in.RouterLatency); ok {
 			windows = append(windows, withFill(w, fill, fillOK))
@@ -566,7 +629,8 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		return nil, nil, fmt.Errorf("learnreplay: the replay ended after %d of the %d cycles of %s/%s", n, cycle, ns, model)
 	}
 	st.FirstAt, st.TPOTWindows, st.EngineTPOTWindows, st.Cycles = firstAt, windows, engine, total
-	st.ArrivalRates, st.CycleTimes = arrivals, times
+	st.ArrivalRates, st.ServingReplicas = arrivals, servingUpTo(serving, len(arrivals))
+	st.CycleTimes, st.TPOTRatioCensored, st.DecodeResidencePull, st.DecodeBurstFill = times, censored, residence, burst
 	for i := range st.Variants {
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
@@ -583,6 +647,8 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		s.FirstAt, s.Cycles = firstAt, total
 		s.TPOTWindows, s.EngineTPOTWindows = slices.Clone(windows[:sn.windows]), slices.Clone(engine[:sn.engine])
 		s.ArrivalRates = slices.Clone(arrivals[:sn.arrived])
+		s.ServingReplicas = servingUpTo(serving, sn.arrived)
+		s.TPOTRatioCensored, s.DecodeResidencePull, s.DecodeBurstFill = censored, residence, burst
 		s.CycleTimes = slices.Clone(times[:sn.arrived])
 		for i := range s.Variants {
 			s.Variants[i].ReadingsFrom, s.Variants[i].ReadingsTo = cyclesSpanned(s.Variants[i].LineReadings, cycleAt)
@@ -1011,4 +1077,38 @@ func noteRanges(ranges map[string]ShapeRange, shapes map[string][]shapeSample, n
 		r.Cycles++
 		ranges[v] = r
 	}
+}
+
+// noteServing appends each variant's serving replicas at cycle n (1-based)
+// to serving: CurrentReplicas less PendingReplicas, never below 0. A
+// variant first named at a later cycle reads -1 at the cycles before it,
+// and one the cycle does not name reads -1 at it.
+func noteServing(serving map[string][]int, states []domain.VariantReplicaState, n int) {
+	for _, vs := range states {
+		row := serving[vs.VariantName]
+		for len(row) < n-1 {
+			row = append(row, -1)
+		}
+		if len(row) < n {
+			row = append(row, max(vs.CurrentReplicas-vs.PendingReplicas, 0))
+		}
+		serving[vs.VariantName] = row
+	}
+}
+
+// servingUpTo is serving cut or padded with -1 to n cycles, each row its own
+// copy; nil with no variant.
+func servingUpTo(serving map[string][]int, n int) map[string][]int {
+	if len(serving) == 0 {
+		return nil
+	}
+	out := make(map[string][]int, len(serving))
+	for v, row := range serving {
+		r := slices.Clone(row[:min(len(row), n)])
+		for len(r) < n {
+			r = append(r, -1)
+		}
+		out[v] = r
+	}
+	return out
 }

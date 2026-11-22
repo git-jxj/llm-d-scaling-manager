@@ -149,6 +149,36 @@ const SwitchTTFTDecodeGateCharge = "slo-ttft-decode-gate-charge"
 // on it can be read.
 const SwitchTTFTMeasuredSpread = "slo-ttft-measured-spread"
 
+// SwitchTTFTPromptSupport is the replay switch for the prompt's support: on,
+// the longest prompt the computed-token histogram allows
+// (whatif.PromptSpread.MaxRatio) is priced (whatif.Prefill.PromptMaxRatio):
+// the prompt is a gamma held at that bound, not one that runs past it, and a
+// bound at whatif.MaxPSPromptSupport or under prices processor sharing alone
+// whatever the cv read, at arrivals no burstier than Poisson. The cv a
+// histogram reads is the widest its buckets allow: every 8000-token prompt in
+// a (5000, 10000] bucket read 0.31, flagged
+// every 8k answer SpreadBeyondProcessorSharing although processor sharing
+// held there, and its gamma put 19.8% of the prompts above 10000 (issue
+// llm-d-incubation/llm-d-scaling-manager#304). Off, the gamma runs on and the
+// cv alone decides, as before. Planner-only: off from the constructor, and
+// not turned on in the planner's replay either (learnreplay.PlannerSwitches
+// says why).
+const SwitchTTFTPromptSupport = "slo-ttft-prompt-support"
+
+// SwitchTTFTPrefixAttention is the replay switch for a prefix hit's cost in
+// the capacity planner (issue llm-d-incubation/llm-d-scaling-manager#311).
+// On: V_P's rescale along the curve reads the attention over the cached
+// tokens, I_eff + 2h, not I_eff alone (whatif.Prefill.PrefixAttention); the
+// prefill work is the prompt net of the prefill variant's hit, not the
+// decode variant's; and the KV transfer moves the prompt net of the decode
+// variant's hit. Off, as before. Planner-only: off from the constructor, and
+// not in learnreplay.PlannerSwitches, so it is off in the planner too until
+// a backtest turns it on. The analyzer itself reads no whole prompt and
+// prices nothing with it; the planner reads it through the replay
+// (learnreplay.PrefillState.PrefixAttention). No committed recording has a
+// prefix hit, so on or off it moves no golden.
+const SwitchTTFTPrefixAttention = "slo-ttft-prefix-attention"
+
 // SwitchTTFTMeasuredTransfer is the replay switch for the KV transfer term:
 // on, the pricing reads AvgKVTransferTime from the decode rows that carry one
 // (transferPerToken). Off, it reads none and raises whatif.TransferOmitted, as
@@ -566,7 +596,11 @@ func (a *Analyzer) promptSpread(key string, rows []domain.ReplicaMetrics, now ti
 	if !a.ttftMeasuredSpread {
 		return whatif.ReadPromptSpread(nil, 0)
 	}
-	return w.window.Spread()
+	s := w.window.Spread()
+	if !a.ttftPromptSupport {
+		s.MaxRatio = 0
+	}
+	return s
 }
 
 // transferPerToken is the transfer the pricing reads: 0 with

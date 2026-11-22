@@ -32,8 +32,9 @@ func atReplicasJSON(t *testing.T, args ...string) whatifapi.ReportResponse {
 // curve, f is 1 there and the knee 74 r/s, issue
 // llm-d-incubation/llm-d-scaling-manager#300). On the
 // throughput sweep the mean is 6.9 r/s, the p95 26.9 and the peak 30.04, past
-// 0.85 of the 30.88 r/s decode knee: under-provisioned at the default and at
-// the peak.
+// 0.85 of the 30.88 r/s decode knee priced at the last cycles' OL 602; but
+// those busy cycles ran at OL 500, so the knee is of other traffic and
+// neither is judged (#297).
 func TestAtReplicas_JudgedAtTheBusyLoad(t *testing.T) {
 	t.Run("staircase 3 prefill + 4 decode", func(t *testing.T) {
 		args := atStair("--prefill", "3", "--decode", "4", "--imbalance-across-counts=false")
@@ -55,13 +56,14 @@ func TestAtReplicas_JudgedAtTheBusyLoad(t *testing.T) {
 		rep := atReplicasJSON(t, args...)
 		require.NotNil(t, rep.Load.P95)
 		assert.InDelta(t, 26.90, *rep.Load.P95, 0.005, "the sweep's p95")
-		assert.Equal(t, whatifapi.VerdictUnder, rep.Shapes[0].Verdict.Verdict, "at the default load: %s", rep.Shapes[0].Verdict.Reason)
+		assert.Equal(t, whatifapi.VerdictNotJudged, rep.Shapes[0].Verdict.Verdict, "at the default load: %s", rep.Shapes[0].Verdict.Reason)
+		assert.Contains(t, rep.Shapes[0].Verdict.Summary, phasesWords)
 
 		peak := atReplicasJSON(t, append(args, "--load-statistic", "peak")...)
 		require.NotNil(t, peak.Load.Peak)
 		require.NotNil(t, peak.Load.Rate.Value)
 		assert.InDelta(t, 30.04, *peak.Load.Peak, 0.005)
 		assert.Equal(t, *peak.Load.Peak, *peak.Load.Rate.Value)
-		assert.Equal(t, whatifapi.VerdictUnder, peak.Shapes[0].Verdict.Verdict, peak.Shapes[0].Verdict.Reason)
+		assert.Equal(t, whatifapi.VerdictNotJudged, peak.Shapes[0].Verdict.Verdict, peak.Shapes[0].Verdict.Reason)
 	})
 }

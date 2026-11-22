@@ -558,6 +558,15 @@ type SaturationAnalyzer struct {
 	// planner-only; the analyzer accepts it for the planner's replay
 	// (learnreplay.StatesFrom reads it) and reads it nowhere.
 	itlLineAtFloor bool
+	// tpotRatioCensored is SwitchTPOTRatioCensored: off from the
+	// constructor, and never read here (the planner reads R_q).
+	tpotRatioCensored bool
+	// decodeResidencePull is SwitchDecodeResidencePull: off from the
+	// constructor, and never read here (the planner prices residence).
+	decodeResidencePull bool
+	// decodeBurstFill is SwitchDecodeBurstFill: off from the constructor,
+	// and never read here (the planner prices the fill a request sees).
+	decodeBurstFill bool
 	// prefillVPFloorServed is SwitchPrefillVPFloorServed: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillVPFloorServed bool

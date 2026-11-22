@@ -119,11 +119,19 @@ type wireTTFT struct {
 	// VP is V_P, tokens/s, as learned or assumed (VPSource); VPOrigin is P1's
 	// source, and VPPromptTokens the prompt it was read at. VPLearned is P1's
 	// figure an --assume-vp stands in place of, and FixedLatencyLearned the
-	// one an --assume-a does.
+	// one an --assume-a does. VPWholePromptTokens and VPPromptHitRate are
+	// the whole prompt, prefix hits included, and the prefix-cache hit rate
+	// V_P was read at; WholePromptTokens and PromptHitRate the question's,
+	// beside PromptTokens. Each pair is absent where the whole prompt is
+	// unknown.
 	VP                  float64  `json:"vp,omitempty"`
 	VPSource            string   `json:"vpSource,omitempty"`
 	VPOrigin            string   `json:"vpOrigin,omitempty"`
 	VPPromptTokens      float64  `json:"vpPromptTokens,omitempty"`
+	VPWholePromptTokens float64  `json:"vpWholePromptTokens,omitempty"`
+	VPPromptHitRate     *float64 `json:"vpPromptHitRate,omitempty"`
+	WholePromptTokens   float64  `json:"wholePromptTokens,omitempty"`
+	PromptHitRate       *float64 `json:"promptHitRate,omitempty"`
 	VPLearned           *float64 `json:"vpLearned,omitempty"`
 	FixedLatencySeconds float64  `json:"fixedLatencySeconds,omitempty"`
 	FixedLatencySource  string   `json:"fixedLatencySource,omitempty"`
@@ -405,13 +413,16 @@ type wireTTFTAnswer struct {
 }
 
 // wireTTFTParts is the figures beside the union bound, and its parts' means,
-// in seconds.
+// in seconds; kvPullUtilization is the KV pull stage's utilization on one
+// decode pod (whatif.TTFTParts.KVPullUtilization), 0 where kvPullWait is not
+// priced.
 type wireTTFTParts struct {
 	Independent           float64 `json:"independent"`
 	Pooled                float64 `json:"pooled"`
 	DecodeShare           float64 `json:"decodeShare"`
 	EngineWait            float64 `json:"engineWait"`
 	KVPullWait            float64 `json:"kvPullWait"`
+	KVPullUtilization     float64 `json:"kvPullUtilization"`
 	OwnPrefill            float64 `json:"ownPrefill"`
 	DecodeWait            float64 `json:"decodeWait"`
 	FirstStep             float64 `json:"firstStep"`
@@ -520,7 +531,8 @@ func toWireTTFT(r whatif.Result) *wireTTFTResult {
 			Floor: v.Floor, KneeRate: v.PrefillKnee, BoundBy: []string{}, Tier: v.Tier,
 		}, Parts: wireTTFTParts{
 			Independent: v.Independent, Pooled: v.Pooled, DecodeShare: v.DecodeShare,
-			EngineWait: v.Parts.EngineWait, KVPullWait: v.Parts.KVPullWait, OwnPrefill: v.Parts.OwnPrefill, DecodeWait: v.Parts.DecodeWait,
+			EngineWait: v.Parts.EngineWait, KVPullWait: v.Parts.KVPullWait,
+			KVPullUtilization: v.Parts.KVPullUtilization, OwnPrefill: v.Parts.OwnPrefill, DecodeWait: v.Parts.DecodeWait,
 			FirstStep: v.Parts.FirstStep, DecodeEngine: v.Parts.DecodeEngine, RouterHop: v.Parts.RouterHop,
 			RouterWait: v.Parts.RouterWait, BurstWait: v.Parts.BurstWait,
 			PrefillUtilization: v.PrefillUtilization, VPMarginApplied: v.VPMarginApplied,

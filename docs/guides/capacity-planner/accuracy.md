@@ -3,26 +3,30 @@
 Every figure the [capacity planner](README.md) prints says whether a real run
 checked it, and how far off it read there. **Validated means measured, not
 accurate: read the range.** A validated figure can be twice the real value.
+And every region so far is **in-sample**: the one run that measured it also
+tuned the planner (see [What was measured](#what-was-measured)).
 
 ## Read the label
 
 Each figure carries one of two labels.
 
-- **`validated: error +6..+103% (p10-p90, min-max +3..+152%, n=12 at 6 load levels; q32 staircase)`.**
+- **`validated in-sample: error +3..+152% (min-max, n=6 load levels, 12 readings; q32 staircase)`.**
   Your fleet and traffic sit inside what a measured run covered. On that
-  run the planner's figure read 6% to 103% over what the client measured
-  for 8 in 10 of its 12 readings (6 load levels, each read twice), and 3%
-  to 152% over at the extremes.
+  run the planner's figure read 3% to 152% over what the client measured,
+  lowest to highest, over 6 independent load levels (12 readings: each level
+  read twice). `in-sample` says the run also tuned the planner; a run kept
+  out of tuning would print `validated on a holdout`.
 - **`OUTSIDE VALIDATED REGION (prompt spread not measured (cv 2 assumed), ...)`.**
   No run checked a figure like this one. The bracket names the first thing
   that differs. The figure may still be right; nobody has measured it.
 
-The label always gives the count (`n=`) and what kind of range it is:
+The label always gives the count (`n=`, the independent load levels first)
+and what kind of range it is:
 
 | Range | Means |
 | --- | --- |
-| `p10-p90` with `min-max` | 5 or more readings: the middle 8 in 10, then the extremes |
-| `min-max` | fewer than 5 readings: the lowest and the highest |
+| `p10-p90` with `min-max` | 10 or more independent load levels: the middle 8 in 10, then the extremes |
+| `min-max` | fewer than 10 independent load levels: the lowest and the highest |
 | `single reading, between two ladder steps` | one measurement, known only to lie between two steps of the run |
 | `one-sided ... not crossed within the steps run` | the run never reached the point. For a rate, `at most -6%`: the planner read at least 6% low, and how much lower is unknown. For a knee, `at most +3%`: the fleet held the planner's knee to within the run's 3% hold rule |
 
@@ -38,8 +42,12 @@ Where to find it:
 - **CLI text:** after each figure, one label a line.
 - **CLI JSON (`-o json`):** `validation` on each answer. It holds
   `validated`, `label`, `errorLo` and `errorHi` (shares, not percent),
-  `readings` and `outside`. A refused figure, and the operating rate, which
-  is an input, have none.
+  `readings` and `outside`; inside a measured row also `source`, `shape`,
+  `spread` (the kind of range: `min-max`, `p10-p90`, `bracket` or
+  `one-sided`), `levels` (the independent load levels among the readings)
+  and `holdout` (true only for a row whose run never tuned the planner,
+  false for an in-sample one). A refused figure, and the operating rate,
+  which is an input, have none.
 - **API (`POST /v1/plan`):** `validation` on the knees, the TTFT at the rate,
   the rate at the target, the TPOT's two points and the limits. Curve points
   and the marginal steps carry none.
@@ -51,10 +59,32 @@ decode Pods. It climbed a ladder of 6 load levels, from 0.40 to 0.90 of the
 knee, each judged over 7 to 22 minutes. Each level ran twice, once with the
 router's flow control off and once on. The client timed every request.
 
-So "n=12 at 6 load levels" is 6 load levels, each read twice. The planner
-prices both phases the same below the onset, and its error grows with load:
-on long prompts the mean TTFT reads about +27% at 0.40 of the knee and +63% to
-+149% at 0.90. The range on a label covers the whole band of load it names.
+So "n=6 load levels, 12 readings" is 6 load levels, each read twice. The
+planner prices both phases the same below the onset, so the two readings of
+a level are one reading of the planner, and the count is 6. Over 6 values a
+10th and a 90th percentile are just the second-lowest and the second-highest,
+so under 10 independent levels the label gives the lowest and the highest.
+The error grows with load: on long prompts the mean TTFT reads about +7% at
+0.40 of the knee and +58% to +141% at 0.90. The range on a label covers the
+whole band of load it names.
+
+**In-sample.** This run is also one of the planner's goldens
+(one of its test fixtures), and constants the planner ships were read from it. Its
+errors are how well the planner fits the run it was tuned on, so treat them
+as a floor on the error at another fleet, not a bound. No run kept out of
+tuning has been measured yet; when one is, its rows will print `validated on
+a holdout`.
+
+**The decode knee.** Inside its region (the row below) the decode knee held
+to within the run's 3% hold rule. Outside it, on the Qwen3-0.6B goldens, four
+knees read 17% to 99% high past the table's bound and one 42% low; the
+planner says the same 17% to 99%. `at-replicas` prints the label under the decode knee
+in its capacity table, says the 0.6B range under `not validated` only when
+the knee is outside, and sizes decode at the label's upper error inside the
+region, or at 99.1% outside it, beside the point answer
+(`needed.decodeAtErrorBound`, at most the search's `maxReplicas`). The
+label's `n=` gives the independent load levels first, then the raw
+readings.
 
 This table is generated from the rows the planner ships:
 
@@ -64,9 +94,9 @@ This table is generated from the rows the planner ships:
 | decode-knee | 1000-token prompts, 1000 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 1 | -4..+2% | bracket | 1 |  | on |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 4 | -7..-4% | bracket | 1 |  | on |
-| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +2..+15% | p10-p90, min-max +1..+18% | 12 at 6 load levels | 0.400 to 0.900 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -2..+1% | p10-p90, min-max -3..+1% | 12 at 6 load levels | 0.096 to 0.215 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -4..-2% | p10-p90, min-max -5..-1% | 10 at 6 load levels | 0.096 to 0.203 | any |
+| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +1..+18% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -3..+1% | min-max | 6 load levels (12 readings) | 0.096 to 0.215 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -5..-1% | min-max | 6 load levels (10 readings) | 0.096 to 0.203 | any |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 4 | at most +3% | one-sided | 1 |  | off |
 | rate-at-ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | -6..+0% | bracket | 1 | 0.825 to 0.875 | off, on |
@@ -75,15 +105,15 @@ This table is generated from the rows the planner ships:
 | rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | at most -6% | one-sided | 1 | 0.825 to 0.875 | off, on |
 | rate-at-ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | at most +0% | one-sided | 2 | 0.740 to 0.875 | off, on |
 | rate-at-ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | at most +2% | one-sided | 2 | 0.740 to 0.875 | off, on |
-| ttft mean | 1000-token prompts, 1000 out, Ca^2 1 | -14..+11% | p10-p90, min-max -15..+11% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | -9..+8% | p10-p90, min-max -11..+11% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | -10..+7% | p10-p90, min-max -11..+10% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft mean | 8000-token prompts, 200 out, Ca^2 1 | +10..+86% | p10-p90, min-max +7..+141% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | +7..+103% | p10-p90, min-max +4..+152% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | +9..+99% | p10-p90, min-max -4..+171% | 12 at 6 load levels | 0.400 to 0.900 | off, on |
-| ttft mean | 8000-token prompts, 200 out, Ca^2 4 | +16..+88% | p10-p90, min-max +9..+122% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
-| ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | +39..+128% | p10-p90, min-max +25..+164% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
-| ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | +40..+143% | p10-p90, min-max +31..+184% | 9 at 6 load levels | 0.400 to 0.850 | off, on |
+| ttft mean | 1000-token prompts, 1000 out, Ca^2 1 | -15..+11% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | -11..+11% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft p95 | 1000-token prompts, 1000 out, Ca^2 1 | -11..+10% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft mean | 8000-token prompts, 200 out, Ca^2 1 | +7..+141% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft p90 | 8000-token prompts, 200 out, Ca^2 1 | +4..+152% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft p95 | 8000-token prompts, 200 out, Ca^2 1 | -4..+171% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | off, on |
+| ttft mean | 8000-token prompts, 200 out, Ca^2 4 | +9..+122% | min-max | 6 load levels (9 readings) | 0.400 to 0.850 | off, on |
+| ttft p90 | 8000-token prompts, 200 out, Ca^2 4 | +25..+164% | min-max | 6 load levels (9 readings) | 0.400 to 0.850 | off, on |
+| ttft p95 | 8000-token prompts, 200 out, Ca^2 4 | +31..+184% | min-max | 6 load levels (9 readings) | 0.400 to 0.850 | off, on |
 <!-- envelope-table: end -->
 
 What this says:
@@ -119,10 +149,11 @@ priced:
 - The router's flow-control state is known. Without its queue series, state
   it with `--flow-control on|off`. A knee needs it off.
 - Every term was learned from the recording. A flag that types a term in
-  (`--assume-vp`, `--assume-a`, `--assume-router-hop`, `--batch-cap`,
-  `--assume-tpot-ratio`, the experimental pricing flags, the capture's engine
-  overrides) puts every figure outside. So does any flag on a figure that the
-  run's own figures did not carry.
+  (`--assume-vp`, `--assume-a`, `--assume-router-hop`,
+  `--assume-transfer-base`, `--batch-cap`, `--assume-tpot-ratio`, the
+  experimental pricing flags, the capture's engine overrides) puts every
+  figure outside. So does any flag on a figure that the run's own figures did
+  not carry.
 - The model is Qwen3-32B, at tensor parallelism 2 for prefill and decode, on
   H200, with 2 prefill and 2 decode Pods.
 - Prompt and output lengths are within 1.25x of a measured shape, and the

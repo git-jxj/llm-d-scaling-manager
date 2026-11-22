@@ -25,7 +25,7 @@ func runAtReplicas(ctx context.Context, args []string, out, warn io.Writer) erro
 // on the API's fleet (servedState), which takes the defaults for them, and
 // states lengths with --shape.
 var atReplicasRefused = []string{"seed", "price-router-wait", "router-wait-in-prefill", "ps-onsets", "prefill-running-cap", "charge-decode-gate",
-	"assume-input-tokens", "assume-output-tokens"}
+	"assume-input-tokens", "assume-output-tokens", "assume-transfer-base"}
 
 // listFlag is a repeatable flag: each use adds its value.
 type listFlag []string
@@ -103,7 +103,7 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 		return err
 	}
 	s := &servedState{st: st, decodeVariant: variants[0].state.Variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
-		imbalanceAcrossCounts: f.imbalanceAcrossCounts}
+		imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter}
 	rep, err := buildReport(ctx, st, s, q)
 	if err != nil {
 		if whatifapi.IsInputError(err) {
@@ -462,6 +462,23 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 	d := s.Utilization.Decode
 	fmt.Fprintf(b, "  %-14sKV fill %s (band top %s), slots %s of %d, wait p %s\n", "decode",
 		figText(d.KVFill, "%.3f", 1), num(d.BandTop), figText(d.SlotsOccupied, "%.0f", 1), d.Slots, figText(d.WaitProbability, "%.3f", 1))
+	if k := d.KVPull; k != nil {
+		pull := fmt.Sprintf("utilization %.3f per decode pod", k.Utilization)
+		switch {
+		case k.Utilization >= 1:
+			pull += ", saturated: TTFT is refused"
+		case k.Wait == nil && k.Unpriced == whatifapi.KVPullFirstCome:
+			pull += ", mean wait unpriced (TTFT priced first come: prompts too uneven for processor sharing)"
+		case k.Wait == nil:
+			pull += ", mean wait unpriced (TTFT refused)"
+		default:
+			pull += ", mean wait " + msText(*k.Wait)
+		}
+		if k.SetsTTFT {
+			pull += ": the larger mean wait in TTFT sits on the decode pods"
+		}
+		fmt.Fprintf(b, "  %-14s%s\n", "KV pull", pull)
+	}
 	p := s.Utilization.Prefill
 	pre := fmt.Sprintf("utilization pooled %s, worst pod %s", figText(p.Pooled, "%.2f", 1), figText(p.WorstPod, "%.2f", 1))
 	if p.Imbalance > 0 {
@@ -500,6 +517,9 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 			tok = fmt.Sprintf("%.0f", *row.rate.OutputTokensPerSecond)
 		}
 		fmt.Fprintf(b, capLayout, row.label, fmt.Sprintf("%.2f", *row.rate.Value), tok, row.rate.Binds)
+		if row.rate.Validation != nil {
+			fmt.Fprintf(b, "  %-18s%s\n", "", row.rate.Validation.Label)
+		}
 	}
 	b.WriteString(tableText(s.Table))
 	b.WriteString("checks\n")

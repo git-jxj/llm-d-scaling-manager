@@ -123,6 +123,11 @@
               "reason": "Saturated",
               "detail": "41.7 r/s at or above the knee 36.98 r/s"
             }
+          },
+          "kvPull": {
+            "utilization": 1.2567072654765727,
+            "unpriced": "ttftRefused",
+            "setsTTFT": false
           }
         },
         "prefill": {
@@ -167,6 +172,11 @@
           "flags": [
             "ExtrapolatedFill"
           ],
+          "validation": {
+            "validated": false,
+            "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
+            "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
+          },
           "outputTokensPerSecond": 7396.031728752224,
           "binds": "decode band top at fill 0.798"
         },
@@ -275,18 +285,14 @@
           },
           "tpotPercentile": {
             "statistic": "p90",
-            "value": 0.004999917963493543,
-            "unit": "s",
-            "band": {
-              "lo": 0.004872742612921775,
-              "hi": 0.005035912842411187
-            },
-            "floor": 0.004872742612921775,
-            "flags": [
-              "BelowFittedBand",
-              "CoarseTPOTBucket",
-              "HostBoundTPOTTail"
-            ]
+            "refused": {
+              "reason": "TPOTBucketTooWide",
+              "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the router's TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
+              "flags": [
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
+              ]
+            }
           },
           "e2eMeanSum": {
             "value": 0.8679493112275836,
@@ -394,18 +400,14 @@
           },
           "tpotPercentile": {
             "statistic": "p90",
-            "value": 0.010798266509783123,
-            "unit": "s",
-            "band": {
-              "lo": 0.007423150526527075,
-              "hi": 0.011071723409494498
-            },
-            "floor": 0.004872742612921775,
-            "flags": [
-              "BelowFittedBand",
-              "CoarseTPOTBucket",
-              "HostBoundTPOTTail"
-            ]
+            "refused": {
+              "reason": "TPOTBucketTooWide",
+              "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the router's TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
+              "flags": [
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
+              ]
+            }
           },
           "e2eMeanSum": {
             "value": 2.0739272891258693,
@@ -576,13 +578,15 @@
       ],
       "verdict": {
         "verdict": "UNDER-PROVISIONED",
-        "summary": "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2); the same at f 1 to 1.5 (prefill f 1 assumed at 3 pods).",
+        "summary": "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 99% high; the same at f 1 to 1.5 (prefill f 1 assumed at 3 pods).",
         "scope": "fleet",
         "reason": "2 prefill + 2 decode: 41.70 r/s is 1.1x the fleet knee of 36.98 r/s; TTFT p90 saturated misses 2000.0 ms; TPOT mean saturated misses 30.0 ms. Add decode: decode sets the knee",
         "needed": {
           "prefill": 3,
           "decode": 3,
           "maxReplicas": 32,
+          "decodeAtErrorBound": 6,
+          "decodeKneeError": 0.991,
           "minimizes": "gpus",
           "gpusPerReplica": {
             "prefill": 1,
@@ -645,7 +649,7 @@
     }
   ],
   "notValidated": [
-    "decode knee: not validated; it read 44% to 103% high on the goldens (docs/proposals/slo-capacity-planner.md, Measured on the goldens)",
+    "decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 17% to 99% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)",
     "TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.",
     "e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile"
   ],

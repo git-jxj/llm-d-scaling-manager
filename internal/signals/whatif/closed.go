@@ -44,6 +44,31 @@ type Decode struct {
 	// BelowBand says how the line is read below the band; the zero value
 	// reads it at the band's bottom, as the controller prices.
 	BelowBand BelowBand
+	// HeldBefore is the seconds a request holds its KV on the decode replica
+	// before its first output token: on a P/D fleet the KV pull and the
+	// first step, the decode engine's own TTFT (issue
+	// llm-d-incubation/llm-d-scaling-manager#301). Residence is then
+	// HeldBefore + (OL - 1) * ITL(k), not OL * ITL(k): the TTFT ends at the
+	// first output token, so that step is in it. At 8k prompts and 26 output
+	// tokens the pull is about a third of the residence. 0, as the controller
+	// prices, leaves it out. It must be a TTFT read with no decode backlog: a
+	// request waiting for decode capacity holds no KV.
+	//
+	// Two simplifications. HeldBefore is the TTFT read at the recorded load
+	// and held at every rate priced: the pull's own wait grows with the rate,
+	// so above the recorded load the residence reads short (the knee high),
+	// below it long. And the same residence times the batch slots, where a
+	// request pulling its KV holds cache but not yet a running-batch slot
+	// (vLLM's WAITING_FOR_REMOTE_KVS): a knee the slots bind (BoundBatchCap)
+	// is under-priced, conservatively, by up to HeldBefore over the
+	// residence.
+	HeldBefore float64
+	// ArrivalCV2 is Ca^2, the squared coefficient of variation of the fleet's
+	// interarrival times, where the caller prices how clustered arrivals
+	// load the fill a request runs at (issue
+	// llm-d-incubation/llm-d-scaling-manager#291): 0 or 1 is Poisson, as the
+	// controller prices, and below 1 prices as Poisson too (burstFill).
+	ArrivalCV2 float64
 	// AssumedB says the caller stated Line's intercept B and refitted the
 	// slope through it (the capacity planner's --assume-itl-b): a line on the
 	// default intercept is then priced, not refused (PinnedDefaultB), and the
@@ -98,6 +123,8 @@ func (d Decode) check() *Unanswerable {
 		u = refuse(NoBatchCap, fmt.Sprintf("replica cap %d", d.ReplicaCap))
 	case !Finite(d.OutputTokens) || !(d.OutputTokens > 0) || !Finite(d.KVPerRequest) || !(d.KVPerRequest > 0):
 		u = refuse(NoTraffic, fmt.Sprintf("output %g tokens, KV per request %g tokens", d.OutputTokens, d.KVPerRequest))
+	case !Finite(d.HeldBefore) || d.HeldBefore < 0:
+		u = refuse(InvalidInput, fmt.Sprintf("held before the first token %g s, want a finite value of at least 0", d.HeldBefore))
 	// The band's top must hold one whole request: a replica that cannot
 	// serves none, and the closed form would price a fraction of one.
 	case math.Floor(d.Band.Hi*d.CapacityTokens/d.KVPerRequest) < 1:
@@ -230,50 +257,132 @@ func (p fullPoint) flags() []Flag {
 
 // replicaRate is lambda_rep(k), one replica's request rate at fill k: the
 // sequences resident there, capped at the slots (CappedSequences), each
-// advancing a token every ITL(k), over the output length.
+// advancing a token every ITL(seenFill(k)), ITL(k) for Poisson arrivals,
+// over the output length.
 func (d Decode) replicaRate(k float64) float64 {
 	seqs := CappedSequences(k, d.CapacityTokens, d.KVPerRequest, d.full().slots)
-	itlSec := d.itlAt(k)
+	itlSec := d.itlAt(d.seenFill(k))
 	if !(seqs > 0) || !(itlSec > 0) {
 		return 0
 	}
-	return seqs / (itlSec * d.OutputTokens)
+	return seqs / d.residence(itlSec)
+}
+
+// burstFill is the fill of the sequences a request finds running beside it
+// over what Poisson arrivals give it, from ArrivalCV2 (issue
+// llm-d-incubation/llm-d-scaling-manager#291). Little's law gives the time
+// average fill k; a request is counted where requests arrive, and clustered
+// arrivals put more of them beside it. For a stationary arrival stream with
+// interarrival squared coefficient of variation Ca^2, the arrivals expected
+// beside a typical one, beyond the rate's share, number Ca^2 - 1 in all (the
+// counts' variance over a long window is Ca^2 times their mean); each of N_d
+// decode replicas, taking a share 1/N_d of them at random (Bernoulli
+// splitting), holds (Ca^2 - 1)/N_d of them. They are taken as all overlapping the request's residence, which
+// holds where the residence is long against the clusters (a residence of
+// hundreds of steps): where it is not, this reads a request's fill high.
+// The line was fitted on what the engines measured at their own arrivals
+// (Poisson for every recording that states none), so only the excess over
+// Poisson is priced, and a Ca^2 at or below 1 prices none: a smoother
+// stream would read a lower TPOT, which no recording has shown.
+func (d Decode) burstFill() float64 {
+	if !Finite(d.ArrivalCV2) || !(d.ArrivalCV2 > 1) || d.Replicas < 1 {
+		return 0
+	}
+	return (d.ArrivalCV2 - 1) / float64(d.Replicas) * d.KVPerRequest / d.CapacityTokens
+}
+
+// seenFill is the fill a request runs at where the time average is k: k and
+// the burst's fill (burstFill), never past k_full, where the slots are
+// full, nor under k.
+func (d Decode) seenFill(k float64) float64 {
+	e := d.burstFill()
+	if e == 0 {
+		return k
+	}
+	return max(k, min(k+e, d.full().fill))
+}
+
+// SeenFill is the fill a request runs at where the replica's time average is
+// k (Basis.Fill): k itself for Poisson arrivals, higher where they cluster
+// (ArrivalCV2 above 1). The line is read there, so a caller checking a fill
+// against what was observed checks this one.
+func (d Decode) SeenFill(k float64) float64 {
+	return d.seenFill(k)
+}
+
+// residence is a request's seconds on the replica at step time itlSec:
+// HeldBefore, then the steps after it (steps).
+func (d Decode) residence(itlSec float64) float64 {
+	return d.HeldBefore + d.steps()*itlSec
+}
+
+// steps is the output steps a request takes on the replica after
+// HeldBefore: OL with none, OL - 1 with one, since the decode engine's TTFT
+// that HeldBefore is read from ends at the first output token, so its step
+// is already in it.
+func (d Decode) steps() float64 {
+	if d.HeldBefore > 0 {
+		return max(d.OutputTokens-1, 0)
+	}
+	return d.OutputTokens
 }
 
 // chainMu is the rate a replica holding m sequences completes them:
-// m / (OL * ITL(k_m)), with k_m = m*KVreq/C clamped to [lowestFill, band.Hi]
+// m / residence(ITL(k_m)), OL * ITL(k_m) with no HeldBefore, with k_m = m*KVreq/C clamped to [lowestFill, band.Hi]
 // (below the band only a measured intercept is read at the fill itself). The
 // admission chain's state m completes at chainMu(min(m, c)), and the knee is
 // N_d * chainMu(c): one formula, so the chain and the knee saturate at the
 // same rate by construction.
 func (d Decode) chainMu(m float64) float64 {
 	k := min(max(m*d.KVPerRequest/d.CapacityTokens, d.lowestFill()), d.Band.Hi)
-	return m / (d.OutputTokens * d.itlAt(k))
+	return m / d.residence(d.itlAt(k))
 }
 
-// kneeRate is the fleet's knee, N_d * chainMu(c): N_d * c / (OL * ITL(k_full)).
+// kneeRate is the fleet's knee, N_d * chainMu(c): N_d * c / residence(ITL(k_full)),
+// N_d * c / (OL * ITL(k_full)) with no HeldBefore.
 func (d Decode) kneeRate() float64 {
 	return float64(d.Replicas) * d.chainMu(d.full().slots)
 }
 
 // fillAtReplicaRate is the closed-form fill one replica runs at while it
-// carries lam requests a second (Little's law, residence OL*ITL(k)):
+// carries lam requests a second (Little's law, residence H + S*ITL(k), H
+// the HeldBefore, S its steps):
 //
-//	k(lam) = lam*OL*B / (C/KVreq - lam*OL*A)
+//	k(lam) = lam*(H + S*B) / (C/KVreq - lam*S*A)
 //
 // It is valid while the denominator is positive and the sequences are under
 // the slots (the fill under slotFill); ok is false past that, where the
-// replica is saturated. With a batch term the rate has no closed form, and
-// the fill is found by bisection (fillAtReplicaRateBisected).
+// replica is saturated. With clustered arrivals (burstFill e) a request's
+// steps run at ITL(k + e), so its residence is H + S*ITL(k + e):
+//
+//	k(lam) = lam*(H + S*B + S*A*e) / (C/KVreq - lam*S*A)
+//
+// while k + e is under k_full, and lam*(H + S*ITL(k_full))*KVreq/C past it.
+// With a batch term the rate has no closed form, and the fill is found by
+// bisection (fillAtReplicaRateBisected), on the same residence.
 func (d Decode) fillAtReplicaRate(lam float64) (k float64, ok bool) {
 	if !d.Batch.IsZero() {
 		return d.fillAtReplicaRateBisected(lam)
 	}
-	den := d.CapacityTokens/d.KVPerRequest - lam*d.OutputTokens*d.Line.A
+	s := d.steps()
+	den := d.CapacityTokens/d.KVPerRequest - lam*s*d.Line.A
 	if !(den > 0) {
 		return 0, false
 	}
-	k = lam * d.OutputTokens * d.Line.B / den
+	// With no HeldBefore the sum is left out, so the controller's figure is
+	// the same to the last bit as before the term; so too with no burst.
+	e := d.burstFill()
+	switch {
+	case e > 0:
+		k = lam * (d.HeldBefore + s*d.Line.B + s*d.Line.A*e) / den
+		if kf := d.full().fill; k+e > kf {
+			k = lam * d.residence(d.Line.ITLAt(kf)) * d.KVPerRequest / d.CapacityTokens
+		}
+	case d.HeldBefore > 0:
+		k = lam * (d.HeldBefore + s*d.Line.B) / den
+	default:
+		k = lam * s * d.Line.B / den
+	}
 	if !Finite(k) || k > d.full().slotFill {
 		return 0, false
 	}
@@ -281,7 +390,7 @@ func (d Decode) fillAtReplicaRate(lam float64) (k float64, ok bool) {
 }
 
 // KneeRate is the rate, in requests per second over the fleet, at which the
-// decode replicas saturate, N_d * c / (OL * ITL(k_full)) (question 2, step 1):
+// decode replicas saturate, N_d * c / residence(ITL(k_full)) (question 2, step 1):
 // the knee. Basis.KneeRate repeats it, Basis.Fill is k_full, Basis.BoundBy
 // names whether the band's top or the batch cap set the slots, and
 // BelowFittedBand flags a knee read at the band's bottom because the slots
@@ -486,11 +595,31 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	p := d.full()
 	k, global := d.fillForTPOT(t.Seconds, r, d.lowestFill())
 	by := []Bound{BoundTPOT}
-	// below is whether the answer's fill sits under the band: set once per
+	e := d.burstFill()
+	// Under a burst a target met at k_full itself is met at every fill a
+	// request can see, so it is the knee's too (>=, not >): with none the
+	// bound stays the target's at k_full, as before.
+	clamped := k > p.fill || (e > 0 && k >= p.fill)
+	if clamped {
+		k, by = p.fill, []Bound{p.by}
+	}
+	// k is the fill a request runs at (seenFill); the replica's own is the
+	// burst's fill (burstFill) under it. A target a request misses at the
+	// burst alone has no rate.
+	if e > 0 && !clamped {
+		if k <= e {
+			burstFloor, _ := d.tpotAtFill(max(e, d.lowestFill()), r)
+			return refuse(TargetBelowFloor, fmt.Sprintf("target %.4g ms at or below the TPOT the arrivals' clustering alone prices, %.4g ms",
+				1000*t.Seconds, 1000*burstFloor))
+		}
+		k -= e
+	}
+	// below is whether the line is read under the band: at the fill a
+	// request sees (seenFill), not the replica's time average. Set once per
 	// place k is set, and flagged once, at the end.
-	below := k < d.Band.Lo
-	if k > p.fill {
-		k, by, below = p.fill, []Bound{p.by}, p.belowBand
+	below := d.seenFill(k) < d.Band.Lo
+	if clamped {
+		below = p.belowBand
 	}
 	knee := d.kneeRate()
 	uncapped := float64(d.Replicas) * d.replicaRate(k)
@@ -623,11 +752,16 @@ func SLOAtReplicas(d Decode, q ReplicasQuery) DecodeSLO {
 }
 
 // tpotAt is the TPOT at fill k, times R_q at that fill, never below the floor.
+// The line is read at the fill a request sees (seenFill); Basis.Fill is the
+// replica's time-average k, and Basis.Floor the line's floor at the lowest
+// fill, not the higher floor a burst puts under every request.
 func (d Decode) tpotAt(k, knee float64, r TPOTRatio, flags []Flag) Answer {
 	lowest := d.lowestFill()
 	floor, _ := d.tpotAtFill(lowest, r)
-	at := max(k, lowest)
-	if k < d.Band.Lo {
+	seen := d.seenFill(k)
+	at := max(seen, lowest)
+	// Below the band where the line is read: the fill the request sees.
+	if seen < d.Band.Lo {
 		flags = append(flags, BelowFittedBand)
 	}
 	v, global := d.tpotAtFill(at, r)

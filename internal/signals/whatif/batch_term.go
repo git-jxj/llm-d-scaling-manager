@@ -284,7 +284,8 @@ func FitBatchTerm(line itl.Model, rows []BatchRow, ranks, specTokens int) BatchF
 
 // fillAtReplicaRateBisected is fillAtReplicaRate with a batch term: the
 // least fill at which one replica carries lam requests a second, n(k) /
-// (OL * ITL(k)) with n(k) = k*C/KVreq, found by bisection on [0, slotFill].
+// residence(ITL(seenFill(k))) with n(k) = k*C/KVreq (n(k) / (OL * ITL(k))
+// with no HeldBefore and no burst), found by bisection on [0, slotFill].
 // The rate rises with k (BatchTerm.usable), so it is ok wherever the
 // closed form is: lam carried at or under the slots.
 func (d Decode) fillAtReplicaRateBisected(lam float64) (float64, bool) {
@@ -292,7 +293,7 @@ func (d Decode) fillAtReplicaRateBisected(lam float64) (float64, bool) {
 		return 0, true
 	}
 	rate := func(k float64) float64 {
-		return k * d.CapacityTokens / d.KVPerRequest / (d.OutputTokens * d.itlAt(k))
+		return k * d.CapacityTokens / d.KVPerRequest / d.residence(d.itlAt(d.seenFill(k)))
 	}
 	top := d.full().slotFill
 	if !Finite(lam) || !(lam > 0) || !(rate(top) >= lam) {

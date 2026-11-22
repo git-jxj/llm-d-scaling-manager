@@ -49,6 +49,19 @@ type Prefill struct {
 	// ImbalanceAssumed marks one the caller supplied (AssumedImbalance).
 	Imbalance        float64
 	ImbalanceAssumed bool
+	// LoadAwareRouter prices f as a load-aware router spreads it
+	// (prefillPlan.fAt): f up to ImbalanceUtilization, then falling to 1 as
+	// the pods fill, so the knee is the pooled one and f prices only the
+	// latency below it. Off, f holds at every rate. Opt-in
+	// (DefaultPlannerLoadAwareRouter): no recording says what the router
+	// scores.
+	LoadAwareRouter bool
+	// ImbalanceUtilization is rho_m, the mean prefill pod utilization f was
+	// read at: P1's load over VP (prefill.Estimate.FLoad), in
+	// [0, MaxImbalanceUtilization], rescaled to the question's prompt where
+	// V_P is (prefillPlan.rhoM). 0 is not known, and f is then held. Read
+	// only with LoadAwareRouter.
+	ImbalanceUtilization float64
 	// Replicas is N_p.
 	Replicas int
 	// PromptTokens is E[I_eff], the mean prompt a pod computes (prefix
@@ -60,6 +73,17 @@ type Prefill struct {
 	// caller assumed (AssumedPromptSpread).
 	PromptCV        float64
 	PromptCVAssumed bool
+	// PromptMaxRatio is the longest effective prompt over the mean, as the
+	// computed-prompt histogram bounds it (PromptSpread.MaxRatio): a figure
+	// of the traffic, as PromptCV is, so it holds at any prompt asked. Set,
+	// the prompt is priced as its gamma held at that bound (censored there)
+	// and processor sharing holds at any cv while it is at most
+	// MaxPSPromptSupport. 0 is no bound: the gamma runs on and the spread
+	// alone decides (MaxPSPromptCV). The slo analyzer sets it with
+	// slo.SwitchTTFTPromptSupport, the planner where its replay turns that
+	// switch on (off by default, and not in learnreplay.PlannerSwitches;
+	// issue llm-d-incubation/llm-d-scaling-manager#304).
+	PromptMaxRatio float64
 	// ArrivalCV2 is Ca^2, the arrivals' squared coefficient of variation:
 	// Kingman's 1 + Cs^2 becomes Ca^2 + Cs^2 in the mean wait, and the wait's
 	// tail stretches by their ratio (engineWait). 0 means Poisson, 1.
@@ -73,6 +97,19 @@ type Prefill struct {
 	// VPPromptTokens is I_vp, the mean effective prompt V_P was read at
 	// (prefill.Estimate.VPPromptTokens); 0 is unknown.
 	VPPromptTokens float64
+	// VPWholePromptTokens is the mean whole prompt V_P was read at, prefix
+	// hits included, and VPPromptHitRate the prefix-cache hit rate then
+	// (prefill.Estimate.VPWholePromptTokens, VPPromptHitRate);
+	// WholePromptTokens and PromptHitRate are the question's. A whole prompt
+	// of 0 is unknown: with either unknown, V_P is shaped as before
+	// (shapedVP, prefixMoved).
+	VPWholePromptTokens, VPPromptHitRate float64
+	WholePromptTokens, PromptHitRate     float64
+	// PrefixAttention prices the attention over a prefix hit's cached
+	// tokens in the curve's rescale (shapedVP): off, I_eff stands for the
+	// context, as if no token were cached. The replay switch
+	// slo.SwitchTTFTPrefixAttention, planner-only and off.
+	PrefixAttention bool
 	// CurveSlope and CurveCurvature are b and c of P1's low-load curve
 	// s0 + b*I + c*I*I (prefill.Estimate.ASlope and ACurve, with AModel
 	// quadratic): a prompt of length I costs b + c*I per token in a busy
@@ -154,6 +191,19 @@ const minPromptCV = 1e-4
 // flagged SpreadBeyondProcessorSharing, until a run at a wide spread
 // validates processor sharing there.
 const MaxPSPromptCV = 0.25
+
+// MaxPSPromptSupport is the longest prompt over the mean
+// (Prefill.PromptMaxRatio) at which processor sharing is priced alone,
+// whatever the cv read. The cv a histogram reads is the widest its buckets
+// allow (ReadPromptSpread): every 8000-token prompt in a (5000, 10000] bucket
+// read 0.31 against a true 0.06, past MaxPSPromptCV, although processor
+// sharing held on those steps. What MaxPSPromptCV guards is a prompt long
+// enough for chunked prefill to serve it closer to first come, and a support
+// bound says there is none: 1.6 is under the 99th percentile of the gamma at
+// MaxPSPromptCV (1.67 times the mean), so no prompt it admits is longer than
+// one in a hundred of a spread the cv rule already prices under processor
+// sharing alone. The 8000-token steps sit at 1.25.
+const MaxPSPromptSupport = 1.6
 
 // DefaultPriceRouterWait is TTFTFleet.PriceRouterWait's default, for the CLI
 // (--price-router-wait), the planner API (assume.routerWait gateStage) and the SLO analyzer
@@ -411,6 +461,10 @@ func (d DecodeTTFT) at(i float64) float64 {
 	return d.Seconds * max(1, i/d.PromptTokens)
 }
 
+// At is the decode term for a prompt of i tokens, as the TTFT prices it:
+// 0 when unmeasured.
+func (d DecodeTTFT) At(i float64) float64 { return d.at(i) }
+
 // TTFTTarget is a TTFT service level, end to end.
 type TTFTTarget struct {
 	// Seconds is the target.
@@ -470,11 +524,12 @@ func (pl prefillPlan) marginAt(rho0 float64) float64 {
 // rho0/(1 - marginAt(rho0)), rises with rho0, so TTFT still rises with the
 // rate; it reaches 1 at rho0 = 1 - margin, the margined knee.
 func (pl prefillPlan) atRate(rate float64) prefillPlan {
-	m := pl.marginAt(pl.utilization(rate))
-	if m == 0 {
-		return pl
-	}
 	q := pl
+	q.f = pl.fAt(rate)
+	m := q.marginAt(q.utilization(rate))
+	if m == 0 {
+		return q
+	}
 	q.applied = m
 	q.setVP(pl.vp * (1 - m))
 	return q
@@ -500,12 +555,26 @@ func (pl prefillPlan) atRate(rate float64) prefillPlan {
 // V_P is held, and a mean prompt more than MaxVPShapeRatio from I_vp either
 // way, or an unknown I_vp, is flagged VPShapeMoved. An assumed V_P is the
 // caller's for the prompt asked, and is neither rescaled nor flagged.
+//
+// c*I stands for the attention over a fresh prompt's mean context, I/2. A
+// prefix hit of h tokens is not computed, but each of the I_eff = I - h
+// tokens that are attends over the h cached ones too: mean context
+// h + I_eff/2, so the curve's argument is I_eff + 2h (attentionSpan). With
+// PrefixAttention on, both whole prompts known (the hit rates are read with
+// them) and either hit rate above MaterialPrefixHitMove, the rescale reads
+// that argument at I_vp and at the question, h from each side's own hit rate;
+// otherwise I_eff stands for it, as if nothing were cached, and reads V_P
+// high at a hit (issue llm-d-incubation/llm-d-scaling-manager#311).
 func (p Prefill) shapedVP() (float64, Flag) {
 	if p.VPAssumed {
 		return p.VP, ""
 	}
 	i, ivp := p.PromptTokens, p.VPPromptTokens
 	if p.CurveSlope > 0 && p.CurveCurvature > 0 && ivp > 0 {
+		if p.PrefixAttention && p.VPWholePromptTokens > 0 && p.WholePromptTokens > 0 &&
+			max(p.PromptHitRate, p.VPPromptHitRate) > MaterialPrefixHitMove {
+			i, ivp = attentionSpan(i, p.PromptHitRate), attentionSpan(ivp, p.VPPromptHitRate)
+		}
 		if i > ivp {
 			s := func(x float64) float64 { return p.CurveSlope + p.CurveCurvature*x }
 			return p.VP * s(ivp) / s(i), VPScaledToPrompt
@@ -516,6 +585,46 @@ func (p Prefill) shapedVP() (float64, Flag) {
 		return p.VP, VPShapeMoved
 	}
 	return p.VP, ""
+}
+
+// attentionSpan is the curve's argument for a computed prompt of eff tokens
+// at a prefix-cache hit rate hit in [0, 1): eff + 2h, h = eff*hit/(1 - hit)
+// the cached tokens (shapedVP). h is taken from the measured hit rate, not
+// as the whole prompt less eff: the two prompts are read over different
+// windows, and their drift with no cache would read as cached context.
+func attentionSpan(eff, hit float64) float64 {
+	return eff + 2*eff*hit/(1-hit)
+}
+
+// MaterialPrefixHitMove is how far a prefix-cache hit rate must move, or
+// stand above 0, for prefixMoved to read the prefix hits as moved, and how
+// high one must stand for shapedVP to price the cached tokens' attention
+// (PrefixAttention): below it a hit rate is taken as noise around none.
+// Stated, not measured: no committed recording has prefix hits.
+const MaterialPrefixHitMove = 0.1
+
+// prefixMoved reports whether the prefix hits V_P was read at moved from the
+// question's, which the computed prompt alone does not show: the hit rate
+// by more than MaterialPrefixHitMove, or, with either hit rate above it, the
+// whole prompt by more than MaxVPShapeRatio either way. At 32k with a 75% hit
+// a pod computes the 8k a fresh 8k prompt does, so I_vp and E[I_eff] agree,
+// but each token attends over 24k cached ones (issue
+// llm-d-incubation/llm-d-scaling-manager#311). False with either whole
+// prompt unknown, as before, and for an assumed V_P. With no hit on either
+// side it is false: the whole prompt then moves with E[I_eff], which
+// shapedVP reads.
+func (p Prefill) prefixMoved() bool {
+	if p.VPAssumed || !(p.VPWholePromptTokens > 0) || !(p.WholePromptTokens > 0) {
+		return false
+	}
+	if math.Abs(p.PromptHitRate-p.VPPromptHitRate) > MaterialPrefixHitMove {
+		return true
+	}
+	if max(p.PromptHitRate, p.VPPromptHitRate) <= MaterialPrefixHitMove {
+		return false
+	}
+	w, wvp := p.WholePromptTokens, p.VPWholePromptTokens
+	return w > MaxVPShapeRatio*wvp || w*MaxVPShapeRatio < wvp
 }
 
 // check refuses a Prefill the model cannot price, naming the first input
@@ -542,12 +651,23 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 		// The spread is assumed or read from a histogram; a value outside
 		// [0, 10] is the caller's mistake, not the traffic's.
 		u = refuse(InvalidInput, fmt.Sprintf("prompt cv %g, want 0 <= cv <= %d", p.PromptCV, maxPromptCV))
+	case p.PromptMaxRatio != 0 && !(Finite(p.PromptMaxRatio) && p.PromptMaxRatio >= 1):
+		// No prompt is longer than the bound, so the mean is not either.
+		u = refuse(InvalidInput, fmt.Sprintf("longest prompt %g times the mean, want 0 (none) or at least 1", p.PromptMaxRatio))
 	case !Finite(p.ArrivalCV2) || p.ArrivalCV2 < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("Ca^2 %g, want a finite value of at least 0 (0 is Poisson)", p.ArrivalCV2))
 	case !Finite(p.TransferSecondsPerToken) || p.TransferSecondsPerToken < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("transfer %g s per token", p.TransferSecondsPerToken))
 	case !Finite(p.VPPromptTokens) || p.VPPromptTokens < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("V_P read at %g prompt tokens", p.VPPromptTokens))
+	case !Finite(p.VPWholePromptTokens) || p.VPWholePromptTokens < 0 || !Finite(p.WholePromptTokens) || p.WholePromptTokens < 0:
+		u = refuse(InvalidInput, fmt.Sprintf("whole prompt %g, V_P's %g, want finite values of at least 0 (0 is unknown)",
+			p.WholePromptTokens, p.VPWholePromptTokens))
+	case p.WholePromptTokens > 0 && !(p.PromptHitRate >= 0 && p.PromptHitRate < 1) ||
+		p.VPWholePromptTokens > 0 && !(p.VPPromptHitRate >= 0 && p.VPPromptHitRate < 1):
+		// A hit rate is read only beside a known whole prompt; with the whole
+		// prompt unknown, nothing reads it (shapedVP, prefixMoved).
+		u = refuse(InvalidInput, fmt.Sprintf("prefix hit rate %g, V_P's %g, want 0 <= hit < 1", p.PromptHitRate, p.VPPromptHitRate))
 	case !Finite(p.CurveSlope) || p.CurveSlope < 0 || !Finite(p.CurveCurvature) || p.CurveCurvature < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("curve b %g, c %g, want finite values of at least 0", p.CurveSlope, p.CurveCurvature))
 	case !(p.VPMargin >= 0 && p.VPMargin <= MaxVPMargin):
@@ -573,7 +693,7 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 			f  Flag
 		}{
 			{p.VPAssumed, AssumedVP}, {p.VPLowerBound, VPLowerBound}, {p.VPAboveSlopeBound, VPAboveSlopeBound},
-			{shape != "", shape},
+			{shape != "", shape}, {shape != VPShapeMoved && p.prefixMoved(), VPShapeMoved},
 			{p.ImbalanceAssumed, AssumedImbalance}, {p.PromptCVAssumed, AssumedPromptSpread},
 			{p.TransferSecondsPerToken == 0, TransferOmitted},
 		} {
@@ -589,8 +709,96 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 // knee is the prefill knee, N_p * V_P * (1 - VPMargin) / (f * E[I_eff]), V_P
 // at the question's prompt: the rate at which the worst pod saturates. The
 // margin is whole there (MaxVPMargin).
+//
+// With LoadAwareRouter f falls with the load (fAt), and the knee is where
+// f(rho) * rho reaches 1 - VPMargin, rho the mean pod utilization at the
+// unmargined V_P: past rho_m that is k rho^2 - (1 + k) rho + (1 - VPMargin)
+// = 0, k = (f - 1)/(1 - rho_m), at its smaller root. With no margin that
+// root is 1, the pooled knee, unless f - 1 > 1 - rho_m: a pod that hot
+// saturates before the router has the idle pods to steer its excess to.
 func (pl prefillPlan) knee() float64 {
-	return float64(pl.p.Replicas) * pl.vp * (1 - pl.margin) / (pl.f * pl.p.PromptTokens)
+	f := pl.baseF()
+	pooled := float64(pl.p.Replicas) * pl.vp / pl.p.PromptTokens
+	held := (1 - pl.margin) / f
+	rm := pl.rhoM()
+	if !pl.loadAware() || held <= rm {
+		// The held knee, in the order of operations it has always had, so a
+		// fleet the switch does not touch prices to the bit as before.
+		return float64(pl.p.Replicas) * pl.vp * (1 - pl.margin) / (f * pl.p.PromptTokens)
+	}
+	k := (f - 1) / (1 - rm)
+	disc := (1-k)*(1-k) + 4*k*pl.margin
+	// The smaller root in the form that keeps its digits as k goes to 0.
+	return pooled * 2 * (1 - pl.margin) / ((1 + k) + math.Sqrt(disc))
+}
+
+// baseF is the f the plan was given: Prefill.Imbalance, at least 1.
+func (pl prefillPlan) baseF() float64 { return max(pl.p.Imbalance, 1) }
+
+// loadAware is whether f falls with the load: LoadAwareRouter, on more than
+// one pod, with an f above 1 and the utilization it was read at known. With
+// rho_m unknown f is held: a fall from no load would lift the knee on no
+// reading at all.
+func (pl prefillPlan) loadAware() bool {
+	return pl.p.LoadAwareRouter && pl.p.Replicas > 1 && pl.baseF() > 1 && pl.p.ImbalanceUtilization > 0
+}
+
+// rhoM is ImbalanceUtilization at the V_P the plan prices, the question's
+// prompt (shapedVP): the load is the same, and where the prompt's V_P is
+// lower the same load fills more of it. Held to [0, MaxImbalanceUtilization].
+func (pl prefillPlan) rhoM() float64 {
+	rm := pl.p.ImbalanceUtilization
+	if pl.vp > 0 && pl.p.VP > 0 {
+		rm *= pl.p.VP / pl.vp
+	}
+	return min(max(rm, 0), MaxImbalanceUtilization)
+}
+
+// MaxImbalanceUtilization is the most of rho_m that fAt reads: rho_m is
+// clamped to it, so the fall past it is never steeper than (f - 1)/0.05.
+const MaxImbalanceUtilization = 0.95
+
+// PrefillLoadAt is f at rate (fAt) and the pooled prefill utilization there,
+// rate * E[I] / (N_p * V_P * (1 - VPMargin)), V_P at the question's prompt;
+// false where p cannot be priced. The busiest pod's utilization is their
+// product.
+func PrefillLoadAt(p Prefill, rate float64) (f, pooled float64, ok bool) {
+	pl, u := p.check()
+	if u != nil {
+		return 0, 0, false
+	}
+	return pl.fAt(rate), rate * p.PromptTokens / (float64(p.Replicas) * pl.vp * (1 - pl.margin)), true
+}
+
+// fAt is f at rate. Off LoadAwareRouter it is the plan's f at every rate.
+// On, it is f up to rho_m (ImbalanceUtilization), the mean pod utilization
+// it was read at, and past it the excess falls in proportion to the pods'
+// idle capacity:
+//
+//	f(rho) = 1 + (f - 1)(1 - rho)/(1 - rho_m),
+//
+// rho the mean pod utilization at the unmargined V_P, so 1 at rho = 1. A
+// router that scores each pod's queue (llm-d's EPP queue scorer) sends less
+// to a pod as its queue grows: what spreads the shares at light load (a
+// prefix the router keeps on one pod, a slower node) loses to the queue as
+// the pods fill, and near the pooled knee the busiest pod's share is the
+// mean share (join-the-shortest-queue). Measured: on the public staircase
+// the busiest pod's raw share fell from about 1.5 at 10 requests/s to 1.01
+// to 1.06 near capacity (busiestMinutes, issue #266). The linear fall is a
+// stated shape, not a fit: f is held, never raised, below rho_m, where the
+// minutes it was read from say it held, and the shares near the knee are
+// not read until a run sits there.
+func (pl prefillPlan) fAt(rate float64) float64 {
+	f := pl.baseF()
+	if !pl.loadAware() {
+		return f
+	}
+	rho := rate * pl.p.PromptTokens / (float64(pl.p.Replicas) * pl.vp)
+	rm := pl.rhoM()
+	if !(rho > rm) {
+		return f
+	}
+	return max(1, 1+(f-1)*(1-rho)/(1-rm))
 }
 
 // utilization is rho_w, the worst pod's: f * rate * E[I_eff] / (N_p * V_P),
@@ -605,9 +813,31 @@ func (pl prefillPlan) waitScale(rho float64) float64 {
 	return pl.work * (pl.ca2 + pl.cs2) / (2 * (1 - rho))
 }
 
-// own is the request's own latency less a: I * (1/V_P + kappa/BW).
+// own is the request's own latency less a: I * (1/V_P + kappa/BW), held at
+// the longest prompt with a bound (Prefill.PromptMaxRatio).
 func (pl prefillPlan) own() ownTime {
-	return newOwnTime(pl.p.PromptTokens*pl.ownRate, pl.cv)
+	mean := pl.p.PromptTokens * pl.ownRate
+	return newOwnTime(mean, pl.cv).capped(pl.p.PromptMaxRatio * mean)
+}
+
+// BeyondProcessorSharing says processor sharing is not priced alone on p's
+// prompt (SpreadBeyondProcessorSharing): a spread past MaxPSPromptCV that no
+// support bound at MaxPSPromptSupport or under clears. The bound clears it
+// only at a fleet Ca^2 no burstier than Poisson (ArrivalCV2 at most 1, 0
+// being Poisson), not at each pod's split one: the steps processor sharing
+// was measured to hold on were all at Poisson arrivals, and on the
+// 8000-token phase run at Ca^2 4 the bound read p50 7% under the measured,
+// where the larger of the two held it (issue
+// llm-d-incubation/llm-d-scaling-manager#304). The cut at 1 is where that
+// evidence brackets it (Ca^2 1 held, 4 did not), not a calibrated threshold.
+// A step it does not clear is priced as with the switch off, the router's
+// wait included: no gate stage and no processor-sharing onsets
+// (ttftPlan.routerWait, psOnsets).
+func (p Prefill) BeyondProcessorSharing() bool {
+	if r := p.PromptMaxRatio; r > 0 && r <= MaxPSPromptSupport && p.ArrivalCV2 <= 1 {
+		return false
+	}
+	return p.PromptCV > MaxPSPromptCV
 }
 
 // engineWait is the worst pod's wait tail at utilization rho, and its decay
@@ -747,8 +977,9 @@ type ttftPlan struct {
 	flags  []Flag
 	// ps is TTFTFleet.ProcessorSharing.
 	ps bool
-	// psCapped is ps at a prompt spread past MaxPSPromptCV: each price is
-	// the larger of processor sharing's and first come's.
+	// psCapped is ps at a prompt spread past MaxPSPromptCV, with no support
+	// bound clearing it (Prefill.BeyondProcessorSharing): each price is the larger of
+	// processor sharing's and first come's.
 	psCapped bool
 	// routerWait is TTFTFleet.PriceRouterWait or RouterWaitInPrefill where it
 	// takes: processor sharing alone, at a prompt spread up to MaxPSPromptCV.
@@ -777,7 +1008,7 @@ func (fl TTFTFleet) plan() (ttftPlan, *Unanswerable) {
 		}
 	}
 	pl := ttftPlan{pf: pf, d: fl.Decode, fc: fl.FlowControl, ps: fl.ProcessorSharing,
-		psCapped:     fl.ProcessorSharing && pf.cv > MaxPSPromptCV,
+		psCapped:     fl.ProcessorSharing && fl.Prefill.BeyondProcessorSharing(),
 		kneeUnpriced: fl.LowerBoundKneeUnpriced && fl.Prefill.VPLowerBound && !fl.Prefill.VPAssumed}
 	pl.routerWait = (fl.PriceRouterWait || fl.RouterWaitInPrefill) && pl.ps && !pl.psCapped
 	pl.gateStage = pl.routerWait && fl.PriceRouterWait
@@ -1251,7 +1482,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 			return m, nil
 		}
 		mixes[key{}] = withGate(m, false)
-		out.Parts.EngineWait, out.Parts.KVPullWait = parts.prefill, parts.pull
+		out.Parts.EngineWait, out.Parts.KVPullWait, out.Parts.KVPullUtilization = parts.prefill, parts.pull, parts.pullRho
 	} else {
 		theta := pf.waitScale(rho)
 		var tail float64
@@ -1306,12 +1537,15 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 			u := refuse(Saturated, fmt.Sprintf("no decode fill carries %.4g r/s", rate))
 			return priced{u: &u}
 		}
-		fill := k
-		if k < d.Band.Lo {
+		// fill is the fill the request runs at (seenFill): its first step
+		// and the term are read there, as its TPOT is; k for Poisson
+		// arrivals, higher where they cluster.
+		fill := d.seenFill(k)
+		if fill < d.Band.Lo {
 			out.Flags = addFlags(out.Flags, BelowFittedBand)
 		}
 		lowest := d.lowestFill()
-		k = max(k, lowest)
+		k = max(fill, lowest)
 		first, floorStep = d.itlAt(k), d.itlAt(lowest)
 		oldFirst, oldFloorStep = first, floorStep
 		if t := pl.term; t != nil {

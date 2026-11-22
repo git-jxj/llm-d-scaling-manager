@@ -30,8 +30,24 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   the KV pull are processor-sharing stages (`prefillPlan.psStages`), and
   `D`'s per-token part is net of the pull (`netOfPull`). Past a prompt cv of
   `MaxPSPromptCV` (0.25) a price is the larger of that and first come
-  (`ttftPlan.price`, flagged `SpreadBeyondProcessorSharing`). Off, a
-  first-come wait on the busiest pod (`prefillPlan.engineWait`).
+  (`ttftPlan.price`, flagged `SpreadBeyondProcessorSharing`), unless the
+  longest prompt is at most `MaxPSPromptSupport` (1.6) times the mean, at
+  `Ca²` up to 1, with `slo-ttft-prompt-support` on
+  (`Prefill.BeyondProcessorSharing`). Off, a first-come wait on the busiest
+  pod (`prefillPlan.engineWait`).
+- `PromptSupport` (`slo-ttft-prompt-support`, planner-only, off from the
+  constructor): the spread carries the longest prompt its histogram allows
+  over the mean (`PromptSpread.MaxRatio`, the highest bucket bound holding
+  requests), priced as `Prefill.PromptMaxRatio`: the prompt's gamma is
+  stretched so its held mean stays the measured mean (`holdScale`) and
+  censored there (`ownTime.capped` on first come, `ePoly.expect`'s hold on
+  processor sharing), and the bound, not the cv, decides processor sharing
+  at arrivals no burstier than Poisson.
+  Off, `MaxRatio` is zeroed in `promptSpread` and the gamma runs on. The
+  planner's replay does not turn it on either (`learnreplay.PlannerSwitches`):
+  on, its backtests read TTFT under measured where they read at or above it.
+  A backtest step carries its own histogram's bound beside its cv
+  (`whatifapi.Knobs.PromptMaxRatio`).
 - `PriceRouterWait` (`slo-ttft-router-wait`, opt-in, off, the CLI's
   `--price-router-wait` default): above the prefill onset, up to
   `MaxRouterWaitKneeShare` of the knee, prices the flow-control gate as a
@@ -52,6 +68,35 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   `BoundDecodeGateCharge`, which `decodeBound` does not read as decode-bound.
 - The last two are replay-only in the analyzer: `SetSwitchesForReplay` is
   the only way on, and no policy key sets them.
+One switch is a `whatif.Prefill` field, not a `TTFTFleet` field, and the
+planner's alone: `PrefixAttention` (`slo-ttft-prefix-attention`, off from the
+constructor and not in `learnreplay.PlannerSwitches`, so off in the planner
+too), a prefix hit's cost (issue #311). The planner reads it through
+`learnreplay.PrefillState.PrefixAttention`; the analyzer prices nothing with
+it. On:
+
+- V_P's rescale along the curve reads `I_eff + 2h`, `h` the cached tokens,
+  not `I_eff` (`Prefill.shapedVP`, `attentionSpan`). Each computed token
+  attends over the cached ones too: at 32k with a 75% hit a pod computes the
+  8k a fresh 8k prompt does, but V_P reads about 1.7x high without it. `h`
+  is `I_eff·hit/(1 − hit)`, from each side's measured hit rate, not the
+  whole prompt less `I_eff` (the two are read over different windows). It
+  needs both whole prompts known and a hit rate above
+  `MaterialPrefixHitMove` on either side; otherwise the rescale is as
+  before.
+- The planner nets an assumed prompt by a stated hit rate (`--prefix-hit`),
+  else the prefill variant's, not the decode variant's
+  (`pricedFleet.effectivePrompt`).
+- The KV transfer scales with the tokens it moves, the whole prompt less the
+  decode variant's hits (`pricedFleet.transferPerToken`).
+
+On whatever the switch says, `prefill.Estimate` records the whole prompt and
+the hit rate V_P was read at (`VPWholePromptTokens`, `VPPromptHitRate`), and
+`VPShapeMoved` is raised where the hits moved (`Prefill.prefixMoved`): the
+hit rate by more than `MaterialPrefixHitMove` (0.1, stated, not measured),
+or the whole prompt by more than `MaxVPShapeRatio` with a hit rate above 0.1
+on either side. A state that recorded no whole prompt raises nothing new. No
+committed recording has a prefix hit, so no golden moves.
 
 One more switch sets an input, not a `TTFTFleet` field:
 `slo-ttft-imbalance-across-counts` (off, `whatif.DefaultImbalanceAcrossCounts`;
