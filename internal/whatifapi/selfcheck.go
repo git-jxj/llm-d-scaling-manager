@@ -45,8 +45,8 @@ const (
 // its median ratio lies outside [selfCheckBiasFail, selfCheckBiasHi], fewer than
 // selfCheckWithinLo of its steps are within BacktestTolerance, more than
 // selfCheckLowShare read low or any one under selfCheckFloor, its p90 (where
-// the figure is judged at the mean) reads low in half of selfCheckMinSteps
-// or more scored steps, its worst
+// the figure is judged at the mean) reads low in half or more of its scored
+// steps, where it has selfCheckMinSteps or more, its worst
 // tenth near the knee reads outside [selfCheckFloor, selfCheckNearKneeHi],
 // or it called the fleet overloaded where it served unqueued
 // (selfcheck_rules.go); weak when its median ratio lies under
@@ -95,8 +95,9 @@ type SelfCheck struct {
 	Why   string `json:"why,omitempty"`
 	Trust string `json:"trust,omitempty"`
 	// TTFT and TPOT are the figures scored over every fold's judged steps,
-	// each at its primary statistic (the mean, else p90, else p50:
-	// primaryStats); absent where not scored.
+	// each at the statistic selfCheckScore takes (the mean, else p90, else
+	// p50, the first scored in selfCheckMinSteps or more steps); absent
+	// where not scored.
 	TTFT *SelfCheckFigure `json:"ttft,omitempty"`
 	TPOT *SelfCheckFigure `json:"tpot,omitempty"`
 	// Untrusted names the figures an inconsistent self-check says not to
@@ -378,8 +379,8 @@ type SelfCheckFigure struct {
 	// Refused is the other refusals, by reason.
 	Refused map[string]int `json:"refused"`
 	// p90Steps and p90Low are the p90's scored steps and those read more
-	// than BacktestTolerance low, where the figure is judged at another
-	// statistic (the p90-low rule, figureRules).
+	// than BacktestTolerance low, where the figure is judged at its mean
+	// (the p90-low rule, figureRules).
 	p90Steps, p90Low int
 }
 
@@ -514,8 +515,8 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 
 // selfCheckFigure is the score the self-check judges among scores, over
 // judged steps (selfCheckScore); the p90's where none was scored, for its
-// refusals. Beside a figure judged at another statistic it keeps the p90's
-// scored and low steps, for the p90-low rule.
+// refusals. Beside a figure judged at its mean it keeps the p90's scored
+// and low steps, for the p90-low rule.
 func selfCheckFigure(scores []BacktestScore, judged int) *SelfCheckFigure {
 	p90 := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 })
 	p := selfCheckScore(scores)
@@ -528,7 +529,7 @@ func selfCheckFigure(scores []BacktestScore, judged int) *SelfCheckFigure {
 	s := *p
 	f := &SelfCheckFigure{Statistic: s.Statistic, Steps: s.All.Steps, Bias: s.All.Bias, Low: s.All.Low, Judged: judged,
 		Overloaded: s.Refused[string(whatif.Saturated)], PastKnee: s.PastKnee, Refused: map[string]int{}}
-	if p90 >= 0 && s.Statistic != statP90 {
+	if p90 >= 0 && s.Statistic == statisticMean {
 		f.p90Steps, f.p90Low = scores[p90].All.Steps, scores[p90].All.Low
 	}
 	if s.All.Within != nil {

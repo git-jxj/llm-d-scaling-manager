@@ -165,9 +165,11 @@ const (
 // statP90 is the percentile a verdict reports beside the mean.
 const statP90 = "p90"
 
-// primaryStats is the order a verdict and the self-check take a figure's
-// statistic in: the mean (the histogram's sum over its count, no bucket
-// interpolated), else p90, else p50, the first scored in any step.
+// primaryStats is the order a figure's statistic is taken in: the mean (the
+// histogram's sum over its count, no bucket interpolated), else p90, else
+// p50. The backtest's verdict takes the first scored in any step
+// (primaryScore); the self-check the first scored in selfCheckMinSteps or
+// more (selfCheckScore).
 var primaryStats = []string{statisticMean, statP90, "p50"}
 
 // primaryScore is the first of primaryStats scored in a step, nil with none.

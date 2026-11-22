@@ -120,9 +120,10 @@ It tested 0.24 to 4.13 r/s at 2 prefill + 2 decode: an answer at another rate or
   why: few or loose agreements: mean TTFT: within 20% in 73% of 11 steps; the within share could be as low as 45% over the load levels
 ```
 
-Each figure is judged at its mean when the mean was scored in 6 steps or
-more, else at the p90, else at the p50; with none scored in 6, at the one
-scored in the most steps.
+Each figure is judged at the first of its mean, p90 and p50 scored in 6
+steps or more; with none scored in 6, at the one scored in the most steps
+(on a tie, in that order). The backtest's own verdict quotes the mean
+wherever it scored one.
 
 An answer given stated inputs is checked with them. With
 `--assume-vp`, `--assume-a`, `--assume-prompt-cv`, `--assume-router-hop`,
