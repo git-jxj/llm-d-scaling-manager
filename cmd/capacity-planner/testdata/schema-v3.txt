@@ -428,6 +428,7 @@ selfCheck.tpot.minRatio number
 selfCheck.tpot.nearKnee object
 selfCheck.tpot.nearKnee.steps number
 selfCheck.tpot.nearKnee.worst number
+selfCheck.tpot.nearKneeUnsettled number
 selfCheck.tpot.overloaded number
 selfCheck.tpot.pastKnee object
 selfCheck.tpot.pastKnee.hi number
@@ -448,6 +449,7 @@ selfCheck.ttft.minRatio number
 selfCheck.ttft.nearKnee object
 selfCheck.ttft.nearKnee.steps number
 selfCheck.ttft.nearKnee.worst number
+selfCheck.ttft.nearKneeUnsettled number
 selfCheck.ttft.overloaded number
 selfCheck.ttft.pastKnee object
 selfCheck.ttft.pastKnee.hi number

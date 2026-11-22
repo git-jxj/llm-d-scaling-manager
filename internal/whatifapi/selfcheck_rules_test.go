@@ -3,6 +3,7 @@ package whatifapi
 import (
 	"context"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -161,4 +162,34 @@ func TestReport_JudgeTrust(t *testing.T) {
 	r.Shapes[0].Verdict.Trust = ""
 	r.JudgeTrust()
 	assert.Empty(t, r.Shapes[0].Verdict.Trust)
+}
+
+// TTFT steps near the knee left unscored as unsettled are counted beside
+// the near-knee rule: in its words where it runs, and as why it did not
+// where too few steps there were scored.
+func TestSelfCheckNearKneeUnsettled(t *testing.T) {
+	steps := []BacktestStep{
+		{Load: LoadNearKnee, Unsettled: true},
+		{Load: LoadNearKnee, Unsettled: true},
+		{Load: LoadNearKnee, Unsettled: true, Excluded: ExcludedBurst},
+		{Load: LoadBelow80, Unsettled: true},
+		{Load: LoadNearKnee},
+	}
+	assert.Equal(t, 2, nearKneeUnsettled(steps), "judged steps near the knee only")
+
+	fig := func(scored int) *SelfCheckFigure {
+		return &SelfCheckFigure{Bias: ptr(1), Steps: 10, Levels: 10, NearKnee: &SelfCheckNearKnee{Steps: scored, Worst: 1}, NearKneeUnsettled: 2}
+	}
+	sc := &SelfCheck{}
+	rules, _, _ := sc.figureRules("ttft", "TTFT", fig(selfCheckNearKneeMin), 0.9)
+	i := slices.IndexFunc(rules, func(r SelfCheckRule) bool { return r.Name == "ttft-near-knee" })
+	require.GreaterOrEqual(t, i, 0)
+	assert.Contains(t, rules[i].Detail, "; 2 more there did not settle and are not scored")
+	assert.Empty(t, sc.tail())
+
+	sc = &SelfCheck{}
+	rules, _, _ = sc.figureRules("ttft", "TTFT", fig(1), 0.9)
+	assert.False(t, slices.ContainsFunc(rules, func(r SelfCheckRule) bool { return r.Name == "ttft-near-knee" }))
+	assert.Equal(t, " The near-knee rule did not run: at 0.8 to 1.0 of the knee 1 steps were scored, fewer than 3; "+
+		"2 more there did not settle and are not scored.", sc.tail())
 }

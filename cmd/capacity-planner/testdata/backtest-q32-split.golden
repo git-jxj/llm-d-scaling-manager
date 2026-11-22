@@ -24,7 +24,7 @@ step (UTC)          rate   P+D  TTFT p50            TTFT p90            TPOT p50
 2026-11-14 09:10    0.27   2+2  667ms/509ms         996ms/-             13ms/15ms         18ms/-            judged
 2026-11-14 09:15    3.09   2+2  1.7s/11.7s          4.7s/17.7s          13ms/15ms         18ms/19ms         not judged: a burst near the knee in its window
 2026-11-14 09:20    4.13   2+2  overloaded/12.2s    overloaded/17.9s    13ms/14ms         18ms/19ms         judged
-2026-11-14 09:25    2.02   2+2  880ms/11.1s         2.0s/17.6s          13ms/14ms         18ms/19ms         not judged: a burst near the knee in its window
+2026-11-14 09:25    2.02   2+2  920ms/11.1s         2.0s/17.6s          13ms/14ms         18ms/19ms         not judged: a burst near the knee in its window
 2026-11-14 09:30    0.26   2+2  666ms/515ms         993ms/-             13ms/15ms         18ms/-            judged
 2026-11-14 09:35    0.24   2+2  665ms/516ms         989ms/-             13ms/15ms         18ms/-            judged
 

@@ -125,6 +125,9 @@ type SelfCheck struct {
 	// region.
 	notUsed string
 	outside bool
+	// nearKneeNotRun says the near-knee rule did not run because steps
+	// there did not settle.
+	nearKneeNotRun string
 }
 
 // StatedITLBNotUsed opens the words of a refusal whose stated ITL B was not
@@ -133,9 +136,10 @@ type SelfCheck struct {
 const StatedITLBNotUsed = "ITL B not assumed ("
 
 // tail is what the line adds after its result: a stated ITL B the fits did
-// not use, and the stated inputs the self-check ran without.
+// not use, a near-knee rule unsettled steps kept from running, and the
+// stated inputs the self-check ran without.
 func (sc *SelfCheck) tail() string {
-	return sc.notUsed + withoutStatedSentence(sc.WithoutStated)
+	return sc.notUsed + sc.nearKneeNotRun + withoutStatedSentence(sc.WithoutStated)
 }
 
 // itlBNotUsed is how many judged steps a stated ITL B was not used in, at
@@ -372,6 +376,11 @@ type SelfCheckFigure struct {
 	MinRatio       *float64           `json:"minRatio,omitempty"`
 	NearKnee       *SelfCheckNearKnee `json:"nearKnee,omitempty"`
 	ServedPastKnee int                `json:"servedPastKnee"`
+	// NearKneeUnsettled is the TTFT steps at 0.8 to 1.0 of the knee left
+	// unscored because their queue does not settle in the window
+	// (UnscoredUnsettled): NearKnee does not hold them, so the worst-tenth
+	// rule reads fewer steps there, or does not run.
+	NearKneeUnsettled int `json:"nearKneeUnsettled,omitempty"`
 	// Refused is the other refusals, by reason.
 	Refused map[string]int `json:"refused"`
 }
@@ -502,6 +511,9 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 		if x.f != nil {
 			pts, overloaded := selfCheckPoints(steps, x.ttft, x.f.Statistic)
 			x.f.scoreSteps(pts, overloaded, x.ttft)
+			if x.ttft {
+				x.f.NearKneeUnsettled = nearKneeUnsettled(steps)
+			}
 		}
 	}
 	sc.Covered = coverageOf(steps)
@@ -642,10 +654,21 @@ func (sc *SelfCheck) figureRules(name, label string, f *SelfCheckFigure, within 
 		rule("floor", *f.MinRatio >= selfCheckFloor,
 			fmt.Sprintf("the lowest step read %.2f of measured, want %.2f or more", *f.MinRatio, selfCheckFloor))
 	}
+	unsettled := ""
+	if n := f.NearKneeUnsettled; n > 0 {
+		unsettled = fmt.Sprintf("; %d more there did not settle and are not scored", n)
+	}
 	if k := f.NearKnee; k != nil && k.Steps >= selfCheckNearKneeMin {
 		rule("near-knee", k.Worst >= selfCheckFloor && k.Worst <= selfCheckNearKneeHi,
-			fmt.Sprintf("at 0.8 to 1.0 of the knee the worst tenth of %d steps read %.2f of measured, want %.2f to %.2f",
-				k.Steps, k.Worst, selfCheckFloor, selfCheckNearKneeHi))
+			fmt.Sprintf("at 0.8 to 1.0 of the knee the worst tenth of %d steps read %.2f of measured, want %.2f to %.2f%s",
+				k.Steps, k.Worst, selfCheckFloor, selfCheckNearKneeHi, unsettled))
+	} else if unsettled != "" {
+		scored := 0
+		if k != nil {
+			scored = k.Steps
+		}
+		sc.nearKneeNotRun = fmt.Sprintf(" The near-knee rule did not run: at 0.8 to 1.0 of the knee %d steps were scored, fewer than %d%s.",
+			scored, selfCheckNearKneeMin, unsettled)
 	}
 	if f.Overloaded > 0 && name == "ttft" {
 		served := f.ServedPastKnee >= selfCheckServedMin && float64(f.ServedPastKnee) >= selfCheckServedShare*float64(f.Overloaded)
