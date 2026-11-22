@@ -389,17 +389,30 @@ type shapeSample struct {
 // 120 per rank, 0.034 ms per sequence) to read it, so a recording of one
 // shape cannot. A replay turns it on by name.
 //
-// One controller switch, on from its constructor, is turned off here:
+// Two controller switches, on from their constructor, are turned off here:
 //
+//   - saturation.SwitchITLBaselineFromFloor: a decode line with no full fit
+//     pinned through the floor read below the band in the last 30 minutes,
+//     not the 6 ms default B (issue
+//     llm-d-incubation/llm-d-scaling-manager#169 item 1, on from the
+//     constructor since #318, after a GPU check of the controller's decode
+//     asks). The planner keeps such a line on the default and refuses it
+//     (PinnedDefaultB), as v0.12.2 did; --assume-itl-b floor prices it
+//     through the floor's B and flags every figure on it AssumedITLB. On,
+//     the planner priced 14 backtest TPOT steps it had refused, on seven
+//     recordings, more than 20% under what was measured (ttft-three-pods at
+//     0.33 to 0.46 of measured), with no flag saying B was not measured, and
+//     judged pd-restart's decode under-provisioned where it had not judged
+//     it (issue llm-d-incubation/llm-d-scaling-manager#318).
 //   - saturation.SwitchITLFloorBaselineHeld: a decode line with no full fit
 //     keeps the B it last read from its floor below the band after the
 //     floor's readings are 30 minutes old (issue
 //     llm-d-incubation/llm-d-scaling-manager#333). On from the controller's
-//     constructor, for a fleet held in the band. The planner reads B from the
-//     floor of the last 30 minutes only, as before, and refuses a line with
-//     none (PinnedDefaultB): held, it priced decode on hours of the
-//     staircase and three-pods recordings it refused, and no check yet says
-//     those figures do not read under what was measured.
+//     constructor, for a fleet held in the band. It holds nothing with the
+//     floor off; it is off here in its own right too: held, it priced
+//     decode on hours of the staircase and three-pods recordings the planner
+//     refused, and no check yet says those figures do not read under what
+//     was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -411,6 +424,7 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchITLAdaptiveBandFloor:   true,
 		saturation.SwitchPrefillVPFloorServed:   true,
 		saturation.SwitchPlannerCapAtStepBudget: true,
+		saturation.SwitchITLBaselineFromFloor:   false,
 		saturation.SwitchITLFloorBaselineHeld:   false,
 	}, PackageSLO: {
 		slo.SwitchTTFTHopUnqueued: true,

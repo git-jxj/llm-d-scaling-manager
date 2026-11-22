@@ -70,29 +70,35 @@ func TestSelfCheckReplaysTheStatedPromptCV(t *testing.T) {
 	assert.Greater(t, *wide.TTFT.Bias, *plain.TTFT.Bias, "the stated cv 3 reaches the replay's pricing: first come's mean, above processor sharing's")
 }
 
-// The self-check replays the recording with the ITL B the answer states, and
-// names it. On the b-on staircase the decode line is pinned through the floor
-// below the band (saturation.SwitchITLBaselineFromFloor, issue
-// llm-d-incubation/llm-d-scaling-manager#169), so no step is refused
-// PinnedDefaultB: the plain self-check scores 6 p90 TPOT steps, 5 within
-// 20 %. Before the floor, every step was refused PinnedDefaultB and only the
-// stated B scored them. A stated B is used only on a line still on the
-// default (itl_b.go), so here it changes no step, and the self-check still
-// replays and names it. TestAssumeITLB_PricesALineOnTheDefaultIntercept
-// holds the stated B on a line on the default.
+// The self-check replays the recording with the ITL B the answer states: on
+// a staircase phase whose decode line rests on the default intercept, the
+// default self-check refuses every p90 TPOT step PinnedDefaultB, and with
+// --assume-itl-b floor it scores them, flagged as stated. The planner does
+// not take B from the floor below the band on its own
+// (saturation.SwitchITLBaselineFromFloor is off in
+// learnreplay.PlannerSwitches, issue llm-d-incubation/llm-d-scaling-manager#318):
+// only the stated B scores these steps.
+//
+// The phase's last test step (03:30) holds the end of the load at the knee
+// (0 to 43.2 r/s against a decode knee of 43.3 r/s) and is not judged
+// (ExcludedBurst, issue llm-d-incubation/llm-d-scaling-manager#278): priced
+// at its mean rate it read p90 TPOT 0.31 of measured. That leaves 5 scored
+// steps, under the 6 a verdict needs, on every staircase phase that spans
+// an hour, so the check is not run; the steps it scored, and the line's
+// lead, still show the stated B replayed.
 func TestSelfCheckReplaysTheStatedITLB(t *testing.T) {
 	withSelfCheck(t)
 	recording := stair("ttft-staircase-b-on")
 	plain := selfCheckOf(t, "at-replicas", "--recording", recording)
 	require.NotNil(t, plain.TPOT, plain.Line)
 	assert.Empty(t, plain.Stated)
-	assert.Zero(t, plain.TPOT.Refused["PinnedDefaultB"], "the floor's B prices the steps: %s", plain.Line)
-	assert.Positive(t, plain.TPOT.Steps, plain.Line)
+	assert.Zero(t, plain.TPOT.Steps, plain.Line)
+	assert.Positive(t, plain.TPOT.Refused["PinnedDefaultB"], "the default B refuses the steps: %s", plain.Line)
 
 	sc := selfCheckOf(t, "at-replicas", "--recording", recording, "--assume-itl-b", "floor")
 	assert.Equal(t, []string{"--assume-itl-b floor"}, sc.Stated)
-	assert.True(t, strings.HasPrefix(sc.Line, "Self-check, replayed with the stated --assume-itl-b floor (flagged as stated, outside the validated region): "), sc.Line)
+	assert.True(t, strings.HasPrefix(sc.Line, "Self-check with the stated --assume-itl-b floor (flagged as stated, outside the validated region) not run: too few steps were scored"), sc.Line)
 	require.NotNil(t, sc.TPOT, sc.Line)
-	assert.Zero(t, sc.TPOT.Refused["PinnedDefaultB"], sc.Line)
-	assert.Equal(t, plain.TPOT.Steps, sc.TPOT.Steps, "no line is on the default, so the stated B moves no step: %s", sc.Line)
+	assert.Zero(t, sc.TPOT.Refused["PinnedDefaultB"], "the fits priced through the stated B: %s", sc.Line)
+	assert.Positive(t, sc.TPOT.Steps, sc.Line)
 }
