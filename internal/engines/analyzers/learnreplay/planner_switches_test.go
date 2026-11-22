@@ -42,3 +42,21 @@ func TestPlannerSwitches_StateAtTurnsThemOn(t *testing.T) {
 	assert.True(t, mine[PackageSaturation][saturation.SwitchPrefillAEngineTiming] == false &&
 		len(mine[PackageSaturation]) == 2, "the caller's map is not written")
 }
+
+// The TTFT model's switches as v0.12.3 ships them: the served peak on a
+// fleet that never queued and the speculating decode row's held TTFT are
+// on; every other TTFT switch is off, and only an explicit replay option
+// (the capacity planner's --experimental-ttft) turns one on.
+func TestPlannerSwitches_TheTTFTModelStates(t *testing.T) {
+	sw := PlannerSwitches()
+	assert.True(t, sw[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued])
+	assert.True(t, sw[PackageSLO][slo.SwitchTTFTDecodeSpeculatingHeld])
+	for _, name := range []string{saturation.SwitchPrefillVPWindowBest, saturation.SwitchPrefillVPAtServedWork,
+		saturation.SwitchPrefillVPOccupancyPlateau} {
+		assert.NotContains(t, sw[PackageSaturation], name, "off in the planner by default")
+	}
+	for _, name := range []string{slo.SwitchTTFTComputedHit, slo.SwitchTTFTTierLoad, slo.SwitchTTFTTierKVWait,
+		slo.SwitchTTFTPSByEngine, slo.SwitchTTFTHopWindowMeans, slo.SwitchTTFTCachedTokenCost} {
+		assert.NotContains(t, sw[PackageSLO], name, "off in the planner by default")
+	}
+}

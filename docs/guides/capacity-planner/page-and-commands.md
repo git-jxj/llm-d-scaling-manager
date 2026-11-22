@@ -523,12 +523,15 @@ at SLO` is at least its rate, and a TTFT floor over the target is at most
 that floor. A TPOT miss is known whatever V_P is, and still gives
 UNDER-PROVISIONED.
 
-The planner reads V_P over the whole recording, not only its last 6 hours,
-as the controller does: a fleet that queued for prefill only at its busiest
-hours keeps the V_P read then (flag `VPFromEarlierInWindow`, and the assumed
-line says when: "V_P learned at +6.2 h of the window, 17.8 h before the cycle
-priced"). It is a lower bound, raised to what a Pod was seen to compute
-where that is higher.
+The planner reads V_P from the last 6 hours of the recording, as the
+controller does. Only with `--experimental-ttft` (see below) does it read
+V_P over the whole recording: a fleet that queued for prefill only at its
+busiest hours then keeps the V_P read then (flag `VPFromEarlierInWindow`,
+and the assumed line says when: "V_P learned at +6.2 h of the window, 17.8 h
+before the cycle priced"). It is a lower bound, raised to what a Pod was
+seen to compute where that is higher. It is off by default because, on a
+production P/D fleet, the TTFT priced from that lower bound for the rest of
+the day read many times what was measured.
 
 A fleet whose prefill Pods never queued for compute at all has no V_P from a
 queue. The planner then takes the highest rate a prefill Pod computed over 3

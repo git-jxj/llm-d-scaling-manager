@@ -318,10 +318,6 @@ type shapeSample struct {
 //     TTFT priced from it: no figure is priced where none was, so none can
 //     read under what was measured (issue
 //     llm-d-incubation/llm-d-scaling-manager#369).
-//   - saturation.SwitchPrefillVPWindowBest: the peak under a queue, the best
-//     read anywhere in the recording, not only in the last 6 hours, flagged
-//     with its age (VPFromEarlierInWindow). A lower bound as before, floored
-//     at the served peak.
 //   - saturation.SwitchPlannerCapAtStepBudget: the batch cap per rank held
 //     to the batch the step token budget runs, ceil(budget / (1 + k)) with k
 //     speculative tokens (issue llm-d-incubation/llm-d-scaling-manager#302).
@@ -414,6 +410,14 @@ type shapeSample struct {
 // lower bound. One warm-up's self-check falls from weak to inconsistent with
 // it. It stays off until TTFT under a lower-bound knee is priced.
 //
+// saturation.SwitchPrefillVPWindowBest is planner-only and not listed: it
+// keeps the peak under a queue read anywhere in the recording, not only in
+// the last 6 hours, flagged with its age (VPFromEarlierInWindow). No public
+// figure moves with it, but on a production P/D fleet whose prefill pods
+// queued only at its busiest hours it prices the rest of the day's TTFT from
+// that lower bound, and the TTFT read many times what was measured. It is
+// on only with --experimental-ttft.
+//
 // saturation.SwitchMoEBusiestRank is not listed either: it reads a
 // data-parallel MoE engine's line at its busiest rank (issue
 // llm-d-incubation/llm-d-scaling-manager#312), and its only evidence is
@@ -465,7 +469,6 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchITLAdaptiveBandFloor:    true,
 		saturation.SwitchPrefillVPFloorServed:    true,
 		saturation.SwitchPrefillVPServedUnqueued: true,
-		saturation.SwitchPrefillVPWindowBest:     true,
 		saturation.SwitchPlannerCapAtStepBudget:  true,
 		saturation.SwitchITLBaselineFromFloor:    false,
 		saturation.SwitchITLFloorBaselineHeld:    false,
