@@ -85,16 +85,14 @@ func TestSelfCheckGolden(t *testing.T) {
 // selfCheckBlock is the self-check's lines of a text answer: its
 // "Self-check:" line and the indented lines under it, "" with none.
 func selfCheckBlock(out string) string {
-	var block []string
-	for _, l := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
-		switch {
-		case strings.HasPrefix(l, "Self-check:"):
-			block = []string{l}
-		case len(block) > 0 && strings.HasPrefix(l, "  "):
-			block = append(block, l)
-		case len(block) > 0:
-			return strings.Join(block, "\n")
-		}
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	i := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, "Self-check:") })
+	if i < 0 {
+		return ""
 	}
-	return strings.Join(block, "\n")
+	j := i + 1
+	for j < len(lines) && strings.HasPrefix(lines[j], "  ") {
+		j++
+	}
+	return strings.Join(lines[i:j], "\n")
 }
