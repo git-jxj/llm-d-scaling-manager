@@ -53,13 +53,13 @@ const maxPromptTailQ = 0.95
 const cellTTFTQ = 0.9
 
 // decodeKneeGoldensLow and decodeKneeGoldensHigh are the lowest and the
-// highest of the decode knees that read high on the 0.6B goldens, outside
-// every region the envelope validates it in (testdata/decode-validation.golden,
+// highest of the decode knees that read high on the 0.6B goldens and past
+// the table's own bound (OUT in testdata/decode-validation.golden,
 // docs/proposals/slo-capacity-planner.md, "Measured on the goldens"; a test
 // pins them to the file): the error a decode knee outside its region is
 // sized at.
 const (
-	decodeKneeGoldensLow  = 0.43
+	decodeKneeGoldensLow  = 0.172
 	decodeKneeGoldensHigh = 0.991
 )
 

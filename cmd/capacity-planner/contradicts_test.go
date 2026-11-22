@@ -332,11 +332,13 @@ func TestReport_DecodeAtTheErrorBound(t *testing.T) {
 
 // The 0.6B goldens' range the planner says and sizes at is the lowest and
 // the highest of the decode knees that read high in
-// testdata/decode-validation.golden.
+// testdata/decode-validation.golden and past its bound (OUT): a knee read
+// within the bound (a pinned-B line since the floor's intercept, #318) is
+// not a knee that read high.
 func TestDecodeKneeGoldensMatchTheTable(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("testdata", "decode-validation.golden"))
 	require.NoError(t, err)
-	re := regexp.MustCompile(`knee \+([0-9.]+)% over`)
+	re := regexp.MustCompile(`knee \+([0-9.]+)% over \d+ rows, OUT of`)
 	ms := re.FindAllStringSubmatch(string(b), -1)
 	high := make([]float64, 0, len(ms))
 	for _, m := range ms {

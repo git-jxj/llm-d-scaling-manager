@@ -76,9 +76,9 @@ tuning has been measured yet; when one is, its rows will print `validated on
 a holdout`.
 
 **The decode knee.** Inside its region (the row below) the decode knee held
-to within the run's 3% hold rule. Outside it, on the Qwen3-0.6B goldens, three
-knees read 43% to 99% high and one 42% low; the planner says the same 43% to
-99%. `at-replicas` prints the label under the decode knee
+to within the run's 3% hold rule. Outside it, on the Qwen3-0.6B goldens, four
+knees read 17% to 99% high past the table's bound and one 42% low; the
+planner says the same 17% to 99%. `at-replicas` prints the label under the decode knee
 in its capacity table, says the 0.6B range under `not validated` only when
 the knee is outside, and sizes decode at the label's upper error inside the
 region, or at 99.1% outside it, beside the point answer
