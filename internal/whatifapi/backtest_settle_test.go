@@ -100,7 +100,8 @@ func TestScoreStepUnsettled(t *testing.T) {
 	one := 1.0
 	st := BacktestStep{Unsettled: true, TTFT: []BacktestPoint{predictedPoint(0.9, Figure{Value: &one}, nil)},
 		TPOT: []BacktestPoint{predictedPoint(0.9, Figure{Value: &one}, nil)}}
-	m := measured{ttft: []*float64{&one}, tpot: []*float64{&one}, ttftWhy: []string{""}, tpotWhy: []string{""}, requests: 1000, tpotRequests: 1000}
+	m := measured{ttft: []*float64{&one}, tpot: []*float64{&one}, ttftWhy: []string{""}, tpotWhy: []string{""},
+		ttftBucket: []*Band{nil}, tpotBucket: []*Band{nil}, requests: 1000, tpotRequests: 1000}
 	scoreStep(&st, m, nil)
 	assert.Equal(t, UnscoredUnsettled, st.TTFT[0].Unscored)
 	assert.Nil(t, st.TTFT[0].Ratio)
