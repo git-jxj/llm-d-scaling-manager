@@ -138,6 +138,12 @@ const (
 	// fewer than 1/SettleShare independent readings of it: its TTFT is a
 	// noisy sample of the steady state the planner prices.
 	UnscoredUnsettled = "unsettled"
+	// UnscoredBurst is a TTFT whose measurement window holds the start or
+	// the end of a load near a prefill knee that rests on a lower bound of
+	// V_P (BacktestStep.TTFTBurst): the step is judged on decode's own knee,
+	// and only its TTFT, which a queue building near that knee may set, is
+	// not scored.
+	UnscoredBurst = "burst"
 	// UnscoredUnresolvable is a measured percentile that fell in a histogram
 	// bucket too wide to place it (MeasuredBucketWidth) while the prediction
 	// fell inside the same bucket: interpolated inside the bucket, the
@@ -392,6 +398,11 @@ type BacktestStep struct {
 	// scored (UnscoredUnsettled).
 	RelaxationSeconds *float64 `json:"relaxationSeconds,omitempty"`
 	Unsettled         bool     `json:"unsettled,omitempty"`
+	// TTFTBurst says the step's window is a burst (burstIn) against a
+	// prefill knee priced from a lower bound of V_P, and not against
+	// decode's knee: the true prefill knee may be far higher, so the step is
+	// not excluded for it, and only its TTFT is not scored (UnscoredBurst).
+	TTFTBurst bool `json:"ttftBurst,omitempty"`
 	// Backlog is the requests a fluid queue carries into the step from the
 	// steps before it, where one ran past the prefill knee (Q_k+1 =
 	// max(0, Q_k + (rate - knee) x step)), and BacklogWait the mean wait it
@@ -1319,9 +1330,25 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		fl.reset()
 	}
 	if pred.knee != nil {
-		if lo, hi, ok := burstIn(seriesAt(q.test.series, st.window), *pred.knee); ok && out.Excluded == "" && in.rate < *pred.knee {
-			out.Excluded, out.Detail = ExcludedBurst, fmt.Sprintf("its measurement window holds the start or the end of a load near the knee: cycles from %.2f to %.2f r/s against a knee of %.2f r/s, so its mean rate, %.2f r/s, is no rate the fleet ran at",
-				lo, hi, *pred.knee, in.rate)
+		// A burst is judged against a knee the model prices. A prefill knee
+		// that rests on a lower bound of V_P is not one: the true knee may be
+		// far higher, so whether the window ran near it is unknown. There the
+		// step is judged against decode's knee, and a burst against the
+		// lower-bound knee alone withholds only the step's TTFT, which a
+		// prefill queue building in the burst may set (#280).
+		judgeKnee := pred.knee
+		if pred.kneeLowerBound {
+			judgeKnee = pred.decodeKnee
+		}
+		samples := seriesAt(q.test.series, st.window)
+		if judgeKnee != nil {
+			if lo, hi, ok := burstIn(samples, *judgeKnee); ok && out.Excluded == "" && in.rate < *judgeKnee {
+				out.Excluded, out.Detail = ExcludedBurst, fmt.Sprintf("its measurement window holds the start or the end of a load near the knee: cycles from %.2f to %.2f r/s against a knee of %.2f r/s, so its mean rate, %.2f r/s, is no rate the fleet ran at",
+					lo, hi, *judgeKnee, in.rate)
+			}
+		}
+		if _, _, ok := burstIn(samples, *pred.knee); ok && pred.kneeLowerBound && out.Excluded == "" && in.rate < *pred.knee {
+			out.TTFTBurst = true
 		}
 		out.KneeShare = ptr(in.rate / *pred.knee)
 		out.Load = loadBand(*out.KneeShare)
@@ -1392,6 +1419,10 @@ func scoreStep(out *BacktestStep, m measured, target *ReportTarget) {
 		why := m.ttftWhy[i]
 		if why == "" && out.Unsettled {
 			why = UnscoredUnsettled
+		}
+		if why == "" && out.TTFTBurst && out.TTFT[i].Predicted.Value != nil {
+			// A refused figure counts by its refusal, not twice.
+			why = UnscoredBurst
 		}
 		out.TTFT[i] = scoredPoint(out.TTFT[i], m.ttft[i], m.requests, m.ttftTop, why, m.ttftBucket[i])
 	}
@@ -1495,6 +1526,9 @@ type prediction struct {
 	// knee is the lower knee of the fleet that priced, decodeKnee decode's
 	// and prefillKnee prefill's; nil with none.
 	knee, decodeKnee, prefillKnee *float64
+	// kneeLowerBound says knee is the prefill knee and rests on a lower
+	// bound of V_P (whatif.VPLowerBound).
+	kneeLowerBound bool
 	// promptCV is the prompt spread priced, and ca2 the arrivals' (1 for
 	// random arrivals).
 	promptCV, ca2 float64
@@ -1589,6 +1623,9 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 			}
 			if v, ok := valueOf(fl.PrefillKnee()); ok && v > 0 {
 				out.prefillKnee = ptr(v)
+			}
+			if a, ok := fl.PrefillKnee().(whatif.Answer); ok && out.knee != nil && a.Value == *out.knee && a.HasFlag(whatif.VPLowerBound) {
+				out.kneeLowerBound = true
 			}
 			out.promptCV, out.ca2 = whatif.AssumedPromptCV, 1
 			if cv != nil {
@@ -2303,6 +2340,10 @@ func verdictPart(name string, scores []BacktestScore, unit string) (line string,
 	if n := sc.Unscored[UnscoredUnsettled]; n > 0 {
 		w += fmt.Sprintf(" %d ran so near the prefill knee that its queue does not settle inside the window (relaxation time over %.0f%% of it): "+
 			"the window's TTFT is a noisy sample of the steady state priced.", n, 100*SettleShare)
+	}
+	if n := sc.Unscored[UnscoredBurst]; n > 0 {
+		w += fmt.Sprintf(" %d held the start or the end of a load near a prefill knee priced from a lower bound of V_P: "+
+			"its TTFT, which a queue building there may set, is not scored.", n)
 	}
 	if sc.Statistic != statP90 {
 		w += percentileWords(name, scores)

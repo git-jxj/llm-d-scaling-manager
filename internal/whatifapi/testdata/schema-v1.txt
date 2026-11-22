@@ -129,6 +129,7 @@ backtest.steps[].tpot[].sameBucket boolean
 backtest.steps[].tpot[].statistic string
 backtest.steps[].tpot[].unscored string
 backtest.steps[].ttft array
+backtest.steps[].ttftBurst boolean
 backtest.steps[].ttft[] object
 backtest.steps[].ttft[].aboveHistogram boolean
 backtest.steps[].ttft[].bound number
@@ -769,6 +770,7 @@ prediction.steps[].tpot[].sameBucket boolean
 prediction.steps[].tpot[].statistic string
 prediction.steps[].tpot[].unscored string
 prediction.steps[].ttft array
+prediction.steps[].ttftBurst boolean
 prediction.steps[].ttft[] object
 prediction.steps[].ttft[].aboveHistogram boolean
 prediction.steps[].ttft[].bound number

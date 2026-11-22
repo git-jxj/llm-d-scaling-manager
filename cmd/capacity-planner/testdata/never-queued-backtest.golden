@@ -1,8 +1,8 @@
 Over the 1 h 13 min the planner did not see:
-The planner gave no TTFT figure for any step: no prefill speed was learned to price a TTFT from: none under a queue, or, where the prefill pods never queued, only the rate a pod computed, which prices the knee as a lower bound and no TTFT; fit on more (a larger split, or a longer recording) (refused: NoPrefillCapacity in 13).
-mean TPOT: within 20% of measured in 13 of the 13 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 0.99). p90 TPOT not scored in 8: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it or within 20% of its edge; in the measured histogram bucket itself in 8, 10 ms to 20 ms (2.0x wide): consistent at the bucket's resolution, not within 20%.
+The planner gave no TTFT figure for any step: no prefill speed was learned to price a TTFT from: none under a queue, or, where the prefill pods never queued, only the rate a pod computed, which prices the knee as a lower bound and no TTFT; fit on more (a larger split, or a longer recording) (refused: NoPrefillCapacity in 15).
+mean TPOT: within 20% of measured in 15 of the 15 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 0.98). p90 TPOT not scored in 10: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it or within 20% of its edge; in the measured histogram bucket itself in 10, 10 ms to 20 ms (2.0x wide): consistent at the bucket's resolution, not within 20%.
 None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.
-Judged 13 of 16 five-minute steps; not judged: 1 warm-up, 2 a burst near the knee in its window.
+Judged 15 of 16 five-minute steps; not judged: 1 warm-up.
 
 fit:  never-queued.jsonl.gz, 2026-11-14 07:09 to 2026-11-14 08:22 UTC, 291 cycles
 test: never-queued.jsonl.gz, 2026-11-14 08:22 to 2026-11-14 09:35 UTC, 289 cycles (one recording split: 50%)
@@ -23,26 +23,26 @@ step (UTC)          rate   P+D  TTFT mean           TTFT p90            TPOT mea
 2026-11-14 09:00    0.30   2+2  no figure/603ms     no figure/-         11ms/11ms         18ms/-            judged
 2026-11-14 09:05    0.29   2+2  no figure/563ms     no figure/-         11ms/11ms         18ms/-            judged
 2026-11-14 09:10    0.27   2+2  no figure/562ms     no figure/-         11ms/11ms         18ms/-            judged
-2026-11-14 09:15    3.09   2+2  no figure/11.4s     no figure/17.7s~    11ms/12ms         18ms/19ms~        not judged: a burst near the knee in its window
+2026-11-14 09:15    3.09   2+2  no figure/11.4s     no figure/17.7s~    11ms/12ms         18ms/19ms~        judged
 2026-11-14 09:20    4.13   2+2  no figure/11.6s     no figure/17.9s~    11ms/12ms         18ms/19ms~        judged
-2026-11-14 09:25    2.02   2+2  no figure/10.7s     no figure/17.6s~    11ms/12ms         18ms/19ms~        not judged: a burst near the knee in its window
+2026-11-14 09:25    2.02   2+2  no figure/10.7s     no figure/17.6s~    11ms/12ms         18ms/19ms~        judged
 2026-11-14 09:30    0.26   2+2  no figure/586ms     no figure/-         11ms/11ms         18ms/-            judged
 2026-11-14 09:35    0.24   2+2  no figure/589ms     no figure/-         11ms/11ms         18ms/-            judged
 
 score over the steps with a figure
             steps  median  within     read    typical     worst-10%  under upper 
                     ratio     20% >20% low       miss          miss        bound 
-TTFT mean       0       -       -        0          -             -            - 13 refused NoPrefillCapacity
-TTFT p50        0       -       -        0          -             -            - 13 refused NoPrefillCapacity
-TTFT p90        0       -       -        0          -             -            - 13 refused NoPrefillCapacity, 5 fewRequests
-TTFT p95        0       -       -        0          -             -            - 13 refused NoPrefillCapacity, 11 fewRequests
-TPOT mean      13    0.99    100%        0      1.01x         1.02x            - 
-TPOT p50        0       -       -        0          -             -            - 13 unresolvable (13 in the measured bucket)
-TPOT p90        0       -       -        0          -             -            - 5 fewRequests, 8 unresolvable (8 in the measured bucket)
-TPOT p95        0       -       -        0          -             -            - 11 fewRequests, 2 unresolvable (2 in the measured bucket)
+TTFT mean       0       -       -        0          -             -            - 15 refused NoPrefillCapacity
+TTFT p50        0       -       -        0          -             -            - 15 refused NoPrefillCapacity
+TTFT p90        0       -       -        0          -             -            - 15 refused NoPrefillCapacity, 5 fewRequests
+TTFT p95        0       -       -        0          -             -            - 15 refused NoPrefillCapacity, 11 fewRequests
+TPOT mean      15    0.98    100%        0      1.02x         1.11x            - 
+TPOT p50        0       -       -        0          -             -            - 15 unresolvable (15 in the measured bucket)
+TPOT p90        0       -       -        0          -             -            - 5 fewRequests, 10 unresolvable (10 in the measured bucket)
+TPOT p95        0       -       -        0          -             -            - 11 fewRequests, 4 unresolvable (4 in the measured bucket)
 
 by load (the step's rate over the load the planner thinks the fleet can carry): steps, median ratio, within 20%
-below 0.8 of the knee     TTFT (12 steps): mean 0 - - p90 0 - -  TPOT (13 steps): mean 13 0.99 100% p90 0 - -
+below 0.8 of the knee     TTFT (14 steps): mean 0 - - p90 0 - -  TPOT (15 steps): mean 15 0.98 100% p90 0 - -
 0.8 to 1.0 of the knee    TTFT (0 steps): mean 0 - - p90 0 - -  TPOT (0 steps): mean 0 - - p90 0 - -
 past the knee             TTFT (1 step): mean 0 - - p90 0 - -  TPOT (0 steps): mean 0 - - p90 0 - -
 
