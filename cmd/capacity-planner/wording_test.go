@@ -45,16 +45,22 @@ func TestAtReplicas_VariantHelpSaysOne(t *testing.T) {
 func TestNoLine_SaysWhatToDo(t *testing.T) {
 	out, code := runCmd(t, "replicas-to-slo", "--recording", olsSweep, "--cycle", "1")
 	require.Equal(t, 3, code, out)
-	assert.Contains(t, out, "no ITL line learned by cycle 1; the line needs a window in which decode's KV-cache use spans 0.30 or more: "+
+	assert.Contains(t, out, "no ITL line learned by cycle 1; the line needs a window in which decode's KV-cache use spans 0.30 or more between 0.15 and 0.80 full: "+
 		"answer at a later cycle where one is learned (--cycle; source.cycle on the API), or record a busier window")
 }
 
-// The hint is the same on the CLI and the API (TestServeParity holds their
-// refusals equal), and names both ways to pick a cycle.
-func TestNoLine_HintIsTheSameOnTheAPI(t *testing.T) {
-	h := pricedVariant{api: true}.noLineHint()
-	assert.Equal(t, pricedVariant{}.noLineHint(), h)
-	assert.Contains(t, h, "--cycle; source.cycle on the API")
+// A later cycle is offered only where the recording holds one: at the last
+// cycle (the default) the hint says only to record a busier window. Both
+// name the band the line reads, from the ITL window's own constants.
+func TestNoLine_HintOffersOnlyACycleThatExists(t *testing.T) {
+	early := pricedVariant{cycle: 1, cycles: 39}.noLineHint()
+	assert.Contains(t, early, "answer at a later cycle where one is learned (--cycle; source.cycle on the API)")
+	last := pricedVariant{cycle: 39, cycles: 39}.noLineHint()
+	assert.NotContains(t, last, "later cycle")
+	assert.True(t, strings.HasSuffix(last, ": record a busier window"), last)
+	for _, h := range []string{early, last} {
+		assert.Contains(t, h, "spans 0.30 or more between 0.15 and 0.80 full")
+	}
 }
 
 // longFloat is a number printed to more digits than anyone reads.

@@ -102,6 +102,10 @@ type State struct {
 	// it (QueryModelArrivalRate): 0 where it read none, which a failed query
 	// and an idle cycle both read as.
 	ArrivalRates []float64
+	// CycleTimes is the clock of every cycle up to Cycle, oldest first, one
+	// per ArrivalRates entry: where the recording has holes
+	// (whatifapi.WindowGapsOf).
+	CycleTimes []time.Time
 }
 
 // VariantState is one variant's learned state at the cycle: everything the
@@ -196,6 +200,24 @@ type VariantState struct {
 	// itl.BelowBandMinReadings, where the line is not read below the band.
 	// BelowBandFill is the fill that reading was taken at, 0 with none.
 	BelowBandITL, BelowBandFill float64
+	// BusiestRankFill says the line, its readings, its band and its rows are
+	// read at the variant's busiest engine rank, not the mean over its ranks:
+	// a data-parallel MoE engine under saturation.SwitchMoEBusiestRank, whose
+	// ranks step in lockstep with the busiest (issue
+	// llm-d-incubation/llm-d-scaling-manager#312). BusiestRankRatio is the
+	// median busiest/mean rank fill ratio of its latest rows whose busiest
+	// rank filled the band's bottom or more
+	// (domain.ReplicaMetrics.BusiestRankFillRatio): the planner prices the
+	// mean fill at a busiest-rank fill k at k over it. 0 where none was read,
+	// and always with BusiestRankFill false.
+	BusiestRankFill  bool
+	BusiestRankRatio float64
+	// BatchFit is the ITL batch term fitted on the variant's rows up to the
+	// cycle, on the residuals of Line (whatif.FitBatchTerm,
+	// saturation.SwitchITLBatchTerm); its Term is what the planner prices on
+	// top of Line, zero where a gate refused it. The zero value while the
+	// switch is off.
+	BatchFit whatif.BatchFit
 	// LineAtFloor says the replay lifts a decode line to that floor
 	// (saturation.SwitchITLLineAtFloor, whatif.LiftToFloor), and LineLift
 	// how far, in seconds, Line's intercept was raised to pass through it; 0
@@ -250,6 +272,15 @@ type shapeSample struct {
 //     median of the busiest minutes, not of every minute.
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
+//   - saturation.SwitchPrefillVPFloorServed: a lower-bound V_P raised to the
+//     highest computed-token rate a pod was seen to sustain.
+//   - saturation.SwitchPlannerCapAtStepBudget: the batch cap per rank held
+//     to the batch the step token budget runs, ceil(budget / (1 + k)) with k
+//     speculative tokens (issue llm-d-incubation/llm-d-scaling-manager#302).
+//     It only ever lowers the cap: the knee and the sequences a replica is
+//     priced at fall, and the line is read at the knee's lower fill, so the
+//     ITL and TPOT at the knee fall with it. No committed recording runs a
+//     budget under its cap times 1 + k, so no golden moves with it on.
 //   - slo.SwitchTTFTHopUnqueued: the router hop of the decode term read off
 //     windows whose prefill pods held no queue. The planner reads its own
 //     decode term windows (state_ttft.go), so it reads the switch from here
@@ -268,10 +299,21 @@ type shapeSample struct {
 // and its p90 TPOT up to 22% under there (32% on the first warm-up's
 // B-onset, 39% on the bursty C phases), so both stay off.
 //
-// saturation.SwitchPlannerCapAtStepBudget is planner-only and not listed
-// either: no recording holds an engine whose step budget runs fewer
-// sequences than its cap (MTP, wide EP), so there is no backtest to turn it
-// on with (issue llm-d-incubation/llm-d-scaling-manager#302).
+// saturation.SwitchMoEBusiestRank is not listed either: it reads a
+// data-parallel MoE engine's line at its busiest rank (issue
+// llm-d-incubation/llm-d-scaling-manager#312), and its only evidence is
+// synthetic. No recording in the goldens is of such an engine, so nothing
+// shows it does not read a figure under what was measured; a replay turns it
+// on by name.
+//
+// saturation.SwitchITLBatchTerm is not listed either: the ITL term past the
+// roofline (issue llm-d-incubation/llm-d-scaling-manager#309) is fitted on
+// the residuals of a variant's own line, and no committed recording
+// identifies it. On the Qwen3-32B warm-up alone the fitted slope is 0.003 ms
+// per sequence and removes 0.4% of the residuals' error, which the gates
+// refuse; it takes the warm-up and the 1k-prompt A-off phase together (n_roof
+// 120 per rank, 0.034 ms per sequence) to read it, so a recording of one
+// shape cannot. A replay turns it on by name.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -279,6 +321,8 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchPrefillFBusyMinutes:    true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
+		saturation.SwitchPrefillVPFloorServed:   true,
+		saturation.SwitchPlannerCapAtStepBudget: true,
 	}, PackageSLO: {
 		slo.SwitchTTFTHopUnqueued: true,
 	}}
@@ -360,6 +404,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		windows, engine, arrived int
 		rows                     map[string][]whatif.LineRow
 		below                    map[string][2]float64 // ITL seconds, fill
+		ratios                   map[string]float64
 	}
 	snaps := map[int]*snap{}
 	opts.Mode = Normal
@@ -377,8 +422,10 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		resident = map[string][]residentSample{}
 		ttft     = newTTFTSamples(opts.Switches[PackageSLO][slo.SwitchTTFTHopUnqueued])
 		lines    = newLineSamples()
+		batch    = newBatchSamples(opts.Switches[PackageSaturation][saturation.SwitchITLBatchTerm])
 		cycleAt  = map[time.Time]int{}
 		arrivals []float64
+		times    []time.Time
 		ranges   = map[string]ShapeRange{}
 	)
 	// Read once: the switches are set before the replay starts.
@@ -407,8 +454,15 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			firstAt = ev.Now
 		}
 		cycleAt[ev.Now] = n
-		fill, fillOK := decodeFill(in.ReplicaMetrics, rolesOf(in))
+		// The variants whose line the analyzer reads at the busiest rank
+		// (saturation.SwitchMoEBusiestRank): every fill below is read there.
+		busiest := func(variant string) bool {
+			rec := r.store.Get(in.Namespace, in.ModelID, variant)
+			return rec != nil && r.sat.BusiestRankFillFor(rec.EngineParams)
+		}
+		fill, fillOK := decodeFill(in.ReplicaMetrics, rolesOf(in), busiest)
 		arrivals = append(arrivals, in.ArrivalRate)
+		times = append(times, ev.Now)
 		if w, ok := tpotWindow(in.RouterLatency); ok {
 			windows = append(windows, withFill(w, fill, fillOK))
 		}
@@ -430,7 +484,8 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			return rec != nil && rec.EngineParams != nil && rec.EngineParams.Engine == inferenceengine.EngineSGLang
 		}
 		ttft.noteJoint(in, ev.Now, args, sglang)
-		lines.note(in, n, ev.Now)
+		lines.note(in, n, ev.Now, busiest)
+		batch.note(in)
 		ttft.noteTerm(in, ev.Now, args)
 		if n == cycle || early[n] {
 			s := r.stateOf(in, n, ev.Now, shapes)
@@ -442,16 +497,18 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 				}
 			}
 			r.fillTTFT(s, in, ttft)
+			batch.fit(s)
 			if n == cycle {
 				st = s
 				return true
 			}
 			sn := &snap{st: s, windows: len(windows), engine: len(engine), arrived: len(arrivals),
-				rows: map[string][]whatif.LineRow{}, below: map[string][2]float64{}}
+				rows: map[string][]whatif.LineRow{}, below: map[string][2]float64{}, ratios: map[string]float64{}}
 			for _, v := range s.Variants {
 				sn.rows[v.Variant] = slices.Clone(lines.rows(v.Variant))
 				itlSec, fill := lines.leastBelowBand(v.Variant)
 				sn.below[v.Variant] = [2]float64{itlSec, fill}
+				sn.ratios[v.Variant] = lines.busiestRatio(v.Variant)
 			}
 			snaps[n] = sn
 		}
@@ -468,11 +525,12 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		return nil, nil, fmt.Errorf("learnreplay: the replay ended after %d of the %d cycles of %s/%s", n, cycle, ns, model)
 	}
 	st.FirstAt, st.TPOTWindows, st.EngineTPOTWindows, st.Cycles = firstAt, windows, engine, total
-	st.ArrivalRates = arrivals
+	st.ArrivalRates, st.CycleTimes = arrivals, times
 	for i := range st.Variants {
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
 		st.Variants[i].BelowBandITL, st.Variants[i].BelowBandFill = lines.leastBelowBand(st.Variants[i].Variant)
+		st.Variants[i].BusiestRankRatio = lines.busiestRatio(st.Variants[i].Variant)
 		st.Variants[i].liftToFloor(lineAtFloor && st.disaggregated())
 	}
 	var out map[int]*State
@@ -484,11 +542,13 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		s.FirstAt, s.Cycles = firstAt, total
 		s.TPOTWindows, s.EngineTPOTWindows = slices.Clone(windows[:sn.windows]), slices.Clone(engine[:sn.engine])
 		s.ArrivalRates = slices.Clone(arrivals[:sn.arrived])
+		s.CycleTimes = slices.Clone(times[:sn.arrived])
 		for i := range s.Variants {
 			s.Variants[i].ReadingsFrom, s.Variants[i].ReadingsTo = cyclesSpanned(s.Variants[i].LineReadings, cycleAt)
 			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]
 			b := sn.below[s.Variants[i].Variant]
 			s.Variants[i].BelowBandITL, s.Variants[i].BelowBandFill = b[0], b[1]
+			s.Variants[i].BusiestRankRatio = sn.ratios[s.Variants[i].Variant]
 			s.Variants[i].liftToFloor(lineAtFloor && s.disaggregated())
 		}
 		out[c] = s
@@ -794,6 +854,7 @@ func (r *replayer) stateOf(in domain.AnalyzerInput, cycle int, now time.Time, sh
 			}
 			vs.MaxModelLenUnresolved = slices.Contains(params.Unresolved, "max_model_len") || slices.Contains(params.Unresolved, "context_length")
 		}
+		vs.BusiestRankFill = r.sat.BusiestRankFillFor(params)
 		vs.BatchCap, vs.BatchCapSource = r.sat.PricingBatchCap(in.Namespace, in.ModelID, vc.VariantName, params, learning)
 		st.Variants = append(st.Variants, vs)
 	}
