@@ -2390,6 +2390,7 @@ prefill-queue-by-capacity
 prefill-required
 prefill-spare
 prefill-throughput-bound-reading
+prefill-vp-at-served-work
 prefill-vp-floor-served
 prefill-vp-served-unqueued
 prefill-vp-window-best
@@ -2950,6 +2951,7 @@ slo-ttft-ps-onsets
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
 slo-ttft-sizes-prefill
+slo-ttft-tier-kv-wait
 slo-ttft-tier-load
 slo-ttft-variant
 slo-variant

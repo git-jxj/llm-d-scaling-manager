@@ -556,7 +556,9 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	ttft.prefixAttention = opts.Switches[PackageSLO][slo.SwitchTTFTPrefixAttention]
 	ttft.computedHit = opts.Switches[PackageSLO][slo.SwitchTTFTComputedHit]
 	ttft.tierLoad = opts.Switches[PackageSLO][slo.SwitchTTFTTierLoad]
+	ttft.tierKVWait = opts.Switches[PackageSLO][slo.SwitchTTFTTierKVWait]
 	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
+	ttft.vpAtServed = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPAtServedWork]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false

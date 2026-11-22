@@ -141,6 +141,19 @@ const SwitchPrefillVPServedUnqueued = "prefill-vp-served-unqueued"
 // now, so a reading hours old should age out there.
 const SwitchPrefillVPWindowBest = "prefill-vp-window-best"
 
+// SwitchPrefillVPAtServedWork is the replay switch for the V_P a TTFT is
+// priced from where the prefill knee rests on a lower bound of it. On, where
+// the knee that lower bound gives is under the rate the prefill pods'
+// sustained computed-token work serves (the planner's servedKneeFloor), V_P
+// is raised by the same ratio for the TTFT too, so the TTFT and the knee are
+// read off one V_P: the pods computed that work, so they compute at least
+// that fast. Off, as #280 and the served floor left it: only the knee is
+// raised, and a TTFT priced from the lower V_P reads the prefill pods past
+// their capacity at rates they served: on a P/D fleet of 5 prefill groups
+// whose knee was floored at 26.2 r/s, the mean TTFT at 80% of it read 43 s
+// against about 3 s measured. Planner-only, as SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillVPAtServedWork = "prefill-vp-at-served-work"
+
 // SwitchPrefillALowLoadByRate is the replay switch for which minutes the fit
 // of a reads as low load (prefill.Cycle.ALowLoadByRate). On, a quiet minute
 // (no queue) is low load when its request rate times its prompt cluster's

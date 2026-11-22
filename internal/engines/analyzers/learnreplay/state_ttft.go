@@ -59,6 +59,11 @@ type PrefillState struct {
 	// reads the attention span from the whole prompt less the computed one.
 	// Off unless the replay's options turn it on.
 	TierLoad bool
+	// TierKVWait is slo.SwitchTTFTTierKVWait: with TierLoad, the planner
+	// prices the engine's measured wait for a cached KV
+	// (PromptWindow.TierLoad's WaitPerRequest). Off unless the replay's
+	// options turn it on.
+	TierKVWait bool
 	// RawShare is f_raw, the busiest pod's share of the computed-token rate
 	// over the mean share, not de-biased: the largest over the latest
 	// whatif.TTFTWindowCycles cycles that read one at the cycle's pod count. A pod with
@@ -75,6 +80,10 @@ type PrefillState struct {
 	// compute, a lower bound on what that many can. Read only with
 	// saturation.SwitchPrefillVPServedUnqueued on; nil otherwise.
 	ServedComputed map[int]float64
+	// VPAtServedWork is saturation.SwitchPrefillVPAtServedWork: the planner
+	// prices a TTFT from V_P raised with a knee floored at the served work.
+	// Off unless the replay's options turn it on.
+	VPAtServedWork bool
 	// WindowFrom and At are the replay's first cycle and the cycle read, for
 	// the age of a V_P read before the samples kept
 	// (prefill.Estimate.VPLearnedAt).
@@ -168,6 +177,8 @@ type ttftSamples struct {
 	computedHit bool
 	// tierLoad is slo.SwitchTTFTTierLoad (PrefillState.TierLoad).
 	tierLoad bool
+	// tierKVWait is slo.SwitchTTFTTierKVWait (PrefillState.TierKVWait).
+	tierKVWait bool
 	// hopUnqueued is slo.SwitchTTFTHopUnqueued, for the decode term's
 	// router windows (noteTerm).
 	hopUnqueued bool
@@ -175,6 +186,9 @@ type ttftSamples struct {
 	// (saturation.SwitchPrefillVPServedUnqueued; PrefillState.ServedComputed).
 	served   map[string]*servedWork
 	servedOn bool
+	// vpAtServed is saturation.SwitchPrefillVPAtServedWork
+	// (PrefillState.VPAtServedWork).
+	vpAtServed bool
 }
 
 // newTTFTSamples returns empty windows; hopUnqueued is
@@ -489,6 +503,8 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 		ps.PrefixAttention = t.prefixAttention
 		ps.ComputedHit = t.computedHit
 		ps.TierLoad = t.tierLoad
+		ps.TierKVWait = t.tierKVWait
+		ps.VPAtServedWork = t.vpAtServed
 		if w := t.served[v]; w != nil {
 			ps.ServedComputed = w.peaks()
 		}

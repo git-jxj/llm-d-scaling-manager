@@ -668,6 +668,10 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// recording does, so it moves no golden. Its unit tests hold it
 	// (heldBy).
 	slo.SwitchTTFTTierLoad: nil,
+	// The tier load priced at the engine's measured wait for the KV, with
+	// the tier load on, planner-only: no committed recording reads the
+	// cached tokens by tier, so it moves no golden. Its unit tests hold it.
+	slo.SwitchTTFTTierKVWait: nil,
 
 	// Learner PR 5c, on main after 5b (602054e98): the replicaStartSeconds
 	// seed is the prior (SwitchStartReadsSeed), and the first starts blend
@@ -1286,6 +1290,10 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// The planner's peak under a queue over the whole window. Planner-only,
 	// off; the controller's replays never run it. Its unit tests hold it.
 	saturation.SwitchPrefillVPWindowBest: nil,
+	// The planner's V_P for a TTFT raised with a knee floored at the served
+	// work. Planner-only, off; read by the planner's pricing, not the replay,
+	// so no learner golden moves. Its unit tests hold it.
+	saturation.SwitchPrefillVPAtServedWork: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1707,6 +1715,19 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPrefillVPServedUnqueued_ThroughAnalyze"},
 		{".", "TestServedWork_TheBusiestStretch"},
 		{".", "TestServedWork_BrokenStretchesAreNoReading"},
+	},
+	saturation.SwitchPrefillVPAtServedWork: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{".", "TestStateAt_TheVPAtServedWorkSwitchReachesThePrefillState"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_VPAtServedWorkPricesTheTTFTAtTheFlooredKnee"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_VPAtServedWorkLeavesOtherFleets"},
+	},
+	slo.SwitchTTFTTierKVWait: {
+		{"../slo", "TestTTFT_TheTierKVWaitOffFromTheConstructor"},
+		{".", "TestStateAt_TheTierKVWaitSwitchReachesThePrefillState"},
+		{"../../../signals/whatif", "TestPromptWindow_TierWait"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierKVWaitPricesTheMeasuredWait"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierKVWaitBelowTheTransferIsTheTransfer"},
 	},
 	saturation.SwitchPrefillVPWindowBest: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},

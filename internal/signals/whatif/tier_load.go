@@ -67,6 +67,12 @@ type tierSample struct {
 	cached map[string]float64
 	moved  map[string]float64
 	kinds  map[string]kindReading
+	// wait is the engine's mean queue time times the request rate, and
+	// waitRequests that rate, over the rows read with no request waiting
+	// for capacity: there vLLM's queue time is the wait for the KV load
+	// (the deferred requests), the transfer and the steps the loaded
+	// request waits for before it is scheduled (TierLoad.WaitPerRequest).
+	wait, waitRequests float64
 }
 
 // movedBy is the cached tokens a second kind moves on a row with the given
@@ -111,6 +117,10 @@ func (s *tierSample) noteTiers(rm domain.ReplicaMetrics, rate float64) {
 	for kind := range tierKind {
 		s.moved[kind] += movedBy(kind, cached, offloadLoad)
 	}
+	if rm.AvgQueueTimeKnown && Finite(rm.AvgQueueTime) && rm.AvgQueueTime >= 0 && rm.CapacityQueueKnown && rm.CapacityQueueLength == 0 {
+		s.wait += rate * rm.AvgQueueTime
+		s.waitRequests += rate
+	}
 	for _, t := range rm.KVTransferRates {
 		if _, ok := tierKind[t.Kind]; !ok || !Finite(t.ByteRate) || t.ByteRate < 0 || !Finite(t.SecondsRate) || t.SecondsRate < 0 {
 			continue
@@ -150,6 +160,11 @@ type TierLoad struct {
 	// summed. Its own seconds over its own tokens, so a row that did not
 	// read a kind is priced at the rows that did.
 	SecondsPerRequest float64
+	// WaitPerRequest is the engine's mean queue time on the rows read with
+	// no request waiting for capacity, request-weighted: what a request
+	// waited before it was scheduled while its KV loaded, the transfer and
+	// the scheduling around it. 0 with no such row.
+	WaitPerRequest float64
 	// Unmeasured is each tier, past the GPU, serving at least MinTierShare
 	// of the whole prompt that no transfer read prices, sorted. With one,
 	// SecondsPerRequest leaves its load out, and the term is not priced.
@@ -164,11 +179,13 @@ func (w *PromptWindow) TierLoad() (TierLoad, bool) {
 	if w == nil {
 		return TierLoad{}, false
 	}
-	var requests, whole float64
+	var requests, whole, wait, waitRequests float64
 	cached, moved, kinds := map[string]float64{}, map[string]float64{}, map[string]kindReading{}
 	for _, s := range w.samples {
 		requests += s.tiers.requests
 		whole += s.tiers.whole
+		wait += s.tiers.wait
+		waitRequests += s.tiers.waitRequests
 		for k, v := range s.tiers.cached {
 			cached[k] += v
 		}
@@ -187,6 +204,9 @@ func (w *PromptWindow) TierLoad() (TierLoad, bool) {
 		return TierLoad{}, false
 	}
 	tl := TierLoad{Shares: map[string]float64{}, WholePromptTokens: whole / requests}
+	if waitRequests > 0 {
+		tl.WaitPerRequest = wait / waitRequests
+	}
 	for src, v := range cached {
 		tl.Shares[src] = v / whole
 		if src != SourceDevice {

@@ -131,6 +131,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
 // SwitchPrefillFBusyMinutes, SwitchPrefillVPFloorServed,
 // SwitchPrefillVPServedUnqueued, SwitchPrefillVPWindowBest,
+// SwitchPrefillVPAtServedWork,
 // SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
 // SwitchITLAdaptiveBandFloor,
 // SwitchITLHoldSteadySlope, SwitchITLLineAtFloor, SwitchMoEBusiestRank,
@@ -282,6 +283,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// The planner's peak under a queue over the whole window
 		// (prefill.Cycle.VPWindowBest). Off from the constructor.
 		SwitchPrefillVPWindowBest: &a.prefillVPWindowBest,
+		// The planner's V_P for a TTFT where the knee is floored at the
+		// served work: raised with it (cmd/capacity-planner). Off from the
+		// constructor.
+		SwitchPrefillVPAtServedWork: &a.prefillVPAtServedWork,
 		// The planner's a: low load read by rate against the prompt
 		// cluster's service time, and the median overhead
 		// (prefill.Cycle.ALowLoadByRate, AMedianOverhead). Off from the

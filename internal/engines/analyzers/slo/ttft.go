@@ -218,6 +218,19 @@ const SwitchTTFTComputedHit = "slo-ttft-computed-hit"
 // tier.
 const SwitchTTFTTierLoad = "slo-ttft-tier-load"
 
+// SwitchTTFTTierKVWait is the replay switch for what a request pays for its
+// cached KV, with SwitchTTFTTierLoad on: on, the engine's measured wait for
+// it (whatif.TierLoad.WaitPerRequest, the queue time on prefill rows with no
+// request waiting for capacity), where it is above the transfer's own
+// seconds; off, the transfer's seconds, as SwitchTTFTTierLoad prices them.
+// A loaded request is scheduled at a step boundary after its load, so it
+// waits longer than the transfer runs: on a P/D fleet with a CPU tier the
+// prefill queue time read 3 to 6 times the load counter's seconds per
+// request, and tracked the deferred requests by Little's law (correlation
+// 0.995). Planner-only: off from the constructor; the analyzer prices no
+// tier.
+const SwitchTTFTTierKVWait = "slo-ttft-tier-kv-wait"
+
 // SwitchTTFTMeasuredTransfer is the replay switch for the KV transfer term:
 // on, the pricing reads AvgKVTransferTime from the decode rows that carry one
 // (transferPerToken). Off, it reads none and raises whatif.TransferOmitted, as

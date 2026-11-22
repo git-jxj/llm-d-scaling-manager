@@ -104,24 +104,34 @@ func (pf *pricedFleet) tierLoad(ps *learnreplay.PrefillState) {
 	if pf.in.PromptSource == shapeAssumed && p.WholePromptTokens > 0 {
 		whole = p.WholePromptTokens
 	}
-	perToken := tl.SecondsPerRequest / (tl.OuterShare * tl.WholePromptTokens)
+	// The seconds a request paid at the traffic read: the transfers', or,
+	// with slo-ttft-tier-kv-wait on, the engine's measured wait for the KV
+	// where that is longer: the request is scheduled after its load, at a
+	// step boundary, so it waits past the transfer.
+	measured, waitText := tl.SecondsPerRequest, ""
+	if pf.tierKVWaitOn && tl.WaitPerRequest > tl.SecondsPerRequest && tl.SecondsPerRequest > 0 {
+		measured = tl.WaitPerRequest
+		waitText = fmt.Sprintf("; priced at the engine's measured wait for the KV, %s a request, %.1fx the transfer's %s",
+			ms(tl.WaitPerRequest), tl.WaitPerRequest/tl.SecondsPerRequest, ms(tl.SecondsPerRequest))
+	}
+	perToken := measured / (tl.OuterShare * tl.WholePromptTokens)
 	load := share * whole * perToken
-	w := &wireTierLoad{OuterShare: tl.OuterShare, Shares: tl.Shares, MeasuredSeconds: tl.SecondsPerRequest,
+	w := &wireTierLoad{OuterShare: tl.OuterShare, Shares: tl.Shares, MeasuredSeconds: measured,
 		Transfers: make([]wireTierTransfer, 0, len(tl.Transfers))}
 	for _, t := range tl.Transfers {
 		w.Transfers = append(w.Transfers, wireTierTransfer(t))
 	}
 	pf.in.TierLoad = w
-	source := fmt.Sprintf("%s of the prompt from outside the GPU (%s), %s", tierPercent(tl.OuterShare), tierShares(tl), transfersText(tl))
+	source := fmt.Sprintf("%s of the prompt from outside the GPU (%s), %s%s", tierPercent(tl.OuterShare), tierShares(tl), transfersText(tl), waitText)
 	switch {
 	case pf.assumedA:
 		pf.assume("tier load %s a request not added: a is stated (--assume-a); %s", ms(load), source)
 		return
 	case ps.Estimate.ASource != prefill.ASourceEngineTiming:
 		w.FixedLatencyHolds = true
-		w.Seconds = max(load-tl.SecondsPerRequest, 0)
+		w.Seconds = max(load-measured, 0)
 		pf.assume("tier load %s a request, of which a holds the %s read at low load: %s added; %s",
-			ms(load), ms(tl.SecondsPerRequest), ms(w.Seconds), source)
+			ms(load), ms(measured), ms(w.Seconds), source)
 	default:
 		w.Seconds = load
 		pf.assume("tier load %s a request: %s; no overlap with the prefill (an upper bound where loads overlap)", ms(load), source)
