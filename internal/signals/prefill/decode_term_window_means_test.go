@@ -26,7 +26,7 @@ type noisyCycle struct {
 // nil, changes each cycle before it is observed.
 func noisyRun(windowMeans bool, n int, trueHop float64, cycle func(i int) noisyCycle, edit func(i int, c *DecodeTermCycle)) HopFit {
 	w := NewDecodeTermWindow()
-	var past []noisyCycle
+	past := make([]noisyCycle, 0, n)
 	for i := range n {
 		nc := cycle(i)
 		nc.at = termT0.Add(time.Duration(i) * 15 * time.Second)
@@ -135,7 +135,7 @@ func TestHop_WindowMeansKeepTheHeldAndQueuedGates(t *testing.T) {
 // The fit is a median: a minority of windows far off moves it little, and a
 // median not above zero is refused.
 func TestHop_WindowMeansFitIsAMedian(t *testing.T) {
-	var samples []hopSample
+	samples := make([]hopSample, 0, 40)
 	for i := range 40 {
 		r := 0.6
 		if i%4 == 0 {
