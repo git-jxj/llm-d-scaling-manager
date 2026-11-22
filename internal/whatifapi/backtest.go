@@ -433,6 +433,13 @@ type BacktestPoint struct {
 	// could be within, and is unresolvable.
 	OutsideBucket string `json:"outsideBucket,omitempty"`
 	Unscored      string `json:"unscored,omitempty"`
+	// SameBucket says an unresolvable pair (UnscoredUnresolvable) had the
+	// prediction inside MeasuredBucket itself, (Lo, Hi]: the histogram
+	// cannot tell the two apart, so the pair is consistent at the bucket's
+	// resolution, Hi/Lo wide. It is not within BacktestTolerance and is not
+	// scored; an unresolvable pair without it had the prediction outside
+	// the bucket, though within BacktestTolerance of its nearer edge.
+	SameBucket bool `json:"sameBucket,omitempty"`
 }
 
 // BacktestJudged is a step judged against a TTFT target.
@@ -497,6 +504,15 @@ type BacktestScore struct {
 	// the refusal's reason (Saturated, NoPrefillCapacity, ...).
 	Unscored map[string]int `json:"unscored"`
 	Refused  map[string]int `json:"refused"`
+	// SameBucket counts the unresolvable steps whose prediction fell inside
+	// the measured bucket itself (BacktestPoint.SameBucket), and
+	// SameBucketBand spans those buckets: consistent at the histogram's
+	// resolution, a third outcome beside within and out, never counted
+	// within. SameBucketWidth is the narrowest of those buckets' Hi/Lo, 0
+	// where one starts at 0.
+	SameBucket      int     `json:"sameBucket,omitempty"`
+	SameBucketBand  *Band   `json:"sameBucketBand,omitempty"`
+	SameBucketWidth float64 `json:"sameBucketWidth,omitempty"`
 	// PastKnee is the measured figure's range over the steps refused as
 	// saturated, where the source measured one: what the fleet did where
 	// the planner gave no figure.
@@ -1816,12 +1832,20 @@ func scoredPoint(p BacktestPoint, meas *float64, requests, top float64, why stri
 		p.Ratio, p.OutsideBucket = ptr(*pred.Value/bucket.Hi), OutsideOver
 	case bucket != nil:
 		p.Unscored = UnscoredUnresolvable
+		p.SameBucket = inBucket(*pred.Value, *bucket)
 	case *meas > 0 && *pred.Value > 0:
 		p.Ratio = ptr(*pred.Value / *meas)
 	default:
 		p.Unscored = UnscoredNotMeasured
 	}
 	return p
+}
+
+// inBucket reports whether v falls in the histogram bucket b, (Lo, Hi]: a
+// figure on a bound belongs to the bucket that bound closes. The edges carry
+// bucketEps, as the bounds are written in decimal.
+func inBucket(v float64, b Band) bool {
+	return v > b.Lo*(1+bucketEps) && v <= b.Hi*(1+bucketEps)
 }
 
 // judgeTarget is the step against the TTFT target, predicted (from its
@@ -1932,6 +1956,44 @@ func summarize(steps []BacktestStep, target bool) BacktestSummary {
 	return s
 }
 
+// noteSameBucket counts one step consistent at bucket b's resolution.
+func (sc *BacktestScore) noteSameBucket(b Band) {
+	sc.SameBucket++
+	w := 0.0
+	if b.Lo > 0 {
+		w = b.Hi / b.Lo
+	}
+	if sc.SameBucketBand == nil {
+		sc.SameBucketBand, sc.SameBucketWidth = &Band{Lo: b.Lo, Hi: b.Hi}, w
+		return
+	}
+	sc.SameBucketBand.Lo, sc.SameBucketBand.Hi = min(sc.SameBucketBand.Lo, b.Lo), max(sc.SameBucketBand.Hi, b.Hi)
+	if w == 0 || sc.SameBucketWidth == 0 {
+		sc.SameBucketWidth = 0
+	} else {
+		sc.SameBucketWidth = min(sc.SameBucketWidth, w)
+	}
+}
+
+// SameBucketWords is the steps consistent at the histogram's resolution, in
+// words with the bucket and its width, "" with none: "in the measured
+// bucket, 10 ms to 20 ms (2.0x wide), in 97": never a share within.
+func (sc BacktestScore) SameBucketWords() string {
+	if sc.SameBucket == 0 || sc.SameBucketBand == nil {
+		return ""
+	}
+	b := sc.SameBucketBand
+	width := "from 0"
+	if sc.SameBucketWidth > 0 {
+		width = fmt.Sprintf("%.1fx wide", sc.SameBucketWidth)
+		if b.Hi > b.Lo*sc.SameBucketWidth*(1+bucketEps) {
+			width = fmt.Sprintf("buckets %.1fx wide or wider", sc.SameBucketWidth)
+		}
+	}
+	return fmt.Sprintf("in the measured histogram bucket itself in %d, %s to %s (%s): consistent at the bucket's resolution, not within %.0f%%",
+		sc.SameBucket, secondsWords(b.Lo), secondsWords(b.Hi), width, BacktestTolerance*100)
+}
+
 // loadBand is the band of a rate at share of the knee.
 func loadBand(share float64) string {
 	switch {
@@ -1966,6 +2028,9 @@ func scoreOf(q float64, steps []BacktestStep, points func(BacktestStep) []Backte
 		if p.Ratio == nil {
 			if p.Unscored != "" {
 				sc.Unscored[p.Unscored]++
+			}
+			if p.SameBucket && p.MeasuredBucket != nil {
+				sc.noteSameBucket(*p.MeasuredBucket)
 			}
 			if r := p.Predicted.Refused; r != nil {
 				sc.Refused[r.Reason]++
@@ -2247,7 +2312,14 @@ func percentileWords(name string, scores []BacktestScore) string {
 	}
 	if n := sc.Unscored[UnscoredUnresolvable]; n > 0 {
 		w += fmt.Sprintf(" p90 %s not scored in %d: the measured p90 fell in a histogram bucket wider than %.0f%% of its lower edge, "+
-			"too wide to place it, with the prediction inside it.", name, n, MeasuredBucketWidth*100)
+			"too wide to place it, with the prediction inside it or within %.0f%% of its edge", name, n, MeasuredBucketWidth*100, BacktestTolerance*100)
+		if words := sc.SameBucketWords(); words != "" {
+			w += "; " + words
+			if rest := n - sc.SameBucket; rest > 0 {
+				w += fmt.Sprintf(", and outside it, within %.0f%% of its edge, in %d", BacktestTolerance*100, rest)
+			}
+		}
+		w += "."
 	}
 	return w
 }

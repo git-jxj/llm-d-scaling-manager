@@ -391,6 +391,14 @@ type SelfCheckFigure struct {
 	// than BacktestTolerance low, where the figure is judged at its mean
 	// (the p90-low rule, figureRules).
 	p90Steps, p90Low int
+	// P90SameBucket is, beside a figure judged at its mean, the p90's steps
+	// whose prediction fell in the measured histogram bucket itself, of
+	// P90Unresolvable unresolvable ones (BacktestScore.SameBucket): for
+	// information, consistent at the bucket's resolution, never within and
+	// never part of the trust.
+	P90SameBucket   int `json:"p90SameBucket,omitempty"`
+	P90Unresolvable int `json:"p90Unresolvable,omitempty"`
+	p90Bucket       string
 }
 
 // SelfCheckFold is one fold: the fit up to FitTo, the test from TestFrom to
@@ -548,6 +556,8 @@ func selfCheckFigure(scores []BacktestScore, judged int) *SelfCheckFigure {
 		Overloaded: s.Refused[string(whatif.Saturated)], PastKnee: s.PastKnee, Refused: map[string]int{}}
 	if p90 >= 0 && s.Statistic == statisticMean {
 		f.p90Steps, f.p90Low = scores[p90].All.Steps, scores[p90].All.Low
+		f.P90SameBucket, f.P90Unresolvable = scores[p90].SameBucket, scores[p90].Unscored[UnscoredUnresolvable]
+		f.p90Bucket = scores[p90].SameBucketWords()
 	}
 	if s.All.Within != nil {
 		f.Within = int(math.Round(*s.All.Within * float64(s.All.Steps)))
@@ -616,6 +626,11 @@ func (sc *SelfCheck) judge(e *inputsEntry, span time.Duration, info SelfCheckInf
 		within := float64(f.Within) / float64(f.Steps)
 		parts = append(parts, fmt.Sprintf("%s %s within 20%% in %d of %d steps at %d load levels (median ratio %.2f)", f.Statistic, x.name, f.Within, f.Steps,
 			f.Levels, *f.Bias))
+		if f.p90Bucket != "" {
+			// For information beside the mean: the p90 the histogram could not
+			// place, how often the prediction fell in the very bucket measured.
+			parts[len(parts)-1] += fmt.Sprintf("; p90 %s unresolvable in %d, %s", x.name, f.P90Unresolvable, f.p90Bucket)
+		}
 		name := strings.ToLower(x.name)
 		rules, failed, loose := sc.figureRules(name, x.name, f, within)
 		sc.Checks = append(sc.Checks, rules...)

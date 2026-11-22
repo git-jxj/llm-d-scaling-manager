@@ -125,6 +125,7 @@ backtest.steps[].tpot[].measuredBucket.lo number
 backtest.steps[].tpot[].outsideBucket string
 backtest.steps[].tpot[].predicted Figure
 backtest.steps[].tpot[].ratio number
+backtest.steps[].tpot[].sameBucket boolean
 backtest.steps[].tpot[].statistic string
 backtest.steps[].tpot[].unscored string
 backtest.steps[].ttft array
@@ -139,6 +140,7 @@ backtest.steps[].ttft[].measuredBucket.lo number
 backtest.steps[].ttft[].outsideBucket string
 backtest.steps[].ttft[].predicted Figure
 backtest.steps[].ttft[].ratio number
+backtest.steps[].ttft[].sameBucket boolean
 backtest.steps[].ttft[].statistic string
 backtest.steps[].ttft[].unscored string
 backtest.steps[].unsettled boolean
@@ -175,6 +177,11 @@ backtest.summary.byLoad[].tpot[].pastKnee.hi number
 backtest.summary.byLoad[].tpot[].pastKnee.lo number
 backtest.summary.byLoad[].tpot[].refused object
 backtest.summary.byLoad[].tpot[].refused.* number
+backtest.summary.byLoad[].tpot[].sameBucket number
+backtest.summary.byLoad[].tpot[].sameBucketBand object
+backtest.summary.byLoad[].tpot[].sameBucketBand.hi number
+backtest.summary.byLoad[].tpot[].sameBucketBand.lo number
+backtest.summary.byLoad[].tpot[].sameBucketWidth number
 backtest.summary.byLoad[].tpot[].statistic string
 backtest.summary.byLoad[].tpot[].unscored object
 backtest.summary.byLoad[].tpot[].unscored.* number
@@ -205,6 +212,11 @@ backtest.summary.byLoad[].ttft[].pastKnee.hi number
 backtest.summary.byLoad[].ttft[].pastKnee.lo number
 backtest.summary.byLoad[].ttft[].refused object
 backtest.summary.byLoad[].ttft[].refused.* number
+backtest.summary.byLoad[].ttft[].sameBucket number
+backtest.summary.byLoad[].ttft[].sameBucketBand object
+backtest.summary.byLoad[].ttft[].sameBucketBand.hi number
+backtest.summary.byLoad[].ttft[].sameBucketBand.lo number
+backtest.summary.byLoad[].ttft[].sameBucketWidth number
 backtest.summary.byLoad[].ttft[].statistic string
 backtest.summary.byLoad[].ttft[].unscored object
 backtest.summary.byLoad[].ttft[].unscored.* number
@@ -252,6 +264,11 @@ backtest.summary.tpot[].pastKnee.hi number
 backtest.summary.tpot[].pastKnee.lo number
 backtest.summary.tpot[].refused object
 backtest.summary.tpot[].refused.* number
+backtest.summary.tpot[].sameBucket number
+backtest.summary.tpot[].sameBucketBand object
+backtest.summary.tpot[].sameBucketBand.hi number
+backtest.summary.tpot[].sameBucketBand.lo number
+backtest.summary.tpot[].sameBucketWidth number
 backtest.summary.tpot[].statistic string
 backtest.summary.tpot[].unscored object
 backtest.summary.tpot[].unscored.* number
@@ -282,6 +299,11 @@ backtest.summary.ttft[].pastKnee.hi number
 backtest.summary.ttft[].pastKnee.lo number
 backtest.summary.ttft[].refused object
 backtest.summary.ttft[].refused.* number
+backtest.summary.ttft[].sameBucket number
+backtest.summary.ttft[].sameBucketBand object
+backtest.summary.ttft[].sameBucketBand.hi number
+backtest.summary.ttft[].sameBucketBand.lo number
+backtest.summary.ttft[].sameBucketWidth number
 backtest.summary.ttft[].statistic string
 backtest.summary.ttft[].unscored object
 backtest.summary.ttft[].unscored.* number
@@ -441,6 +463,8 @@ inputs.selfCheck.tpot.nearKnee.steps number
 inputs.selfCheck.tpot.nearKnee.worst number
 inputs.selfCheck.tpot.nearKneeUnsettled number
 inputs.selfCheck.tpot.overloaded number
+inputs.selfCheck.tpot.p90SameBucket number
+inputs.selfCheck.tpot.p90Unresolvable number
 inputs.selfCheck.tpot.pastKnee object
 inputs.selfCheck.tpot.pastKnee.hi number
 inputs.selfCheck.tpot.pastKnee.lo number
@@ -463,6 +487,8 @@ inputs.selfCheck.ttft.nearKnee.steps number
 inputs.selfCheck.ttft.nearKnee.worst number
 inputs.selfCheck.ttft.nearKneeUnsettled number
 inputs.selfCheck.ttft.overloaded number
+inputs.selfCheck.ttft.p90SameBucket number
+inputs.selfCheck.ttft.p90Unresolvable number
 inputs.selfCheck.ttft.pastKnee object
 inputs.selfCheck.ttft.pastKnee.hi number
 inputs.selfCheck.ttft.pastKnee.lo number
@@ -739,6 +765,7 @@ prediction.steps[].tpot[].measuredBucket.lo number
 prediction.steps[].tpot[].outsideBucket string
 prediction.steps[].tpot[].predicted Figure
 prediction.steps[].tpot[].ratio number
+prediction.steps[].tpot[].sameBucket boolean
 prediction.steps[].tpot[].statistic string
 prediction.steps[].tpot[].unscored string
 prediction.steps[].ttft array
@@ -753,6 +780,7 @@ prediction.steps[].ttft[].measuredBucket.lo number
 prediction.steps[].ttft[].outsideBucket string
 prediction.steps[].ttft[].predicted Figure
 prediction.steps[].ttft[].ratio number
+prediction.steps[].ttft[].sameBucket boolean
 prediction.steps[].ttft[].statistic string
 prediction.steps[].ttft[].unscored string
 prediction.steps[].unsettled boolean
@@ -852,6 +880,8 @@ report.selfCheck.tpot.nearKnee.steps number
 report.selfCheck.tpot.nearKnee.worst number
 report.selfCheck.tpot.nearKneeUnsettled number
 report.selfCheck.tpot.overloaded number
+report.selfCheck.tpot.p90SameBucket number
+report.selfCheck.tpot.p90Unresolvable number
 report.selfCheck.tpot.pastKnee object
 report.selfCheck.tpot.pastKnee.hi number
 report.selfCheck.tpot.pastKnee.lo number
@@ -874,6 +904,8 @@ report.selfCheck.ttft.nearKnee.steps number
 report.selfCheck.ttft.nearKnee.worst number
 report.selfCheck.ttft.nearKneeUnsettled number
 report.selfCheck.ttft.overloaded number
+report.selfCheck.ttft.p90SameBucket number
+report.selfCheck.ttft.p90Unresolvable number
 report.selfCheck.ttft.pastKnee object
 report.selfCheck.ttft.pastKnee.hi number
 report.selfCheck.ttft.pastKnee.lo number
