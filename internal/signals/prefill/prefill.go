@@ -239,7 +239,7 @@ type Estimate struct {
 	VPServedPeak float64
 	// VPFlooredAtServed says V_P is VPServedPeak, raised to it from a lower
 	// source (Cycle.VPFloorServed): VPSamples is then PeakRun and
-	// VPPromptTokens the peak's, while VPSource and VPLowerBoundReason still
+	// VPPromptTokens, VPWholePromptTokens and VPPromptHitRate the peak's, while VPSource and VPLowerBoundReason still
 	// name the source that made V_P a lower bound.
 	VPFlooredAtServed bool
 	// VPQueuedMinutes, VPLongestQueuedRun and VPBusyMinutes say why V_P was
@@ -265,7 +265,7 @@ type Estimate struct {
 	VPAboveSlopeBound bool
 	// VPPromptTokens is the mean effective prompt length of the minutes V_P
 	// rests on, zero when V_P is refused or the length is unknown (the
-	// back-pressure bound records none).
+	// back-pressure bound records none, unless floored: VPFlooredAtServed).
 	VPPromptTokens float64
 	// VPWholePromptTokens is the mean whole prompt of the same minutes,
 	// prefix hits included (AvgInputTokensRecent), and VPPromptHitRate their

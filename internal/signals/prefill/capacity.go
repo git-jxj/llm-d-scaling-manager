@@ -115,7 +115,9 @@ func (est *Estimate) capacity(ks *keyState, c Cycle, sglang bool) {
 // minutes at a light load, and the knee priced from it sits far under the
 // load the pods were seen to serve (issue
 // llm-d-incubation/llm-d-scaling-manager#280). The source is kept and stays
-// a lower bound; VPFlooredAtServed says the figure is the served peak's.
+// a lower bound; VPFlooredAtServed says the figure is the served peak's,
+// and the floored V_P takes the served run's prompt, whole prompt and hit
+// rate with it.
 // Only a lower bound is floored: busy minutes of a single-rank pod are V_P
 // itself, and no source at all stays refused, as a peak with no queue
 // cannot tell capacity from the offered load.

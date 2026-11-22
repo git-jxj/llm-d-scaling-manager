@@ -211,3 +211,30 @@ func TestCapacity_DataParallelBusyMinutesAreFloored(t *testing.T) {
 	assert.Equal(t, 4000.0, est.VPPromptTokens)
 	assert.True(t, est.VPFlooredAtServed)
 }
+
+// A floored V_P takes the served run's whole prompt with its rate and prompt,
+// not the queued minutes' it was raised from.
+func TestCapacity_TheFloorCarriesTheServedRunsWholePrompt(t *testing.T) {
+	o := NewObserver()
+	var est Estimate
+	for i := range 3 {
+		rm := served(36000)
+		rm.EngineRanks = 2
+		rm.AvgInputTokensRecent = 9000
+		c := cycle(t0.Add(time.Duration(i)*minute), rm)
+		c.VPFloorServed = true
+		o.Observe(c)
+	}
+	for i := range 5 {
+		rm := queued("p-0", 24000, 3)
+		rm.EngineRanks = 2
+		rm.AvgInputTokensRecent = 7000
+		c := cycle(t0.Add(time.Duration(3+i)*minute), rm)
+		c.QueueMin = map[string]float64{"p-0": 2}
+		c.VPFloorServed = true
+		est = o.Observe(c)
+	}
+	assert.True(t, est.VPFlooredAtServed)
+	assert.Equal(t, 36000.0, est.VP)
+	assert.InDelta(t, 9000.0, est.VPWholePromptTokens, 1e-9)
+}
