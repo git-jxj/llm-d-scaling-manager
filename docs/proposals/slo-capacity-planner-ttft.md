@@ -1744,7 +1744,11 @@ holds requests, over the mean (`whatif.PromptSpread.MaxRatio`), and prices it
   chunked prefill to serve it first come. The 8k steps sit at 1.25. At `Ca²` 4
   (the 8000-token phase run that bursty, backtested at `--arrival-cv2 4`)
   processor sharing alone read p50 7% under (0.93) where the larger of it and
-  first come held, so a bursty step keeps the cv's rule.
+  first come held, so a bursty step keeps the cv's rule, and is priced as
+  with the switch off: the router's wait is not priced in the prefill
+  (`--price-router-wait`, `--router-wait-in-prefill`) and the onset is the
+  lower of processor sharing and first come. The cut at 1 is where the
+  evidence brackets it (`Ca²` 1 held, 4 did not), not a calibrated threshold.
 
 With no bound (mass past the last bucket, or no histogram) the gamma runs on
 and the cv decides, as before. The queue's `Cs²` stays the cv read, the
@@ -1758,7 +1762,8 @@ above measured to under it, the lowest at 0.92 of measured (15 before the
 bound cleared processor sharing only at Poisson arrivals). The hold moves
 them, not processor sharing: with the bound kept from clearing processor
 sharing at all, the same 14 go under at the same ratios, and with the bound
-clearing it but no hold, nothing at `Ca²` 1 moves by more than 1%. The wait
+clearing it but no hold, nothing at `Ca²` 1 moves by more than 1%; at `Ca²` 4 it read p50 under,
+which is why the bound now clears only at `Ca²` up to 1. The wait
 side cannot be what reads them low either: at `Ca²` up to 1 the
 processor-sharing stages do not read `Cs²` (`psBurst`, and the variance's
 `max(1, Cs²)`), and a held `Cs²` on first come would only lower its price.
@@ -1766,7 +1771,7 @@ processor-sharing stages do not read `Cs²` (`psBurst`, and the variance's
 The processor-sharing tail is not what reads low. Against the tandem
 simulation of bucket B (two prefill pods, `Ca²` 1, 13.3 to 31.6 r/s), with
 the prompt drawn from the held gamma itself (cv 0.3 held at 1.25), the model
-reads p90 +0.6 to +1.9% and p95 +0.3 to -2.3% of the simulation; against a
+reads p90 +0.6 to +1.9% and p95 -2.3 to +0.3% of the simulation; against a
 simulation at the true prompt (cv 0.058) it reads p90 +5.0 to +8.7% and p95
 +3.2 to +8.0% (+8.7 to +16.5% unheld). So the held model is still above an
 exact processor-sharing fleet serving the prompts the pods were sent, and

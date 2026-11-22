@@ -226,6 +226,16 @@ func TestTTFT_ThePromptsSupportClearsOnlyAtPoissonArrivals(t *testing.T) {
 		if got := slices.Contains(res.Flags, SpreadBeyondProcessorSharing); got != c.flag {
 			t.Errorf("Ca^2 %g: flagged %v, want %v (%v)", c.ca2, got, c.flag, res.Flags)
 		}
+		// Not cleared, the router's wait is not priced in the prefill: the
+		// switch-off price.
+		fl.PriceRouterWait = true
+		pl, u := fl.plan()
+		if u != nil {
+			t.Fatal(u)
+		}
+		if pl.routerWait == c.flag {
+			t.Errorf("Ca^2 %g: router wait priced %v, want %v", c.ca2, pl.routerWait, !c.flag)
+		}
 	}
 }
 

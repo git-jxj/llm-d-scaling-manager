@@ -153,8 +153,9 @@ const SwitchTTFTMeasuredSpread = "slo-ttft-measured-spread"
 // (whatif.PromptSpread.MaxRatio) is priced (whatif.Prefill.PromptMaxRatio):
 // the prompt is a gamma held at that bound, not one that runs past it, and a
 // bound at whatif.MaxPSPromptSupport or under prices processor sharing alone
-// whatever the cv read, at arrivals no burstier than Poisson. The cv a histogram reads is the widest its buckets
-// allow: every 8000-token prompt in a (5000, 10000] bucket read 0.31, flagged
+// whatever the cv read, at arrivals no burstier than Poisson. The cv a
+// histogram reads is the widest its buckets allow: every 8000-token prompt in
+// a (5000, 10000] bucket read 0.31, flagged
 // every 8k answer SpreadBeyondProcessorSharing although processor sharing
 // held there, and its gamma put 19.8% of the prompts above 10000 (issue
 // llm-d-incubation/llm-d-scaling-manager#304). Off, the gamma runs on and the

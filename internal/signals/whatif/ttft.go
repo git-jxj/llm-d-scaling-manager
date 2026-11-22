@@ -633,11 +633,16 @@ func (pl prefillPlan) own() ownTime {
 // BeyondProcessorSharing says processor sharing is not priced alone on p's
 // prompt (SpreadBeyondProcessorSharing): a spread past MaxPSPromptCV that no
 // support bound at MaxPSPromptSupport or under clears. The bound clears it
-// only at arrivals no burstier than Poisson (ArrivalCV2 at most 1, 0 being
-// Poisson): the steps processor sharing was measured to hold on were, and on
-// the 8000-token phase run at Ca^2 4 the bound read p50 7% under the
-// measured, where the larger of the two held it (issue
-// llm-d-incubation/llm-d-scaling-manager#304).
+// only at a fleet Ca^2 no burstier than Poisson (ArrivalCV2 at most 1, 0
+// being Poisson), not at each pod's split one: the steps processor sharing
+// was measured to hold on were all at Poisson arrivals, and on the
+// 8000-token phase run at Ca^2 4 the bound read p50 7% under the measured,
+// where the larger of the two held it (issue
+// llm-d-incubation/llm-d-scaling-manager#304). The cut at 1 is where that
+// evidence brackets it (Ca^2 1 held, 4 did not), not a calibrated threshold.
+// A step it does not clear is priced as with the switch off, the router's
+// wait included: no gate stage and no processor-sharing onsets
+// (ttftPlan.routerWait, psOnsets).
 func (p Prefill) BeyondProcessorSharing() bool {
 	if r := p.PromptMaxRatio; r > 0 && r <= MaxPSPromptSupport && p.ArrivalCV2 <= 1 {
 		return false

@@ -42,7 +42,7 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   stretched so its held mean stays the measured mean (`holdScale`) and
   censored there (`ownTime.capped` on first come, `ePoly.expect`'s hold on
   processor sharing), and the bound, not the cv, decides processor sharing
-  at Poisson arrivals.
+  at arrivals no burstier than Poisson.
   Off, `MaxRatio` is zeroed in `promptSpread` and the gamma runs on. The
   planner's replay does not turn it on either (`learnreplay.PlannerSwitches`):
   on, its backtests read TTFT under measured where they read at or above it.
