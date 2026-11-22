@@ -243,13 +243,14 @@ prefill speed raised to the served work; not validated). The assumed line
 lists the switches it turned on, the self-check names the flag, and the
 footer says so. Without the flag the output is the default's, byte for byte.
 
-How it read: on a production P/D fleet, fitted on the
-first 12 hours of a day and tested on the last 12, the TTFT it priced read
-about 1.1x what was measured at the mean, 1.3x at p90 and 1.6x at p95, never
-under. On a second split of the same day (fitted on 18 hours, tested on 6)
-it read under what was measured on the mean and p90, so it is not validated:
-use it to show what the model can do on such a fleet, never to size from it
-alone.
+How it read: on a production P/D fleet, fitted on the first half of a day
+and tested on the second, the TTFT it priced read about 1.3x what was
+measured at the mean, 1.35x at p90 and 1.7x at p95, none under 0.8. Those
+figures are upper bounds: they rest on a V_P that is only a lower bound. The
+self-check's folds on the same recording read the p90 TTFT about 0.76x of
+measured, and called it inconsistent. It is not validated: it is for
+demonstration only, to show what the model can do on such a fleet, never to
+size from.
 
 **TTFT on a fleet that never goes quiet is not validated: prefill capacity
 V_P is a lower bound.** Such a fleet's prefill pods queue at every load, so

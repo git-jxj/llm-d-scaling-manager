@@ -11,7 +11,7 @@ import (
 // --experimental-ttft turns on, for one answer, the TTFT model's replay
 // switches that are not in learnreplay.PlannerSwitches (experimentalTTFT):
 // the combination that read closest to a production P/D fleet's measured
-// TTFT on one holdout, and failed a second. It is read where
+// TTFT, high and never validated, for demonstration only. It is read where
 // --prefill-vp-plateau is (answerFlags.replayOptions): every command that
 // replays a recording reads its state there, the server and day-plan,
 // backtest and predict through whatifapi.InputsRequest.ExperimentalTTFT.
@@ -26,8 +26,9 @@ const experimentalTTFTFlag = "experimental-ttft"
 const experimentalTTFTUsage = "experimental, for demonstration, not validated: price TTFT with the TTFT model's switches that are off by default " +
 	"(processor sharing by the engine's flags, the router hop from window means, V_P raised to the served work, " +
 	"the whole window's V_P, the computed-token hit, the cache tier's load and KV wait). " +
-	"On one production P/D fleet's holdout its TTFT read about 1.1x measured at the mean, 1.3x at p90 and 1.6x at p95, " +
-	"and it failed a second holdout split. Every prefill and TTFT figure is flagged ExperimentalTTFT and reads OUTSIDE VALIDATED REGION. Off by default"
+	"On one production P/D fleet, tested on the second half of a day, its TTFT read about 1.3x measured at the mean, " +
+	"1.35x at p90 and 1.7x at p95, none under 0.8 (upper bounds), while its self-check folds read p90 about 0.76x (inconsistent). " +
+	"Not validated, for demonstration only. Every prefill and TTFT figure is flagged ExperimentalTTFT and reads OUTSIDE VALIDATED REGION. Off by default"
 
 // experimentalTTFT is the replay switches --experimental-ttft turns on, by
 // package, in the order the assumed line names them.

@@ -116,7 +116,7 @@ func TestExperimentalTTFT_EveryReplayingCommandTakesIt(t *testing.T) {
 		out, _ := runCmd(t, cmd, "-h")
 		assert.Contains(t, out, "-"+experimentalTTFTFlag, cmd)
 		assert.Contains(t, out, "for demonstration, not validated", cmd)
-		assert.Contains(t, out, "failed a second holdout split", cmd)
+		assert.Contains(t, out, "for demonstration only", cmd)
 	}
 }
 
