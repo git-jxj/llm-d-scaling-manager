@@ -582,6 +582,17 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
     verdict: {verdict: "NOT JUDGED", scope: "fleet", summary: "NOT JUDGED: at the p95 load of 12.5 r/s, 3.1x a prefill knee of at least 4.0 r/s."}}]});
   check("a lower-bound knee reads as at least its rate", lb.details[0].lines.some(l => l.startsWith("Knees: prefill at least 4.04 r/s,") &&
     l.includes("the fleet's is at least 4.04 r/s")), JSON.stringify(lb.details[0].lines));
+  // A TTFT priced from a lower bound of V_P is at most its figure: over the
+  // target, its miss is not known (#369).
+  const ubTTFT = {statistic: "p95", value: 6.922, unit: "s", upperBound: true};
+  const ub = reportView({slo, load: {rate: {value: 3}}, loads: ["50%"], shapes: [{label: "measured", utilization: {decode: {}, prefill: {}},
+    capacity: knees(4.04, "prefill"), verdict: {verdict: "NOT JUDGED", scope: "fleet", summary: "NOT JUDGED: TTFT p95 is at most 6.9 s."},
+    table: [{load: "50%", rate: 2.02, ttft: [ubTTFT], tpotMean: {value: 0.0108}, cell: {mark: "at most, over target", ttft: ubTTFT,
+      tpot: {statistic: "mean", value: 0.0108}}}]}]});
+  const ubCell = ub.rows[0].cells[0];
+  check("a TTFT priced from a lower bound of V_P reads as at most", ubCell.parts[0] === "TTFT ≤6922 ms", JSON.stringify(ubCell));
+  check("its miss over the target is not known, never MISS", ubCell.cls === "unknown" && ubCell.word === "at most, over target: not known",
+    JSON.stringify(ubCell));
   // The fleet needed: a chip of its own, the sentence not repeating it.
   const {neededText, verdictLine, roleLines, loadLine} = ctx;
   const has = {prefill: 2, decode: 2};
@@ -705,7 +716,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 337;
+const EXPECTED_CASES = 339;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

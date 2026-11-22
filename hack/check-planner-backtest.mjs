@@ -134,6 +134,18 @@ try {
     p.predicted = {refused: {reason: "Saturated", detail: "past the knee"}};
   }
   check("a refused prediction is named in the tooltip", /overloaded/.test(btTipHTML(refused, refused.steps[3])));
+
+  // A TTFT priced from a lower bound of V_P is at most its figure, and one
+  // the fleet measured under is consistent with it, not scored (#369).
+  const upper = copy(answer);
+  const ub = upper.steps[3].ttft[0];
+  ub.predicted.upperBound = true;
+  ub.unscored = "upperBound";
+  const ubTip = btTipHTML(upper, upper.steps[3]);
+  check("an upper-bound prediction reads at most in the tooltip", ubTip.includes("predicted at most ") &&
+    ubTip.includes("an upper bound the fleet measured under: consistent, not scored"), ubTip);
+  check("an upper-bound prediction reads at most in the step table", btStepTable(upper).includes("at most "));
+  check("a plain prediction does not", !btStepTable(answer).includes("at most "));
 } catch (e) {
   failures.push("threw: " + (e && e.stack || e));
 }

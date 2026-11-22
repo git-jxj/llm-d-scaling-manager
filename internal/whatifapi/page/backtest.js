@@ -293,6 +293,13 @@ function btStepAt(bt, t) {
   return null;
 }
 
+// btPred is a point's prediction in words: "at most" before a TTFT priced
+// from a lower bound of V_P (predicted.upperBound), whose ratio is scored
+// only where the fleet measured more than 20% over it (unscored upperBound).
+function btPred(p) {
+  return (p.predicted.upperBound ? "at most " : "") + btFmt(p.predicted.value);
+}
+
 // btTipHTML is the tooltip of one step: its inputs, why it was not judged,
 // and each statistic predicted and measured.
 function btTipHTML(bt, s) {
@@ -301,9 +308,10 @@ function btTipHTML(bt, s) {
   if (s.excluded) h += `<br>not judged: ${esc(BT_EXCLUDED[s.excluded] || s.excluded)}${s.detail ? " (" + esc(s.detail) + ")" : ""}`;
   for (const key of ["ttft", "tpot"]) {
     for (const p of s[key] || []) {
-      const pred = p.predicted.value != null ? btFmt(p.predicted.value) : p.predicted.refused && p.predicted.refused.reason === "Saturated" ?
+      const pred = p.predicted.value != null ? btPred(p) : p.predicted.refused && p.predicted.refused.reason === "Saturated" ?
         "no figure (overloaded)" : "no figure (" + (p.predicted.refused ? p.predicted.refused.reason : "-") + ")";
-      h += `<br>${key.toUpperCase()} ${esc(p.statistic)}: predicted ${esc(pred)}, measured ${esc(btMeasured(p))}`;
+      const held = p.unscored === "upperBound" ? " (an upper bound the fleet measured under: consistent, not scored)" : "";
+      h += `<br>${key.toUpperCase()} ${esc(p.statistic)}: predicted ${esc(pred)}, measured ${esc(btMeasured(p))}${esc(held)}`;
     }
   }
   return h;
@@ -336,7 +344,7 @@ function btStepTable(bt) {
   const cell = (s, key, stat) => {
     const p = btPoint(s, key, stat);
     if (!p) return "-";
-    const pred = p.predicted.value != null ? btFmt(p.predicted.value) : p.predicted.refused ? "no figure" : "-";
+    const pred = p.predicted.value != null ? btPred(p) : p.predicted.refused ? "no figure" : "-";
     return `${pred} / ${btMeasured(p)}`;
   };
   let h = `<table class="t"><thead><tr><th>step (UTC)</th><th>rate</th><th>prefill + decode</th><th>TTFT mean</th><th>TTFT p90</th>` +
