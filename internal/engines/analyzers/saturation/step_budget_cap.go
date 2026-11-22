@@ -29,8 +29,9 @@ const SwitchMuAtStepBudget = "mu-at-step-budget"
 // SwitchPlannerCapAtStepBudget is SwitchMuAtStepBudget for the capacity
 // planner: the batch cap per rank the planner reads (PricingBatchCap), and so
 // its decode knee, held to the step budget's batch. Planner-only and off from
-// the constructor; the planner's replay does not turn it on yet
-// (learnreplay.PlannerSwitches), for the same lack of a recording.
+// the constructor; the planner's replay turns it on
+// (learnreplay.PlannerSwitches): it only lowers the cap, and moves no
+// committed recording, whose budgets all run their caps.
 const SwitchPlannerCapAtStepBudget = "planner-cap-at-step-budget"
 
 // atStepBudget is p held to the batch params' step budget runs, with its
