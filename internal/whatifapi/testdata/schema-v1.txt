@@ -19,11 +19,14 @@ Figure.unit string
 Figure.validation object
 Figure.validation.errorHi number
 Figure.validation.errorLo number
+Figure.validation.holdout boolean
 Figure.validation.label string
+Figure.validation.levels number
 Figure.validation.outside string
 Figure.validation.readings number
 Figure.validation.shape string
 Figure.validation.source string
+Figure.validation.spread string
 Figure.validation.validated boolean
 Figure.value number
 Line object
@@ -921,6 +924,8 @@ report.shapes[].growth[].verdict.needed.alternatives[] object
 report.shapes[].growth[].verdict.needed.alternatives[].decode number
 report.shapes[].growth[].verdict.needed.alternatives[].prefill number
 report.shapes[].growth[].verdict.needed.decode number
+report.shapes[].growth[].verdict.needed.decodeAtErrorBound number
+report.shapes[].growth[].verdict.needed.decodeKneeError number
 report.shapes[].growth[].verdict.needed.decodeOnly boolean
 report.shapes[].growth[].verdict.needed.fSensitivity array
 report.shapes[].growth[].verdict.needed.fSensitivity[] object
@@ -1019,6 +1024,8 @@ report.shapes[].verdict.needed.alternatives[] object
 report.shapes[].verdict.needed.alternatives[].decode number
 report.shapes[].verdict.needed.alternatives[].prefill number
 report.shapes[].verdict.needed.decode number
+report.shapes[].verdict.needed.decodeAtErrorBound number
+report.shapes[].verdict.needed.decodeKneeError number
 report.shapes[].verdict.needed.decodeOnly boolean
 report.shapes[].verdict.needed.fSensitivity array
 report.shapes[].verdict.needed.fSensitivity[] object

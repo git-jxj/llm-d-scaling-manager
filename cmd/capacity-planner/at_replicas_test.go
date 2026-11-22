@@ -60,7 +60,7 @@ func TestAtReplicasGolden(t *testing.T) {
 		{"at-replicas-over", atStair("--decode", "3", "--load-seen", "20"), 0},
 		// V_P is refused on the sweep: the report answers for decode alone,
 		// which is under-provisioned at the p95: an answer, exit 0.
-		{"at-replicas-decode-only", []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms"}, 0},
+		{"at-replicas-decode-only", []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms"}, 3},
 		// Three shapes by four loads: the measured one, a short and a long
 		// prompt the recording never saw (EXTRAPOLATED), at two shares of each
 		// shape's knee, a stated rate and the load seen grown by a fifth. Past
@@ -178,7 +178,11 @@ func TestAtReplicas_OverProvisionedNamesTheRole(t *testing.T) {
 	assert.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Reason)
 	assert.Equal(t, []string{roleDecode}, v.Shrink)
 	assert.Equal(t, whatifapi.ScopeFleet, v.Scope)
-	assert.Contains(t, v.Summary, "decode knee unvalidated")
+	// The staircase-b decode knee is outside its validated region: the
+	// caveat says so, and the needed fleet gives decode at the 0.6B goldens'
+	// 99.1% (#297): the replica cut is not safe at that bound.
+	assert.Contains(t, v.Summary, "decode knee outside its validated region")
+	assert.Contains(t, v.Summary, "needs 2 prefill + 2 decode (has 2 + 3), 3 decode if the decode knee reads 99% high")
 	require.Len(t, v.Checks, 3)
 	for _, c := range v.Checks {
 		assert.True(t, strings.HasPrefix(c.Reason, "20.00 r/s "), "each fleet is checked at the load: %s", c.Reason)
@@ -209,7 +213,8 @@ func TestAtReplicas_OverProvisionedNamesTheRole(t *testing.T) {
 	got.FSensitivity = nil // TestAtReplicas_TheFleetNeededAtEachF
 	gpus := 4
 	assert.Equal(t, whatifapi.ReportNeeded{Prefill: 2, Decode: 2, MaxReplicas: whatifapi.DefaultSizeBound, Minimizes: whatifapi.MinimizesGPUs,
-		GPUsPerReplica: &whatifapi.FleetCounts{Prefill: 1, Decode: 1}, GPUs: &gpus}, got)
+		GPUsPerReplica: &whatifapi.FleetCounts{Prefill: 1, Decode: 1}, GPUs: &gpus,
+		DecodeAtErrorBound: 3, DecodeKneeError: decodeKneeGoldensHigh}, got)
 	assert.Contains(t, v.Summary, "needs 2 prefill + 2 decode (has 2 + 1)")
 }
 
@@ -286,6 +291,10 @@ func TestAtReplicas_LoadStatistics(t *testing.T) {
 		}
 	}
 	require.Len(t, st.ArrivalRates, st.Cycles, "one rate per cycle")
+	require.NotEmpty(t, st.ServingReplicas)
+	for v, row := range st.ServingReplicas {
+		require.Len(t, row, st.Cycles, "%s: one serving count per cycle", v)
+	}
 	rep := stairReport(t, stairQuery(0, 0, 0))
 	l := rep.Load
 	require.NotNil(t, l.P95)

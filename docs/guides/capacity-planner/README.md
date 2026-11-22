@@ -31,7 +31,7 @@ capacity planner's pages:
 | [The metrics it needs](metrics.md) | every series it reads, and what your Prometheus must keep |
 | [Troubleshooting](troubleshooting.md) | every refusal and error, with its fix |
 | [Check the planner on your own data](check.md) | fit it on part of a recording, predict the rest, and compare with what the fleet measured |
-| [How accurate each figure is](accuracy.md) | what `validated: error ...` and `OUTSIDE VALIDATED REGION` mean, and what was measured |
+| [How accurate each figure is](accuracy.md) | what `validated in-sample: error ...` and `OUTSIDE VALIDATED REGION` mean, and what was measured |
 
 ## Prerequisites
 
@@ -542,8 +542,8 @@ It replays the recording once and answers, for each shape and load:
   output length is flagged `ShapeLoadMismatch`, and `--shape load` prices
   the load at its own cycles' shape. On the guide's sample the p95, 29.7
   r/s, ran at 1000/500 tokens while the measured shape is 4569/1855: the
-  measured shape needs 14 prefill + 23 decode, `--shape load` 4 + 2, what
-  `day-plan` sizes the same rate at.
+  report gives no verdict on the measured shape (NOT JUDGED, exit 3), and
+  `--shape load` needs 4 + 2, what `day-plan` sizes the same rate at.
 - **Not the default.** `--shape load` and `p95-modulation` (here and in
   `day-plan --size-for`) are opt-in. A model change becomes the default only
   where the recordings show it moves no figure to read under what was
@@ -588,7 +588,10 @@ It replays the recording once and answers, for each shape and load:
     target at the window's peak too, since removing capacity is the costly
     mistake.
   - RIGHT-SIZED: the fleet holds, and no role has a replica to spare.
-  - NOT JUDGED: a figure the verdict needs is refused (the sentence says
+  - NOT JUDGED: where it would be UNDER-PROVISIONED on a load of other
+    traffic than the shape priced, or on a knee the window's own fleet
+    served past for 3 minutes; or a figure the verdict needs
+    is refused (the sentence says
     which), there is no load, or the prefill side is not priced and decode
     alone holds. With no prefill speed learned, decode alone is judged
     ("(decode only)"): the report never calls such a fleet right-sized or
@@ -657,16 +660,39 @@ summary                     50%                80%                 5r/s         
   1k/1k EXTRAPOLATED        133/3.1 @17.78 ok  152/5.6 @28.45 ok   125/3.1 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
   16k/200/0.3 EXTRAPOLATED  667/3.2 @9.08 ok   1015/6.8 @14.53 ok  567/3.1 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
 verdicts
-  measured                  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2); the same at f 1 to 1.5 (prefill f 1 assumed at 3 pods).
-                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (37.0 r/s); needs 3 prefill + 4 decode (has 2 + 2) (prefill f 1 assumed at 3 pods).
-  1k/1k EXTRAPOLATED        UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.2x the fleet knee of 35.6 r/s, the fleet saturates; needs 1 prefill + 3 decode (has 2 + 2).
-                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (35.6 r/s); needs 1 prefill + 4 decode (has 2 + 2).
-  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 2.3x the fleet knee of 18.2 r/s, the fleet saturates; needs 4 prefill + 6 decode (has 2 + 2); at f 1 needs 4 + 6, at f 1.5 needs 5 + 6 (prefill f 1 assumed at 4 pods).
-                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 2.8x the fleet knee (18.2 r/s); needs 4 prefill + 7 decode (has 2 + 2) (prefill f 1 assumed at 4 pods).
+  measured                  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 3 pods).
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (37.0 r/s); needs 4 prefill + 4 decode (has 2 + 2), 7 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 4 pods).
+  1k/1k EXTRAPOLATED        UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.2x the fleet knee of 35.6 r/s, the fleet saturates; needs 1 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 99% high.
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (35.6 r/s); needs 1 prefill + 4 decode (has 2 + 2), 7 decode if the decode knee reads 99% high.
+  16k/200/0.3 EXTRAPOLATED  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 2.3x the fleet knee of 18.2 r/s, the fleet saturates; needs 5 prefill + 6 decode (has 2 + 2), 11 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 5 pods).
+                            x1.2 (50.0 r/s): UNDER-PROVISIONED: 2.8x the fleet knee (18.2 r/s); needs 6 prefill + 7 decode (has 2 + 2), 13 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 6 pods).
 ```
 
-Read the `not validated` lines after each shape (not shown above): the decode knee read 44% to 103%
-high on the goldens, and TTFT is not validated.
+Read the label under the decode knee in each shape's capacity table: inside
+the region a run measured it reads `validated in-sample: one-sided, error at
+most +3%`; outside it, the `not validated` lines at the end of the report add
+that the knee read 43% to 99% high on the 0.6B goldens. The needed fleet gives
+the decode count at the label's upper error beside the point answer: +3%
+inside the region, 99% outside it
+([accuracy](accuracy.md#what-was-measured)). TTFT is not validated.
+
+A verdict that would be UNDER-PROVISIONED is NOT JUDGED instead in two
+cases, and no fleet is sized:
+
+- The load and the shape priced are of different traffic: the measured
+  shape priced is more than 20% longer, in prompt or output, than the
+  cycles the load was read from (the `SHAPE/LOAD MISMATCH` line), so its
+  knee reads low for that load. The summary gives both shapes; `--shape
+  load` prices the load at its own. A shape priced lighter than the load
+  keeps its UNDER: its knee only reads high.
+- The window contradicts the model, where the load is past the knee's
+  operating point: at the shape priced, the fleet priced,
+  or a smaller one, served more than 1.25x the fleet knee for 3 minutes
+  without a break (over the band's top where that sets the decode knee;
+  never on a prefill knee read off a lower bound of V_P). The summary says
+  how far and for how long; the knee reads low for that window.
+
+Only an UNDER is withheld: neither case shows the fleet holding.
 
 A window whose cycles do not cover its span (a capture or recording with
 holes) gets a `window gaps` line under the header line: the cycles the span

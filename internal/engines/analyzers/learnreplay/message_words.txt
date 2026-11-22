@@ -1422,6 +1422,7 @@ holdCap
 holdFloor
 holdFor
 holding
+holdout
 holds
 hole
 holes
@@ -1463,6 +1464,7 @@ implausible
 important
 in
 in-flight
+in-sample
 inBand
 inactive
 included

@@ -725,9 +725,11 @@ mutation-checked:
 ### Calibration envelope, as built
 
 Every figure the planner prints carries the envelope's verdict
-(`whatif.Envelope`, `internal/signals/whatif/envelope.go`): `validated: error
-LO..HI% (RANGE, n=N; SOURCE)` when a measured row's region holds it, `OUTSIDE
-VALIDATED REGION (why)` when none does. Validated means measured, not accurate.
+(`whatif.Envelope`, `internal/signals/whatif/envelope.go`): `validated
+in-sample: error LO..HI% (RANGE, n=N[ load levels, M readings]; SOURCE)` when
+a measured row's region holds it (`validated on a holdout` for a row whose run
+never tuned the planner, `EnvelopeRow.Holdout`), `OUTSIDE VALIDATED REGION
+(why)` when none does. Validated means measured, not accurate.
 For an operator's reading:
 [how accurate each figure is](../guides/capacity-planner/accuracy.md).
 
@@ -759,8 +761,9 @@ until a run prices it:
 A row also says what kind of range its error is, and over how many independent
 readings:
 
-- p10-p90 with min-max, for 5 or more point readings;
-- min-max, under 5;
+- p10-p90 with min-max, for 10 or more independent load levels (readings
+  that repeat a level count once: `EnvelopeRow.Independent`);
+- min-max, under 10;
 - a bracket between ladder steps;
 - one-sided, where the run stopped short.
 
@@ -827,9 +830,9 @@ the run's frozen curve.
 | decode-knee | 1000-token prompts, 1000 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 1 | -4..+2% | bracket | 1 |  | on |
 | flow-control-onset | 8000-token prompts, 200 out, Ca^2 4 | -7..-4% | bracket | 1 |  | on |
-| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +2..+15% | p10-p90, min-max +1..+18% | 12 at 6 load levels | 0.400 to 0.900 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -2..+1% | p10-p90, min-max -3..+1% | 12 at 6 load levels | 0.096 to 0.215 | any |
-| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -4..-2% | p10-p90, min-max -5..-1% | 10 at 6 load levels | 0.096 to 0.203 | any |
+| mean TPOT | 1000-token prompts, 1000 out, Ca^2 1 | +1..+18% | min-max | 6 load levels (12 readings) | 0.400 to 0.900 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 1 | -3..+1% | min-max | 6 load levels (12 readings) | 0.096 to 0.215 | any |
+| mean TPOT | 8000-token prompts, 200 out, Ca^2 4 | -5..-1% | min-max | 6 load levels (10 readings) | 0.096 to 0.203 | any |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 1 | at most +3% | one-sided | 1 |  | off |
 | prefill-knee | 8000-token prompts, 200 out, Ca^2 4 | at most +3% | one-sided | 1 |  | off |
 | rate-at-ttft p90 | 1000-token prompts, 1000 out, Ca^2 1 | -6..+0% | bracket | 1 | 0.825 to 0.875 | off, on |
@@ -1696,11 +1699,14 @@ roles[].results.knee.answer.unit string
 roles[].results.knee.answer.validation object
 roles[].results.knee.answer.validation.errorHi number
 roles[].results.knee.answer.validation.errorLo number
+roles[].results.knee.answer.validation.holdout boolean
 roles[].results.knee.answer.validation.label string
+roles[].results.knee.answer.validation.levels number
 roles[].results.knee.answer.validation.outside string
 roles[].results.knee.answer.validation.readings number
 roles[].results.knee.answer.validation.shape string
 roles[].results.knee.answer.validation.source string
+roles[].results.knee.answer.validation.spread string
 roles[].results.knee.answer.validation.validated boolean
 roles[].results.knee.answer.value number
 roles[].results.knee.refused object
@@ -1733,11 +1739,14 @@ roles[].results.meanTPOT.answer.unit string
 roles[].results.meanTPOT.answer.validation object
 roles[].results.meanTPOT.answer.validation.errorHi number
 roles[].results.meanTPOT.answer.validation.errorLo number
+roles[].results.meanTPOT.answer.validation.holdout boolean
 roles[].results.meanTPOT.answer.validation.label string
+roles[].results.meanTPOT.answer.validation.levels number
 roles[].results.meanTPOT.answer.validation.outside string
 roles[].results.meanTPOT.answer.validation.readings number
 roles[].results.meanTPOT.answer.validation.shape string
 roles[].results.meanTPOT.answer.validation.source string
+roles[].results.meanTPOT.answer.validation.spread string
 roles[].results.meanTPOT.answer.validation.validated boolean
 roles[].results.meanTPOT.answer.value number
 roles[].results.meanTPOT.refused object
@@ -1770,11 +1779,14 @@ roles[].results.operatingRate.answer.unit string
 roles[].results.operatingRate.answer.validation object
 roles[].results.operatingRate.answer.validation.errorHi number
 roles[].results.operatingRate.answer.validation.errorLo number
+roles[].results.operatingRate.answer.validation.holdout boolean
 roles[].results.operatingRate.answer.validation.label string
+roles[].results.operatingRate.answer.validation.levels number
 roles[].results.operatingRate.answer.validation.outside string
 roles[].results.operatingRate.answer.validation.readings number
 roles[].results.operatingRate.answer.validation.shape string
 roles[].results.operatingRate.answer.validation.source string
+roles[].results.operatingRate.answer.validation.spread string
 roles[].results.operatingRate.answer.validation.validated boolean
 roles[].results.operatingRate.answer.value number
 roles[].results.operatingRate.refused object
@@ -1807,11 +1819,14 @@ roles[].results.percentileTPOT.answer.unit string
 roles[].results.percentileTPOT.answer.validation object
 roles[].results.percentileTPOT.answer.validation.errorHi number
 roles[].results.percentileTPOT.answer.validation.errorLo number
+roles[].results.percentileTPOT.answer.validation.holdout boolean
 roles[].results.percentileTPOT.answer.validation.label string
+roles[].results.percentileTPOT.answer.validation.levels number
 roles[].results.percentileTPOT.answer.validation.outside string
 roles[].results.percentileTPOT.answer.validation.readings number
 roles[].results.percentileTPOT.answer.validation.shape string
 roles[].results.percentileTPOT.answer.validation.source string
+roles[].results.percentileTPOT.answer.validation.spread string
 roles[].results.percentileTPOT.answer.validation.validated boolean
 roles[].results.percentileTPOT.answer.value number
 roles[].results.percentileTPOT.refused object
@@ -1844,11 +1859,14 @@ roles[].results.rate.answer.unit string
 roles[].results.rate.answer.validation object
 roles[].results.rate.answer.validation.errorHi number
 roles[].results.rate.answer.validation.errorLo number
+roles[].results.rate.answer.validation.holdout boolean
 roles[].results.rate.answer.validation.label string
+roles[].results.rate.answer.validation.levels number
 roles[].results.rate.answer.validation.outside string
 roles[].results.rate.answer.validation.readings number
 roles[].results.rate.answer.validation.shape string
 roles[].results.rate.answer.validation.source string
+roles[].results.rate.answer.validation.spread string
 roles[].results.rate.answer.validation.validated boolean
 roles[].results.rate.answer.value number
 roles[].results.rate.refused object
@@ -1901,11 +1919,14 @@ roles[].results.ttft.answer.unit string
 roles[].results.ttft.answer.validation object
 roles[].results.ttft.answer.validation.errorHi number
 roles[].results.ttft.answer.validation.errorLo number
+roles[].results.ttft.answer.validation.holdout boolean
 roles[].results.ttft.answer.validation.label string
+roles[].results.ttft.answer.validation.levels number
 roles[].results.ttft.answer.validation.outside string
 roles[].results.ttft.answer.validation.readings number
 roles[].results.ttft.answer.validation.shape string
 roles[].results.ttft.answer.validation.source string
+roles[].results.ttft.answer.validation.spread string
 roles[].results.ttft.answer.validation.validated boolean
 roles[].results.ttft.answer.value number
 roles[].results.ttft.refused object

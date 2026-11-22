@@ -450,6 +450,14 @@ type ReportNeeded struct {
 	Alternatives []FleetCounts `json:"alternatives,omitempty"`
 	Unmet        string        `json:"unmet,omitempty"`
 	MaxReplicas  int           `json:"maxReplicas"`
+	// DecodeAtErrorBound is the decode replicas the load needs when the
+	// decode knee reads as high as its validation allows, DecodeKneeError
+	// (a share: the envelope row's upper error, or the 0.6B goldens' upper
+	// end outside every row); never below Decode, and at most MaxReplicas,
+	// which it reads where more would be needed. 0 where the knee, its
+	// upper error or the load is not a figure.
+	DecodeAtErrorBound int     `json:"decodeAtErrorBound,omitempty"`
+	DecodeKneeError    float64 `json:"decodeKneeError,omitempty"`
 	// Minimizes is what the search minimised (MinimizesGPUs or
 	// MinimizesReplicas); absent on a decode-only need, a count of one role.
 	Minimizes string `json:"minimizes,omitempty"`
