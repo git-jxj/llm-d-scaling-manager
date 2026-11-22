@@ -2128,6 +2128,7 @@ observed
 observed/historical/derived
 observedGPS
 occupancy
+occupancy-plateau
 occupancy-unknown
 of
 off
@@ -2354,6 +2355,7 @@ prefill-required
 prefill-spare
 prefill-throughput-bound-reading
 prefill-vp-floor-served
+prefill-vp-occupancy-plateau
 prefillBoundHeld
 prefillBounds
 prefillDemandAfter
@@ -3325,6 +3327,10 @@ vpAboveSlopeBound
 vpFlooredAtServed
 vpLowerBound
 vpLowerBoundReason
+vpPlateau
+vpPlateauFlat
+vpPlateauMinutes
+vpPlateauSpan
 vpPromptTokens
 vpRefused
 vpSamples

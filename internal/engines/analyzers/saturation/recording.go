@@ -130,7 +130,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
 // SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
 // SwitchPrefillFBusyMinutes, SwitchPrefillVPFloorServed,
-// SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
+// SwitchPrefillVPOccupancyPlateau, SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
 // SwitchITLAdaptiveBandFloor,
 // SwitchITLHoldSteadySlope, SwitchITLLineAtFloor, SwitchMoEBusiestRank,
 // SwitchITLBatchTerm, SwitchTPOTRatioCensored,
@@ -274,6 +274,11 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// pod was seen to compute (prefill.Cycle.VPFloorServed). Off from
 		// the constructor.
 		SwitchPrefillVPFloorServed: &a.prefillVPFloorServed,
+		// Issue llm-d-incubation/llm-d-scaling-manager#368: the planner's
+		// V_P from the plateau of the served rate against the prefill
+		// occupancy (prefill.Cycle.VPOccupancyPlateau). Off from the
+		// constructor.
+		SwitchPrefillVPOccupancyPlateau: &a.prefillVPOccupancyPlateau,
 		// The planner's a: low load read by rate against the prompt
 		// cluster's service time, and the median overhead
 		// (prefill.Cycle.ALowLoadByRate, AMedianOverhead). Off from the

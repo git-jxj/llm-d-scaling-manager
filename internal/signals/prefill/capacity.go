@@ -40,6 +40,11 @@ import (
 // the max over unqueued minutes too adds windows, so its noise is that of
 // source 2 over more runs: still within a one-minute rate's spread.
 //
+// With Cycle.VPOccupancyPlateau, a V_P refused here for want of a queue, or
+// a lower bound under it, is read from the plateau of the served rate
+// against the prefill occupancy (plateau.go): V_P where the curve flattened
+// in the window, a lower bound where it did not.
+//
 // Otherwise NoPrefillCapacity. SGLang always refuses: it publishes no
 // computed-token series.
 //
