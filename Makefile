@@ -3746,11 +3746,12 @@ docker-build-warmpool-launcher: ## Build the warm-pool launcher image (pulls the
 docker-push-warmpool-launcher: ## Push the warm-pool launcher image.
 	$(CONTAINER_TOOL) push ${WARMPOOL_LAUNCHER_IMG}
 
-# The launcher's own unit tests. They stub vLLM, so they need only the packages
-# in warmpool/supervisor/tests/requirements.txt (pip install -r it first).
-.PHONY: test-warmpool-launcher
+# The launcher's own unit tests live in make/warmpool-launcher.mk, so that
+# ci-pr-checks.yaml builds the ~10 GB launcher image for a change to that file
+# and not for every Makefile edit. Only the help line stays here, to keep its
+# place in `make help`; give the target no prerequisites or recipe here.
 test-warmpool-launcher: ## Run the warm-pool launcher's Python unit tests (needs warmpool/supervisor/tests/requirements.txt installed)
-	cd warmpool/supervisor && python3 -m pytest -v -p no:cacheprovider tests
+include make/warmpool-launcher.mk
 
 # BuildKit reads Dockerfile.tools.dockerignore; the default .dockerignore
 # excludes deploy/, which is all this image carries.
