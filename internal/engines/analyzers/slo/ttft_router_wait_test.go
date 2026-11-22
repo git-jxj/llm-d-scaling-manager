@@ -131,6 +131,7 @@ var notOnTheTTFTPath = map[string]string{
 	"TransferHeld":              "joint model",
 	"VPFromPlateau":             "planner only: the controller never reads V_P from the occupancy plateau",
 	"ExperimentalTTFT":          "planner only: the CLI's --experimental-ttft",
+	"PSSlotsExceeded":           "planner only: slo-ttft-ps-by-engine, which the analyzer never prices with",
 }
 
 // Every flag the whatif package declares is on the TTFT series' list, the
