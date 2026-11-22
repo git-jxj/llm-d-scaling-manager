@@ -916,7 +916,7 @@ and the provenance chips of every term. The banner is the API's.
 C5 is built: `POST /v1/size` in the API, and a toggle on the page between
 "How much does this fleet serve?" and "What fleet does this traffic need?".
 How to use it is in the guide's
-[Find the fleet a rate needs](../guides/capacity-planner/README.md#find-the-fleet-a-rate-needs);
+[Find the fleet a rate needs](../guides/capacity-planner/page-and-commands.md#find-the-fleet-a-rate-needs);
 the keys and the search are in
 [What-if serve](../developer-guide/capacity-planner-serve.md#the-size-search).
 
@@ -989,7 +989,7 @@ every replica count, not the bound reached.
 
 C10 is built, in the page alone: the API is unchanged and the server keeps
 nothing. How to use it is in the guide's
-[Save and compare scenarios](../guides/capacity-planner/README.md#save-and-compare-scenarios);
+[Save and compare scenarios](../guides/capacity-planner/page-and-commands.md#save-and-compare-scenarios);
 the storage, the file format and the checks are in
 [Capacity planner serve](../developer-guide/capacity-planner-serve.md#the-page).
 
@@ -1025,7 +1025,7 @@ pin.
 
 A plan may set its own prompt buckets: `bucketEdges`, the upper edges in
 tokens, ascending. How to use them is in the guide's
-[Set your own prompt buckets](../guides/capacity-planner/README.md#set-your-own-prompt-buckets);
+[Set your own prompt buckets](../guides/capacity-planner/page-and-commands.md#set-your-own-prompt-buckets);
 the keys and the rules are in
 [What-if serve](../developer-guide/capacity-planner-serve.md#bucket-edges).
 

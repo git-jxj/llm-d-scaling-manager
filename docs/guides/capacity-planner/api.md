@@ -307,7 +307,7 @@ judged must also hold that role at the peak.
 | `searched` | How many fleets the search priced, besides the answer's plan. |
 | `answer.fleet` | The fleet of the fewest GPUs (or replicas). |
 | `answer.gpusPerReplica`, `answer.gpus` | Each role's GPUs per replica and the fleet's GPUs; absent where the inputs do not state both roles'. `answer.withSpare.gpus` is absent likewise. |
-| `answer.withSpare` | With `spare` above 0: `spare`, `fleet` (the answer plus `spare` replicas of each role) and its `gpus`. It serves the rate with `spare` replicas of each role lost at once, since the answer does. Map it onto `minReplicaCount`, `maxReplicaCount` and quota as [the guide](README.md#size-for-failures-minreplicacount-and-quota) says. |
+| `answer.withSpare` | With `spare` above 0: `spare`, `fleet` (the answer plus `spare` replicas of each role) and its `gpus`. It serves the rate with `spare` replicas of each role lost at once, since the answer does. Map it onto `minReplicaCount`, `maxReplicaCount` and quota as [the guide](page-and-commands.md#size-for-failures-minreplicacount-and-quota) says. |
 | `answer.limit`, `answer.binding` | The plan's `limits.fleet` at that fleet, with its span in `sensitivity`, and the role that binds; `limit.boundBy` says which SLO or cap sets it. Sized on `point`, the span's low end may be under the rate. |
 | `answer.headroom` | The limit less the rate; sized `low`, the span's low end less the rate. |
 | `answer.fewerPrefill`, `answer.fewerDecode` | The fleet with one replica fewer of that role: its limit, its shortfall (`headroom`, negative), and the role that binds. Absent when the role has one replica. |
@@ -588,7 +588,7 @@ loopback only. [Get the planner](README.md#get-the-planner) has the command.
 Never run the default command with `--network host`: the server would listen
 on every interface of the host. Give the command yourself, with
 `--listen 127.0.0.1:8080` and without `--listen-all-in-container`
-([In a container](README.md#in-a-container)). For a browser in a Kubernetes
+([In a container](install-options.md#in-a-container)). For a browser in a Kubernetes
 Pod, see [Run it in a cluster](in-cluster.md); for API clients, use
 `--auth=kubernetes` with TLS.
 

@@ -138,8 +138,11 @@ stack](guides/testing-with-llm-d/) · [benchmark the scaling manager](guides/ben
 
 **[Capacity planner](guides/capacity-planner/)** — a web page on your machine
 that prices a P/D fleet from what it did: the TTFT and TPOT it gives, the most
-it serves under the SLO, and the fleet a rate needs. Getting it, recording a
-window, the API, the metrics it reads and troubleshooting are all there.
+it serves under the SLO, and the fleet a rate needs. Start with the
+[quick start](guides/capacity-planner/) and
+[read the planner's answer](guides/capacity-planner/read-the-answer.md);
+recording a window, the API, the metrics it reads and troubleshooting are
+all there too.
 
 ## Reference — what you set and read
 

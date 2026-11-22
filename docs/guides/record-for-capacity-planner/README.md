@@ -125,7 +125,7 @@ How to read their answers: [Read the command-line answers](#read-the-command-lin
 
 To look at the recording in the planner's page, put `run.jsonl.gz` (the
 recording, not `run.capture.jsonl.gz`) in a directory and serve it:
-[Start the planner](../capacity-planner/README.md#start-the-planner).
+[Start the planner](../capacity-planner/install-options.md#start-the-planner).
 
 **Go easy on Prometheus.** A capture asks one range query per planner query
 over the whole window: about 56 for one vLLM model. An hour is light; a day

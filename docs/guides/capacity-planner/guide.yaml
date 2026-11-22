@@ -3,16 +3,101 @@
 # commands a tool would run are the same strings.
 name: capacity-planner
 
+# The quick start (README.md). Windows steps are PowerShell; the planner commands themselves
+# (bin/capacity-planner ...) run as written in PowerShell, bash and zsh.
+quick:
+  windows:
+    lang: powershell
+    note: |
+      Windows (amd64), in PowerShell. curl.exe ships with Windows 10 and later. The check prints True when the
+      download matches the release's SHA256SUMS.
+    run: |
+      $V = "<release, v0.12.2 or later>"
+      $B = "capacity-planner-$V-windows-amd64.exe"
+      $URL = "https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V"
+      curl.exe -fsSL -O "$URL/$B" -O "$URL/SHA256SUMS"
+      ((Select-String -Path SHA256SUMS -Pattern " $B$").Line -split " ")[0] -eq (Get-FileHash $B -Algorithm SHA256).Hash.ToLower()
+      New-Item -ItemType Directory -Force bin | Out-Null; Move-Item -Force $B bin/capacity-planner.exe
+      bin/capacity-planner version
+  unix:
+    note: |
+      macOS or Linux. OS is darwin or linux; ARCH is arm64 (Apple silicon) or amd64 (Intel). The check prints OK
+      when the download matches the release's SHA256SUMS.
+    run: |
+      export V=<release, v0.12.0 or later> OS=darwin ARCH=arm64
+      B=capacity-planner-${V}-${OS}-${ARCH}
+      URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/${V}
+      curl -fsSL -O ${URL}/${B} -O ${URL}/SHA256SUMS
+      grep " ${B}$" SHA256SUMS | shasum -a 256 -c -
+      mkdir -p bin && install -m 0755 ${B} bin/capacity-planner
+      bin/capacity-planner version
+
+cluster:
+  install:
+    note: |
+      Plain Kubernetes, as the admin of one namespace. The planner listens on 127.0.0.1 inside its Pod; a Role and a
+      RoleBinding let every authenticated user port-forward to that Pod, capacity-planner-0, and no other.
+      Skip the create if your cluster admin made the namespace.
+    run: |
+      export NS=capacity-planner V=<release, v0.12.0 or later>
+      export SRC=https://github.com/llm-d-incubation/llm-d-scaling-manager//config/capacity-planner
+      kubectl create namespace ${NS}
+      kubectl apply -n ${NS} -k "${SRC}/kubernetes?ref=${V}"
+      kubectl -n ${NS} rollout status statefulset/capacity-planner
+  sample:
+    note: |
+      Load the sample through the loader, a short-lived Pod that mounts the recordings volume read-write.
+      Your own recordings go in the same way.
+    run: |
+      curl -fsSL -o ttft-staircase-b-on.jsonl.gz \
+        https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz
+      kubectl apply -n ${NS} -k "${SRC}/loader?ref=${V}"
+      kubectl -n ${NS} wait --for=condition=Ready pod/capacity-planner-loader --timeout=120s
+      kubectl -n ${NS} cp ttft-staircase-b-on.jsonl.gz capacity-planner-loader:/recordings/ttft-staircase-b-on.jsonl.gz
+      kubectl -n ${NS} delete pod capacity-planner-loader
+  open:
+    note: |
+      Anyone allowed, from their own machine. Leave it running, then open http://localhost:8080. Use localhost or
+      127.0.0.1: the planner refuses other names. If port 8080 is busy, use 9090:8080 and open http://localhost:9090.
+    run: |
+      kubectl -n <namespace> port-forward pod/capacity-planner-0 8080:8080
+
 sample:
   get:
     note: |
-      A sample recording, from the source tree of the release you run: one P/D model, one prefill and one decode
-      replica, an hour of a test run. Or put your own run.jsonl.gz from the record guide in recordings/ instead.
+      Two sample recordings, from the source tree of the release you run. ols-sweep: one prefill and one decode
+      replica, an hour of a test run. ttft-staircase-b-on: two and two, 72 minutes of rising load.
     run: |
       export V=<release, v0.12.0 or later>
       mkdir -p recordings
       curl -fsSL -o recordings/ols-sweep.jsonl.gz \
         https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ols-sweep/recording.jsonl.gz
+      curl -fsSL -o recordings/ttft-staircase-b-on.jsonl.gz \
+        https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz
+  getWindows:
+    lang: powershell
+    note: The same two samples, in PowerShell, with $V set as above.
+    run: |
+      New-Item -ItemType Directory -Force recordings | Out-Null
+      $S = "https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/$V/internal/engines/analyzers/learnreplay/testdata/goldens"
+      curl.exe -fsSL -o recordings/ols-sweep.jsonl.gz "$S/ols-sweep/recording.jsonl.gz"
+      curl.exe -fsSL -o recordings/ttft-staircase-b-on.jsonl.gz "$S/ttft-staircase-b-on/recording.jsonl.gz"
+  ask:
+    note: |
+      Judge the staircase sample's fleet at the load it saw. The same command in PowerShell. Takes a few seconds.
+    run: |
+      bin/capacity-planner at-replicas --recording recordings/ttft-staircase-b-on.jsonl.gz
+  serve:
+    note: |
+      Serve the page on the samples. It listens on 127.0.0.1:8080, on your machine only, until Ctrl-C. If 8080 is
+      busy, add --listen 127.0.0.1:8090 and use that port below. The same command in PowerShell.
+    run: |
+      bin/capacity-planner serve --recordings ./recordings
+  openWindows:
+    lang: powershell
+    note: In a second PowerShell window. The address is the one above.
+    run: |
+      Start-Process 'http://127.0.0.1:8080/#recording=ols-sweep.jsonl.gz&vp=30000&priceAs=1k&out=1000&ttft=0.5&tpot=0.004'
   open:
     note: |
       vp=30000 assumes a prefill rate V_P of 30000 tokens/s per prefill replica: the sample has no prefill
