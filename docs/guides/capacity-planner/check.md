@@ -98,6 +98,16 @@ How to read it:
   there). Its TTFT is not scored ("unsettled"); its TPOT is. The
   self-check's near-knee rule reads only the steps scored, and says so
   when steps it would have read did not settle.
+- **TTFT an upper bound** (`<=` before the figure): a step priced from a
+  V_P known only as a lower bound (flag `VPLowerBound`). A faster prefill
+  only lowers the TTFT, so the true TTFT is at most the figure: a ceiling,
+  not a reading, and a figure 1.2x or 1000x over what was measured is the
+  bound holding. Where the fleet measured at most 20% over it, the
+  step is counted `upperBound`, consistent, and not scored, so it moves no
+  median, within share or self-check rule. Where the fleet measured more,
+  the bound broke, and the step is scored like any other, read low: a
+  figure under what was measured is never hidden. `--assume-vp` states a
+  V_P and scores the TTFT as a figure again.
 - **A backlog carried over**: where a step ran past the prefill knee, what
   it could not serve is still queued at the next step (a fluid queue: it
   grows by the rate less the knee over the step, and drains at the knee

@@ -726,6 +726,20 @@ cells at and past that knee are marked `LB`, not `SAT`. Past decode's own
 knee the fleet saturates whatever V_P is, and the verdict says so on
 decode's knee. `--assume-vp` states a V_P to price the prefill side.
 
+Below that knee the TTFT is still priced from the same lower bound, and a
+faster prefill only lowers it, so every such TTFT is an upper bound: the
+true TTFT is at most the figure. The report says so: `<=` before it in
+the summary and the SLO table (and before the e2e sum built on it),
+`upperBound` in the JSON, "≤" on the page. A target it meets is met. A
+target it misses is not a known miss: the cell is marked `UB`, not
+`MISS`, and the verdict is NOT JUDGED, never UNDER-PROVISIONED on it:
+"TTFT p95 is at most 14.5 s against a 200 ms target: it is priced from a
+lower bound of V_P, and the true TTFT may be lower, so the miss is not
+known; --assume-vp states a V_P to price it." For the same reason `max
+at SLO` is at least its rate, and a TTFT floor over the target is at most
+that floor. A TPOT miss is known whatever V_P is, and still gives
+UNDER-PROVISIONED.
+
 A window whose cycles do not cover its span (a capture or recording with
 holes) gets a `window gaps` line under the header line: the cycles the span
 should hold, those present, and the largest gap between the cycles either
