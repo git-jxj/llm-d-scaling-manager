@@ -320,11 +320,15 @@ type BacktestResponse struct {
 	// MeasuredNote says what the measured figures are.
 	MeasuredNote string `json:"measuredNote"`
 	// Assumed is every input of the prediction the test did not give.
-	Assumed []string        `json:"assumed"`
-	TTFT    *Objective      `json:"ttft,omitempty"`
-	Steps   []BacktestStep  `json:"steps"`
-	Summary BacktestSummary `json:"summary"`
-	Notes   []string        `json:"notes"`
+	Assumed []string `json:"assumed"`
+	// CachedTokenCost is the fit's phi, the cost of a cached prompt token,
+	// priced at every step; absent where slo.SwitchTTFTCachedTokenCost is
+	// off.
+	CachedTokenCost *CachedTokenCost `json:"cachedTokenCost,omitempty"`
+	TTFT            *Objective       `json:"ttft,omitempty"`
+	Steps           []BacktestStep   `json:"steps"`
+	Summary         BacktestSummary  `json:"summary"`
+	Notes           []string         `json:"notes"`
 }
 
 // BacktestWindow is one side of a backtest: its inputs, and the time it
@@ -754,6 +758,9 @@ type backtestQuestion struct {
 	source         string
 	measureWindow  float64
 	predictionHash string
+	// cachedCost is phi priced at every step in place of the pricer's own
+	// (Knobs.CachedTokenCost), for FitCachedTokenCost; nil is the pricer's.
+	cachedCost *float64
 }
 
 // backtestQuestionOf checks req against fit and test, and refuses a test
@@ -1070,7 +1077,7 @@ func (q *backtestQuestion) layout() ([]stepOf, []time.Time, time.Time) {
 func (q *backtestQuestion) predictSteps(ctx context.Context) ([]stepOf, []BacktestStep, error) {
 	steps, changes, first := q.layout()
 	p := &predictor{pricer: q.fit.pricer, fleets: map[predictKey]Fleet{}, cv2: q.cv2, promptCV: q.promptCV, promptMaxRatio: q.promptMaxRatio,
-		headroom: q.fit.doc.Policy.Headroom, assume: q.assume}
+		headroom: q.fit.doc.Policy.Headroom, assume: q.assume, cachedCost: q.cachedCost}
 	out := make([]BacktestStep, 0, len(steps))
 	var fl fluid
 	for _, st := range steps {
@@ -1099,6 +1106,12 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 		Steps: []BacktestStep{}, Notes: []string{}}
 	out.Fit = windowOf(q.fit, nil, q.cutoff)
 	out.Test = windowOf(test, q.testIndices, time.Time{})
+	if c := q.fit.doc.CachedTokenCost; c != nil {
+		// The fit's phi prices every step (slo.SwitchTTFTCachedTokenCost).
+		cc := *c
+		out.CachedTokenCost = &cc
+		out.Assumed = append(out.Assumed, "the fit's "+c.Words())
+	}
 	for k, s := range predicted {
 		if st := steps[k]; st.anchor >= 0 {
 			scoreStep(&s, measuredOf(test.latency[st.anchor], source, st.windowSeconds, q.pd()), q.target)
@@ -1470,6 +1483,8 @@ type predictor struct {
 	headroom float64
 	// assume is the request's typed terms.
 	assume Assume
+	// cachedCost is Knobs.CachedTokenCost at every step.
+	cachedCost *float64
 }
 
 // prediction is one step's figures at each statistic of backtestStats.
@@ -1519,6 +1534,7 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 			kn.Assume = p.assume
 			kn.Assume.PromptCV = cv
 			kn.PromptMaxRatio = k.promptMaxRatio
+			kn.CachedTokenCost = p.cachedCost
 			var err error
 			if fl, err = p.pricer.Fleet(kn); err != nil {
 				return out, err

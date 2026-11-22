@@ -271,6 +271,9 @@ type pricedFleet struct {
 	// window its hit is read from (whatif.PromptWindow.ComputedHit).
 	computedHit  bool
 	promptWindow *whatif.PromptWindow
+	// cachedTokenCost is slo.SwitchTTFTCachedTokenCost, as the replay read
+	// it (PrefillState.CachedTokenCost): priceCachedLoad.
+	cachedTokenCost bool
 	// flags are the fleet's own, beside P3's.
 	flags []whatif.Flag
 	// inputsText is where the fleet's inputs came from, for the human
@@ -430,6 +433,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.variant = ps.Variant
 	pf.prefixAttention = ps.PrefixAttention
 	pf.computedHit, pf.promptWindow = ps.ComputedHit, ps.PromptWindow
+	pf.cachedTokenCost = ps.CachedTokenCost
 	for _, vs := range st.Variants {
 		if vs.Variant == ps.Variant {
 			pf.prefillTP, pf.prefillServed = vs.TensorParallel, vs.Shape
@@ -457,6 +461,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.fleet.PSOnsets, pf.fleet.ChargeDecodeGate = f.psOnsets, f.chargeDecodeGate
 	pf.fleet.Prefill.RunningCap = f.prefillRunningCap
 	f.prefillShape(pf, ps)
+	pf.priceCachedLoad(f)
 	if f.set["assume-router-hop"] {
 		pf.assumedHop = &f.assumeRouterHop
 	}

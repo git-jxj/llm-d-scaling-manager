@@ -122,6 +122,42 @@ showed, and V_P is read from that counter. Details:
   what V_P's is compared with.
 - The measured shape is unchanged: its prompt is already the computed one.
 
+`CachedTokenCost` (`slo-ttft-cached-token-cost`, planner-only, off from the
+constructor) prices the load of a cached prompt token. A token served from a
+host tier or a peer is not computed, but its KV is loaded before the
+request's prefill can use it. With the switch on, a request's own latency
+carries `phi × cached / V_P` beside its computed prompt:
+
+- `cached` is the whole prompt less the computed one over every tier: the
+  whole prompt asked times the computed-token hit, or at the measured
+  prompt, computed × hit / (1 − hit) (`pricedFleet.priceCachedLoad`).
+- The load is added to `a` (`whatif.Prefill.FixedLatency`): it is in the
+  request's own latency only, never in the pod's work, so no knee moves.
+  V_P is read from busy pods whose loads overlapped their compute.
+- `phi` is one figure per fleet, in [0, 1], fitted on the source's own
+  steps up to the cycle read (`whatifapi.FitCachedTokenCost`): each step a
+  backtest judges, its mean TTFT scored and below the knee, is priced at
+  phi 0 and at phi 1; its implied phi is the measured mean less the first
+  price over the second less the first (the price is linear in phi), and
+  phi is the median, held to [0, 1]. A step read high for another reason
+  pulls phi to 0, never under it. phi on each half of the steps is reported
+  beside it.
+- phi is 0, with the reason, where V_P was not learned under a queue (busy
+  minutes or the peak under a queue; not the back-pressure bound, a served
+  peak, or V_P raised to the served peak), the computed-token hit is under
+  `MinCachedTokenCostShare` (0.1), or fewer than `MinCachedTokenCostSteps`
+  (12) steps qualify. A self-check's folds fit their own phi on the steps
+  before their cut. An answer that reads no steps (the one-shot commands,
+  at-replicas with the self-check off) names phi as not fitted.
+- phi is net of what the learned terms already hold. `a` is read at the
+  shape its minutes ran at: its low-load fit, or its overhead outside the
+  prefill and the queue, takes in the load at that cached share. phi is the
+  load the learned terms do not hold; on a fleet whose cached share does not
+  move it can fit near 0. In the synthetic recording of
+  `TestCachedTokenCost_SyntheticRecording` (cost 0.8 injected as queue
+  time) it fits 0.40, and the mean TTFT reads as measured with it, 0.55 of
+  it without.
+
 One more switch sets an input, not a `TTFTFleet` field:
 `slo-ttft-imbalance-across-counts` (off, `whatif.DefaultImbalanceAcrossCounts`;
 the capacity planner's `--imbalance-across-counts` is on by default,

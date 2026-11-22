@@ -661,6 +661,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// whatif.MaterialPrefixHitMove, which no committed recording has, so it
 	// moves no golden. Its unit tests hold it (heldBy).
 	slo.SwitchTTFTComputedHit: nil,
+	// A cached prompt token's cost, fitted on the source's steps and priced
+	// in a request's own latency, planner-only: the analyzer fits none, and
+	// the planner fits phi only where the prefill variant's computed-token
+	// hit is above whatif.MaterialPrefixHitMove, which no committed
+	// recording has, so it moves no golden. Its unit tests hold it (heldBy).
+	slo.SwitchTTFTCachedTokenCost: nil,
 
 	// Learner PR 5c, on main after 5b (602054e98): the replicaStartSeconds
 	// seed is the prior (SwitchStartReadsSeed), and the first starts blend
@@ -2024,6 +2030,16 @@ var heldBy = map[string][]heldTest{
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionPricesThePrefillVariantsHit"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionAStatedHitGovernsThePrefill"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionMovesTheTransferByTheDecodeHit"},
+	},
+	slo.SwitchTTFTCachedTokenCost: {
+		{"../slo", "TestTTFT_TheCachedTokenCostOffFromTheConstructor"},
+		{".", "TestStateAt_TheCachedTokenCostSwitchReachesThePrefillState"},
+		{"../../../whatifapi", "TestFitCachedTokenCost_RecoversAKnownCost"},
+		{"../../../whatifapi", "TestFitCachedTokenCost_TooFewSteps"},
+		{"../../../whatifapi", "TestFitCachedTokenCost_SkipsStepsPastTheKnee"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_CachedTokenCostAddsTheLoad"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_CachedTokenCostNeedsACachedShare"},
+		{"../../../../cmd/capacity-planner", "TestCachedTokenCost_SyntheticRecording"},
 	},
 	slo.SwitchTTFTComputedHit: {
 		{"../slo", "TestTTFT_TheComputedHitOffFromTheConstructor"},
