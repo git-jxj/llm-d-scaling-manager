@@ -2160,6 +2160,7 @@ selfCheck.tpot.refused map
 selfCheck.tpot.servedPastKnee number
 selfCheck.tpot.statistic string
 selfCheck.tpot.steps number
+selfCheck.tpot.upperBound number
 selfCheck.tpot.within number
 selfCheck.tpot.withinBound number
 selfCheck.trust string
@@ -2181,6 +2182,7 @@ selfCheck.ttft.refused map
 selfCheck.ttft.servedPastKnee number
 selfCheck.ttft.statistic string
 selfCheck.ttft.steps number
+selfCheck.ttft.upperBound number
 selfCheck.ttft.within number
 selfCheck.ttft.withinBound number
 selfCheck.untrusted array
