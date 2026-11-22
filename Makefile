@@ -3631,6 +3631,11 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@echo "Checking no doc applies the sample scaling policy over an install..."
 	@# The sample has no limiters: applying it removes the GPU limit.
 	@bash hack/check-policy-apply-docs.sh
+	@echo "Checking the docs pin the tools image of the release their newTag names..."
+	@# The v0.12.2 tag pinned v0.12.1's tools digest in every install guide: the
+	@# digest exists only after the run builds the image, and nothing said so.
+	@bash -n deploy/ci-pr-checks/tools-pin.sh
+	@bash hack/check-tools-pin.sh
 	@echo "Checking only the highest final release tag moves latest..."
 	@# Runs the release workflow step against a scratch repository. A backport
 	@# tagged after a newer release used to move latest back to the old line.

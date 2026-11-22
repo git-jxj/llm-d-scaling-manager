@@ -11,12 +11,12 @@ instead.
 
 | Step | Where | What |
 |------|--------|------|
-| 1. Release PR | PR to `main` | `newTag: vX.Y.Z` (controller and planner) and the proxy image `:vX.Y.Z`; merge it |
+| 1. Release PR | PR to `main` | `newTag: vX.Y.Z` (controller and planner), the proxy image `:vX.Y.Z` and the docs' tools image `tools:vX.Y.Z`; merge it |
 | 2. Tag | Your clone | Tag the merge commit of the release PR, check it, push the tag |
 | 3. Wait | GitHub Actions | The release run must succeed |
 | 4. Reset PR | PR to `main` | `newTag: main` (controller and planner) and the proxy image `:main` again, only after the run succeeded |
 | 5. Publish | GitHub | Publish the draft GitHub Release the run made, with the release notes; verify the signatures |
-| 6. Docs PR | PR to `main` | Point the install, upgrade and benchmark docs at the release and its digest |
+| 6. Docs PR | PR to `main` | Point the install, upgrade and benchmark docs at the release and its digests; the tools image by the digest the run printed |
 
 ---
 
@@ -106,8 +106,13 @@ The workflow checks where a tag is, not who reviewed it. Review on `main` and
    then runs `make warmpool-render` (it copies the image into
    `deploy/warmpool.sh`; the PR checks fail if it was not run). It sets the
    same `newTag: vX.Y.Z` in `config/capacity-planner/base/kustomization.yaml`
-   (the PR checks fail when it differs from the controller's). The release
-   fails before it builds anything if any of the three is not the tag.
+   (the PR checks fail when it differs from the controller's). It pins the
+   docs' tools image to the release's tag:
+   `bash deploy/ci-pr-checks/tools-pin.sh pin :vX.Y.Z` (the PR checks fail
+   while the docs name another release's image). The tools image carries the
+   release files the run signs, so its digest exists only after the run: a
+   release commit cannot name it, and the v0.12.2 tag named v0.12.1's. The
+   release fails before it builds anything if any of the four is not the tag.
 2. **Bump dependency pins**, if the release moves one (for example
    [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim)), in
    every file `hack/upstream-versions.sh` lists for it. Same PR. See
@@ -193,7 +198,10 @@ the two supported installs, the attached files and `make deploy-scaling-manager`
 Open a docs PR to `main` that replaces the previous version with the new one in
 the install, upgrade and benchmark docs, pins the new multi-arch index digest
 from the run's summary where the docs pin one, and adds the upgrade section for
-this release to `docs/reference/upgrade-and-uninstall.md`.
+this release to `docs/reference/upgrade-and-uninstall.md`. The tools image
+moves from `tools:vX.Y.Z` to its digest with the command the `release-tools`
+job summary prints, `bash deploy/ci-pr-checks/tools-pin.sh pin
+@sha256:<digest>`; every pin must then name that one digest.
 
 ### If the release fails
 
@@ -267,8 +275,9 @@ branch's tags are refused.
    the proxy job existed has no proxy pin to set, and one before
    `config/capacity-planner` no planner pin; do not backport the
    `ci-release.yaml` planner pin step to such a line, where it fails every
-   tag), and moves every version reference on the branch to
-   `v0.10.2`; list them with
+   tag), pins the docs' tools image with
+   `bash deploy/ci-pr-checks/tools-pin.sh pin :v0.10.2`, and moves every
+   version reference on the branch to `v0.10.2`; list them with
    `git grep -n 'v0\.10\.[0-9]' -- docs deploy hack/benchmark`. It adds
    "Upgrading from v0.10.1 to v0.10.2" to
    `docs/reference/upgrade-and-uninstall.md`. Pre-release checklist items 2
