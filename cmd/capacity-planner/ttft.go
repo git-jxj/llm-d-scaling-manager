@@ -112,21 +112,26 @@ const kneeAtServedWork whatif.Flag = "KneeAtServedWork"
 const vpAtServedWork whatif.Flag = "VPAtServedWork"
 
 // psByEngine prices the prefill queue as processor sharing where the prefill
-// engine's arguments say it shares its steps (slo.SwitchTTFTPSByEngine):
-// --max-num-seqs above 1, and --max-num-batched-tokens at least twice the
-// mean computed prompt priced, both read from the engine's flags. The pod
-// runs max_num_seqs prompts a data-parallel rank (whatif.QueueChoice.Slots).
-// The choice is a named model (whatif.QueueModel) with its reason, which the
-// assumed line gives, for issue #387 to choose among by fit.
-// A pod is priced as one processor-sharing stage, as before: the planner's
-// own time and its utilization are the pod's, and the ranks enter as its
-// slots. Nothing where the arguments are not read or do not say so.
-func (pf *pricedFleet) psByEngine(st *learnreplay.State, variant string) {
+// engine's flags say it shares its steps (slo.SwitchTTFTPSByEngine). The
+// discipline is the engine's, so it is read from the engine alone and does
+// not move with the prompt a step asks: chunked prefill (vLLM V1's default,
+// or the flag) with --max-num-seqs above 1 interleaves a long prompt, chunk by
+// chunk, with the short ones. The step budget is a sanity check only:
+// --max-num-batched-tokens, where read, at least the mean computed prompt the
+// variant's pods were measured at (learnreplay.PrefillState.PromptTokens),
+// not the prompt priced. The pod runs max_num_seqs prompts a data-parallel
+// rank (whatif.QueueChoice.Slots); past them on the busiest pod whatif falls
+// back to the larger of the two queues (PSSlotsExceeded). The choice is a
+// named model (whatif.QueueModel) with its reason, which the assumed line
+// gives, for issue #387 to choose among by fit. A pod is one
+// processor-sharing stage, as before: the planner's own time and utilization
+// are the pod's, and the ranks enter as its slots.
+func (pf *pricedFleet) psByEngine(st *learnreplay.State, ps *learnreplay.PrefillState) {
 	p := &pf.fleet.Prefill
-	params := variantParams(st, variant)
+	params := variantParams(st, ps.Variant)
 	ranks := 1
 	for _, vs := range st.Variants {
-		if vs.Variant == variant {
+		if vs.Variant == ps.Variant {
 			ranks = max(vs.Ranks, 1)
 		}
 	}
@@ -135,25 +140,27 @@ func (pf *pricedFleet) psByEngine(st *learnreplay.State, variant string) {
 	if params != nil {
 		budget = params.MaxNumBatchedTokens
 	}
+	measured := ps.PromptTokens
 	switch {
-	case params == nil || k < 2 || budget <= 0:
-		pf.assume("prefill queue model by the spread rule (engine config: --max-num-seqs or --max-num-batched-tokens not read)")
+	case params == nil || k < 2:
+		pf.assume("prefill queue model by the spread rule (engine config: --max-num-seqs not read, or 1)")
 		return
-	case !(p.PromptTokens > 0) || float64(budget) < psBudgetPrompts*p.PromptTokens:
-		pf.assume("prefill queue model by the spread rule (engine config: a step of %d tokens holds fewer than %g mean computed prompts of %s)",
-			budget, psBudgetPrompts, num(round(p.PromptTokens)))
+	case !params.ChunkedPrefillEnabled:
+		pf.assume("prefill queue model by the spread rule (engine config: no chunked prefill)")
+		return
+	case budget > 0 && measured > 0 && float64(budget) < measured:
+		pf.assume("prefill queue model by the spread rule (engine config: a step of %d tokens is under the mean computed prompt measured, %s)",
+			budget, num(round(measured)))
 		return
 	}
-	reason := fmt.Sprintf("engine config: max-num-seqs %d on %d ranks, step budget %d tokens, %.1f mean computed prompts a step",
-		k, ranks, budget, float64(budget)/p.PromptTokens)
+	reason := fmt.Sprintf("engine config: chunked prefill, max-num-seqs %d on %d ranks", k, ranks)
+	if budget > 0 {
+		reason += fmt.Sprintf(", step budget %d tokens", budget)
+	}
 	p.Queue = whatif.QueueChoice{Model: whatif.QueueProcessorSharing, Slots: int(k) * ranks, Reason: reason}
 	pf.flags = append(pf.flags, psByEngineFlag)
 	pf.assume("prefill queue model %s (%s); first come past %d prompts on the busiest pod", p.Queue.Model, reason, p.Queue.Slots)
 }
-
-// psBudgetPrompts is the least step budget, in mean computed prompts, at which
-// psByEngine reads an engine as sharing its steps. Stated, not measured.
-const psBudgetPrompts = 2.0
 
 // psByEngineFlag is a prefill queue priced as processor sharing by the
 // engine's arguments (psByEngine).
@@ -556,7 +563,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.fleet.Prefill.RunningCap = f.prefillRunningCap
 	f.prefillShape(pf, ps)
 	if ps.PSByEngine {
-		pf.psByEngine(st, ps.Variant)
+		pf.psByEngine(st, ps)
 	}
 	if f.set["assume-router-hop"] {
 		pf.assumedHop = &f.assumeRouterHop
