@@ -208,7 +208,14 @@ a fleet whose pods queue for capacity only at light load, the peak under a
 queue is a light minute's and the knee priced from it sits far under the load
 the fleet served. Busy minutes of a single-rank pod are `V_P` itself and are
 not floored, and with no source the answer stays `NoPrefillCapacity`: a peak
-with no queue cannot tell capacity from the offered load. The planner also
+with no queue cannot tell capacity from the offered load. With the planner-only
+switch `prefill-vp-served-unqueued` (`prefill.Cycle.VPServedUnqueued`) that
+served peak becomes `V_P` where no source has a reading (`served-peak`,
+`NeverQueued`), as a lower bound and no more: the planner prices only the
+prefill knee from it, as at least its rate and at least the rate the prefill
+pods' sustained computed-token work serves at the prompt priced
+(`KneeAtServedWork`), and refuses every TTFT priced from it
+(`NoPrefillCapacity`; issue #369). The planner also
 prices no TTFT at or past a knee priced from a lower bound: such a rate is
 refused `PastLowerBoundKnee`, not `Saturated` (past decode's knee it is
 `Saturated`, past the decode gate's onset under flow control

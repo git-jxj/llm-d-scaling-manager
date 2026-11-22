@@ -86,6 +86,21 @@ var agnosticReplicaQueries = []string{
 	registration.QueryAvgKVTransferTime,
 	registration.QueryTPOTBuckets,
 	registration.QueryComputedTokensBuckets,
+	// vLLM's KV-connector hits and cached tokens by tier, recorded only
+	// (registration/cache_tiers.go); SGLang publishes its own under other
+	// names, not read here.
+	registration.QueryExternalPrefixCacheHitTokenRate,
+	registration.QueryExternalPrefixCacheQueryTokenRate,
+	registration.QueryCachedTokenRateBySource,
+	// What loading those cached tokens cost: the KV moved into the GPU, read
+	// from a secondary tier, and moved by NIXL, in bytes and seconds,
+	// recorded only (registration/kv_transfers.go).
+	registration.QueryKVOffloadLoadByteRate,
+	registration.QueryKVOffloadLoadSecondsRate,
+	registration.QueryKVTierReadByteRate,
+	registration.QueryKVTierReadSecondsRate,
+	registration.QueryNIXLByteRate,
+	registration.QueryNIXLSecondsRate,
 }
 
 // ttftAgnosticQueries are the agnostic queries above that carry model_name
@@ -96,6 +111,15 @@ var ttftAgnosticQueries = []string{
 	registration.QueryAvgKVTransferTime,
 	registration.QueryTPOTBuckets,
 	registration.QueryComputedTokensBuckets,
+	registration.QueryExternalPrefixCacheHitTokenRate,
+	registration.QueryExternalPrefixCacheQueryTokenRate,
+	registration.QueryCachedTokenRateBySource,
+	registration.QueryKVOffloadLoadByteRate,
+	registration.QueryKVOffloadLoadSecondsRate,
+	registration.QueryKVTierReadByteRate,
+	registration.QueryKVTierReadSecondsRate,
+	registration.QueryNIXLByteRate,
+	registration.QueryNIXLSecondsRate,
 }
 
 // recordOnlyReplicaQueries are the replica queries above issued only while a
@@ -108,6 +132,18 @@ var recordOnlyReplicaQueries = map[string]bool{
 	registration.QueryQueueTimeBuckets:    true,
 	registration.QueryAvgPrefillTime:      true,
 	registration.QueryTPOTBuckets:         true,
+	// The cache tiers: nothing reads them yet.
+	registration.QueryExternalPrefixCacheHitTokenRate:   true,
+	registration.QueryExternalPrefixCacheQueryTokenRate: true,
+	registration.QueryCachedTokenRateBySource:           true,
+	// What loading them cost: read by the capacity planner only, from the
+	// recording (slo.SwitchTTFTTierLoad).
+	registration.QueryKVOffloadLoadByteRate:    true,
+	registration.QueryKVOffloadLoadSecondsRate: true,
+	registration.QueryKVTierReadByteRate:       true,
+	registration.QueryKVTierReadSecondsRate:    true,
+	registration.QueryNIXLByteRate:             true,
+	registration.QueryNIXLSecondsRate:          true,
 }
 
 // ttftReadReplicaQueries are the replica queries above that the TTFT pricing

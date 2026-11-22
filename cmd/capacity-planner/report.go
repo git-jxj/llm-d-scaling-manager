@@ -421,7 +421,7 @@ func (r *reporter) fleet(np, nd int, ttftQ, tpotQ float64) (*servedFleet, error)
 	kn := whatifapi.Knobs{Prefill: np, Decode: nd, TTFTPercentile: ttftQ, TPOTPercentile: tpotQ,
 		Assume: assume, Headroom: r.headroom, ArrivalCV2: r.q.ArrivalCV2}
 	if !r.sh.Measured {
-		kn.PromptTokens, kn.OutputTokens, kn.PrefixHit = r.sh.IL, r.sh.OL, r.sh.Hit
+		kn.PromptTokens, kn.OutputTokens, kn.PrefixHit, kn.PrefixHitRead = r.sh.IL, r.sh.OL, r.sh.Hit, r.sh.Load
 	}
 	sf, err := r.s.fleetAtImbalance(kn, r.fixedF)
 	if err != nil {
@@ -888,7 +888,22 @@ func reasonOf(r whatif.Result) string {
 	if !ok {
 		return ""
 	}
+	if servedOnlyRefusal(string(u.Reason), slices.Contains(u.Flags, whatif.VPLowerBound)) {
+		return servedOnlyWords
+	}
 	return plainReason(string(u.Reason))
+}
+
+// servedOnlyWords stands for a TTFT refused on a V_P that is only the rate a
+// prefill pod was seen to compute (whatif.Prefill.VPServedOnly): a speed was
+// read, as a lower bound, and the TTFT is not priced from it.
+const servedOnlyWords = "TTFT not priced (V_P a lower bound)"
+
+// servedOnlyRefusal reports whether a refusal of reason, flagged
+// whatif.VPLowerBound or not, is a TTFT refused on a V_P known only as the
+// rate a pod computed: NoPrefillCapacity carries that flag there alone.
+func servedOnlyRefusal(reason string, lowerBound bool) bool {
+	return reason == string(whatif.NoPrefillCapacity) && lowerBound
 }
 
 // plainReasons are the reasons a report's text names, in words.
@@ -985,11 +1000,21 @@ func prefillBinds(sf *servedFleet) string {
 		return ""
 	}
 	p := sf.pf.fleet.Prefill
+	if k, ok := sf.PrefillKnee().(whatif.Answer); ok && k.HasFlag(kneeAtServedWork) {
+		return servedWorkWords(k.Value, p.PromptTokens)
+	}
 	margin := ""
 	if p.VPMargin > 0 {
 		margin = fmt.Sprintf(" x (1 - %.2f margin)", p.VPMargin)
 	}
 	return fmt.Sprintf("prefill compute: N_p %d x V_P%s / (f %.3f x %s tokens)", p.Replicas, margin, sf.pf.in.Imbalance, num(round(p.PromptTokens)))
+}
+
+// servedWorkWords says a prefill knee is the work the prefill pods sustained
+// (kneeAtServedWork): knee x the prompt priced, over that prompt.
+func servedWorkWords(knee, prompt float64) string {
+	return fmt.Sprintf("prefill work served: the %s computed tokens/s the prefill pods sustained over 2 min / %s tokens",
+		num(round(knee*prompt)), num(round(prompt)))
 }
 
 // decodeBinds says what sets the decode knee.

@@ -2,8 +2,8 @@ Day plan for ns-01/model-02, 2026-11-06 02:15 to 2026-11-06 03:35 UTC, buckets o
 scale-up lead: prefill 2m2s (learned), decode 1m47s (learned); held = the need and the replicas starting in the bucket for the buckets after it
 SLO: TTFT p95 190ms; headroom 0.85. TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.
 
-REFUSED prefill's TTFT (NoPrefillCapacity), in 16 buckets: P1 refused V_P of variant-02: NoPrefillCapacity; pass --assume-vp for a flagged answer
-  what to do: The source learned no prefill rate V_P (it saw no prefill pod busy enough). Assume one: --assume-vp, or on the page Assume a term, V_P.
+REFUSED prefill's TTFT (NoFixedLatency), in 16 buckets: P1 refused a: TooFewLowLoadMinutes; pass --assume-a for a flagged answer
+  what to do: The source learned no fixed prefill latency a (too few low-load minutes). Assume one: --assume-a, or on the page Assume a term, a.
   what the plan did: Prefill is not sized: decode is sized alone, on its knee times headroom.
 
 each hour: a fleet that holds every bucket in it (priced again at each), the busiest bucket's own fleet, the fewest pods it had, and the fleet it had judged whole at each bucket's rate

@@ -310,6 +310,18 @@ type shapeSample struct {
 //     the fill a low-fill fleet has.
 //   - saturation.SwitchPrefillVPFloorServed: a lower-bound V_P raised to the
 //     highest computed-token rate a pod was seen to sustain.
+//   - saturation.SwitchPrefillVPServedUnqueued: where no source has a
+//     reading, that served rate as a lower-bound V_P (prefill.NeverQueued),
+//     not NoPrefillCapacity. The planner prices only the prefill knee from
+//     it, as at least its rate, raised to the computed-token work the
+//     fleet's prefill pods sustained (servedKneeFloor), and refuses every
+//     TTFT priced from it: no figure is priced where none was, so none can
+//     read under what was measured (issue
+//     llm-d-incubation/llm-d-scaling-manager#369).
+//   - saturation.SwitchPrefillVPWindowBest: the peak under a queue, the best
+//     read anywhere in the recording, not only in the last 6 hours, flagged
+//     with its age (VPFromEarlierInWindow). A lower bound as before, floored
+//     at the served peak.
 //   - saturation.SwitchPlannerCapAtStepBudget: the batch cap per rank held
 //     to the batch the step token budget runs, ceil(budget / (1 + k)) with k
 //     speculative tokens (issue llm-d-incubation/llm-d-scaling-manager#302).
@@ -415,17 +427,19 @@ type shapeSample struct {
 //     was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
-		saturation.SwitchPrefillALowLoadPerRank: true,
-		saturation.SwitchPrefillAEngineTiming:   true,
-		saturation.SwitchPrefillQueueByCapacity: true,
-		saturation.SwitchPrefillFBusyMinutes:    true,
-		saturation.SwitchPrefillALowLoadByRate:  true,
-		saturation.SwitchPrefillAMedianOverhead: true,
-		saturation.SwitchITLAdaptiveBandFloor:   true,
-		saturation.SwitchPrefillVPFloorServed:   true,
-		saturation.SwitchPlannerCapAtStepBudget: true,
-		saturation.SwitchITLBaselineFromFloor:   false,
-		saturation.SwitchITLFloorBaselineHeld:   false,
+		saturation.SwitchPrefillALowLoadPerRank:  true,
+		saturation.SwitchPrefillAEngineTiming:    true,
+		saturation.SwitchPrefillQueueByCapacity:  true,
+		saturation.SwitchPrefillFBusyMinutes:     true,
+		saturation.SwitchPrefillALowLoadByRate:   true,
+		saturation.SwitchPrefillAMedianOverhead:  true,
+		saturation.SwitchITLAdaptiveBandFloor:    true,
+		saturation.SwitchPrefillVPFloorServed:    true,
+		saturation.SwitchPrefillVPServedUnqueued: true,
+		saturation.SwitchPrefillVPWindowBest:     true,
+		saturation.SwitchPlannerCapAtStepBudget:  true,
+		saturation.SwitchITLBaselineFromFloor:    false,
+		saturation.SwitchITLFloorBaselineHeld:    false,
 	}, PackageSLO: {
 		slo.SwitchTTFTHopUnqueued: true,
 	}}
@@ -540,6 +554,12 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	residence := opts.Switches[PackageSaturation][saturation.SwitchDecodeResidencePull]
 	burst := opts.Switches[PackageSaturation][saturation.SwitchDecodeBurstFill]
 	ttft.prefixAttention = opts.Switches[PackageSLO][slo.SwitchTTFTPrefixAttention]
+	ttft.computedHit = opts.Switches[PackageSLO][slo.SwitchTTFTComputedHit]
+	ttft.tierLoad = opts.Switches[PackageSLO][slo.SwitchTTFTTierLoad]
+	ttft.tierKVWait = opts.Switches[PackageSLO][slo.SwitchTTFTTierKVWait]
+	ttft.psByEngine = opts.Switches[PackageSLO][slo.SwitchTTFTPSByEngine]
+	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
+	ttft.vpAtServed = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPAtServedWork]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false
@@ -609,6 +629,9 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 					v.Resident = residentOf(resident[v.Variant], v.Shape)
 				}
 			}
+			// The window's first cycle, for the age of a V_P read before the
+			// samples kept (PrefillState.WindowFrom); set again below.
+			s.FirstAt = firstAt
 			r.fillTTFT(s, in, ttft)
 			batch.fit(s)
 			// The replay applied the cycle's Analyze before asking: its

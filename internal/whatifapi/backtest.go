@@ -138,6 +138,12 @@ const (
 	// fewer than 1/SettleShare independent readings of it: its TTFT is a
 	// noisy sample of the steady state the planner prices.
 	UnscoredUnsettled = "unsettled"
+	// UnscoredBurst is a TTFT whose measurement window holds the start or
+	// the end of a load near a prefill knee that rests on a lower bound of
+	// V_P (BacktestStep.TTFTBurst): the step is judged on decode's own knee,
+	// and only its TTFT, which a queue building near that knee may set, is
+	// not scored.
+	UnscoredBurst = "burst"
 	// UnscoredUnresolvable is a measured percentile that fell in a histogram
 	// bucket too wide to place it (MeasuredBucketWidth) while the prediction
 	// fell inside the same bucket: interpolated inside the bucket, the
@@ -392,6 +398,11 @@ type BacktestStep struct {
 	// scored (UnscoredUnsettled).
 	RelaxationSeconds *float64 `json:"relaxationSeconds,omitempty"`
 	Unsettled         bool     `json:"unsettled,omitempty"`
+	// TTFTBurst says the step's window is a burst (burstIn) against a
+	// prefill knee priced from a lower bound of V_P, and not against
+	// decode's knee: the true prefill knee may be far higher, so the step is
+	// not excluded for it, and only its TTFT is not scored (UnscoredBurst).
+	TTFTBurst bool `json:"ttftBurst,omitempty"`
 	// Backlog is the requests a fluid queue carries into the step from the
 	// steps before it, where one ran past the prefill knee (Q_k+1 =
 	// max(0, Q_k + (rate - knee) x step)), and BacklogWait the mean wait it
@@ -433,6 +444,13 @@ type BacktestPoint struct {
 	// could be within, and is unresolvable.
 	OutsideBucket string `json:"outsideBucket,omitempty"`
 	Unscored      string `json:"unscored,omitempty"`
+	// SameBucket says an unresolvable pair (UnscoredUnresolvable) had the
+	// prediction inside MeasuredBucket itself, (Lo, Hi]: the histogram
+	// cannot tell the two apart, so the pair is consistent at the bucket's
+	// resolution, Hi/Lo wide. It is not within BacktestTolerance and is not
+	// scored; an unresolvable pair without it had the prediction outside
+	// the bucket, though within BacktestTolerance of its nearer edge.
+	SameBucket bool `json:"sameBucket,omitempty"`
 }
 
 // BacktestJudged is a step judged against a TTFT target.
@@ -497,6 +515,15 @@ type BacktestScore struct {
 	// the refusal's reason (Saturated, NoPrefillCapacity, ...).
 	Unscored map[string]int `json:"unscored"`
 	Refused  map[string]int `json:"refused"`
+	// SameBucket counts the unresolvable steps whose prediction fell inside
+	// the measured bucket itself (BacktestPoint.SameBucket), and
+	// SameBucketBand spans those buckets: consistent at the histogram's
+	// resolution, a third outcome beside within and out, never counted
+	// within. SameBucketWidth is the narrowest of those buckets' Hi/Lo, 0
+	// where one starts at 0.
+	SameBucket      int     `json:"sameBucket,omitempty"`
+	SameBucketBand  *Band   `json:"sameBucketBand,omitempty"`
+	SameBucketWidth float64 `json:"sameBucketWidth,omitempty"`
 	// PastKnee is the measured figure's range over the steps refused as
 	// saturated, where the source measured one: what the fleet did where
 	// the planner gave no figure.
@@ -1303,9 +1330,25 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		fl.reset()
 	}
 	if pred.knee != nil {
-		if lo, hi, ok := burstIn(seriesAt(q.test.series, st.window), *pred.knee); ok && out.Excluded == "" && in.rate < *pred.knee {
-			out.Excluded, out.Detail = ExcludedBurst, fmt.Sprintf("its measurement window holds the start or the end of a load near the knee: cycles from %.2f to %.2f r/s against a knee of %.2f r/s, so its mean rate, %.2f r/s, is no rate the fleet ran at",
-				lo, hi, *pred.knee, in.rate)
+		// A burst is judged against a knee the model prices. A prefill knee
+		// that rests on a lower bound of V_P is not one: the true knee may be
+		// far higher, so whether the window ran near it is unknown. There the
+		// step is judged against decode's knee, and a burst against the
+		// lower-bound knee alone withholds only the step's TTFT, which a
+		// prefill queue building in the burst may set (#280).
+		judgeKnee := pred.knee
+		if pred.kneeLowerBound {
+			judgeKnee = pred.decodeKnee
+		}
+		samples := seriesAt(q.test.series, st.window)
+		if judgeKnee != nil {
+			if lo, hi, ok := burstIn(samples, *judgeKnee); ok && out.Excluded == "" && in.rate < *judgeKnee {
+				out.Excluded, out.Detail = ExcludedBurst, fmt.Sprintf("its measurement window holds the start or the end of a load near the knee: cycles from %.2f to %.2f r/s against a knee of %.2f r/s, so its mean rate, %.2f r/s, is no rate the fleet ran at",
+					lo, hi, *judgeKnee, in.rate)
+			}
+		}
+		if _, _, ok := burstIn(samples, *pred.knee); ok && pred.kneeLowerBound && out.Excluded == "" && in.rate < *pred.knee {
+			out.TTFTBurst = true
 		}
 		out.KneeShare = ptr(in.rate / *pred.knee)
 		out.Load = loadBand(*out.KneeShare)
@@ -1376,6 +1419,10 @@ func scoreStep(out *BacktestStep, m measured, target *ReportTarget) {
 		why := m.ttftWhy[i]
 		if why == "" && out.Unsettled {
 			why = UnscoredUnsettled
+		}
+		if why == "" && out.TTFTBurst && out.TTFT[i].Predicted.Value != nil {
+			// A refused figure counts by its refusal, not twice.
+			why = UnscoredBurst
 		}
 		out.TTFT[i] = scoredPoint(out.TTFT[i], m.ttft[i], m.requests, m.ttftTop, why, m.ttftBucket[i])
 	}
@@ -1479,6 +1526,9 @@ type prediction struct {
 	// knee is the lower knee of the fleet that priced, decodeKnee decode's
 	// and prefillKnee prefill's; nil with none.
 	knee, decodeKnee, prefillKnee *float64
+	// kneeLowerBound says knee is the prefill knee and rests on a lower
+	// bound of V_P (whatif.VPLowerBound).
+	kneeLowerBound bool
 	// promptCV is the prompt spread priced, and ca2 the arrivals' (1 for
 	// random arrivals).
 	promptCV, ca2 float64
@@ -1573,6 +1623,9 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 			}
 			if v, ok := valueOf(fl.PrefillKnee()); ok && v > 0 {
 				out.prefillKnee = ptr(v)
+			}
+			if a, ok := fl.PrefillKnee().(whatif.Answer); ok && out.knee != nil && a.Value == *out.knee && a.HasFlag(whatif.VPLowerBound) {
+				out.kneeLowerBound = true
 			}
 			out.promptCV, out.ca2 = whatif.AssumedPromptCV, 1
 			if cv != nil {
@@ -1816,12 +1869,20 @@ func scoredPoint(p BacktestPoint, meas *float64, requests, top float64, why stri
 		p.Ratio, p.OutsideBucket = ptr(*pred.Value/bucket.Hi), OutsideOver
 	case bucket != nil:
 		p.Unscored = UnscoredUnresolvable
+		p.SameBucket = inBucket(*pred.Value, *bucket)
 	case *meas > 0 && *pred.Value > 0:
 		p.Ratio = ptr(*pred.Value / *meas)
 	default:
 		p.Unscored = UnscoredNotMeasured
 	}
 	return p
+}
+
+// inBucket reports whether v falls in the histogram bucket b, (Lo, Hi]: a
+// figure on a bound belongs to the bucket that bound closes. The edges carry
+// bucketEps, as the bounds are written in decimal.
+func inBucket(v float64, b Band) bool {
+	return v > b.Lo*(1+bucketEps) && v <= b.Hi*(1+bucketEps)
 }
 
 // judgeTarget is the step against the TTFT target, predicted (from its
@@ -1932,6 +1993,44 @@ func summarize(steps []BacktestStep, target bool) BacktestSummary {
 	return s
 }
 
+// noteSameBucket counts one step consistent at bucket b's resolution.
+func (sc *BacktestScore) noteSameBucket(b Band) {
+	sc.SameBucket++
+	w := 0.0
+	if b.Lo > 0 {
+		w = b.Hi / b.Lo
+	}
+	if sc.SameBucketBand == nil {
+		sc.SameBucketBand, sc.SameBucketWidth = &Band{Lo: b.Lo, Hi: b.Hi}, w
+		return
+	}
+	sc.SameBucketBand.Lo, sc.SameBucketBand.Hi = min(sc.SameBucketBand.Lo, b.Lo), max(sc.SameBucketBand.Hi, b.Hi)
+	if w == 0 || sc.SameBucketWidth == 0 {
+		sc.SameBucketWidth = 0
+	} else {
+		sc.SameBucketWidth = min(sc.SameBucketWidth, w)
+	}
+}
+
+// SameBucketWords is the steps consistent at the histogram's resolution, in
+// words with the bucket and its width, "" with none: "in the measured
+// bucket, 10 ms to 20 ms (2.0x wide), in 97": never a share within.
+func (sc BacktestScore) SameBucketWords() string {
+	if sc.SameBucket == 0 || sc.SameBucketBand == nil {
+		return ""
+	}
+	b := sc.SameBucketBand
+	width := "from 0"
+	if sc.SameBucketWidth > 0 {
+		width = fmt.Sprintf("%.1fx wide", sc.SameBucketWidth)
+		if b.Hi > b.Lo*sc.SameBucketWidth*(1+bucketEps) {
+			width = fmt.Sprintf("buckets %.1fx wide or wider", sc.SameBucketWidth)
+		}
+	}
+	return fmt.Sprintf("in the measured histogram bucket itself in %d, %s to %s (%s): consistent at the bucket's resolution, not within %.0f%%",
+		sc.SameBucket, secondsWords(b.Lo), secondsWords(b.Hi), width, BacktestTolerance*100)
+}
+
 // loadBand is the band of a rate at share of the knee.
 func loadBand(share float64) string {
 	switch {
@@ -1966,6 +2065,9 @@ func scoreOf(q float64, steps []BacktestStep, points func(BacktestStep) []Backte
 		if p.Ratio == nil {
 			if p.Unscored != "" {
 				sc.Unscored[p.Unscored]++
+			}
+			if p.SameBucket && p.MeasuredBucket != nil {
+				sc.noteSameBucket(*p.MeasuredBucket)
 			}
 			if r := p.Predicted.Refused; r != nil {
 				sc.Refused[r.Reason]++
@@ -2138,14 +2240,21 @@ func secondsWords(x float64) string {
 
 // backtestHint is what to do about a statistic no step priced, by the
 // refusal's reason.
-func backtestHint(reason string) string {
+func backtestHint(reason string, only bool) string {
+	every := "every step was"
+	if !only {
+		every = "the steps so refused were"
+	}
 	switch reason {
 	case string(whatif.Saturated):
-		return "every step was at or past the load the planner thinks the fleet can carry"
+		return every + " at or past the load the planner thinks the fleet can carry"
 	case string(whatif.PastLowerBoundKnee):
-		return "every step was at or past a prefill knee priced from a lower bound of V_P, " +
+		return every + " at or past a prefill knee priced from a lower bound of V_P, " +
 			"and the true knee may be higher, so the planner gave no price there and does not call it overloaded"
-	case string(whatif.NoPrefillCapacity), string(whatif.NoFixedLatency), string(whatif.PinnedDefaultB), string(whatif.NoLine):
+	case string(whatif.NoPrefillCapacity):
+		return "no prefill speed was learned to price a TTFT from: none under a queue, or, where the prefill pods never queued, " +
+			"only the rate a pod computed, which prices the knee as a lower bound and no TTFT; fit on more (a larger split, or a longer recording)"
+	case string(whatif.NoFixedLatency), string(whatif.PinnedDefaultB), string(whatif.NoLine):
 		return "the fitted part held too few busy minutes to learn from; fit on more (a larger split, or a longer recording)"
 	}
 	return "see the refusal in the steps"
@@ -2162,12 +2271,22 @@ func verdictPart(name string, scores []BacktestScore, unit string) (line string,
 		var why []string
 		hint := ""
 		if i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 }); i >= 0 {
+			only := len(scores[i].Refused) == 1
+			var hints []string
 			for _, r := range slices.Sorted(maps.Keys(scores[i].Refused)) {
 				n := scores[i].Refused[r]
 				why = append(why, fmt.Sprintf("%s in %d", r, n))
 				if hint == "" || r != string(whatif.Saturated) {
-					hint = backtestHint(r)
+					hint = backtestHint(r, only)
 				}
+				if r == string(whatif.PastLowerBoundKnee) || r == string(whatif.NoPrefillCapacity) {
+					hints = append(hints, backtestHint(r, only))
+				}
+			}
+			if !only && len(hints) > 1 {
+				// A lower-bound knee and no V_P beside it: each says why for its
+				// own steps, not the last one for all.
+				hint = strings.Join(hints, "; ")
 			}
 			if n := scores[i].Unscored[UnscoredNotComparable]; n > 0 && len(why) == 0 {
 				return fmt.Sprintf("%s was not scored: the source measured no %s comparable with the prediction (see measured).", name, name), nil
@@ -2222,6 +2341,10 @@ func verdictPart(name string, scores []BacktestScore, unit string) (line string,
 		w += fmt.Sprintf(" %d ran so near the prefill knee that its queue does not settle inside the window (relaxation time over %.0f%% of it): "+
 			"the window's TTFT is a noisy sample of the steady state priced.", n, 100*SettleShare)
 	}
+	if n := sc.Unscored[UnscoredBurst]; n > 0 {
+		w += fmt.Sprintf(" %d held the start or the end of a load near a prefill knee priced from a lower bound of V_P: "+
+			"its TTFT, which a queue building there may set, is not scored.", n)
+	}
 	if sc.Statistic != statP90 {
 		w += percentileWords(name, scores)
 	}
@@ -2247,7 +2370,14 @@ func percentileWords(name string, scores []BacktestScore) string {
 	}
 	if n := sc.Unscored[UnscoredUnresolvable]; n > 0 {
 		w += fmt.Sprintf(" p90 %s not scored in %d: the measured p90 fell in a histogram bucket wider than %.0f%% of its lower edge, "+
-			"too wide to place it, with the prediction inside it.", name, n, MeasuredBucketWidth*100)
+			"too wide to place it, with the prediction inside it or within %.0f%% of its edge", name, n, MeasuredBucketWidth*100, BacktestTolerance*100)
+		if words := sc.SameBucketWords(); words != "" {
+			w += "; " + words
+			if rest := n - sc.SameBucket; rest > 0 {
+				w += fmt.Sprintf(", and outside it, within %.0f%% of its edge, in %d", BacktestTolerance*100, rest)
+			}
+		}
+		w += "."
 	}
 	return w
 }

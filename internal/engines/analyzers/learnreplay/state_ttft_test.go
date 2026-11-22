@@ -104,7 +104,13 @@ func TestStateAt_ReadsP1Through(t *testing.T) {
 	// own replay, with the least overhead, reads 11.58 ms
 	// (TestTTFTValidation_P1OnTheGoldens).
 	assert.InDelta(t, 0.01443, ps.Estimate.A, 0.00001)
-	assert.NotEmpty(t, ps.Estimate.VPRefused)
+	// Its prefill pod never queued: the planner's replay takes the served
+	// peak as a lower bound (saturation.SwitchPrefillVPServedUnqueued),
+	// where P1's own refuses V_P.
+	assert.Empty(t, ps.Estimate.VPRefused)
+	assert.Equal(t, prefill.SourceServedPeak, ps.Estimate.VPSource)
+	assert.True(t, ps.Estimate.VPLowerBound)
+	assert.Equal(t, prefill.NeverQueued, ps.Estimate.VPLowerBoundReason)
 	assert.Equal(t, prefill.AModelQuadratic, ps.Estimate.AModel)
 	assert.Positive(t, ps.PromptTokens)
 	assert.Positive(t, ps.PromptCycles)

@@ -179,6 +179,73 @@ const SwitchTTFTPromptSupport = "slo-ttft-prompt-support"
 // prefix hit, so on or off it moves no golden.
 const SwitchTTFTPrefixAttention = "slo-ttft-prefix-attention"
 
+// SwitchTTFTComputedHit is the replay switch for the hit a whole prompt is
+// netted by in the capacity planner. On: a whole prompt priced for the
+// prefill pods (--assume-input-tokens, --shape load, a stated shape with no
+// hit, a backtest or day-plan step) is netted by the prefill variant's
+// computed-token hit, 1 - computed tokens / whole prompt tokens over the
+// prefill rows' one-minute rates (whatif.PromptWindow.ComputedHit), where it
+// or the hit it replaces is above whatif.MaterialPrefixHitMove.
+// vllm:prefix_cache_hits counts the GPU prefix cache alone, so a hit from an
+// offload tier or a KV connector reads as computed there, and the prefill
+// work as more than the engines' own computed-token counter shows; V_P is
+// read from that counter. A hit stated by the question still governs. Off,
+// as before. Planner-only: off from the constructor; the analyzer prices no
+// stated prompt.
+const SwitchTTFTComputedHit = "slo-ttft-computed-hit"
+
+// SwitchTTFTTierLoad is the replay switch for a cached prompt token from a
+// tier outside the GPU in the capacity planner. vllm:prefix_cache_hits counts
+// the GPU prefix cache alone; a hit from a host, disk or peer tier is loaded
+// into the GPU first, and the price took it as free. On, where the prefill
+// rows read the cached tokens by tier (domain.ReplicaMetrics
+// .CachedTokenRateBySource) and the KV transfers (KVTransferRates):
+//
+//   - a request's TTFT carries the load of its cached tokens from outside
+//     the GPU (whatif.Prefill.TierLoadSeconds): the tokens each tier served
+//     times the bytes a token moved over the bandwidth the transfer read,
+//     whatif.PromptWindow.TierLoad, with no overlap with the request's own
+//     prefill (the OffloadingConnector loads before the request is
+//     scheduled), so an upper bound where a connector overlaps it;
+//   - with SwitchTTFTPrefixAttention on, the attention span's cached
+//     context is the whole prompt less the computed one, every tier's hits
+//     counted, not the GPU's hit rate (whatif.Prefill.CachedContextRead).
+//
+// A tier serving whatif.MinTierShare of the prompt or more with no transfer
+// reading, or no split by tier where the computed-token hit is material,
+// leaves the load out and flags it: no bandwidth is assumed. Off, as
+// before. Planner-only: off from the constructor; the analyzer prices no
+// tier.
+const SwitchTTFTTierLoad = "slo-ttft-tier-load"
+
+// SwitchTTFTTierKVWait is the replay switch for what a request pays for its
+// cached KV, with SwitchTTFTTierLoad on: on, the engine's measured wait for
+// it (whatif.TierLoad.WaitPerRequest, the queue time on prefill rows with no
+// request waiting for capacity), where it is above the transfer's own
+// seconds; off, the transfer's seconds, as SwitchTTFTTierLoad prices them.
+// A loaded request is scheduled at a step boundary after its load, so it
+// waits longer than the transfer runs: on a P/D fleet with a CPU tier the
+// prefill queue time read 3 to 6 times the load counter's seconds per
+// request, and tracked the deferred requests by Little's law (correlation
+// 0.995). Planner-only: off from the constructor; the analyzer prices no
+// tier.
+const SwitchTTFTTierKVWait = "slo-ttft-tier-kv-wait"
+
+// SwitchTTFTPSByEngine is the replay switch for how the planner prices the
+// prefill queue: on, where the prefill engine's arguments say it shares its
+// steps (chunked prefill with --max-num-seqs above 1; a step budget, where
+// read, at least the mean computed prompt measured), it is processor sharing
+// whatever the prompt's spread or the prompt priced (whatif.QueueProcessorSharing), falling back to the larger of that and
+// first come where the busiest pod likely holds more prompts than its
+// max_num_seqs times its data-parallel ranks. Off, as before: past
+// whatif.MaxPSPromptCV the price is the larger of the two. On a P/D fleet
+// whose prefill pods run 4 prompts a rank in 8192-token steps, the engines'
+// prefill time rose with load as processor sharing predicts (1.48x measured
+// against 1.44x) and their capacity queue stayed near empty, while the
+// first-come price put about 1.2 s of wait on each request at 17 r/s.
+// Planner-only: off from the constructor; the analyzer prices no fleet with it.
+const SwitchTTFTPSByEngine = "slo-ttft-ps-by-engine"
+
 // SwitchTTFTMeasuredTransfer is the replay switch for the KV transfer term:
 // on, the pricing reads AvgKVTransferTime from the decode rows that carry one
 // (transferPerToken). Off, it reads none and raises whatif.TransferOmitted, as

@@ -419,7 +419,7 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 		f.inputTokens = k.PromptTokens
 		set("assume-input-tokens")
 	}
-	f.prefixHit = k.PrefixHit
+	f.prefixHit, f.prefixHitRead = k.PrefixHit, k.PrefixHitRead
 	if k.OutputTokens > 0 {
 		f.outputTokens = k.OutputTokens
 		set("assume-output-tokens")

@@ -556,7 +556,12 @@ func unscoredText(sc whatifapi.BacktestScore) string {
 		parts = append(parts, fmt.Sprintf("%d refused %s", sc.Refused[r], r))
 	}
 	for _, k := range slices.Sorted(maps.Keys(sc.Unscored)) {
-		if k != whatifapi.UnscoredRefused {
+		switch {
+		case k == whatifapi.UnscoredRefused:
+		case k == whatifapi.UnscoredUnresolvable && sc.SameBucket > 0:
+			// The third outcome: consistent at the bucket's resolution.
+			parts = append(parts, fmt.Sprintf("%d %s (%d in the measured bucket)", sc.Unscored[k], k, sc.SameBucket))
+		default:
 			parts = append(parts, fmt.Sprintf("%d %s", sc.Unscored[k], k))
 		}
 	}

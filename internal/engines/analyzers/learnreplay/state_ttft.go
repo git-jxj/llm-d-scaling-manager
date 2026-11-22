@@ -50,6 +50,24 @@ type PrefillState struct {
 	// variant's hit on the prefill work, the decode variant's on the KV
 	// transfer). Off unless the replay's options turn it on.
 	PrefixAttention bool
+	// ComputedHit is slo.SwitchTTFTComputedHit: the planner nets a whole
+	// prompt it prices by the hit PromptWindow.ComputedHit reads, not by the
+	// prefix-cache hit rate. Off unless the replay's options turn it on.
+	ComputedHit bool
+	// TierLoad is slo.SwitchTTFTTierLoad: the planner prices the load of a
+	// cached token from a tier outside the GPU (PromptWindow.TierLoad), and
+	// reads the attention span from the whole prompt less the computed one.
+	// Off unless the replay's options turn it on.
+	TierLoad bool
+	// TierKVWait is slo.SwitchTTFTTierKVWait: with TierLoad, the planner
+	// prices the engine's measured wait for a cached KV
+	// (PromptWindow.TierLoad's WaitPerRequest). Off unless the replay's
+	// options turn it on.
+	TierKVWait bool
+	// PSByEngine is slo.SwitchTTFTPSByEngine: the planner prices the prefill
+	// queue as processor sharing where the engine's arguments say it shares
+	// its steps. Off unless the replay's options turn it on.
+	PSByEngine bool
 	// RawShare is f_raw, the busiest pod's share of the computed-token rate
 	// over the mean share, not de-biased: the largest over the latest
 	// whatif.TTFTWindowCycles cycles that read one at the cycle's pod count. A pod with
@@ -60,6 +78,23 @@ type PrefillState struct {
 	// low, which raises the share, the side that rule permits.
 	RawShare, RawShareLeast float64
 	RawShareFull            bool
+	// ServedComputed is, at each pod count, the highest mean computed-token
+	// rate the variant's serving pods sustained over ServedWorkWindow in the
+	// last prefill.Retention (servedWork.peaks): work the pods were seen to
+	// compute, a lower bound on what that many can. Read only with
+	// saturation.SwitchPrefillVPServedUnqueued on; nil otherwise.
+	ServedComputed map[int]float64
+	// VPAtServedWork is saturation.SwitchPrefillVPAtServedWork: the planner
+	// prices a TTFT from V_P raised with a knee floored at the served work.
+	// Off unless the replay's options turn it on.
+	VPAtServedWork bool
+	// ServedComputedWindow is ServedComputed over the whole window replayed,
+	// read with VPAtServedWork alone (servedWork.windowPeaks); nil otherwise.
+	ServedComputedWindow map[int]float64
+	// WindowFrom and At are the replay's first cycle and the cycle read, for
+	// the age of a V_P read before the samples kept
+	// (prefill.Estimate.VPLearnedAt).
+	WindowFrom, At time.Time
 }
 
 // DecodeTTFTState is what a decode variant's rows say of the decode side of
@@ -145,9 +180,38 @@ type ttftSamples struct {
 	// prefixAttention is slo.SwitchTTFTPrefixAttention
 	// (PrefillState.PrefixAttention).
 	prefixAttention bool
+	// computedHit is slo.SwitchTTFTComputedHit (PrefillState.ComputedHit).
+	computedHit bool
+	// tierLoad is slo.SwitchTTFTTierLoad (PrefillState.TierLoad).
+	tierLoad bool
+	// tierKVWait is slo.SwitchTTFTTierKVWait (PrefillState.TierKVWait).
+	tierKVWait bool
+	// psByEngine is slo.SwitchTTFTPSByEngine (PrefillState.PSByEngine).
+	psByEngine bool
 	// hopUnqueued is slo.SwitchTTFTHopUnqueued, for the decode term's
 	// router windows (noteTerm).
 	hopUnqueued bool
+	// served is each prefill variant's served work, kept with servedOn
+	// (saturation.SwitchPrefillVPServedUnqueued; PrefillState.ServedComputed).
+	served   map[string]*servedWork
+	servedOn bool
+	// vpAtServed is saturation.SwitchPrefillVPAtServedWork
+	// (PrefillState.VPAtServedWork).
+	vpAtServed bool
+}
+
+// servedWorkOf is variant v's served work: its peaks over prefill.Retention
+// (PrefillState.ServedComputed), and with vpAtServed its peaks over the
+// whole window (PrefillState.ServedComputedWindow). nil where none is kept.
+func (t *ttftSamples) servedWorkOf(v string) (peaks, window map[int]float64) {
+	w := t.served[v]
+	if w == nil {
+		return nil, nil
+	}
+	if t.vpAtServed {
+		window = w.windowPeaks()
+	}
+	return w.peaks(), window
 }
 
 // newTTFTSamples returns empty windows; hopUnqueued is
@@ -156,7 +220,7 @@ func newTTFTSamples(hopUnqueued bool) *ttftSamples {
 	return &ttftSamples{hopUnqueued: hopUnqueued, prompts: map[string]*whatif.PromptWindow{}, shares: map[string]*shareWindow{},
 		engineTTFT: map[string][]whatif.DecodeTTFT{}, backlogs: map[string]*backlogTrack{},
 		transfers: map[string]*prefill.TransferWindow{},
-		terms:     map[string]*prefill.DecodeTermWindow{}, joint: prefill.NewJointWindow()}
+		terms:     map[string]*prefill.DecodeTermWindow{}, joint: prefill.NewJointWindow(), served: map[string]*servedWork{}}
 }
 
 // noteJoint folds one cycle's prefill and decode rows into the model's joint
@@ -267,7 +331,7 @@ func (b *backlogTrack) note(d *decodeRows, cycle int, at time.Time, read bool) i
 
 // prefillRows is one prefill variant's readings in one cycle.
 type prefillRows struct {
-	pods                  int
+	pods, rated           int
 	sum, busiest          float64
 	computedRate, reqRate float64
 }
@@ -299,6 +363,7 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 			if !rm.PrefillComputedTokenRateKnown || !positive(rm.PrefillComputedTokenRate) {
 				continue
 			}
+			p.rated++
 			p.sum += rm.PrefillComputedTokenRate
 			p.busiest = max(p.busiest, rm.PrefillComputedTokenRate)
 			if rm.RequestRateKnown && rm.RequestRate > 0 {
@@ -331,6 +396,12 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 		}
 		share, ok := rawShare(p.pods, p.sum, p.busiest)
 		w.note(p.pods, share, ok)
+		if t.servedOn {
+			if t.served[v] == nil {
+				t.served[v] = &servedWork{}
+			}
+			t.served[v].note(servedWorkSample{at: at, pods: p.pods, sum: p.sum, ok: p.pods > 0 && p.rated == p.pods})
+		}
 		if p.computedRate > 0 {
 			allComputed += p.computedRate
 			allRequests += p.reqRate
@@ -445,7 +516,7 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 		if domain.CanonicalRole(roles[v]) != domain.RolePrefill {
 			continue
 		}
-		ps := PrefillState{Variant: v, Pods: pods[v]}
+		ps := PrefillState{Variant: v, Pods: pods[v], WindowFrom: st.FirstAt, At: st.At}
 		if w := t.shares[v]; w != nil {
 			ps.RawShare, ps.RawShareLeast, ps.RawShareFull = w.read()
 		}
@@ -453,6 +524,12 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 		ps.PromptWindow = t.prompts[v].Clone()
 		ps.PromptSupport = t.promptSupport
 		ps.PrefixAttention = t.prefixAttention
+		ps.ComputedHit = t.computedHit
+		ps.TierLoad = t.tierLoad
+		ps.TierKVWait = t.tierKVWait
+		ps.PSByEngine = t.psByEngine
+		ps.VPAtServedWork = t.vpAtServed
+		ps.ServedComputed, ps.ServedComputedWindow = t.servedWorkOf(v)
 		ps.Estimate, ps.EstimateRead = estimateAt(r.sat.PrefillEstimate, in.Namespace, in.ModelID, v, st.At)
 		st.Prefill = append(st.Prefill, ps)
 	}

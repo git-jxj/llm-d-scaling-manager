@@ -158,10 +158,10 @@ func TestRecordOnlyQueries_FailureCountedOnceUnderItsOwnType(t *testing.T) {
 			"recording %v: the three slo router queries, once each", recording)
 		want, wantRead := 0.0, 0.0
 		if recording {
-			// 6 per pod, 2 router histograms, 3 pool queries; and the 3 per
-			// pod and 2 router queries the TTFT pricing reads, under their
-			// own type.
-			want, wantRead = 11, 5
+			// 6 per pod, 3 per pod for the cache tiers, 6 per pod for the KV transfers, 2 router
+			// histograms, 3 pool queries; and the 3 per pod and 2 router
+			// queries the TTFT pricing reads, under their own type.
+			want, wantRead = 20, 5
 		}
 		assert.Equal(t, want, errorsOfType(t, registry, constants.QueryTypeLearnerRecording), "recording %v", recording)
 		assert.Equal(t, wantRead, errorsOfType(t, registry, constants.QueryTypeTTFTInputs), "recording %v", recording)

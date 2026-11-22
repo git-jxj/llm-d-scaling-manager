@@ -33,9 +33,9 @@
     {
       "role": "prefill",
       "term": "ttft",
-      "reason": "NoPrefillCapacity",
-      "detail": "P1 refused V_P of variant-02: NoPrefillCapacity; pass --assume-vp for a flagged answer",
-      "hint": "The source learned no prefill rate V_P (it saw no prefill pod busy enough). Assume one: --assume-vp, or on the page Assume a term, V_P.",
+      "reason": "NoFixedLatency",
+      "detail": "P1 refused a: TooFewLowLoadMinutes; pass --assume-a for a flagged answer",
+      "hint": "The source learned no fixed prefill latency a (too few low-load minutes). Assume one: --assume-a, or on the page Assume a term, a.",
       "effect": "Prefill is not sized: decode is sized alone, on its knee times headroom.",
       "buckets": 16
     }

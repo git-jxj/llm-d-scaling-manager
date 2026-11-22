@@ -101,7 +101,9 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchITLRestartUnderName, SwitchITLIdleOnEvidence and
 // SwitchITLForgetReachesTheLine, SwitchITLOneSidedAtCap, SwitchTTFTPrice,
 // SwitchTTFTMeasuredSpread, SwitchTTFTMeasuredTransfer,
-// SwitchTTFTPrefixAttention, SwitchTTFTProcessorSharing,
+// SwitchTTFTPrefixAttention, SwitchTTFTComputedHit, SwitchTTFTTierLoad,
+// SwitchTTFTTierKVWait, SwitchTTFTPSByEngine,
+// SwitchTTFTProcessorSharing,
 // SwitchTTFTRouterWait, SwitchTTFTPSOnsets,
 // SwitchTTFTDecodeGateCharge, SwitchTTFTImbalanceAcrossCounts,
 // SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTHopUnqueued, SwitchTTFTJointInputs,
@@ -174,6 +176,19 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		SwitchTTFTQuietTransfer:    &a.ttftQuietTransfer,
 		// A prefix hit's cost in the planner, planner-only (ttft.go).
 		SwitchTTFTPrefixAttention: &a.ttftPrefixAttention,
+		// A stated prompt netted by the computed-token hit, planner-only
+		// (ttft.go).
+		SwitchTTFTComputedHit: &a.ttftComputedHit,
+		// A cached token's load from a tier outside the GPU, and the
+		// attention over every tier's cached context, planner-only
+		// (ttft.go).
+		SwitchTTFTTierLoad: &a.ttftTierLoad,
+		// The engine's measured wait for a cached KV in place of the
+		// transfer's seconds, planner-only (ttft.go).
+		SwitchTTFTTierKVWait: &a.ttftTierKVWait,
+		// The prefill queue priced as processor sharing where the engine
+		// shares its steps, planner-only (ttft.go).
+		SwitchTTFTPSByEngine: &a.ttftPSByEngine,
 		// The decode term of a TTFT on a decode line (ttft.go).
 		SwitchTTFTDecodeTerm: &a.ttftDecodeTerm,
 		// The prefill pod and the KV pull as processor-sharing stages
