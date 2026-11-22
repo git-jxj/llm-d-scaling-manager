@@ -147,6 +147,11 @@ figures an inconsistent self-check names says `not trusted`, and the command
 exits 4 (`verdict.trust` and `exitCode` in the JSON); the verdict is still
 printed.
 
+A recording whose engine rows do not stand for the fleet gets no badge: the
+planner refuses it outright, as an input error. That happens on multi-Pod
+groups where only one rank's engine is scraped. See
+[troubleshooting](troubleshooting.md#a-recording-is-refused-engine-rows-do-not-stand-for-the-fleet).
+
 On **inconsistent**, the answer offers an issue to file: a link to a new
 GitHub issue, prefilled with diagnostics. It holds the planner's version,
 the checks that failed and their numbers, the refusals, the token-size
