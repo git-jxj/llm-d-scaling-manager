@@ -1266,7 +1266,7 @@ func (r *reporter) cell(slo, ttft *servedFleet, row whatifapi.ReportRow, ev flee
 	switch {
 	case s.saturated || (pastKnee && !pastLowerBound):
 		c.Mark = whatifapi.CellSaturated
-	case pastLowerBound && !(s.known && !s.met):
+	case pastLowerBound && (!s.known || s.met):
 		c.Mark = whatifapi.CellPastLowerBound
 	case s.targetCount == 0:
 		c.Mark = whatifapi.CellNoTarget
