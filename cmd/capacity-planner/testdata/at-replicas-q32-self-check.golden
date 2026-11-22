@@ -27,13 +27,13 @@ capacity            req/s     out tok/s   bound by
   fleet knee        4.04      103         prefill
   operating (0.85)  3.44      88          0.85 x fleet knee (scaleUpThreshold)
   max at SLO        0.13      3           TTFT p90, end to end
-SLO vs load         r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee       2.02   829.7/5123.2    10.82/18.38       1.94 s
-  80% of knee       3.23   3772.1/14241.5  10.82/18.38       5.85 s
-  100% of knee      4.04   saturated       10.82/18.38       saturated
-  load seen (309%)  12.48  saturated       11.22/19.07       saturated
+SLO vs load         r/s    TTFT p50/90 ms           TPOT mean/p90 ms  e2e mean (sum)
+  50% of knee       2.02   829.7/5123.2             10.82/18.38       1.94 s
+  80% of knee       3.23   3772.1/14241.5           10.82/18.38       5.85 s
+  100% of knee      4.04   past a lower-bound knee  10.82/18.38       past a lower-bound knee
+  load seen (309%)  12.48  past a lower-bound knee  11.22/19.07       past a lower-bound knee
 checks
-  2 prefill + 2 decode  does not hold: 12.48 r/s is 3.1x the fleet knee of 4.04 r/s; TTFT p90 saturated misses 2000.0 ms
+  2 prefill + 2 decode  does not hold: 12.48 r/s is 3.1x the fleet knee of 4.04 r/s; TTFT p90 not judged (past a lower-bound knee)
 assumed: prompt cv 2 (no computed-prompt histogram); flow control off (no queue series); Poisson arrivals
 flags: UnvalidatedTTFT; VPLowerBound; VPScaledToPrompt; AssumedPromptSpread; HeldLine; SpreadBeyondProcessorSharing; FlowControlInferredOff; BelowFittedBand; KVBoundSlots; AssumedPoissonArrivals; TransferHeld; PromptSpreadAbovePeak; CoarseTPOTBucket; MeanBoundedTPOTPercentile
 

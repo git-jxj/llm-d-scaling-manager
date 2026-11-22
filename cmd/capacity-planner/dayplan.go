@@ -92,6 +92,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	if err != nil {
 		return err
 	}
+	warnTPOTPercentile(warn, f.tpot)
 	plan, err := planDay(ctx, res, req, "schema-v"+strconv.Itoa(schemaVersion))
 	if err != nil {
 		if whatifapi.IsInputError(err) {
@@ -278,7 +279,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	}
 	fmt.Fprintf(&b, "; headroom %.2f. %s\n", p.Headroom, p.Banner)
 	for _, r := range p.Refused {
-		what := map[string]string{"ttft": "prefill's TTFT", "tpot": "decode's TPOT", "decodeKnee": "decode's knee"}[r.Term]
+		what := map[string]string{"ttft": "prefill's TTFT", "tpot": "decode's TPOT", "decodeKnee": "decode's knee", "window": "the busiest bucket"}[r.Term]
 		fmt.Fprintf(&b, "\nREFUSED %s (%s), in %d buckets: %s\n  what to do: %s\n  what the plan did: %s\n",
 			what, r.Reason, r.Buckets, r.Detail, r.Hint, r.Effect)
 	}
@@ -323,8 +324,12 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		return fmt.Sprintf("%.2f prefill + %.2f decode", *r.Prefill, r.Decode)
 	}
 	if s.PeakNeeded != nil {
-		fmt.Fprintf(&b, "needed: at the busiest bucket %s, at the quietest %s (the fewest replicas in all; another mix may serve too)\n",
-			neededText(s.PeakNeeded), neededText(s.MinNeeded))
+		fewest := "the fewest replicas in all"
+		if g := s.SizedOnGPUs; g != nil {
+			fewest = fmt.Sprintf("the fewest GPUs, at %d a prefill and %d a decode replica", g.Prefill, g.Decode)
+		}
+		fmt.Fprintf(&b, "needed: at the busiest bucket %s, at the quietest %s (%s; another mix may serve too)\n",
+			neededText(s.PeakNeeded), neededText(s.MinNeeded), fewest)
 		fmt.Fprintf(&b, "replica-hours over the %d sized buckets: needed %s, had %s\n",
 			c.Sized, hours(s.NeededReplicaHours), hours(s.HadReplicaHours))
 		if s.NeededGPUHours != nil {

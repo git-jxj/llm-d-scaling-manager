@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -126,6 +127,10 @@ const (
 	// FlagFleetRefused is a bucket whose fleet limit the source refuses at
 	// more replicas than one (Refused, term fleet).
 	FlagFleetRefused = "FleetRefused"
+	// FlagWindowGapAtPeak is a bucket refused because a gap in the window,
+	// at least RollingWindow long, borders it while it is the busiest sized
+	// bucket (Refused, term window; refuseGapAtPeak).
+	FlagWindowGapAtPeak = "WindowGapAtPeak"
 	// FlagOtherVariantsServed is a bucket in which a prefill or decode
 	// variant other than the priced ones served: the rate is the model's,
 	// and part of it went to pods Actual does not count.
@@ -188,6 +193,9 @@ type DayPlanResponse struct {
 	Searched int `json:"searched"`
 	// Notes are what the plan does not price, in words.
 	Notes []string `json:"notes"`
+	// Gaps is how much of the source's span its cycles cover; absent with
+	// fewer than three distinct cycles. A bucket inside a gap has no data.
+	Gaps *WindowGaps `json:"gaps,omitempty"`
 }
 
 // DayRefusal is a term the source cannot price at any rate: the role it
@@ -220,8 +228,35 @@ type DayShape struct {
 	Source        string   `json:"source"`
 }
 
-// DayNeeded is the fewest replicas in all that serve a bucket's rate, ties
-// going to fewer decode (SmallestFleet): one fleet that serves it, and
+// neededWhat names what a size's needed fleet is the fewest of: GPUs where
+// the roles' GPUs per replica are stated and differ, else replicas (where
+// they are equal the fewest GPUs are the fewest replicas).
+func neededWhat(gpusPerReplica FleetCounts) string {
+	if WeighsGPUs(gpusPerReplica) {
+		return "fewest GPUs"
+	}
+	return "fewest replicas"
+}
+
+// neededOrder is the order neededWhat's search ranks fleets in, in words.
+func neededOrder(gpusPerReplica FleetCounts) string {
+	if WeighsGPUs(gpusPerReplica) {
+		return fmt.Sprintf("the fewest GPUs at %d a prefill and %d a decode replica, ties to fewer replicas, then fewer decode",
+			gpusPerReplica.Prefill, gpusPerReplica.Decode)
+	}
+	return "the fewest in all, ties to fewer decode"
+}
+
+// WeighsGPUs reports whether a size's search on gpusPerReplica ranks fleets
+// otherwise than by replicas: both roles stated, and unequal.
+func WeighsGPUs(gpusPerReplica FleetCounts) bool {
+	w, on := ReplicaCost(gpusPerReplica)
+	return on == MinimizesGPUs && w.Prefill != w.Decode
+}
+
+// DayNeeded is the cheapest fleet that serves a bucket's rate, the fewest
+// GPUs or replicas (SmallestFleet, ReplicaCost), ties going to fewer
+// replicas, then fewer decode: one fleet that serves it, and
 // another mix may serve it too. Prefill is absent where the source cannot
 // price it (Refused); Decode is then sized on decode's own limit alone, a
 // lower bound (AtLeast): the fleet's limit, which decode admission can hold
@@ -247,7 +282,7 @@ type DayBucket struct {
 	SizedRate *float64 `json:"sizedRate,omitempty"`
 	Shape     DayShape `json:"shape"`
 	Status    string   `json:"status"`
-	// Needed is the fewest replicas that serve SizedRate (sized), and Limit
+	// Needed is the cheapest fleet that serves SizedRate (sized), and Limit
 	// the limit they were sized on.
 	Needed *DayNeeded `json:"needed,omitempty"`
 	Limit  *Figure    `json:"limit,omitempty"`
@@ -296,6 +331,10 @@ type DaySummary struct {
 	// GPUsPerReplica is the priced variants' GPUs per replica, where the
 	// source states them; the GPU-hours follow the replica-hours.
 	GPUsPerReplica *FleetCounts `json:"gpusPerReplica,omitempty"`
+	// SizedOnGPUs is the GPUs per replica the buckets' search weighed each
+	// role by (ReplicaCost), set only where they differ between the roles
+	// and the search so ranked fleets by GPUs rather than by replicas.
+	SizedOnGPUs    *FleetCounts `json:"sizedOnGpus,omitempty"`
 	NeededGPUHours *float64     `json:"neededGpuHours,omitempty"`
 	HadGPUHours    *float64     `json:"hadGpuHours,omitempty"`
 	HadGPUHoursAll *float64     `json:"hadGpuHoursAll,omitempty"`
@@ -628,6 +667,9 @@ const (
 	// termFleet is a fleet's limit refused at more replicas than one, which
 	// the probe at one replica a role did not see.
 	termFleet = "fleet"
+	// termWindow is the busiest bucket, refused beside a gap in the window
+	// (refuseGapAtPeak).
+	termWindow = "window"
 )
 
 // addRefusal adds r to refused, once per role, term and reason.
@@ -851,8 +893,8 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 // hadVerdict judges the fleet a bucket had, as one fleet, at the bucket's
 // rate: under when its limit does not reach the rate; over when it does and
 // a fleet of one replica fewer of either role does too (as at-replicas
-// judges over); else match. The fewest replicas found (Needed) are one fleet
-// that serves the rate, the fewest in all: another mix may serve it as well,
+// judges over); else match. The cheapest fleet found (Needed) is one fleet
+// that serves the rate: another mix may serve it as well,
 // and the fleet it had is judged on its own mix, never role by role against
 // Needed. With prefill not priced, decode is judged alone.
 func (q *dayQuestion) hadVerdict(ctx context.Context, g *dayGroup, db *DayBucket, rate float64) error {
@@ -998,6 +1040,13 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	for _, g := range groups {
 		out.Searched += g.z.searched() + len(g.limits)
 	}
+	times := make([]time.Time, len(series))
+	for i, x := range series {
+		times[i] = x.At
+	}
+	slices.SortFunc(times, time.Time.Compare)
+	out.Gaps = WindowGapsOf(times)
+	q.refuseGapAtPeak(out)
 	q.countRefused(out)
 	if stated {
 		k := q.k
@@ -1011,14 +1060,22 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		}
 	}
 	out.Hours = hoursOf(series, out.Buckets)
+	if g := out.Gaps.Text(); g != "" {
+		out.Notes = append(out.Notes, "Window gaps: "+g+". A bucket inside a gap has no data, and one a gap cuts into is sized "+
+			"from the cycles present: a gap over the busiest hours sizes them low.")
+	}
 	out.Summary = summaryOf(out.Buckets, out.Hours, q.step, gpus)
+	if g := q.e.doc.Fleet.GPUsPerReplica(); WeighsGPUs(g) {
+		out.Summary.SizedOnGPUs = &g
+	}
 	out.Notes = append(out.Notes,
 		"Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
 		fmt.Sprintf("Each bucket is sized for the %s of its cycles' rates. A p95 needs %d cycles in the bucket; with fewer the bucket is sized for its mean, "+
 			"which is less conservative (FewCyclesForP95).", q.sizeFor, MinPercentileCycles),
-		fmt.Sprintf("Needed is the fewest replicas whose fleet limit, at the SLO and headroom %.2f, reaches the rate: the fewest in all, ties to fewer decode "+
+		fmt.Sprintf("Needed is the %s whose fleet limit, at the SLO and headroom %.2f, reaches the rate: %s "+
 			"(POST /v1/size's search, whatifapi.SmallestFleet). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: "+
-			"under when its limit falls short, over when one replica fewer of either role would still serve it.", q.sc.Headroom),
+			"under when its limit falls short, over when one replica fewer of either role would still serve it.", neededWhat(q.e.doc.Fleet.GPUsPerReplica()), q.sc.Headroom,
+			neededOrder(q.e.doc.Fleet.GPUsPerReplica())),
 		fmt.Sprintf("A bucket with fewer than %.0f requests is not sized (too little data); a bucket no cycle fell in has no data.", q.minRequests),
 		"Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. "+
 			"A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.")
@@ -1037,13 +1094,53 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 func (q *dayQuestion) countRefused(out *DayPlanResponse) {
 	for i := range out.Refused {
 		r := &out.Refused[i]
-		flag := map[string]string{termTPOT: FlagTPOTNotPriced, termTTFT: FlagPrefillNotPriced, termFleet: FlagFleetRefused}[r.Term]
+		flag := map[string]string{termTPOT: FlagTPOTNotPriced, termTTFT: FlagPrefillNotPriced, termFleet: FlagFleetRefused,
+			termWindow: FlagWindowGapAtPeak}[r.Term]
 		for _, b := range out.Buckets {
-			if (flag != "" && slices.Contains(b.Flags, flag)) || (r.Term == termDecodeKnee && b.Status == BucketRefused) {
+			if (flag != "" && slices.Contains(b.Flags, flag)) || (r.Term == termDecodeKnee && b.Status == BucketRefused && !slices.Contains(b.Flags, FlagWindowGapAtPeak)) {
 				r.Buckets++
 			}
 		}
 	}
+}
+
+// refuseGapAtPeak refuses the busiest sized bucket, the one of the highest
+// sized rate (the summary's peak), while a gap in the window borders it
+// (WindowGaps.GapAt: a gap at least RollingWindow long with a cycle either
+// side of it in the bucket, so that the gap cuts into the bucket or covers
+// one beside it). The gap could hide minutes busier than the bucket read:
+// its need is not given, and the next busiest takes its place.
+func (q *dayQuestion) refuseGapAtPeak(out *DayPlanResponse) {
+	var gaps []string
+	for {
+		var peak *DayBucket
+		for i := range out.Buckets {
+			if peakBucket(out.Buckets[i], peak, false) {
+				peak = &out.Buckets[i]
+			}
+		}
+		if peak == nil {
+			break
+		}
+		gap := out.Gaps.GapAt(peak.Start, peak.Start.Add(q.step-time.Nanosecond))
+		if gap == "" {
+			break
+		}
+		peak.Status, peak.Verdict = BucketRefused, DayVerdictRefused
+		peak.Needed, peak.Limit, peak.HadLimit = nil, nil, nil
+		peak.Flags = appendNew(peak.Flags, FlagWindowGapAtPeak)
+		gaps = appendNew(gaps, gap)
+	}
+	if len(gaps) == 0 {
+		return
+	}
+	addRefusal(&out.Refused, DayRefusal{Role: roleFleet, Term: termWindow, Reason: ReasonWindowGapAtPeak,
+		Detail: fmt.Sprintf("A gap in the window (%s) borders its busiest bucket: the load in the gap was not read and may have been higher.",
+			strings.Join(gaps, "; ")),
+		Hint: "Capture the window again so that it holds the gap's minutes, or, from Prometheus, plan a window without the gap " +
+			"(--from and --to; in the API, the inputs request's source.from and source.to).",
+		Effect: "Each busiest bucket a gap borders is not sized, down to the first that none borders; the busiest need is read " +
+			"from the buckets left, and may read low."})
 }
 
 // appendNew appends each of xs not already in s.

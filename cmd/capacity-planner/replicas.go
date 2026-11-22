@@ -215,7 +215,7 @@ func replicasAt(pv pricedVariant, fleet *pricedFleet, ttft *ttftQuestion, query 
 	if slo.PercentileTPOT != nil {
 		p := pv.band(slo.PercentileTPOT, on(func(s whatif.DecodeSLO) whatif.Result { return s.PercentileTPOT }))
 		p = onHostBound(p, pv, r)
-		slo.PercentileTPOT = pv.qualify(onRatio(p, r.ratio, r.flags))
+		slo.PercentileTPOT = pv.qualify(onRatio(p, r.ratio, pv.tpotFlags(r, true)))
 		if at != nil {
 			slo.PercentileTPOT = at.onDecode(slo.PercentileTPOT)
 		}

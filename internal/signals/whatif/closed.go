@@ -74,6 +74,11 @@ type Decode struct {
 	// default intercept is then priced, not refused (PinnedDefaultB), and the
 	// caller flags every figure as assumed. The controller never sets it.
 	AssumedB bool
+	// Batch is the ITL the step adds past the roofline (BatchTerm, issue
+	// llm-d-incubation/llm-d-scaling-manager#309), read on top of Line at
+	// every fill (itlAt). The zero value prices Line alone. The capacity
+	// planner sets it from a term it fitted; the controller never does.
+	Batch BatchTerm
 }
 
 // BelowBand is how a Decode reads its line at a fill under the band's bottom.
@@ -107,6 +112,9 @@ func (d Decode) check() *Unanswerable {
 	// engine (every step has a fixed cost).
 	case !itl.ValidModel(d.Line.A, d.Line.B) || !Finite(d.Line.B) || !(d.Line.B > 0):
 		u = refuse(NoLine, fmt.Sprintf("line A=%g B=%g", d.Line.A, d.Line.B))
+	case !d.Batch.IsZero() && !d.Batch.usable(d.Line):
+		u = refuse(InvalidInput, fmt.Sprintf("batch term %g s per token past %g tokens per rank, on a line with B=%g",
+			d.Batch.Slope, d.Batch.Roof, d.Line.B))
 	case d.onDefaultB():
 		u = refuse(PinnedDefaultB, fmt.Sprintf("a %s line on the default intercept %g s", d.Tier, itl.DefaultBaselineSec))
 	case !Finite(d.CapacityTokens) || !(d.CapacityTokens > 0):
@@ -253,7 +261,7 @@ func (p fullPoint) flags() []Flag {
 // over the output length.
 func (d Decode) replicaRate(k float64) float64 {
 	seqs := CappedSequences(k, d.CapacityTokens, d.KVPerRequest, d.full().slots)
-	itlSec := d.Line.ITLAt(d.seenFill(k))
+	itlSec := d.itlAt(d.seenFill(k))
 	if !(seqs > 0) || !(itlSec > 0) {
 		return 0
 	}
@@ -327,7 +335,7 @@ func (d Decode) steps() float64 {
 // same rate by construction.
 func (d Decode) chainMu(m float64) float64 {
 	k := min(max(m*d.KVPerRequest/d.CapacityTokens, d.lowestFill()), d.Band.Hi)
-	return m / d.residence(d.Line.ITLAt(k))
+	return m / d.residence(d.itlAt(k))
 }
 
 // kneeRate is the fleet's knee, N_d * chainMu(c): N_d * c / residence(ITL(k_full)),
@@ -350,7 +358,12 @@ func (d Decode) kneeRate() float64 {
 //	k(lam) = lam*(H + S*B + S*A*e) / (C/KVreq - lam*S*A)
 //
 // while k + e is under k_full, and lam*(H + S*ITL(k_full))*KVreq/C past it.
+// With a batch term the rate has no closed form, and the fill is found by
+// bisection (fillAtReplicaRateBisected), on the same residence.
 func (d Decode) fillAtReplicaRate(lam float64) (k float64, ok bool) {
+	if !d.Batch.IsZero() {
+		return d.fillAtReplicaRateBisected(lam)
+	}
 	s := d.steps()
 	den := d.CapacityTokens/d.KVPerRequest - lam*s*d.Line.A
 	if !(den > 0) {
@@ -496,11 +509,12 @@ func (t TPOTTarget) ratio() (TPOTRatio, []Flag, *Unanswerable) {
 // for a thin fill bucket there.
 func (d Decode) tpotAtFill(k float64, r TPOTRatio) (float64, bool) {
 	rk, global := r.At(k)
-	return d.Line.ITLAt(k) * rk, global
+	return d.itlAt(k) * rk, global
 }
 
 // fillForTPOT is the fill k* at which ITL(k) times R_q(k) reaches t. With
-// one ratio it is the closed form (t/R_q - B)/A. With R_q by fill the product
+// one ratio and no batch term it is the closed form (t/R_q - B)/A; with a
+// batch term it is bisected (fillForTPOTBisected). With R_q by fill the product
 // rises strictly in k (A and B are positive and R_q never falls), so k* is
 // found by bisection on [lo, 1]; past a full cache R_q is flat at its last
 // bucket, and the closed form at that ratio is exact there. R_q steps up at a
@@ -508,6 +522,9 @@ func (d Decode) tpotAtFill(k float64, r TPOTRatio) (float64, bool) {
 // side below t, so the fill answered never prices a TPOT above the target.
 // The flag says the global R_q stood in for a thin bucket at k*.
 func (d Decode) fillForTPOT(t float64, r TPOTRatio, lo float64) (float64, bool) {
+	if !d.Batch.IsZero() {
+		return d.fillForTPOTBisected(t, r, lo)
+	}
 	if len(r.ByFill) == 0 {
 		return (t/r.Value - d.Line.B) / d.Line.A, false
 	}

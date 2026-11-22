@@ -8,7 +8,15 @@
     "cycle": 289,
     "totalCycles": 289,
     "firstAt": "2026-11-06T02:18:37.855280585Z",
-    "lastAt": "2026-11-06T03:30:45.104261899Z"
+    "lastAt": "2026-11-06T03:30:45.104261899Z",
+    "gaps": {
+      "cycleSeconds": 15.021506602,
+      "expectedCycles": 289,
+      "presentCycles": 289,
+      "missingShare": 0,
+      "largestGapSeconds": 0,
+      "flagged": false
+    }
   },
   "fleet": {
     "prefill": 2,
@@ -265,7 +273,8 @@
               "reason": "TPOTBucketTooWide",
               "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the router's TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
               "flags": [
-                "CoarseTPOTBucket"
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
               ]
             }
           },
@@ -379,7 +388,8 @@
               "reason": "TPOTBucketTooWide",
               "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the router's TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
               "flags": [
-                "CoarseTPOTBucket"
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
               ]
             }
           },
@@ -458,7 +468,8 @@
               "reason": "Saturated",
               "detail": "rate 36.98 r/s at or above the knee 36.98 r/s",
               "flags": [
-                "CoarseTPOTBucket"
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
               ]
             }
           },
@@ -519,7 +530,8 @@
               "reason": "Saturated",
               "detail": "rate 41.7 r/s at or above the knee 36.98 r/s",
               "flags": [
-                "CoarseTPOTBucket"
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
               ]
             }
           },
@@ -556,7 +568,13 @@
         "needed": {
           "prefill": 3,
           "decode": 3,
-          "maxReplicas": 32
+          "maxReplicas": 32,
+          "minimizes": "gpus",
+          "gpusPerReplica": {
+            "prefill": 1,
+            "decode": 1
+          },
+          "gpus": 6
         },
         "roles": [],
         "shrink": [],
@@ -587,7 +605,8 @@
         "AssumedPoissonArrivals",
         "AssumedA",
         "PromptSpreadAbovePeak",
-        "CoarseTPOTBucket"
+        "CoarseTPOTBucket",
+        "HostBoundTPOTTail"
       ],
       "assumed": [
         "V_P 200000 tok/s (--assume-vp)",

@@ -82,14 +82,21 @@ var reviewed = map[reflect.Type]buckets{
 		// one-sided admission a key was last priced with (issue ev-shindin/llm-scaling-manager#467),
 		// and ITLBandFloor, the band floor a model's last cycle adapted
 		// (itl_band_floor.go).
+		// BusiestRankFillFor says whether a variant's line is read at its
+		// busiest rank (moe_busiest_rank.go): the planner's replay reads it
+		// to read its own rows the same way; it changes nothing.
 		// PrefillEstimate copies a prefill variant's stashed estimate for the
 		// slo analyzer, which the analyzer overwrites every cycle and nothing
 		// restores (prefill_observe.go).
 		// TakeLearnerReports hands those reports to the engine's metrics and
 		// keeps none. Nothing the analyzer prices or stores reads them, so
 		// it changes no output, and a replay never takes them.
+		// TakeDecodePacking does the same for what a TPOT objective made of
+		// each decode variant's k2 (k2_itl_bound.go), which the analyzer
+		// overwrites every analysis and nothing prices from.
 		readers: []string{"Name", "Horizons", "BorrowTickGap", "PathCounts", "LearnerReports", "TakeLearnerReports",
-			"ITLReadings", "PricingBatchCap", "ITLOneSided", "ITLBandFloor", "PrefillEstimate"},
+			"ITLReadings", "PricingBatchCap", "ITLOneSided", "ITLBandFloor", "PrefillEstimate", "TakeDecodePacking",
+			"BusiestRankFillFor"},
 		// WithSettleView hands k2 the engine's settle tracker; the replay hands
 		// it its own, observed from the settle events (settle.go).
 		builders: []string{"WithHorizons", "WithOptimizationInterval", "WithClock", "WithRecorder", "WithSettleView"},

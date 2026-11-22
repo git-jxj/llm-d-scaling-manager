@@ -11,14 +11,17 @@
 --metric-annotations-allowlist
 --metric-labels-allowlist
 --model-path
+--optimization-level
 --pipeline-parallel-size
 --role-of
 --step
 --tensor-parallel-size
+--v
 --vllm-version
 -1
 -1000
 -Inf
+-O
 -byte
 -c
 -dp
@@ -66,6 +69,7 @@
 24h
 24ns
 2m
+3
 30
 30s
 394
@@ -140,6 +144,7 @@ DSET_ROLE_WRITER
 Data
 DataParallelRanks
 Datastore
+Decode
 DecodeEngineMeasured
 DecodeOnsetUnchecked
 DecodeSideOmitted
@@ -265,6 +270,7 @@ MalformedHistogram
 MaxDecodeGateClosedShare
 MaxPSPromptCV
 MeanBoundedTPOTPercentile
+Meanwhile
 MeasuredLowConfirmFor
 Metrics
 Mimir
@@ -358,6 +364,7 @@ PROMETHEUS_TLS_INSECURE_SKIP_VERIFY
 PROMETHEUS_TOKEN_PATH
 PROPSEED
 Passive
+PastLowerBoundKnee
 Pending
 Physical
 PinnedDefaultB
@@ -615,6 +622,7 @@ analyzer-in-grace
 analyzer-result
 analyzerDefinitions
 analyzerTuning
+analyzerTuning.itlBand
 analyzers
 and
 annotation
@@ -852,6 +860,7 @@ comparable
 compared
 compatible
 compatible-variant-live
+compilation_config
 complete
 completed
 completedPerQueuedReplica
@@ -928,6 +937,10 @@ creation
 crept
 critical
 crossed
+cuda_graph_max_bs
+cuda_graph_sizes
+cudagraph_capture_sizes
+cudagraph_mode
 current
 current-replicas
 currentNeedGPUs
@@ -990,6 +1003,7 @@ decodeTTFT
 decodeTTFTPrompt
 decodeTermRefused
 decodeVariant
+decoding
 deduced
 deepep_low_latency
 deeper
@@ -1123,6 +1137,7 @@ enable_eplb
 enable_expert_parallel
 enable_extensible_kv_cache
 enable_hierarchical_cache
+enable_mixed_chunk
 enable_prefix_caching
 enabled
 enables
@@ -1223,6 +1238,7 @@ fallbackSource
 falls
 false
 fell
+few
 fewer
 field
 fields
@@ -1242,6 +1258,7 @@ firstWrite
 fit
 fit-declined
 fitRows
+fits
 fitted
 fitting
 fix
@@ -1302,6 +1319,7 @@ frozen
 full
 future
 g
+gain
 gap
 gaps
 gate
@@ -1389,6 +1407,7 @@ hicache_size
 hierarchical
 high
 highSeconds
+higher
 highest
 highestGroup
 hint
@@ -1498,6 +1517,7 @@ itl-aggregated-shape-term
 itl-aggregated-sizes
 itl-aggregated-spec-unknown
 itl-baseline-stamped
+itl-batch-term
 itl-fit
 itl-fit-declined
 itl-gps-mismatch
@@ -1587,6 +1607,7 @@ k2-key-bucket-held
 k2-key-bucket-moved
 k2-obs-admitted
 k2-reads-the-settle-tracker
+k2-under-bound
 k2-unsettled-joined
 k2-unsettled-window
 k2-waits-after-a-rollout
@@ -1741,6 +1762,7 @@ let
 levels
 liftReason
 lifted
+light
 likely
 limit
 limited
@@ -1833,6 +1855,7 @@ maxRatio
 maxReplicas
 maxRoles
 maxWait
+max_cudagraph_capture_size
 max_model_len
 max_num_active_seqs
 max_num_batched_tokens
@@ -1884,6 +1907,7 @@ milliseconds
 min
 min-max
 minKSpread
+minReplicaCount
 minReplicas
 minSamples
 minValue
@@ -1914,6 +1938,7 @@ model_unresolved
 modelled
 models
 modelsProcessed
+moe-dp-busiest-rank
 moe_a2a_backend
 monotonicity
 more
@@ -2024,6 +2049,7 @@ no-hit
 no-itl
 no-itl-line
 no-k
+no-kv-capacity
 no-limiter
 no-line
 no-listed-analyzer-sizes-role
@@ -2133,6 +2159,7 @@ operating-point-cap
 operation
 operator
 optimization
+optimization_level
 optimizer
 optimizer.type
 options
@@ -2188,6 +2215,7 @@ owning
 p
 p1
 p10-p90
+packing
 page_size
 panic
 panicked
@@ -2318,6 +2346,7 @@ prefill-queue-by-capacity
 prefill-required
 prefill-spare
 prefill-throughput-bound-reading
+prefill-vp-floor-served
 prefillBoundHeld
 prefillBounds
 prefillDemandAfter
@@ -2529,6 +2558,7 @@ replicasByVariant
 replicasImplied
 replicasToMove
 replicaset
+report
 report-only
 reportOnly
 reported
@@ -2560,6 +2590,7 @@ residentKVBoundFleet
 residentKVPerSeq
 residentRunning
 residual
+residuals
 resolve
 resolved
 resolves
@@ -2575,6 +2606,7 @@ restored
 restoredKeys
 restoredTransfers
 restoring
+rests
 result
 resumed
 resumes
@@ -2598,6 +2630,7 @@ revisions
 rho
 rhoP
 rhoPull
+rise
 rises
 role
 role-of
@@ -2610,6 +2643,7 @@ rolling
 rollout
 rolloutHeld
 rollouts
+roof
 room
 rose
 round
@@ -2815,6 +2849,7 @@ single-accelerator
 single-sample
 sit
 size
+sized
 sizedSeconds
 sizes
 skipped
@@ -2824,6 +2859,7 @@ slo
 slo-
 slo-batch-cap-admission
 slo-batch-cap-per-rank
+slo-cap-at-step-budget
 slo-itl-files-learner-reports
 slo-itl-forget-reaches-the-line
 slo-itl-idle-needs-evidence
@@ -2867,6 +2903,7 @@ slo.EvictStale
 slo.ForgetVariant
 slo.NoteVariantsPresent
 slo.flowControl
+slo.tpot
 sloEntries
 slope
 slopeAge
@@ -2891,6 +2928,7 @@ spare
 spec
 spec.fallback
 speculates
+speculating
 speculative
 speculative_
 speculative_algorithm
@@ -3274,11 +3312,13 @@ vllm:spec_decode_num_accepted_tokens_total
 volume
 vp
 vpAboveSlopeBound
+vpFlooredAtServed
 vpLowerBound
 vpLowerBoundReason
 vpPromptTokens
 vpRefused
 vpSamples
+vpServedPeak
 vpSource
 wait
 waitBeforeReverseMove

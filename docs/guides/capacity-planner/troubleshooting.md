@@ -42,14 +42,16 @@ and under **Inputs**; the API puts it in `refused`.
 | `NoFixedLatency` | No fixed latency a: it is learned from low-load minutes at more than one prompt length. | Record a window with quiet minutes and mixed prompts, or assume a (`assume.a`). |
 | `NoFixedLatency` with detail `P1 refused a: NoPromptSpread` or `TooFewLowLoadMinutes` | The quiet minutes did not span enough prompt lengths, or were too few, to tell the fixed cost a from the per-token cost. | As for `NoFixedLatency`. |
 | `NoImbalance` | More than one prefill Pod and no f, the busiest Pod's share of the work. f = 1 is never assumed silently. | Record a window in which every prefill Pod carried load. |
-| `NoLine` | No inter-token latency line to price TPOT from. | Answer at a later cycle where the line is learned (`--cycle N`, the page's **Cycle** box), or record a window in which decode's KV-cache use spans 0.30 or more ([what the line needs](metrics.md#what-your-prometheus-must-keep)). |
+| `NoLine` | No inter-token latency line to price TPOT from. | Record a window in which decode's KV-cache use spans 0.30 or more between 0.15 and 0.80 full. If the recording has later cycles, answer at one where the line is learned (`--cycle N`, the page's **Cycle** box); the refusal offers this only when one exists ([what the line needs](metrics.md#what-your-prometheus-must-keep)). |
 | `PinnedDefaultB` | The decode line rests on a 6 ms default for its intercept B, the per-token latency with the cache empty. No engine measured it. Common on real P/D windows. | Add `--assume-itl-b floor` (API `assume.itlBFromFloor: true`) to take B from what the decode Pods read at low KV fill, or a value: `--assume-itl-b 12ms` (API `assume.itlB: 0.012`; page **Assume a term**, ITL B in ms, which shows the floor's value: the page has no floor switch). Figures are flagged `AssumedITLB`. On a `held` or `borrowed` line it does nothing: pick a cycle where the line is `pinned-B` (`--cycle N`, the page's **Cycle** box). |
 | `NoCapacity`, `NoBatchCap` | No KV capacity, or no batch cap, for the replica. | Make sure Prometheus keeps `vllm:cache_config_info`; pass the engine arguments (`--engine-args`, and `--prefill-engine-args` for a P/D fleet) or `--batch-cap` when you record or serve. |
 | `NoTPOTHistogram` | A TPOT percentile asked with no ratio R_q of percentile to mean. | Type an assumed ratio (**TPOT percentile**, API `assume.tpotRatio`), or ask for the mean. |
 | `TargetBelowFloor` | The target is under what any number of replicas reaches. | Raise the target. More replicas do not help. |
 | `DecodeTTFTUnderLoad` | Decode has no ITL line, so TTFT uses the decode engine's measured TTFT. That TTFT was measured while requests waited on decode capacity, so it is a queue, not a floor. | For a recording, answer at the cycle the message names: the **Cycle** box (API `source.cycle`). For a Prometheus window, end the window at the time the message names (API `source.to`). On the CLI these are `--cycle` and `--to`. |
 | `Saturated` | The rate is at or past the lower knee. | Lower the rate, or add replicas of the role whose knee is lower. |
+| `PastLowerBoundKnee` | The rate is at or past a prefill knee priced from a V_P that is only a lower bound (the prefill Pods queued for compute only at a light load), so the true knee may be higher. The planner gives no TTFT there and does not call it saturated. Past decode's knee it still reads `Saturated`. | Record a window in which the prefill Pods queue under load, or assume V_P (**Assume a term**, API `assume.vp`). |
 | `AboveDecodeOnset`, `FlowControlUnknown` | With router flow control on, the rate is at the decode gate's onset, or the onsets cannot be placed. | Lower the rate; record with the router's series ([metrics](metrics.md#router-epp)). |
+| `WindowGapAtPeak` (at-replicas load, day-plan bucket) | A gap in the window at least 2 minutes long (the time between the cycles either side of it, less one cycle; any gap, not only the largest) borders its busiest stretch: a cycle either side of the gap lies in the busiest 2 minutes or is the busiest cycle (at-replicas), or in the busiest sized bucket (day-plan). The gap could hide minutes busier than any the window holds, so the load, or that bucket's need, could read low. at-replicas does not judge the observed load (`NOT JUDGED`, exit 3); day-plan does not size that bucket, takes its need from the next busiest, and exits 3. | Capture the window again so that it holds the gap's minutes. Or, for at-replicas, state the load you plan for with `--load-seen` (API `loadSeen`), which is never refused; for a day plan from Prometheus, plan a window without the gap (`--from` and `--to`). A model parked at zero also leaves a gap, though nothing was lost there: state the load. |
 | `ReplicaBoundReached` (size) | No fleet within **Search up to** serves the rate. | Raise **Search up to** (API `maxReplicas`, at most 64), lower the rate, or raise the target that binds. |
 | A refused term in a size | The search hit a refusal no replica count changes. | Fix that term as above, or raise the target. With **Size for the worst corner** ticked, untick it. |
 | `NoPerRequestLengths` on the observed rate and bucket shares | Expected: the source carries no per-request lengths. | Nothing; the mix line uses the mean prompt and output. |
@@ -64,6 +66,29 @@ A figure flagged `AssumedShape`, `AssumedTPOTRatio`, `AssumedITLB` or with an as
 stands, but rests on a value you typed. The **Flags** drawer says what clears
 each flag. A TPOT percentile flagged `GlobalTPOTRatio` is priced at a fill the
 source saw fewer than 5 windows at; record a window with more time at that load.
+
+## Engine configurations the planner does not model
+
+The decode model was checked on dense models, one data-parallel rank and
+NIXL. Speculative decoding is priced through the measured ITL, and flagged
+where its batch meets the step budget or the CUDA-graph ceiling. Where the recorded engine arguments say the
+engine is outside that, every decode figure carries a flag naming what the
+model cannot vouch for. The figure is still printed; read it as a guess on
+that point.
+
+| Flag | What it means | What to do |
+| --- | --- | --- |
+| `MoEDataParallel` | MoE with expert parallelism and more than one data-parallel rank. The ranks step together at the busiest rank's pace, but the fill priced is the mean over ranks, so the busiest rank can run out of KV first. | Leave headroom below the band's top. |
+| `StepBudgetBindsBatch` | The batch priced, times 1 plus the speculative tokens, is more than the step budget (`--max-num-batched-tokens`). The engine runs fewer sequences than the knee assumes. Wide-EP engines with a batched all-to-all default to 256 tokens a step. | Raise the budget, or price at the budget's batch with `--batch-cap`. |
+| `PastCUDAGraphCeiling` | The batch priced is past the largest CUDA graph the engine captures, or the engine runs without graphs (`--enforce-eager`, `-O0`, `cudagraph_mode` NONE, SGLang `--disable-cuda-graph`). Those steps run slower than the line. | Drop `--enforce-eager`; raise `--max-cudagraph-capture-size` (SGLang: `--cuda-graph-max-bs`); or lower `--batch-cap`. |
+| `HybridAttention` | Sliding-window, chunked-local or linear layers (for example gpt-oss, Gemma 2 and 3, Llama 4, Qwen3-Next, Nemotron-H, Jamba, Granite 4.0-H, Kimi Linear, MiniMax-M1, Command A). KV per request and the ITL line are not those of full attention. | Treat the figure as a rough guess. |
+| `MLAAttention` | Multi-head latent attention (for example DeepSeek V2, V3 and R1, Kimi K2, Mistral Large 3). KV is small, so the batch cap or the step budget usually bounds the batch. The CLI's `flags:` line says which one. | Nothing. This flag is for information. |
+| `HostBoundTPOTTail` | A TPOT percentile on an engine whose per-token latency with an empty cache is under 5 ms. The tail is host jitter and reads low. | Size on the mean TPOT. |
+| `KVConnectorUnmodeled`, `KVOffload` | A KV connector other than NIXL, or KV offloading past GPU memory. The KV transfer was modeled on NIXL only, and only the GPU's KV is priced. | Treat the figure as a rough guess. |
+| `SGLangNoMixedChunk` | An aggregated SGLang Pod without `--enable-mixed-chunk`. Each prefill step stalls every running sequence. | Add `--enable-mixed-chunk`. |
+| `ExtensibleKVCache` | vLLM v0.34's extensible KV cache. The KV capacity read at start-up can grow later. | Record after the cache has grown, or turn it off. |
+| `DefaultBatchCapBelowRelease` | The arguments set no `--max-num-seqs`, so the planner priced 256. This vLLM release runs 1024 on this accelerator, so the decode figures can ask for up to 4x too many replicas. | Set `--max-num-seqs` on the engine, or pass `--batch-cap`. |
+| `BatchBeyondFit` | The shape asked holds less than half the KV per request of the rows the ITL line came from, and the batch priced is larger than any those rows held. ITL also rises with the batch's tokens, which the line does not carry to a new shape. | Record a window at this shape. |
 
 ## The planner and the controller disagree on TPOT
 

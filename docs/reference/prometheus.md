@@ -1467,6 +1467,8 @@ model reads all of them `0`, including the two marked "on every answer":
 | `AFromEngineTiming` | Capacity planner only, never on this metric: the fixed latency `a` was fitted from the prefill engines' own timing, because the fleet had too few quiet minutes. TTFT on such a fleet is not validated. |
 | `AdaptedBandFloor` | Capacity planner only, never on this metric: the decode latency line was read with the KV-fill band's floor lowered to the fill the fleet had, because it never filled far enough above the default floor. |
 | `ResidenceUnread` | Capacity planner only, never on this metric, and only with the replay switch `decode-residence-pull` on: a P/D decode was priced without the KV pull in the time a request holds its KV, because the decode engine read no TTFT, or read it with requests waiting for decode capacity or in a window whose decode backlog is unread. An engine without `num_requests_waiting_by_reason` never says why its requests wait, so there the backlog is always unread and the switch prices no residence. |
+| `BusiestRankFill` | Capacity planner only, never on this metric, and only in a replay run with the switch `moe-dp-busiest-rank` on (replay-only: no CLI flag or API field sets it): the decode latency line, its KV-fill band and every fill in the answer are the busiest engine rank's, for a data-parallel MoE engine whose ranks step in lockstep. A replica is priced at the sequences of its mean fill: the busiest rank's fill over the busiest/mean ratio the recording read. |
+| `ITLBatchTerm` | Capacity planner only, never on this metric, and never set by a released planner: only a developer's replay with the switch `itl-batch-term` on. The decode latency at every priced fill is the line's plus a term that grows with the batch tokens per engine rank past a roofline, fitted on the residuals of the variant's own line over its running request counts. |
 | `AssumedITLB` | Capacity planner only, never on this metric: the decode latency line's intercept B was stated (`--assume-itl-b`, API `assume.itlB` or `assume.itlBFromFloor`) in place of the 6 ms default, and its slope refitted through it. |
 | `VPAboveSlopeBound` | `V_P` is above what the low-load fit allows: one of the two is wrong. |
 | `VPShapeMoved` | The mean prompt is more than 1.2 times away from the one `V_P` was learned at, with no curve to rescale by. |
@@ -1982,6 +1984,51 @@ per pod, at `--v=3`.
   - `namespace`: the model's namespace (scraped as `exported_namespace`)
   - `model_name`: model ID
 - **Use Case**: Settle which utilization the autoscaler targets when pricing a replica, without recomputing it from configuration.
+
+### Decode packing under a TPOT target
+
+Where a policy sets `slo.tpot` and lists the `slo` analyzer, saturation holds
+each decode replica at the KV fill where its variant's ITL line reaches the
+target ([how a TPOT target bounds decode packing](scaling-policy.md#how-a-tpot-target-bounds-decode-packing)).
+These two series say, per decode variant, whether it did. They are read from
+the replica the variant's per-replica capacity was taken from, the one
+`llmsm_learned_state_k2_source` describes.
+
+They are published only for a decode variant whose policy sets `slo.tpot` and
+lists `slo`: one `llmsm_decode_packing_bound` series and two
+`llmsm_decode_packing_k2_tokens` series per variant. Without a TPOT target,
+for a prefill or aggregated variant, and for a variant no analyzer reports,
+they are absent. They are deleted with the model. Labels are `namespace` (the
+model's namespace, scraped as `exported_namespace`), `model_name` and
+`variant_name`, plus `controller_instance` when `CONTROLLER_INSTANCE` is set.
+Nothing scales on them: the bound is already in `llmsm_analyzer_target`.
+A model with no replica rows (parked at zero, or its scrape lost) loses them
+until it is priced again. The SLO analyzer's `llmsm_slo_fill` is the same
+target read on its own fit of the line, so the two fills can differ. A
+variant served only by warm-pool bridges reports the bridge's k2.
+
+### `llmsm_decode_packing_bound`
+- **Type**: Gauge, always 1
+- **Description**: Whether the TPOT target bounded how far the decode variant is packed this cycle, and why.
+- **Labels**:
+  - `bound`: `itl` (the target lowered k2) or `none` (it did not)
+  - `reason`: with `itl`, `slo-tpot`. With `none`: `k2-under-bound` (the bound is in force, and the k2 was already under it), or why the bound did not apply: `no-line` (the variant has no ITL line yet), `borrowed-line` (its line is a sibling's), `one-sided-line` (held at a prior), `above-band-line` (fitted above the ITL band), `default-intercept` (its intercept is the 6 ms default, not measured), `per-step-line` (a step-time line on a speculating engine), `target-unreachable` (the target is at or under the line's intercept, so no number of replicas meets it), `bad-band` (the ITL band is not a range inside (0, 1]), `no-kv-capacity` (the replica reports no KV capacity to hold k2 at)
+- **Use Case**: A decode variant with a TPOT target that is sized as if it had none: every `reason` but `slo-tpot` and `k2-under-bound`. After 15 minutes of it the variant also gets one `DecodePackingBoundInert` Warning event ([Events](monitoring.md#events)).
+- **Example**: decode variants whose TPOT target bounds nothing:
+  ```promql
+  llmsm_decode_packing_bound{bound="none", reason!="k2-under-bound"}
+  ```
+
+### `llmsm_decode_packing_k2_tokens`
+- **Type**: Gauge
+- **Description**: The decode variant's k2, the KV tokens one replica is priced to hold when busy, before the TPOT bound (`k2="unbounded"`) and after it (`k2="bounded"`). Equal where the bound held nothing.
+- **Labels**: `k2`: `unbounded` or `bounded`
+- **Use Case**: How much the target costs. `bounded / unbounded` is the share of the batch the target allows; at 0.5, decode needs about twice the replicas it would without the target, at the same load.
+- **Example**:
+  ```promql
+  llmsm_decode_packing_k2_tokens{k2="bounded"}
+    / ignoring (k2) llmsm_decode_packing_k2_tokens{k2="unbounded"}
+  ```
 
 ### Load distribution
 
