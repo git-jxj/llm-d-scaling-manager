@@ -1276,6 +1276,8 @@ flipped
 float
 floor
 floor-trust-reads-completions
+floorBAge
+floorBHeld
 floorExcessGPUs
 floorK
 floorTrust
@@ -2689,6 +2691,7 @@ saturation-decode-owes-router-backlog
 saturation-holds-role
 saturation-itl-baseline-from-floor
 saturation-itl-clears-on-a-new-revision
+saturation-itl-floor-baseline-held
 saturation-itl-one-sided-at-cap
 saturation-itl-tier-hysteresis
 saturation-lower-bound-caps-router-share

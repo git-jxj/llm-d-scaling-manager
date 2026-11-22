@@ -130,13 +130,21 @@ type floorTable struct {
 // 1449), and the floor moves 15 cycles down where it moved 18; e1-tuned 1
 // where 2. The median mu moves by under 1% on e1-tuned and three-pods and
 // by under 0.2% on the staircases; no staircase replica count moves.
+//
+// Issue llm-d-incubation/llm-d-scaling-manager#333 holds the last floor's B
+// on the cycles that read none (saturation.SwitchITLFloorBaselineHeld, on
+// from the constructor, so on in the "on" replay here): the staircases pin
+// a floor B on 194, 190 and 196 cycles where they pinned 130, 167 and 147,
+// and c-on's mu reads 22.049 where it read 22.135. Three-pods does not
+// move: every cycle it would hold is in a shape change, which ends the hold.
+// TestGoldens_ITLFloorBaselineHeldReplicas holds that switch's own table.
 var floorReplicaTables = []floorTable{
 	{"e1", 762, 552, 15, 15, 0, 1454, 1439, 5.277, 5.270},
 	{"e1-tuned", 748, 545, 1, 1, 0, 1388, 1387, 4.755, 4.783},
 	{"ttft-staircase-a-off", 128, 0, 0, 0, 0, 125, 125, 0, 0},
-	{"ttft-staircase-b-off", 289, 130, 0, 0, 0, 283, 283, 31.239, 21.785},
-	{"ttft-staircase-b-on", 289, 167, 0, 0, 0, 284, 284, 32.646, 22.473},
-	{"ttft-staircase-c-on", 292, 147, 0, 0, 0, 286, 286, 28.938, 22.135},
+	{"ttft-staircase-b-off", 289, 194, 0, 0, 0, 283, 283, 31.239, 21.785},
+	{"ttft-staircase-b-on", 289, 190, 0, 0, 0, 284, 284, 32.646, 22.473},
+	{"ttft-staircase-c-on", 292, 196, 0, 0, 0, 286, 286, 28.938, 22.049},
 	{"ttft-three-pods", 203, 102, 31, 0, 31, 451, 482, 4.676, 4.146},
 }
 

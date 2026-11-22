@@ -320,6 +320,18 @@ type shapeSample struct {
 // refuse; it takes the warm-up and the 1k-prompt A-off phase together (n_roof
 // 120 per rank, 0.034 ms per sequence) to read it, so a recording of one
 // shape cannot. A replay turns it on by name.
+//
+// One controller switch, on from its constructor, is turned off here:
+//
+//   - saturation.SwitchITLFloorBaselineHeld: a decode line with no full fit
+//     keeps the B it last read from its floor below the band after the
+//     floor's readings are 30 minutes old (issue
+//     llm-d-incubation/llm-d-scaling-manager#333). On from the controller's
+//     constructor, for a fleet held in the band. The planner reads B from the
+//     floor of the last 30 minutes only, as before, and refuses a line with
+//     none (PinnedDefaultB): held, it priced decode on hours of the
+//     staircase and three-pods recordings it refused, and no check yet says
+//     those figures do not read under what was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
@@ -331,6 +343,7 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchITLAdaptiveBandFloor:   true,
 		saturation.SwitchPrefillVPFloorServed:   true,
 		saturation.SwitchPlannerCapAtStepBudget: true,
+		saturation.SwitchITLFloorBaselineHeld:   false,
 	}, PackageSLO: {
 		slo.SwitchTTFTHopUnqueued: true,
 	}}
