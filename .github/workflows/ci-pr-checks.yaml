@@ -149,8 +149,11 @@ jobs:
               - 'warmpool/supervisor/**'
               - 'Dockerfile.warmpool-launcher'
               - 'Dockerfile.warmpool-launcher.dockerignore'
-              # make test-warmpool-launcher, which the job runs.
-              - 'Makefile'
+              # make test-warmpool-launcher, which warmpool-launcher-tests runs.
+              # Not the whole Makefile: any edit to it would pull the ~10 GB
+              # vLLM base. The Makefile keeps only that target's help line,
+              # plus SHELL and .SHELLFLAGS, which every other make job runs too.
+              - 'make/warmpool-launcher.mk'
               - '.github/workflows/ci-warmpool-launcher.yaml'
               - '.github/workflows/ci-pr-checks.yaml'
 
