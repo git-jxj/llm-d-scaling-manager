@@ -221,6 +221,9 @@ type Analyzer struct {
 	// ttftHopUnqueued is SwitchTTFTHopUnqueued (ttft.go): off from the
 	// constructor; only a replay turns it on.
 	ttftHopUnqueued bool
+	// ttftDecodeSpeculatingHeld is SwitchTTFTDecodeSpeculatingHeld (ttft.go):
+	// off from the constructor, planner-only; only a replay turns it on.
+	ttftDecodeSpeculatingHeld bool
 	// ttftSizesPrefill is SwitchTTFTSizesPrefill (ttft_prefill_ask.go): off
 	// from the constructor; only a replay turns it on.
 	ttftSizesPrefill bool

@@ -333,6 +333,16 @@ type shapeSample struct {
 //     windows whose prefill pods held no queue. The planner reads its own
 //     decode term windows (state_ttft.go), so it reads the switch from here
 //     even where the recording has no slo analyzer to set it on.
+//   - slo.SwitchTTFTDecodeSpeculatingHeld: on a decode fleet that
+//     speculates (MTP), whose every row D's fit refuses, the decode
+//     engine's measured TTFT of a quiet speculating row is held for D, its
+//     ITL read per accepted token, in place of T_xfer + ITL. It only adds a
+//     held D where the term was omitted, so every TTFT figure it moves
+//     rises. No committed recording has a decode row that speculates: on the
+//     cross-validation's 66 public runs no figure moved. On a P/D recording
+//     with MTP on every decode pod, the held figure, fitted on the first half,
+//     read the decode engine's measured TTFT of the second within 20% on
+//     most five-minute steps, where the old sum read a few percent of it.
 //
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
@@ -453,7 +463,8 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchITLBaselineFromFloor:    false,
 		saturation.SwitchITLFloorBaselineHeld:    false,
 	}, PackageSLO: {
-		slo.SwitchTTFTHopUnqueued: true,
+		slo.SwitchTTFTHopUnqueued:           true,
+		slo.SwitchTTFTDecodeSpeculatingHeld: true,
 	}}
 }
 
@@ -573,6 +584,11 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
 	ttft.vpAtServed = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPAtServedWork]
 	ttft.cachedTokenCost = opts.Switches[PackageSLO][slo.SwitchTTFTCachedTokenCost]
+	ttft.specHeld = opts.Switches[PackageSLO][slo.SwitchTTFTDecodeSpeculatingHeld]
+	// SwitchITLPerToken is on from the saturation analyzer's constructor: a
+	// replay that does not name it fits the line per accepted token.
+	perToken, named := opts.Switches[PackageSaturation][saturation.SwitchITLPerToken]
+	ttft.itlPerToken = perToken || !named
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false

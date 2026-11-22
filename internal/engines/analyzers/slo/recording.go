@@ -106,7 +106,8 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchTTFTProcessorSharing,
 // SwitchTTFTRouterWait, SwitchTTFTPSOnsets,
 // SwitchTTFTDecodeGateCharge, SwitchTTFTImbalanceAcrossCounts,
-// SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTHopUnqueued, SwitchTTFTJointInputs,
+// SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTHopUnqueued,
+// SwitchTTFTDecodeSpeculatingHeld, SwitchTTFTJointInputs,
 // SwitchTTFTPromptSupport and SwitchKVPerRequestOutputDispersion; a name it
 // does not know is an error, and sets nothing. Never called on a production
 // path; a test holds that.
@@ -213,6 +214,9 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		// The router hop read off windows whose prefill pods held no queue,
 		// off by default (ttft.go, llm-d-incubation/llm-d-scaling-manager#281).
 		SwitchTTFTHopUnqueued: &a.ttftHopUnqueued,
+		// A speculating decode row held for D, planner-only, off by default
+		// (ttft.go).
+		SwitchTTFTDecodeSpeculatingHeld: &a.ttftDecodeSpeculatingHeld,
 		// A prefill variant sized on TTFT, the joint a₀ where P1 refused a,
 		// off by default (ttft_prefill_ask.go,
 		// llm-d-incubation/llm-d-scaling-manager#131).
