@@ -265,6 +265,22 @@ windows while both climb. The capacity planner's replay turns it on
 That holds on a recording with no slo analyzer too
 (llm-d-incubation/llm-d-scaling-manager#281).
 
+`slo-ttft-hop-window-means` (off, planner-only) reads the hop R on each
+router window's means (`prefill.DecodeTermCycle.HopWindowMeans`). The
+per-cycle gates hold every cycle of a window to the rate ratio and the prompt
+drift. On a production fleet, one-minute noise alone breaks them in every
+window, so R is never learned and the assumed 20 ms stands. With the switch
+on:
+
+- A window is admitted when its earlier and later halves agree: their mean
+  rates within the rate ratio and their mean prompts within the drift. A ramp
+  still fails; noise around a level does not.
+- The held gate and the prefill-queue gate stay, whatever
+  `slo-ttft-hop-unqueued` says.
+- R is the median of at least `prefill.MinHopMeanWindows` admitted windows,
+  held at their median prompt, with no prompt line. The planner names its
+  source `measured, window means`.
+
 `slo-ttft-low-load-decode-ttft` (off) sets the decode engine's measured TTFT,
 which prices the decode side when no decode line does
 (`whatif.TTFTFleet.DecodeTTFT`). Off, it is the largest of the last five

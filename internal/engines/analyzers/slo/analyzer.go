@@ -224,6 +224,9 @@ type Analyzer struct {
 	// ttftDecodeSpeculatingHeld is SwitchTTFTDecodeSpeculatingHeld (ttft.go):
 	// off from the constructor, planner-only; only a replay turns it on.
 	ttftDecodeSpeculatingHeld bool
+	// ttftHopWindowMeans is SwitchTTFTHopWindowMeans (ttft.go): off from the
+	// constructor, planner-only; only a replay turns it on.
+	ttftHopWindowMeans bool
 	// ttftSizesPrefill is SwitchTTFTSizesPrefill (ttft_prefill_ask.go): off
 	// from the constructor; only a replay turns it on.
 	ttftSizesPrefill bool

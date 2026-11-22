@@ -2964,6 +2964,7 @@ slo-ttft-decode-gate-charge
 slo-ttft-decode-speculating-held
 slo-ttft-decode-term
 slo-ttft-hop-unqueued
+slo-ttft-hop-window-means
 slo-ttft-imbalance-across-counts
 slo-ttft-joint
 slo-ttft-joint-inputs

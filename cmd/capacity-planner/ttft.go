@@ -1199,6 +1199,9 @@ func (pf *pricedFleet) decodeTerm() {
 	pf.in.DecodeHeldPromptTokens, pf.in.DecodeFromITLSeconds = t.Engine.HeldPromptTokens, t.FromITL
 	pf.in.DecodePerStep = t.PerStep
 	pf.in.RouterHopSource = shapeMeasured
+	if t.HopFromWindowMeans {
+		pf.in.RouterHopSource = hopFromWindowMeans
+	}
 	switch {
 	case pf.assumedHop != nil:
 		if !t.HopAssumed {
@@ -1216,6 +1219,11 @@ func (pf *pricedFleet) decodeTerm() {
 	pf.in.RouterHopBaseSeconds, pf.in.RouterHopPerTokenSeconds = t.Hop.Base, t.Hop.PerToken
 	pf.in.RouterHopHeldPromptTokens = t.Hop.HeldPromptTokens
 }
+
+// hopFromWindowMeans is R's source where it was learned on its router windows'
+// means (slo.SwitchTTFTHopWindowMeans): the median window, held at the median
+// prompt.
+const hopFromWindowMeans = "measured, window means"
 
 // termHoldsTransfer is T_xfer's source with a D priced: the term holds the pull.
 const termHoldsTransfer = "held by the decode term, not priced"

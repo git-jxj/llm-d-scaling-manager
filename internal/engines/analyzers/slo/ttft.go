@@ -144,6 +144,17 @@ const SwitchTTFTHopUnqueued = "slo-ttft-hop-unqueued"
 // reads the ITL as it is.
 const SwitchTTFTDecodeSpeculatingHeld = "slo-ttft-decode-speculating-held"
 
+// SwitchTTFTHopWindowMeans is the replay switch for how the router hop R of
+// the decode term is read (prefill.DecodeTermCycle.HopWindowMeans, where the
+// rule is): on, a router window is admitted on its means, the rate and prompt
+// held steady between its halves rather than cycle by cycle, with no cycle
+// held by the router and no prefill row queued, and R is the median of at
+// least prefill.MinHopMeanWindows windows, flagged. Off, as before: on a
+// production P/D fleet no window passed the per-cycle gates, and the router's
+// remainder past both engines was priced at the assumed 20 ms. Planner-only:
+// off from the constructor, so the controller never runs it.
+const SwitchTTFTHopWindowMeans = "slo-ttft-hop-window-means"
+
 // SwitchTTFTDecodeGateCharge is the replay switch for
 // whatif.TTFTFleet.ChargeDecodeGate: on, the published rate is charged the
 // share of time the decode flow-control gate is closed below its onset, in
@@ -605,6 +616,7 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 			RouterHeld:      input.SchedulerQueue != nil && input.SchedulerQueue.QueueSize > 0,
 			HopUnqueued:     a.ttftHopUnqueued,
 			SpeculatingHeld: a.ttftDecodeSpeculatingHeld,
+			HopWindowMeans:  a.ttftHopWindowMeans,
 		})
 		t := whatif.TermFromEstimate(est)
 		term = &t

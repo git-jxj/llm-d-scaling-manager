@@ -66,6 +66,9 @@ type DecodeTerm struct {
 	// HopAssumed is an R not learned: AssumedRouterHopSeconds, or the
 	// operator's.
 	HopAssumed bool
+	// HopFromWindowMeans is an R learned on its router windows' means
+	// (prefill.HopFit.FromWindowMeans), for the caller to name its source.
+	HopFromWindowMeans bool
 	// EngineRefused and HopRefused are why no fit stands; "" with one.
 	EngineRefused, HopRefused prefill.Refusal
 	// WholePromptTokens is the decode rows' mean whole prompt: well above the
@@ -105,6 +108,7 @@ func TermFromEstimate(est prefill.DecodeTermEstimate) DecodeTerm {
 	}
 	if h := est.Hop; h.Refused == "" && h.Windows > 0 {
 		t.Hop = PromptLine{Base: h.Base, PerToken: h.PerToken, HeldPromptTokens: h.HeldPromptTokens}
+		t.HopFromWindowMeans = h.FromWindowMeans
 	} else {
 		t.Hop, t.HopAssumed = PromptLine{Base: AssumedRouterHopSeconds}, true
 		t.HopRefused = refusalOf(h.Refused, prefill.NoRouterMean)

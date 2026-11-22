@@ -203,6 +203,9 @@ type ttftSamples struct {
 	// saturation.SwitchITLPerToken: the unit of the line a speculating row's
 	// ITL is set against (prefill.DecodeTermCycle). StatesFrom sets both.
 	specHeld, itlPerToken bool
+	// hopWindowMeans is slo.SwitchTTFTHopWindowMeans, for the decode term's
+	// router windows (noteTerm).
+	hopWindowMeans bool
 	// served is each prefill variant's served work, kept with servedOn
 	// (saturation.SwitchPrefillVPServedUnqueued; PrefillState.ServedComputed).
 	served   map[string]*servedWork
@@ -489,7 +492,8 @@ func (t *ttftSamples) noteTerm(in domain.AnalyzerInput, now time.Time, args func
 		w.Observe(prefill.DecodeTermCycle{Now: now, Prefill: pre, Decode: rowsOfVariant(in.ReplicaMetrics, v),
 			PromptTokens: prompt, Router: in.RouterLatency,
 			RouterHeld:  in.SchedulerQueue != nil && in.SchedulerQueue.QueueSize > 0,
-			HopUnqueued: t.hopUnqueued, SpeculatingHeld: t.specHeld, ITLPerToken: t.itlPerToken})
+			HopUnqueued: t.hopUnqueued, SpeculatingHeld: t.specHeld, ITLPerToken: t.itlPerToken,
+			HopWindowMeans: t.hopWindowMeans})
 	}
 }
 

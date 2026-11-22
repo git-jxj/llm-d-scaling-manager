@@ -1319,6 +1319,11 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// that speculates, so off alone from all on moves nothing. Its unit tests
 	// hold it (heldBy).
 	slo.SwitchTTFTDecodeSpeculatingHeld: nil,
+	// The router hop read on its windows' means (prefill.DecodeTermCycle.
+	// HopWindowMeans): planner-only, off from the constructor, so every
+	// golden replay runs it off and off alone from all on moves nothing. Its
+	// unit tests hold it (heldBy).
+	slo.SwitchTTFTHopWindowMeans: nil,
 	// llm-d-incubation/llm-d-scaling-manager#309: the planner's ITL batch
 	// term past the roofline. No analyzer reads it, so no golden replay
 	// moves; its unit tests hold it (heldBy).
@@ -1798,6 +1803,19 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestTerm_ASpeculatingRowPricesTheMeasuredTTFT"},
 		{".", "TestTerm_TheDecodeSpeculatingHeldSwitch"},
 		{".", "TestPlannerSwitches_TheDecodeSpeculatingHeldIsOn"},
+	},
+	// The first holds it off from the constructor; the window tests run it
+	// on and off on a noisy fleet, a ramp, the held and queued gates and the
+	// fit; the last runs it through the planner's own windows.
+	slo.SwitchTTFTHopWindowMeans: {
+		{"../slo", "TestTTFT_TheHopWindowMeansOffFromTheConstructor"},
+		{"../../../signals/prefill", "TestHop_WindowMeansRecoverRUnderPerCycleNoise"},
+		{"../../../signals/prefill", "TestHop_WindowMeansKeepARampOut"},
+		{"../../../signals/prefill", "TestHop_WindowMeansKeepTheHeldAndQueuedGates"},
+		{"../../../signals/prefill", "TestHop_WindowMeansFitIsAMedian"},
+		{"../../../signals/prefill", "TestHop_WindowMeansAgreeOnASteadyFleet"},
+		{".", "TestTerm_TheHopWindowMeansSwitch"},
+		{".", "TestStateAt_TheHopWindowMeansSwitchReachesTheTerm"},
 	},
 	saturation.SwitchPrefillALowLoadByRate: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},

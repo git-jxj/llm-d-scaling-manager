@@ -344,6 +344,12 @@ type shapeSample struct {
 //     read the decode engine's measured TTFT of the second within 20% on
 //     most five-minute steps, where the old sum read a few percent of it.
 //
+// slo.SwitchTTFTHopWindowMeans, planner-only, reads the router hop on its
+// windows' means: the median of at least prefill.MinHopMeanWindows windows,
+// held at their median prompt (prefill.DecodeTermCycle.HopWindowMeans). It is
+// not listed until backtests show it moves no figure to reading under what
+// was measured.
+//
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
 // TTFT and TPOT under what was measured, because it predicts less decode KV
@@ -571,6 +577,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		series   = map[string][]CycleShape{}
 	)
 	ttft.promptSupport = opts.Switches[PackageSLO][slo.SwitchTTFTPromptSupport]
+	ttft.hopWindowMeans = opts.Switches[PackageSLO][slo.SwitchTTFTHopWindowMeans]
 	// Read once: the switches are set before the replay starts.
 	lineAtFloor := opts.Switches[PackageSaturation][saturation.SwitchITLLineAtFloor]
 	censored := opts.Switches[PackageSaturation][saturation.SwitchTPOTRatioCensored]

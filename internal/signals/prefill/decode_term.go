@@ -65,6 +65,12 @@ const (
 	MinStepSpread = 1.5
 	// MinHopWindows is the fewest admitted router windows R is read from.
 	MinHopWindows = 5
+	// MinHopMeanWindows is the fewest admitted router windows R is read from
+	// on window means (DecodeTermCycle.HopWindowMeans): half an hour of
+	// windows, one a SampleSpacing, so that the median spans six router
+	// windows that share no cycle. Stated, fixed before any recording was
+	// read with it.
+	MinHopMeanWindows = 30
 	// MinHopCycles is the fewest cycles a router window must hold for its
 	// engines' means to be read over it.
 	MinHopCycles = 4
@@ -171,6 +177,10 @@ type HopFit struct {
 	HeldPromptTokens float64
 	// Windows is the admitted router windows.
 	Windows int
+	// FromWindowMeans says R was read on its windows' means
+	// (DecodeTermCycle.HopWindowMeans): the median of every admitted window,
+	// held at their median prompt, with no line in the prompt.
+	FromWindowMeans bool
 	// Refused says why no R stands; "" with one.
 	Refused Refusal
 }
@@ -247,6 +257,40 @@ type DecodeTermCycle struct {
 	// (saturation.SwitchITLPerToken), as the planner's is; the slo analyzer's
 	// is per step. Read with SpeculatingHeld only.
 	ITLPerToken bool
+	// HopWindowMeans reads R on its router windows' means, not on each
+	// cycle's (slo.SwitchTTFTHopWindowMeans). Off, as before.
+	//
+	// Why: the per-cycle gates hold every cycle of a window to
+	// MaxHopRateRatio on the rate and MaxPromptDrift on the prompt, largest
+	// over least. They are there to keep out a ramp, which parts the
+	// router's request-weighted mean from the engines' cycle means. On a
+	// production fleet the one-minute rate and prompt a 15 s cycle reads
+	// move past both from noise alone, ramp or none: a day of a P/D fleet
+	// admitted no window of its 2871, and R was priced at the assumed
+	// AssumedRouterHopSeconds against a remainder near 0.6 s, a quarter of
+	// the router's TTFT.
+	//
+	// The rule, stated before any recording was read with it:
+	//   - Admission (hopOverMeans), per router window: the cycles enough and
+	//     spanning the window, as before; no cycle with the router holding
+	//     requests, as before; no cycle with a prefill row queued
+	//     (prefillQueued), whatever HopUnqueued says; the window's mean rate
+	//     at least MinHopRequestRate. The steadiness gates are read on means:
+	//     the window's cycles split in time into an earlier and a later half,
+	//     the halves' mean rates within MaxHopRateRatio of each other, and
+	//     their rate-weighted mean prompts within 1+MaxPromptDrift. A ramp
+	//     moves the halves apart; noise around a level averages out of both.
+	//   - R of a window: the router's mean less the engines' rate-weighted
+	//     means, as before.
+	//   - The fit (fitHopMeans): with fewer than MinHopMeanWindows admitted
+	//     windows, TooFewHopWindows. Otherwise R is the median of every
+	//     admitted window's, and is held at the median of their prompts
+	//     (HeldPromptTokens): flat below it, scaled up with the prompt above
+	//     it, so that a line through it with a base at or above zero never
+	//     reads higher. No line is fitted: a noisy prompt makes clusters of
+	//     no real length. A median not above zero is NonPositiveHop.
+	//   - The fit is flagged HopFit.FromWindowMeans.
+	HopWindowMeans bool
 }
 
 // decodeSample is one pod-minute of a decode row.
@@ -290,6 +334,9 @@ type DecodeTermWindow struct {
 	now        time.Time
 	whole      float64
 	routerSeen bool
+	// windowMeans is the last cycle's DecodeTermCycle.HopWindowMeans: which
+	// fit reads the windows.
+	windowMeans bool
 	// accelerator and args are what the readings were taken under.
 	accelerator, args string
 	// decodeLatch and hopLatch say whether a fit of D and of R is priced, and
@@ -330,6 +377,9 @@ func (l *fitLatch) step(admissible bool) bool {
 // settle fits this cycle's readings and latches each fit against its fall-back.
 func (w *DecodeTermWindow) settle() {
 	d, h := fitDecode(w.decode), fitHop(w.hops)
+	if w.windowMeans {
+		h = fitHopMeans(w.hops)
+	}
 	if !w.routerSeen {
 		h.Refused = NoRouterMean
 	}
@@ -352,7 +402,7 @@ func (w *DecodeTermWindow) settle() {
 	case priced:
 		w.hopFit = w.stoodHop
 	case hOK:
-		w.hopFit = HopFit{Windows: h.Windows, Refused: FitNotSettled}
+		w.hopFit = HopFit{Windows: h.Windows, FromWindowMeans: h.FromWindowMeans, Refused: FitNotSettled}
 	default:
 		w.hopFit = h
 	}
@@ -388,6 +438,7 @@ func (w *DecodeTermWindow) Under(accelerator, args string) {
 func (w *DecodeTermWindow) Observe(c DecodeTermCycle) {
 	defer w.settle()
 	w.now = c.Now
+	w.windowMeans = c.HopWindowMeans
 	w.prune(c.Now)
 	if whole, ok := wholePrompt(c.Decode); ok {
 		w.whole = whole
@@ -475,7 +526,11 @@ func (w *DecodeTermWindow) observeRouter(c DecodeTermCycle) {
 	if !w.lastHop.IsZero() && c.Now.Sub(w.lastHop) < SampleSpacing {
 		return
 	}
-	hop, prompt, ok := hopOver(w.engines, r.TTFTSumRate/r.TTFTCountRate, span, c.HopUnqueued)
+	over := hopOver
+	if c.HopWindowMeans {
+		over = hopOverMeans
+	}
+	hop, prompt, ok := over(w.engines, r.TTFTSumRate/r.TTFTCountRate, span, c.HopUnqueued)
 	if !ok {
 		return
 	}
@@ -520,6 +575,64 @@ func hopOver(cycles []engineCycle, router float64, span time.Duration, unqueued 
 	}
 	hop = router - p/weight - d/weight
 	return hop, tokens / weight, isFinite(hop)
+}
+
+// hopOverMeans is R over one router window read on its means
+// (DecodeTermCycle.HopWindowMeans, where the rule is): hopOver's cycle, span
+// and held gates; no cycle with a prefill row queued, unqueued or not; and the
+// rate and prompt gates read on the window's earlier and later halves, not on
+// each cycle. unqueued is taken for hopOver's signature: the queue's gate
+// always holds here.
+func hopOverMeans(cycles []engineCycle, router float64, span time.Duration, _ bool) (hop, prompt float64, ok bool) {
+	if len(cycles) < MinHopCycles {
+		return 0, 0, false
+	}
+	first, last := cycles[0], cycles[len(cycles)-1]
+	if float64(last.at.Sub(first.at)) < minHopWindowShare*float64(span) {
+		return 0, 0, false
+	}
+	for _, e := range cycles {
+		if e.held || e.queued {
+			return 0, 0, false
+		}
+	}
+	half := len(cycles) / 2
+	early, late := halfMeans(cycles[:half]), halfMeans(cycles[half:])
+	whole := halfMeans(cycles)
+	if !(whole.rate >= MinHopRequestRate) || !(early.rate > 0) || !(late.rate > 0) || !(early.prompt > 0) || !(late.prompt > 0) {
+		return 0, 0, false
+	}
+	if !(max(early.rate, late.rate) <= MaxHopRateRatio*min(early.rate, late.rate)) ||
+		!(max(early.prompt, late.prompt) <= (1+MaxPromptDrift)*min(early.prompt, late.prompt)) {
+		return 0, 0, false
+	}
+	hop = router - whole.prefill - whole.decode
+	return hop, whole.prompt, isFinite(hop)
+}
+
+// cycleMeans is a run of cycles' means: the rate a plain mean, the engines'
+// TTFTs and the prompt weighted by each cycle's rate, as hopOver weighs them.
+type cycleMeans struct {
+	rate, prefill, decode, prompt float64
+}
+
+// halfMeans is the means of cycles; zero with no rate among them.
+func halfMeans(cycles []engineCycle) cycleMeans {
+	var out cycleMeans
+	var weight float64
+	for _, e := range cycles {
+		out.rate += e.rate
+		out.prefill += e.prefill * e.rate
+		out.decode += e.decode * e.rate
+		out.prompt += e.prompt * e.rate
+		weight += e.rate
+	}
+	if len(cycles) == 0 || !(weight > 0) {
+		return cycleMeans{}
+	}
+	out.rate /= float64(len(cycles))
+	out.prefill, out.decode, out.prompt = out.prefill/weight, out.decode/weight, out.prompt/weight
+	return out
 }
 
 // prefillQueued says a serving prefill row holds requests waiting for compute:
@@ -746,5 +859,28 @@ func fitHop(samples []hopSample) HopFit {
 		return out
 	}
 	out.Base, out.HeldPromptTokens = held, shortest
+	return out
+}
+
+// fitHopMeans reads R on window means (DecodeTermCycle.HopWindowMeans, where
+// the rule is): the median of the admitted windows' R, held at the median of
+// their prompts, from MinHopMeanWindows windows; no line in the prompt.
+func fitHopMeans(samples []hopSample) HopFit {
+	out := HopFit{Windows: len(samples), FromWindowMeans: true}
+	if len(samples) < MinHopMeanWindows {
+		out.Refused = TooFewHopWindows
+		return out
+	}
+	prompt := make([]float64, len(samples))
+	r := make([]float64, len(samples))
+	for i, s := range samples {
+		prompt[i], r[i] = s.prompt, s.r
+	}
+	held := median(r)
+	if !(held > 0) || !isFinite(held) {
+		out.Refused = NonPositiveHop
+		return out
+	}
+	out.Base, out.HeldPromptTokens = held, median(prompt)
 	return out
 }
