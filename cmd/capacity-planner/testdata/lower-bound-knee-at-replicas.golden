@@ -4,10 +4,10 @@ prefill engine  vLLM release not recorded
 load judged     12.48 r/s, the p95 of the 573 of 580 cycles with traffic
 load seen       per cycle (1-minute rates): mean 3.00, p95 12.48, peak 15.38 r/s; p95 less counting noise 12.46; busiest 2m1s (8 cycles): 12.96 r/s
 SLO             TTFT p95 200.0 ms (policy)
-cell = TTFT p95 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
-mark = the SLO (TTFT p95 200.0 ms (policy)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, LB at or past a prefill knee priced from a lower bound of V_P (the knee is at least that rate), so not judged saturated, ? not judged
+cell = TTFT p95 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused; <= at most: a TTFT priced from a lower bound of V_P is an upper bound
+mark = the SLO (TTFT p95 200.0 ms (policy)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, LB at or past a prefill knee priced from a lower bound of V_P (the knee is at least that rate), so not judged saturated, UB a TTFT over its target that is only an upper bound (V_P a lower bound), so the miss is not known, ? not judged
 summary     50%                   80%                    100%             seen
-  measured  6922/18.4 @2.02 MISS  18698/18.4 @3.23 MISS  -/18.4 @4.04 LB  -/19.1 @12.48 LB
+  measured  <=6922/18.4 @2.02 UB  <=18698/18.4 @3.23 UB  -/18.4 @4.04 LB  -/19.1 @12.48 LB
 verdicts
   measured  NOT JUDGED: the load and the shape priced are of different traffic: the load's cycles ran at IL 1000 OL 1133, the shape priced is IL 8016 OL 26, so the knee is of other traffic and no verdict is priced on it; --shape load prices the load at its own shape.
 
@@ -25,10 +25,10 @@ capacity            req/s     out tok/s   bound by
                     OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
   fleet knee        >=4.04    103         prefill; at least: V_P is a lower bound
   operating (0.85)  >=3.44    88          0.85 x fleet knee (scaleUpThreshold); at least: V_P is a lower bound
-  max at SLO        target below the floor            target 0.2 s at or below the TTFT floor 2.787 s
+  max at SLO        target below the floor            target 0.2 s at or below the TTFT floor 2.787 s; the floor is priced from a lower bound of V_P, so it is at most this, and the target may be reachable
 SLO vs load         r/s    TTFT p50/90 ms           TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee       2.02   829.5/5071.9             10.82/18.38       1.93 s
-  80% of knee       3.23   3760.9/14215.9           10.82/18.38       5.84 s
+  50% of knee       2.02   <=829.5/<=5071.9         10.82/18.38       <=1.93 s
+  80% of knee       3.23   <=3760.9/<=14215.9       10.82/18.38       <=5.84 s
   100% of knee      4.04   past a lower-bound knee  10.82/18.38       past a lower-bound knee
   load seen (309%)  12.48  past a lower-bound knee  11.22/19.07       past a lower-bound knee
 checks

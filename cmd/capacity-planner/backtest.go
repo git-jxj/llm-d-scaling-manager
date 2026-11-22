@@ -370,14 +370,18 @@ func btMs(x *float64) string {
 }
 
 // pointText is a step's statistic, predicted/measured, with * where the
-// prediction is inside the validated region and "over" where it gave no
-// figure, calling the fleet overloaded.
+// prediction is inside the validated region, "overloaded" where it gave no
+// figure, calling the fleet overloaded, and "<=" before a prediction that is
+// an upper bound (whatifapi.Figure.UpperBound).
 func pointText(ps []whatifapi.BacktestPoint, stat string) string {
 	for _, p := range ps {
 		if p.Statistic != stat {
 			continue
 		}
 		pred := btMs(p.Predicted.Value)
+		if p.Predicted.UpperBound {
+			pred = "<=" + pred
+		}
 		if r := p.Predicted.Refused; r != nil {
 			pred = "no figure"
 			if r.Reason == string(whatif.Saturated) {
@@ -462,7 +466,11 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 		fmt.Fprintf(&b, "TTFT target: %s %s\n", t.Statistic, fmtSeconds(*t.Target))
 	}
 	b.WriteString("\neach step: predicted/measured (* inside the conditions our accuracy benchmarks cover; " +
-		"~ measured in a histogram bucket too wide to place it, scored only where the prediction falls outside it)\n")
+		"~ measured in a histogram bucket too wide to place it, scored only where the prediction falls outside it")
+	if anyUpperBound(bt.Steps) {
+		b.WriteString("; <= an upper bound, priced from a lower bound of V_P: scored only where the fleet measured more than 20% over it")
+	}
+	b.WriteString(")\n")
 	const layout = "%-16s %7s %5s  %-19s %-19s %-17s %-17s %s\n"
 	fmt.Fprintf(&b, layout, "step (UTC)", "rate", "P+D", "TTFT mean", "TTFT p90", "TPOT mean", "TPOT p90", "")
 	for _, s := range bt.Steps {
@@ -536,6 +544,19 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 	fmt.Fprintf(&b, "%s\n", bt.Banner)
 	_, err := io.WriteString(out, b.String())
 	return err
+}
+
+// anyUpperBound says a step's prediction is an upper bound
+// (whatifapi.Figure.UpperBound).
+func anyUpperBound(steps []whatifapi.BacktestStep) bool {
+	for _, s := range steps {
+		for _, p := range s.TTFT {
+			if p.Predicted.UpperBound {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // stepsWords is n steps, singular or plural.
