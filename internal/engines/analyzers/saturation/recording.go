@@ -129,8 +129,10 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchStartConfirmsByDistinctPod, SwitchPrefillBusyMinutes,
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
 // SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
-// SwitchPrefillFBusyMinutes, SwitchITLAdaptiveBandFloor,
-// SwitchITLHoldSteadySlope, SwitchITLLineAtFloor,
+// SwitchPrefillFBusyMinutes, SwitchPrefillVPFloorServed,
+// SwitchITLAdaptiveBandFloor,
+// SwitchITLHoldSteadySlope, SwitchITLLineAtFloor, SwitchMoEBusiestRank,
+// SwitchITLBatchTerm,
 // SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
 // SwitchK2BatchAtITLTarget,
 // SwitchITLBaselineFromFloor, SwitchITLOneSidedAtCap,
@@ -265,6 +267,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// The planner's f: the median of the busiest minutes
 		// (prefill.Cycle.FBusyMinutes). Off from the constructor.
 		SwitchPrefillFBusyMinutes: &a.prefillFBusyMinutes,
+		// The planner's floor under a lower-bound V_P: the highest rate a
+		// pod was seen to compute (prefill.Cycle.VPFloorServed). Off from
+		// the constructor.
+		SwitchPrefillVPFloorServed: &a.prefillVPFloorServed,
 		// The planner's ITL band floor on a low-fill fleet
 		// (itl_band_floor.go). Off from the constructor.
 		SwitchITLAdaptiveBandFloor: &a.itlAdaptiveFloor,
@@ -272,6 +278,14 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// held, not refitted on every reading (itl.Admission.HoldsSteadySlope).
 		// Off from the constructor.
 		SwitchITLHoldSteadySlope: &a.itlHoldSteadySlope,
+		// Issue llm-d-incubation/llm-d-scaling-manager#312: a data-parallel
+		// MoE engine's line read at its busiest rank (moe_busiest_rank.go).
+		// Off from the constructor.
+		SwitchMoEBusiestRank: &a.moeBusiestRank,
+		// Issue llm-d-incubation/llm-d-scaling-manager#309: the planner's
+		// ITL batch term past the roofline (itl_batch_term.go). Off from the
+		// constructor; no analyzer reads it.
+		SwitchITLBatchTerm: &a.itlBatchTerm,
 		// The planner's decode line lifted to the floor read below the band
 		// (itl_line_at_floor.go). Off from the constructor; the analyzer
 		// does not read it.

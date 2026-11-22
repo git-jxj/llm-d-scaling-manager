@@ -31,6 +31,12 @@ import (
 type SaturationAnalyzer struct {
 	// mu protects computeCapacityHistory from concurrent access.
 	mu sync.Mutex
+	// packingMu guards packing: what a TPOT objective made of each decode
+	// variant's k2 on the model's last analysis, keyed namespace/model and
+	// then by variant (noteDecodePacking), until the engine takes it
+	// (TakeDecodePacking). Apart from mu, which Analyze holds.
+	packingMu sync.Mutex
+	packing   map[string]map[string]domain.DecodePacking
 	// paths counts how often each learner path ran, for the replay
 	// (PathCounts).
 	paths pathCounters
@@ -537,10 +543,20 @@ type SaturationAnalyzer struct {
 	// itlHoldSteadySlope SwitchITLHoldSteadySlope: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillFBusyMinutes, itlHoldSteadySlope bool
+	// moeBusiestRank is SwitchMoEBusiestRank (moe_busiest_rank.go): off
+	// from the constructor, planner-only.
+	moeBusiestRank bool
+	// itlBatchTerm is SwitchITLBatchTerm (itl_batch_term.go): off from the
+	// constructor, planner-only. No analyzer reads it: the capacity
+	// planner's replay fits and prices the term.
+	itlBatchTerm bool
 	// itlLineAtFloor is SwitchITLLineAtFloor: off from the constructor,
 	// planner-only; the analyzer accepts it for the planner's replay
 	// (learnreplay.StatesFrom reads it) and reads it nowhere.
 	itlLineAtFloor bool
+	// prefillVPFloorServed is SwitchPrefillVPFloorServed: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillVPFloorServed bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor

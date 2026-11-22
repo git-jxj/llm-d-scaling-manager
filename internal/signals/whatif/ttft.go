@@ -297,6 +297,15 @@ type TTFTFleet struct {
 	// prefill pod and the pull at its unloaded time. On with
 	// slo.SwitchTTFTProcessorSharing, and in the CLI.
 	ProcessorSharing bool
+	// LowerBoundKneeUnpriced refuses a rate at or above a prefill knee priced
+	// from a V_P that is a lower bound (Prefill.VPLowerBound) as
+	// PastLowerBoundKnee, not Saturated: the true knee is at or above it, so
+	// a rate past it is one the model cannot price, not one the fleet cannot
+	// carry. A rate past the decode line's knee stays Saturated, and one past
+	// the decode gate's onset under flow control AboveDecodeOnset: both are
+	// known whatever bound V_P is. Off, Saturated, as the SLO analyzer reads
+	// it; the planner sets it (issue llm-d-incubation/llm-d-scaling-manager#280).
+	LowerBoundKneeUnpriced bool
 	// PriceRouterWait prices EPP flow control's gate past the prefill onset,
 	// opt-in, off by default (DefaultPriceRouterWait). On, a TTFT at or above the
 	// prefill gate's onset carries the gate as a stage in front of the
@@ -826,6 +835,9 @@ type ttftPlan struct {
 	// chargeGate is TTFTFleet.ChargeDecodeGate where it takes: flow control
 	// on and a decode line.
 	chargeGate bool
+	// kneeUnpriced is TTFTFleet.LowerBoundKneeUnpriced on a V_P that is a
+	// lower bound and not the caller's.
+	kneeUnpriced bool
 }
 
 // plan checks a fleet and places its flow-control onsets.
@@ -840,7 +852,8 @@ func (fl TTFTFleet) plan() (ttftPlan, *Unanswerable) {
 		}
 	}
 	pl := ttftPlan{pf: pf, d: fl.Decode, fc: fl.FlowControl, ps: fl.ProcessorSharing,
-		psCapped: fl.ProcessorSharing && pf.cv > MaxPSPromptCV}
+		psCapped:     fl.ProcessorSharing && pf.cv > MaxPSPromptCV,
+		kneeUnpriced: fl.LowerBoundKneeUnpriced && fl.Prefill.VPLowerBound && !fl.Prefill.VPAssumed}
 	pl.routerWait = (fl.PriceRouterWait || fl.RouterWaitInPrefill) && pl.ps && !pl.psCapped
 	pl.gateStage = pl.routerWait && fl.PriceRouterWait
 	pl.psOnsets = fl.PSOnsets && pl.ps
@@ -1190,12 +1203,40 @@ func (pl ttftPlan) price(rate, q float64, withDecodeWait, extras bool) priced {
 	return ps
 }
 
+// decodeSaturates says rate is at or above the decode line's knee (the line
+// was checked with the plan, as lowestKnee reads it): there the fleet
+// saturates on decode, whatever bound V_P is.
+func (pl ttftPlan) decodeSaturates(rate float64) bool {
+	return pl.d != nil && rate >= pl.d.kneeRate()
+}
+
+// aboveDecodeOnset is the refusal of a rate at or above the decode gate's
+// onset under flow control, nil below it or with flow control off.
+func (pl ttftPlan) aboveDecodeOnset(rate float64) *Unanswerable {
+	if pl.fc.State != FlowControlOn || pl.d == nil || rate < pl.onsets.Decode {
+		return nil
+	}
+	u := refuse(AboveDecodeOnset, fmt.Sprintf("%.4g r/s at or above the decode gate's onset %.4g r/s", rate, pl.onsets.Decode))
+	return &u
+}
+
 // priceOne is price on the plan's one queue: processor sharing with pl.ps,
 // first come without.
 func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced {
 	pk := pl.pf.knee()
 	out := TTFT{PrefillKnee: pk, Onsets: pl.onsets, Flags: append([]Flag(nil), pl.flags...)}
 	if rate >= pk {
+		if pl.kneeUnpriced && !pl.decodeSaturates(rate) {
+			// The decode gate's onset is known whatever bound V_P is: a
+			// rate past it is the miss it was before the knee went unpriced.
+			if u := pl.aboveDecodeOnset(rate); u != nil {
+				return priced{u: u}
+			}
+			u := refuse(PastLowerBoundKnee, fmt.Sprintf("%.4g r/s at or above the prefill knee %.4g r/s, "+
+				"priced from a V_P that is only a lower bound: the true knee may be higher, so it is not priced", rate, pk))
+			u.Flags = []Flag{VPLowerBound}
+			return priced{u: &u}
+		}
 		u := refuse(Saturated, fmt.Sprintf("%.4g r/s at or above the prefill knee %.4g r/s", rate, pk))
 		return priced{u: &u}
 	}
@@ -1205,9 +1246,8 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 	// is the processor-sharing price.
 	var gated bool
 	if pl.fc.State == FlowControlOn {
-		if pl.d != nil && rate >= pl.onsets.Decode {
-			u := refuse(AboveDecodeOnset, fmt.Sprintf("%.4g r/s at or above the decode gate's onset %.4g r/s", rate, pl.onsets.Decode))
-			return priced{u: &u}
+		if u := pl.aboveDecodeOnset(rate); u != nil {
+			return priced{u: u}
 		}
 		if rate >= pl.onsets.Prefill {
 			f := AboveFlowControlOnset
@@ -1347,14 +1387,14 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		}
 		lowest := d.lowestFill()
 		k = max(k, lowest)
-		first, floorStep = d.Line.ITLAt(k), d.Line.ITLAt(lowest)
+		first, floorStep = d.itlAt(k), d.itlAt(lowest)
 		oldFirst, oldFloorStep = first, floorStep
 		if t := pl.term; t != nil {
 			// The term reads the line at the actual fill: D is several steps,
 			// so the clamp's reading, harmless on one step, would be the
 			// figure's largest error at light load. No rate has a fill under
 			// 0, which is the floor's.
-			engine, hop := t.at(d.Line.ITLAt(fill), first)
+			engine, hop := t.at(d.itlAt(fill), first)
 			out.Parts.RouterHop = hop
 			if t.omitted {
 				out.Parts.FirstStep = engine
@@ -1362,7 +1402,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 				out.Parts.DecodeEngine = engine
 			}
 			first = engine + hop
-			engine, hop = t.at(d.Line.ITLAt(0), floorStep)
+			engine, hop = t.at(d.itlAt(0), floorStep)
 			floorStep = engine + hop
 		}
 		out.Flags = addFlags(out.Flags, adm.Flags...)

@@ -187,6 +187,25 @@ alone: `S_work = I_eff/V_P`, `ρ = λ·E[I_eff]/V_P`.
 4. Otherwise `NoPrefillCapacity`. SGLang always lands here (no computed-token
    series).
 
+**The planner's floor under a lower bound** (planner-only switch
+`prefill-vp-floor-served`, `prefill.Cycle.VPFloorServed`; issue #280). A pod
+never computes faster than `V_P`, queued or not, so the highest rate it
+sustained over 3 minutes is a lower bound too, with the same noise as the
+peak under a queue. Where `V_P` is a lower bound (sources 2 and 3, and busy
+minutes of a data-parallel pod), the planner raises it to that served peak
+when the peak is higher, and keeps its source and its `VPLowerBound` flag. On
+a fleet whose pods queue for capacity only at light load, the peak under a
+queue is a light minute's and the knee priced from it sits far under the load
+the fleet served. Busy minutes of a single-rank pod are `V_P` itself and are
+not floored, and with no source the answer stays `NoPrefillCapacity`: a peak
+with no queue cannot tell capacity from the offered load. The planner also
+prices no TTFT at or past a knee priced from a lower bound: such a rate is
+refused `PastLowerBoundKnee`, not `Saturated` (past decode's knee it is
+`Saturated`, past the decode gate's onset under flow control
+`AboveDecodeOnset`), and backtest and the self-check count the step as not
+priced, not overloaded. The controller's
+SLO analyzer is unchanged.
+
 The **low-load slope** of service time against prompt length is an upper bound,
 not a source. A lone prompt runs as `T(I) = s0 + c·I`, and a busy pod's steps of
 `B` tokens run at `B/(s0 + c·B) < 1/c`, so `1/slope ≥ V_P`: on `ols-sweep` about
@@ -431,7 +450,7 @@ that is itself wrong (the exponential tail, Poisson arrivals, an omitted
 | `D` and `R` added at the mean to every percentile, but for their per-token parts | Over-promises at the tail. On the staircase run, bucket A's p90 and p95 read 9% and 13% under on average with the mean 8% over |
 | `D` read past the prompts or step times it was fitted on | Either way, and not flagged: the plane is a line in each. `MaxDecodeQueue` keeps the behind-on-pulls minutes out of the fit, so `D` does not reach them, and they read far above it |
 | `AssumedDecodeStepSlope`, `AssumedRouterHopSeconds` (no fit) | Under-promises if they stand above the fleet's true figures, which is the point. Each is flagged, and a refusal or a move of 25% that one alone decides says so. A long prompt may hop further than 20 ms |
-| `V_P` from a lower bound | Under-promises |
+| `V_P` from a lower bound | Under-promises. The planner floors it at the rate the pods were seen to compute and gives no figure past a knee priced from it (`PastLowerBoundKnee`) |
 | A mix of prompt lengths priced at its mean on a convex prefill curve ([a limit of P3](#prefill-capacity)) | Over-promises: an even 8k/52k mix at a `V_P` read at 30k is priced 32% under its prefill time. The rescale ([after P2](#as-built-p3-after-p2)) moves `V_P` to the mean, not the mix, and `VPShapeMoved`, comparing means, does not flag it |
 | `V_P` rescaled on computed tokens alone at a prefix hit (`slo-ttft-prefix-attention` off) | Over-promises: the cached tokens' attention is left out, about 1.7x on `V_P` at 32k with a 75% hit against fresh 8k. Flagged `VPShapeMoved` where the hit rate moved from the one `V_P` was read at. No committed run has hits, so this is not measured |
 | `V_P` rescaled at a prefix hit (`slo-ttft-prefix-attention` on) on P1's low-load curve | Over-promises if the low-load minutes had hits: the curve is fitted on `I_eff`, so `b` absorbs about `2c·h` of the cached tokens' attention and the rescale `s(I_vp)/s(I)` flattens, reading `V_P` high. The fit assumes a hit rate near 0 at low load. No committed run has hits, so this is not measured |
