@@ -162,6 +162,10 @@ func TestSelfCheck_JudgeAtTheEdges(t *testing.T) {
 			if c.failed != "" {
 				assert.True(t, slices.ContainsFunc(sc.Checks, func(r SelfCheckRule) bool { return r.Name == c.failed && !r.Passed }), "%+v", sc.Checks)
 			}
+			if f := c.ttft; f != nil && f.Steps >= selfCheckMinSteps && f.Bias != nil {
+				judged := slices.ContainsFunc(sc.Checks, func(r SelfCheckRule) bool { return r.Name == "ttft-p90-low" })
+				assert.Equal(t, f.p90Steps >= selfCheckMinSteps, judged, "the p90-low rule is judged with 6 or more p90 steps: %+v", sc.Checks)
+			}
 			if c.trust == "" {
 				assert.Empty(t, sc.Trust)
 			} else {
@@ -245,8 +249,8 @@ func TestSelfCheck_OverHTTPIsBounded(t *testing.T) {
 
 // A figure is judged at its mean only where the mean was scored in
 // selfCheckMinSteps or more steps; else at the first percentile scored in
-// as many, else at the one scored in the most. Beside a mean it keeps the
-// p90's scored and low steps for the p90-low rule.
+// as many, else at the one scored in the most. Only beside a mean does it
+// keep the p90's scored and low steps, for the p90-low rule.
 func TestSelfCheckFigure_TheMeanNeedsItsSteps(t *testing.T) {
 	score := func(stat string, steps, low int) BacktestScore {
 		return BacktestScore{Statistic: stat, All: BacktestStats{Steps: steps, Low: low, Bias: ptr(1.0)}}
@@ -266,8 +270,8 @@ func TestSelfCheckFigure_TheMeanNeedsItsSteps(t *testing.T) {
 			f := selfCheckFigure([]BacktestScore{score(statisticMean, c.mean, 0), score("p50", c.p50, 0), score(statP90, c.p90, 2), score("p95", 20, 0)}, 20)
 			require.NotNil(t, f)
 			assert.Equal(t, c.want, f.Statistic)
-			if c.want == statP90 {
-				assert.Zero(t, f.p90Steps, "a p90 figure is judged by its own low rule")
+			if c.want != statisticMean {
+				assert.Zero(t, f.p90Steps, "only a figure judged at its mean carries the p90's steps")
 			} else {
 				assert.Equal(t, c.p90, f.p90Steps)
 				assert.Equal(t, 2, f.p90Low)
