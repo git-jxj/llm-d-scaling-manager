@@ -286,6 +286,7 @@ Name
 NarrowPromptClusters
 NegativePromptSlope
 NegativeSlopeFit
+NeverQueued
 NewEngine
 NewTypeInventoryWithUsage
 No
@@ -2354,6 +2355,7 @@ prefill-required
 prefill-spare
 prefill-throughput-bound-reading
 prefill-vp-floor-served
+prefill-vp-served-unqueued
 prefillBoundHeld
 prefillBounds
 prefillDemandAfter
@@ -2789,6 +2791,7 @@ series
 seriesPresent
 serve
 served
+served-peak
 served-siblings
 servedBound
 server

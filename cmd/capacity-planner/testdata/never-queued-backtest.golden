@@ -1,0 +1,53 @@
+Over the 1 h 13 min the planner did not see:
+The planner gave no TTFT figure for any step: no prefill speed was learned to price a TTFT from: none under a queue, or, where the prefill pods never queued, only the rate a pod computed, which prices the knee as a lower bound and no TTFT; fit on more (a larger split, or a longer recording) (refused: NoPrefillCapacity in 13).
+mean TPOT: within 20% of measured in 13 of the 13 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 0.99). p90 TPOT not scored in 8: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it or within 20% of its edge; in the measured histogram bucket itself in 8, 10 ms to 20 ms (2.0x wide): consistent at the bucket's resolution, not within 20%.
+None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.
+Judged 13 of 16 five-minute steps; not judged: 1 warm-up, 2 a burst near the knee in its window.
+
+fit:  never-queued.jsonl.gz, 2026-11-14 07:09 to 2026-11-14 08:22 UTC, 291 cycles
+test: never-queued.jsonl.gz, 2026-11-14 08:22 to 2026-11-14 09:35 UTC, 289 cycles (one recording split: 50%)
+configuration: identical where both recordings record it; not compared: the router's version and settings (scorers, flow-control limits): no recording carries them; only whether the flow-control series is present is read; decode vLLM release (not read on both sides); prefill vLLM release (not read on both sides)
+measured: the router's histograms (server side, the same scrape as the inputs): TTFT from the request's arrival at the router, its queue included; TPOT per streamed request. Each step is priced at the inputs of the same window its histogram covers
+assumed: random (Poisson) arrivals: the recording does not measure how bursty arrivals are; state it with --arrival-cv2 (arrivalCV2) when known
+
+each step: predicted/measured (* inside the conditions our accuracy benchmarks cover; ~ measured in a histogram bucket too wide to place it, scored only where the prediction falls outside it)
+step (UTC)          rate   P+D  TTFT mean           TTFT p90            TPOT mean         TPOT p90          
+2026-11-14 08:20    1.06   2+2  no figure/160ms     no figure/196ms~    11ms/11ms         18ms/19ms~        not judged: warm-up
+2026-11-14 08:25    1.10   2+2  no figure/156ms     no figure/194ms~    11ms/11ms         18ms/19ms~        judged
+2026-11-14 08:30    0.57   2+2  no figure/289ms     no figure/389ms~    11ms/11ms         18ms/19ms~        judged
+2026-11-14 08:35    0.58   2+2  no figure/292ms     no figure/389ms~    11ms/11ms         18ms/19ms~        judged
+2026-11-14 08:40    0.52   2+2  no figure/286ms     no figure/389ms~    11ms/11ms         18ms/19ms~        judged
+2026-11-14 08:45    0.43   2+2  no figure/446ms     no figure/596ms~    11ms/11ms         18ms/19ms~        judged
+2026-11-14 08:50    0.42   2+2  no figure/457ms     no figure/598ms~    11ms/11ms         18ms/19ms~        judged
+2026-11-14 08:55    0.35   2+2  no figure/431ms     no figure/579ms~    11ms/11ms         18ms/19ms~        judged
+2026-11-14 09:00    0.30   2+2  no figure/603ms     no figure/-         11ms/11ms         18ms/-            judged
+2026-11-14 09:05    0.29   2+2  no figure/563ms     no figure/-         11ms/11ms         18ms/-            judged
+2026-11-14 09:10    0.27   2+2  no figure/562ms     no figure/-         11ms/11ms         18ms/-            judged
+2026-11-14 09:15    3.09   2+2  no figure/11.4s     no figure/17.7s~    11ms/12ms         18ms/19ms~        not judged: a burst near the knee in its window
+2026-11-14 09:20    4.13   2+2  no figure/11.6s     no figure/17.9s~    11ms/12ms         18ms/19ms~        judged
+2026-11-14 09:25    2.02   2+2  no figure/10.7s     no figure/17.6s~    11ms/12ms         18ms/19ms~        not judged: a burst near the knee in its window
+2026-11-14 09:30    0.26   2+2  no figure/586ms     no figure/-         11ms/11ms         18ms/-            judged
+2026-11-14 09:35    0.24   2+2  no figure/589ms     no figure/-         11ms/11ms         18ms/-            judged
+
+score over the steps with a figure
+            steps  median  within     read    typical     worst-10%  under upper 
+                    ratio     20% >20% low       miss          miss        bound 
+TTFT mean       0       -       -        0          -             -            - 13 refused NoPrefillCapacity
+TTFT p50        0       -       -        0          -             -            - 13 refused NoPrefillCapacity
+TTFT p90        0       -       -        0          -             -            - 13 refused NoPrefillCapacity, 5 fewRequests
+TTFT p95        0       -       -        0          -             -            - 13 refused NoPrefillCapacity, 11 fewRequests
+TPOT mean      13    0.99    100%        0      1.01x         1.02x            - 
+TPOT p50        0       -       -        0          -             -            - 13 unresolvable (13 in the measured bucket)
+TPOT p90        0       -       -        0          -             -            - 5 fewRequests, 8 unresolvable (8 in the measured bucket)
+TPOT p95        0       -       -        0          -             -            - 11 fewRequests, 2 unresolvable (2 in the measured bucket)
+
+by load (the step's rate over the load the planner thinks the fleet can carry): steps, median ratio, within 20%
+below 0.8 of the knee     TTFT (12 steps): mean 0 - - p90 0 - -  TPOT (13 steps): mean 13 0.99 100% p90 0 - -
+0.8 to 1.0 of the knee    TTFT (0 steps): mean 0 - - p90 0 - -  TPOT (0 steps): mean 0 - - p90 0 - -
+past the knee             TTFT (1 step): mean 0 - - p90 0 - -  TPOT (0 steps): mean 0 - - p90 0 - -
+
+note: Fitted on the fit window alone. Each step of the test is priced from its own inputs (request rate, prompt and output lengths, prompt-length spread, the replicas each role served), read over the same window its measurement covers, and never from its measured latency.
+note: Each step is measured at its last cycle, over the rate window its histogram was read over (the router's, recorded with it; the engines' one minute): a step shorter than the window is measured over the window, so neighbouring steps share requests and are not independent. A step whose window reaches before the test, or over a change of replicas, is not judged. A percentile is scored with 50 requests or more at p50, 100 at p90 and 200 at p95 (50 for the mean); measured percentiles are interpolated inside the histogram's buckets, and one whose bucket is wider than 20% of its lower edge is too wide to place: the bucket, not the traffic, would set it. A prediction more than 20% beyond that bucket's nearer edge is a certain miss, scored against that edge, which understates the miss, and never within; one nearer is shown and not scored (unresolvable). The verdict quotes the mean, the histogram's sum over its count.
+note: Median ratio is the middle step's predicted over measured; typical and worst-10% miss the median and p90 of the factor between them; under the upper bound the share measured at or under the planner's own upper estimate, where it gives one; within, the share inside 20%. A measured figure above the histogram's top bucket, or a prediction more than 20% under the coarse bucket the measured one fell in, counts as read low.
+note: In region: the figure falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md).
+The planner's figures are a model, not a bound: this check measures how far off they are on this fleet.

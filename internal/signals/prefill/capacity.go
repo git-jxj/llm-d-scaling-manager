@@ -40,6 +40,12 @@ import (
 // the max over unqueued minutes too adds windows, so its noise is that of
 // source 2 over more runs: still within a one-minute rate's spread.
 //
+// With Cycle.VPServedUnqueued, where none of the three has a reading, the
+// served peak itself is V_P (SourceServedPeak), a lower bound for the same
+// reason (NeverQueued): a fleet whose pods never held a capacity queue for
+// PeakRun minutes in a row in Retention gets V_P as at least what its pods
+// computed, not no V_P at all.
+//
 // Otherwise NoPrefillCapacity. SGLang always refuses: it publishes no
 // computed-token series.
 //
@@ -103,6 +109,12 @@ func (est *Estimate) capacity(ks *keyState, c Cycle, sglang bool) {
 		est.floorAtServed(ks, c.VPFloorServed)
 		return
 	}
+	if pk, ok := servedPeak(ks); ok && c.VPServedUnqueued {
+		est.VP, est.VPSource, est.VPLowerBound, est.VPSamples = pk.rate, SourceServedPeak, true, PeakRun
+		est.VPLowerBoundReason, est.VPServedPeak = NeverQueued, pk.rate
+		est.VPPromptTokens, est.VPWholePromptTokens, est.VPPromptHitRate = pk.prompt, pk.whole, pk.hit
+		return
+	}
 	est.VPRefused = NoPrefillCapacity
 }
 
@@ -119,8 +131,9 @@ func (est *Estimate) capacity(ks *keyState, c Cycle, sglang bool) {
 // and the floored V_P takes the served run's prompt, whole prompt and hit
 // rate with it.
 // Only a lower bound is floored: busy minutes of a single-rank pod are V_P
-// itself, and no source at all stays refused, as a peak with no queue
-// cannot tell capacity from the offered load.
+// itself, and no source at all stays refused here, as a peak with no queue
+// cannot tell capacity from the offered load (Cycle.VPServedUnqueued takes
+// it as a lower bound and no more).
 func (est *Estimate) floorAtServed(ks *keyState, on bool) {
 	pk, ok := servedPeak(ks)
 	if !ok {

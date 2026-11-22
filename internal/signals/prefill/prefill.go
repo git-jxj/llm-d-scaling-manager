@@ -60,6 +60,12 @@ const (
 	// SourceBackPressureBound is the saturation analyzer's prefill lower-bound
 	// window (prefill_bound.go). A lower bound.
 	SourceBackPressureBound Source = "back-pressure-bound"
+	// SourceServedPeak is the highest computed-token rate any pod sustained
+	// over PeakRun minutes, queued or not, taken where no source above has
+	// a reading (Cycle.VPServedUnqueued). A pod never computes faster than
+	// V_P, so it is a lower bound (NeverQueued); with no queue it cannot
+	// tell capacity from the offered load, so it is only that.
+	SourceServedPeak Source = "served-peak"
 )
 
 // Refusal is why a figure was not learned.
@@ -121,6 +127,11 @@ type BoundReason string
 // for an observe-only signal flagging too often under-promises, the
 // conservative side.
 const DataParallelRanks BoundReason = "DataParallelRanks"
+
+// NeverQueued is a V_P from the served peak alone (SourceServedPeak): no
+// pod held a capacity queue long enough for a queued source, so V_P is
+// only known to be at least what a pod was seen to compute.
+const NeverQueued BoundReason = "NeverQueued"
 
 // Row refusals, counted per cycle in Estimate.Refused.
 const (
@@ -206,6 +217,10 @@ type Cycle struct {
 	// rate a pod was seen to sustain, queued or not (Estimate.floorAtServed;
 	// saturation.SwitchPrefillVPFloorServed).
 	VPFloorServed bool
+	// VPServedUnqueued takes the served peak as a lower-bound V_P where no
+	// other source has a reading (SourceServedPeak, NeverQueued), in place
+	// of NoPrefillCapacity (saturation.SwitchPrefillVPServedUnqueued).
+	VPServedUnqueued bool
 	// ALowLoadByRate reads a minute as low load, for the fit of a, by its
 	// request rate against its prompt cluster's service time
 	// (lowLoadByRate), not against its own: a minute whose prefill ran slow
@@ -237,8 +252,9 @@ type Estimate struct {
 	VPSource     Source
 	VPLowerBound bool
 	// VPLowerBoundReason says why busy minutes are a lower bound
-	// (DataParallelRanks). Empty otherwise: sources 2 and 3 are bounds by
-	// their source, and single-rank busy minutes are not one.
+	// (DataParallelRanks), or that V_P is the served peak alone
+	// (NeverQueued). Empty otherwise: sources 2 and 3 are bounds by their
+	// source, and single-rank busy minutes are not one.
 	VPLowerBoundReason BoundReason
 	VPRefused          Refusal
 	VPSamples          int

@@ -118,6 +118,18 @@ const SwitchPrefillFBusyMinutes = "prefill-f-busy-minutes"
 // SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillVPFloorServed = "prefill-vp-floor-served"
 
+// SwitchPrefillVPServedUnqueued is the replay switch for V_P on a fleet that
+// never queued (prefill.Cycle.VPServedUnqueued). On, where no source has a
+// reading (no busy minutes, no PeakRun queued minutes in a row, no
+// back-pressure bound), V_P is the highest computed-token rate a pod
+// sustained, a lower bound (prefill.NeverQueued), not NoPrefillCapacity: a
+// pod never computes faster than V_P. The planner then prices the prefill
+// knee as at least the rate that V_P gives and refuses every TTFT priced from
+// it (whatif.Prefill.VPServedOnly; issue
+// llm-d-incubation/llm-d-scaling-manager#369). Off, NoPrefillCapacity, as
+// before this switch. Planner-only, as SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillVPServedUnqueued = "prefill-vp-served-unqueued"
+
 // SwitchPrefillALowLoadByRate is the replay switch for which minutes the fit
 // of a reads as low load (prefill.Cycle.ALowLoadByRate). On, a quiet minute
 // (no queue) is low load when its request rate times its prompt cluster's
@@ -344,7 +356,7 @@ func (c *cycle) observePrefill() {
 			Bound: bounds[variant], Settle: view, ALineOnly: !a.prefillAQuadratic,
 			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming,
 			QueueByCapacity: a.prefillQueueByCapacity, FBusyMinutes: a.prefillFBusyMinutes,
-			VPFloorServed:  a.prefillVPFloorServed,
+			VPFloorServed: a.prefillVPFloorServed, VPServedUnqueued: a.prefillVPServedUnqueued,
 			ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
 		})
 		a.stashPrefillEstimate(c.input.Namespace, c.input.ModelID, variant, est, now)

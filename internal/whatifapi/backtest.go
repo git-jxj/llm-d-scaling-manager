@@ -2203,14 +2203,21 @@ func secondsWords(x float64) string {
 
 // backtestHint is what to do about a statistic no step priced, by the
 // refusal's reason.
-func backtestHint(reason string) string {
+func backtestHint(reason string, only bool) string {
+	every := "every step was"
+	if !only {
+		every = "the steps so refused were"
+	}
 	switch reason {
 	case string(whatif.Saturated):
-		return "every step was at or past the load the planner thinks the fleet can carry"
+		return every + " at or past the load the planner thinks the fleet can carry"
 	case string(whatif.PastLowerBoundKnee):
-		return "every step was at or past a prefill knee priced from a lower bound of V_P, " +
+		return every + " at or past a prefill knee priced from a lower bound of V_P, " +
 			"and the true knee may be higher, so the planner gave no price there and does not call it overloaded"
-	case string(whatif.NoPrefillCapacity), string(whatif.NoFixedLatency), string(whatif.PinnedDefaultB), string(whatif.NoLine):
+	case string(whatif.NoPrefillCapacity):
+		return "no prefill speed was learned to price a TTFT from: none under a queue, or, where the prefill pods never queued, " +
+			"only the rate a pod computed, which prices the knee as a lower bound and no TTFT; fit on more (a larger split, or a longer recording)"
+	case string(whatif.NoFixedLatency), string(whatif.PinnedDefaultB), string(whatif.NoLine):
 		return "the fitted part held too few busy minutes to learn from; fit on more (a larger split, or a longer recording)"
 	}
 	return "see the refusal in the steps"
@@ -2227,12 +2234,22 @@ func verdictPart(name string, scores []BacktestScore, unit string) (line string,
 		var why []string
 		hint := ""
 		if i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 }); i >= 0 {
+			only := len(scores[i].Refused) == 1
+			var hints []string
 			for _, r := range slices.Sorted(maps.Keys(scores[i].Refused)) {
 				n := scores[i].Refused[r]
 				why = append(why, fmt.Sprintf("%s in %d", r, n))
 				if hint == "" || r != string(whatif.Saturated) {
-					hint = backtestHint(r)
+					hint = backtestHint(r, only)
 				}
+				if r == string(whatif.PastLowerBoundKnee) || r == string(whatif.NoPrefillCapacity) {
+					hints = append(hints, backtestHint(r, only))
+				}
+			}
+			if !only && len(hints) > 1 {
+				// A lower-bound knee and no V_P beside it: each says why for its
+				// own steps, not the last one for all.
+				hint = strings.Join(hints, "; ")
 			}
 			if n := scores[i].Unscored[UnscoredNotComparable]; n > 0 && len(why) == 0 {
 				return fmt.Sprintf("%s was not scored: the source measured no %s comparable with the prediction (see measured).", name, name), nil

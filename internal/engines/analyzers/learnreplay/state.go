@@ -310,6 +310,14 @@ type shapeSample struct {
 //     the fill a low-fill fleet has.
 //   - saturation.SwitchPrefillVPFloorServed: a lower-bound V_P raised to the
 //     highest computed-token rate a pod was seen to sustain.
+//   - saturation.SwitchPrefillVPServedUnqueued: where no source has a
+//     reading, that served rate as a lower-bound V_P (prefill.NeverQueued),
+//     not NoPrefillCapacity. The planner prices only the prefill knee from
+//     it, as at least its rate, raised to the computed-token work the
+//     fleet's prefill pods sustained (servedKneeFloor), and refuses every
+//     TTFT priced from it: no figure is priced where none was, so none can
+//     read under what was measured (issue
+//     llm-d-incubation/llm-d-scaling-manager#369).
 //   - saturation.SwitchPlannerCapAtStepBudget: the batch cap per rank held
 //     to the batch the step token budget runs, ceil(budget / (1 + k)) with k
 //     speculative tokens (issue llm-d-incubation/llm-d-scaling-manager#302).
@@ -415,17 +423,18 @@ type shapeSample struct {
 //     was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
-		saturation.SwitchPrefillALowLoadPerRank: true,
-		saturation.SwitchPrefillAEngineTiming:   true,
-		saturation.SwitchPrefillQueueByCapacity: true,
-		saturation.SwitchPrefillFBusyMinutes:    true,
-		saturation.SwitchPrefillALowLoadByRate:  true,
-		saturation.SwitchPrefillAMedianOverhead: true,
-		saturation.SwitchITLAdaptiveBandFloor:   true,
-		saturation.SwitchPrefillVPFloorServed:   true,
-		saturation.SwitchPlannerCapAtStepBudget: true,
-		saturation.SwitchITLBaselineFromFloor:   false,
-		saturation.SwitchITLFloorBaselineHeld:   false,
+		saturation.SwitchPrefillALowLoadPerRank:  true,
+		saturation.SwitchPrefillAEngineTiming:    true,
+		saturation.SwitchPrefillQueueByCapacity:  true,
+		saturation.SwitchPrefillFBusyMinutes:     true,
+		saturation.SwitchPrefillALowLoadByRate:   true,
+		saturation.SwitchPrefillAMedianOverhead:  true,
+		saturation.SwitchITLAdaptiveBandFloor:    true,
+		saturation.SwitchPrefillVPFloorServed:    true,
+		saturation.SwitchPrefillVPServedUnqueued: true,
+		saturation.SwitchPlannerCapAtStepBudget:  true,
+		saturation.SwitchITLBaselineFromFloor:    false,
+		saturation.SwitchITLFloorBaselineHeld:    false,
 	}, PackageSLO: {
 		slo.SwitchTTFTHopUnqueued: true,
 	}}
@@ -540,6 +549,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	residence := opts.Switches[PackageSaturation][saturation.SwitchDecodeResidencePull]
 	burst := opts.Switches[PackageSaturation][saturation.SwitchDecodeBurstFill]
 	ttft.prefixAttention = opts.Switches[PackageSLO][slo.SwitchTTFTPrefixAttention]
+	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false
