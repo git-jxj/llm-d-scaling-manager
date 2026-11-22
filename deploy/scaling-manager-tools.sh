@@ -5,7 +5,7 @@
 # scripts the make targets run, so an operator needs no checkout of the
 # repository: only docker or podman, and a kubeconfig.
 #
-#   scaling-manager-tools admin-setup -n NS [--keda-namespace KNS] [--model-namespace M ... | --single-namespace] [--dset-role-writer | --no-dset-role-writer]
+#   scaling-manager-tools admin-setup -n NS [--keda-namespace KNS] [--model-namespace M ... | --single-namespace] [--dset-role-writer | --no-dset-role-writer] [--modelserver-port NAME|NUMBER] [--no-epp-monitor]
 #                                                                cluster admin, once per namespace: the admin objects, the stamp, and its namespace on the weights labeller;
 #                                                                with --model-namespace, a controller in NS that manages those namespaces (the full list; one left out is revoked; --single-namespace revokes all)
 #   scaling-manager-tools install -n NS --prometheus-url URL [--quota "GPU=N"] [--utilization-share off|shadow|active] [--prometheus-ca FILE] [--allow-http] [--set KEY=VALUE] [--dset-role-writer | --no-dset-role-writer]
@@ -256,6 +256,9 @@ cmd_release_install() {
     source "$HERE/lib/constants.sh"
     # shellcheck source=lib/scaler_tls.sh
     source "$HERE/lib/scaler_tls.sh"
+    # The EPP ServiceMonitor admin-setup adds: the functions make setup-prereqs adds it with.
+    # shellcheck source=lib/infra_monitoring.sh
+    source "$HERE/lib/infra_monitoring.sh"
     # shellcheck source=lib/release_install.sh
     source "$HERE/lib/release_install.sh"
     case "$verb" in

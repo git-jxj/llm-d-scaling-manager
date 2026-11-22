@@ -33,8 +33,12 @@ Prefer a checkout and `make`? See [From a checkout instead](#from-a-checkout-ins
   ScaledObject [unwired](../../reference/keda.md#unwired-hpa-before-keda-220)
   after the controller restarts. On OpenShift, the Custom Metrics Autoscaler
   operator. See the [KEDA reference](../../reference/keda.md).
-- [ ] **A Prometheus** with the Prometheus Operator, scraping the model servers'
-  EPP. The model-server monitor is in the release files.
+- [ ] **A Prometheus** with the Prometheus Operator. The model-server
+  PodMonitor is in the release files; it scrapes the container port named
+  `modelserver`, as llm-d's model-server base names it. A model server that
+  names its metrics port otherwise: add `--modelserver-port <name or number>`
+  to `admin-setup`. Where nothing scrapes the EPP yet, `admin-setup` adds a
+  ServiceMonitor for it (`--no-epp-monitor` skips that).
 - [ ] **For scale-from-zero only: the EPP's `flowControl` feature gate.** Add
   `featureGates: [flowControl]` to the `EndpointPickerConfig` and restart the
   EPP. Without it, a model at zero never wakes.
@@ -463,6 +467,9 @@ kubectl delete -f scaling-manager-preflight.yaml --ignore-not-found
 kubectl delete -f scaling-manager-model-namespace.yaml --ignore-not-found
 kubectl delete -f scaling-manager-keda-auth.yaml --ignore-not-found
 kubectl delete secret scaling-manager-external-scaler-$NAMESPACE -n $KEDA_NS --ignore-not-found
+kubectl delete servicemonitor,serviceaccount,secret -n $NAMESPACE --ignore-not-found \
+  -l app.kubernetes.io/component=epp-metrics,llm-d.ai/applied-for=$NAMESPACE
+kubectl delete clusterrolebinding scaling-manager-epp-metrics-scraper-$NAMESPACE --ignore-not-found
 ```
 <!-- guide:cleanup.kedaauth end -->
 

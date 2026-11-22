@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestPrometheusReachable(t *testing.T) {
@@ -151,6 +153,55 @@ func TestPodMonitorPort(t *testing.T) {
 			r := only(t, f.run(t), "podmonitor.port")
 			if r.Status != tc.want || !strings.Contains(r.Detail, tc.detail) {
 				t.Errorf("got %s %q, want %s containing %q", r.Status, r.Detail, tc.want, tc.detail)
+			}
+		})
+	}
+}
+
+// TestPodMonitorPortFix: a port the PodMonitor does not scrape FAILs naming
+// each pod with its port names, and the fix is the smt flag that renders the
+// PodMonitor for the port the pods declare.
+func TestPodMonitorPortFix(t *testing.T) {
+	unnamed := func(ns, name string) *corev1.Pod { return modelPod(ns, name, "") }
+	cases := []struct {
+		name   string
+		scope  Scope
+		pods   []*corev1.Pod
+		detail string
+		fix    string
+	}{
+		{"one name", ScopeNamespace, []*corev1.Pod{modelPod(testNS, "llama-decode-0", "http"), modelPod(testNS, "llama-decode-1", "http")},
+			"llama-decode-0 (http), llama-decode-1 (http)", "smt admin-setup -n " + testNS + " --modelserver-port http   #"},
+		{"unnamed port", ScopeNamespace, []*corev1.Pod{unnamed(testNS, "llama-decode-0")},
+			"llama-decode-0 (unnamed 8000)", "--modelserver-port 8000   #"},
+		{"pods disagree", ScopeNamespace, []*corev1.Pod{modelPod(testNS, "llama-decode-0", "http"), modelPod(testNS, "llama-prefill-0", "vllm")},
+			"llama-decode-0 (http), llama-prefill-0 (vllm)", "--modelserver-port <the metrics port, by name or number>"},
+		{"cluster scope", ScopeCluster, []*corev1.Pod{modelPod(testNS, "llama-decode-0", "http")},
+			"llama-decode-0 (http)", "smt install --scope cluster <the flags it was installed with> --modelserver-port http"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.scope = tc.scope
+			f.remove("Pod", "llama-decode-0")
+			for _, p := range tc.pods {
+				f.add(p)
+			}
+			rs := f.run(t).Results
+			var r *Result
+			for i := range rs {
+				if rs[i].Check == "podmonitor.port" && rs[i].Status == Fail {
+					r = &rs[i]
+				}
+			}
+			if r == nil {
+				t.Fatalf("no podmonitor.port FAIL: %+v", rs)
+			}
+			if !strings.Contains(r.Detail, tc.detail) || !strings.Contains(r.Detail, "has no target at all") {
+				t.Errorf("detail %q, want it to name %q and say there is no target", r.Detail, tc.detail)
+			}
+			if !strings.Contains(r.Fix, tc.fix) {
+				t.Errorf("fix %q, want %q", r.Fix, tc.fix)
 			}
 		})
 	}

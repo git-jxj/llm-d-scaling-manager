@@ -66,11 +66,16 @@ res() {
         roles) r=role ;;
         rolebindings) r=rolebinding ;;
         podmonitors) r=podmonitor ;;
+        svc|services) r=service ;;
+        servicemonitors) r=servicemonitor ;;
+        serviceaccounts|sa) r=serviceaccount ;;
+        inferencepools) r=inferencepool ;;
+        crd|crds|customresourcedefinitions) r=customresourcedefinition ;;
     esac
     printf '%s' "$r"
 }
 cluster_scoped() {
-    case "$1" in namespace|clusterrole|clusterrolebinding|clustertriggerauthentication|apiservice) return 0 ;; esac
+    case "$1" in namespace|clusterrole|clusterrolebinding|clustertriggerauthentication|apiservice|customresourcedefinition) return 0 ;; esac
     return 1
 }
 path() {

@@ -156,5 +156,8 @@ cleanup:
       kubectl delete -f scaling-manager-model-namespace.yaml --ignore-not-found
       kubectl delete -f scaling-manager-keda-auth.yaml --ignore-not-found
       kubectl delete secret scaling-manager-external-scaler-$NAMESPACE -n $KEDA_NS --ignore-not-found
+      kubectl delete servicemonitor,serviceaccount,secret -n $NAMESPACE --ignore-not-found \
+        -l app.kubernetes.io/component=epp-metrics,llm-d.ai/applied-for=$NAMESPACE
+      kubectl delete clusterrolebinding scaling-manager-epp-metrics-scraper-$NAMESPACE --ignore-not-found
   model:
     run: make benchmark-teardown BENCHMARK_NAMESPACE=${NAMESPACE}

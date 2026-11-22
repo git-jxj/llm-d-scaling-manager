@@ -110,10 +110,10 @@ smt_parse() {
     SMT_NS="" SMT_KEDA_NS="" SMT_PROM_URL="" SMT_PROM_CA="" SMT_QUOTA="" SMT_SETS=() SMT_FILES=""
     SMT_DRY_RUN=false SMT_OUT="" SMT_SCOPE=namespace SMT_MODEL_NS=() SMT_PLATFORM="" SMT_STRICT=false
     SMT_RESTART_KEDA=false SMT_IMAGE_REPO="" SMT_WL_IMAGE="" SMT_WL_OFF=false SMT_ALLOW_HTTP=false SMT_SINGLE=false SMT_DSETW=false SMT_NO_DSETW=false
-    SMT_SHARE=""
+    SMT_SHARE="" SMT_MS_PORT="" SMT_NO_EPP_MON=false
     case "$cmd" in
-        admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope --model-namespace --single-namespace --dset-role-writer --no-dset-role-writer " ;;
-        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --utilization-share --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller --dset-role-writer --no-dset-role-writer " ;;
+        admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope --model-namespace --single-namespace --dset-role-writer --no-dset-role-writer --modelserver-port --no-epp-monitor " ;;
+        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --utilization-share --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller --dset-role-writer --no-dset-role-writer --modelserver-port --no-epp-monitor " ;;
         admin-finish) allowed=" -n --keda-namespace --files --platform --strict --restart-keda --scope " ;;
         release-files) allowed=" --out " ;;
     esac
@@ -125,7 +125,7 @@ smt_parse() {
             *) smt_usage "$cmd: unknown option $1 (see $cmd --help)" ;;
         esac
         case "$flag" in
-            --dry-run|--strict|--restart-keda|--no-weights-labeller|--allow-http|--single-namespace|--dset-role-writer|--no-dset-role-writer) ;;
+            --dry-run|--strict|--restart-keda|--no-weights-labeller|--allow-http|--single-namespace|--dset-role-writer|--no-dset-role-writer|--no-epp-monitor) ;;
             *) [ $# -ge 2 ] && [ -n "$2" ] || smt_usage "$cmd: $1 needs a value" ;;
         esac
         case "$flag" in
@@ -135,6 +135,8 @@ smt_parse() {
             --prometheus-ca) SMT_PROM_CA="$2"; shift 2 ;;
             --quota) SMT_QUOTA="$2"; shift 2 ;;
             --utilization-share) SMT_SHARE="$2"; shift 2 ;;
+            --modelserver-port) SMT_MS_PORT="$2"; shift 2 ;;
+            --no-epp-monitor) SMT_NO_EPP_MON=true; shift ;;
             --set) SMT_SETS+=("$2"); shift 2 ;;
             --files) SMT_FILES="$2"; shift 2 ;;
             --out) SMT_OUT="$2"; shift 2 ;;
@@ -216,6 +218,22 @@ smt_parse() {
         ""|off|shadow|active) ;;
         *) smt_usage "$cmd --utilization-share is off, shadow or active, not '$SMT_SHARE'" ;;
     esac
+    if [ -n "$SMT_MS_PORT" ]; then
+        if [[ "$SMT_MS_PORT" =~ ^[0-9]+$ ]]; then
+            [ "${#SMT_MS_PORT}" -le 5 ] && [ "$((10#$SMT_MS_PORT))" -ge 1 ] && [ "$((10#$SMT_MS_PORT))" -le 65535 ] \
+                || smt_usage "$cmd --modelserver-port: $SMT_MS_PORT is not a port number (1 to 65535)"
+            SMT_MS_PORT="$((10#$SMT_MS_PORT))"
+        else
+            # A container port name (IANA_SVC_NAME): what the PodMonitor can name.
+            { [ "${#SMT_MS_PORT}" -le 15 ] && [[ "$SMT_MS_PORT" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] \
+                && [[ "$SMT_MS_PORT" =~ [a-z] ]] && [[ "$SMT_MS_PORT" != *--* ]]; } \
+                || smt_usage "$cmd --modelserver-port: '$SMT_MS_PORT' is neither a container port name (up to 15 lower-case letters, digits and dashes) nor a port number"
+        fi
+    fi
+    if [ "$cmd" = install ] && [ "$SMT_SCOPE" = namespace ]; then
+        [ -z "$SMT_MS_PORT" ] || smt_usage "install --modelserver-port: the model-server PodMonitor is the cluster admin's, applied by admin-setup. They run: smt admin-setup -n $SMT_NS --modelserver-port $SMT_MS_PORT"
+        [ "$SMT_NO_EPP_MON" = false ] || smt_usage "install --no-epp-monitor: the EPP ServiceMonitor is the cluster admin's, added by admin-setup. Give it to smt admin-setup"
+    fi
     if [ -n "$SMT_PROM_URL" ]; then
         smt_check_scheme "$SMT_PROM_URL" "--prometheus-url $SMT_PROM_URL"
     fi
@@ -382,6 +400,108 @@ smt_model_file() {
     sed -e "s/__NAMESPACE__/$SMT_NS/g" -e "s/__MODEL_NAMESPACE__/$1/g" "$SMT_SHIPPED/scaling-manager-model-namespace.yaml" > "$out" \
         || smt_exit 2 "cannot render scaling-manager-model-namespace.yaml for $1"
     printf '%s\n' "$out"
+}
+
+# --- The model-server port and the EPP monitor ----------------------------------
+#
+# The model-namespace file carries PodMonitor scaling-manager-modelserver-metrics,
+# which scrapes the container port named `modelserver`, as llm-d's own base
+# names it. A PodMonitor naming a port no container declares has no target at
+# all: nothing is scraped and nothing reports an error. --modelserver-port
+# renders it for another port, by name or by number (targetPort, which every
+# Prometheus Operator version reads). Without the flag a re-run keeps the port
+# the live PodMonitor scrapes, as it keeps the model namespaces: a re-run must
+# not take a working scrape away.
+SMT_MS_PODMONITOR=scaling-manager-modelserver-metrics
+
+# smt_ms_port_shipped echoes the port the release PodMonitor scrapes.
+smt_ms_port_shipped() {
+    yq ea 'select(.kind == "PodMonitor") | .spec.podMetricsEndpoints[0].port // ""' "$SMT_SHIPPED/scaling-manager-model-namespace.yaml"
+}
+
+# smt_ms_port_decide <namespace>: SMT_MS_PORT_USE, the port the PodMonitor
+# there is rendered for: the flag; else the live one's when it differs from
+# the shipped port; else empty (as shipped). --dry-run reads no cluster.
+smt_ms_port_decide() {
+    local ns="$1" live rc=0 shipped
+    SMT_MS_PORT_USE="$SMT_MS_PORT"
+    [ -z "$SMT_MS_PORT_USE" ] || return 0
+    [ "$SMT_DRY_RUN" != true ] || return 0
+    kc_capture get podmonitor "$SMT_MS_PODMONITOR" -n "$ns" -o json || rc=$?
+    if [ "$rc" != 0 ]; then
+        printf '%s' "$KC_ERR" | grep -qF '(NotFound)' && return 0
+        smt_kubectl_failed "get podmonitor $SMT_MS_PODMONITOR -n $ns"
+    fi
+    live="$(printf '%s' "$KC_OUT" | jq -r '(.spec.podMetricsEndpoints[0] // {}) | (.port // .targetPort // "") | tostring')"
+    shipped="$(smt_ms_port_shipped)"
+    [ -n "$live" ] && [ "$live" != "$shipped" ] || return 0
+    SMT_MS_PORT_USE="$live"
+    echo "  PodMonitor $SMT_MS_PODMONITOR in $ns scrapes port $live: kept (--modelserver-port $shipped goes back to the shipped port)."
+}
+
+# smt_ms_port_apply <file> <port>: the PodMonitor of the file scrapes <port>,
+# a name or a number; nothing to do for an empty port.
+smt_ms_port_apply() {
+    local f="$1" p="$2" n
+    [ -n "$p" ] || return 0
+    n="$(yq ea '[select(.kind == "PodMonitor")] | length' "$f")"
+    [ "$n" = 1 ] || smt_exit 2 "${f##*/} holds $n PodMonitors, not the one model-server PodMonitor"
+    if [[ "$p" =~ ^[0-9]+$ ]]; then
+        P="$p" yq -i '(select(.kind == "PodMonitor") | .spec.podMetricsEndpoints[]) |= (del(.port) | .targetPort = env(P))' "$f"
+    else
+        P="$p" yq -i '(select(.kind == "PodMonitor") | .spec.podMetricsEndpoints[]) |= (del(.targetPort) | .port = strenv(P))' "$f"
+    fi || smt_exit 2 "cannot set the model-server port $p in ${f##*/}"
+}
+
+# smt_apply_model_ns <namespace> <file>: the model-namespace file, its
+# PodMonitor scraping the port smt_ms_port_decide chose.
+smt_apply_model_ns() {
+    smt_ms_port_decide "$1"
+    smt_ms_port_apply "$2" "$SMT_MS_PORT_USE"
+    smt_apply "$2"
+    [ -z "$SMT_MS_PORT_USE" ] || echo "  PodMonitor $SMT_MS_PODMONITOR scrapes port $SMT_MS_PORT_USE."
+}
+
+# smt_epp_monitors <namespace>: a ServiceMonitor for each EPP there that
+# nothing scrapes yet, with the identity it scrapes as (the EPP authenticates
+# /metrics). The arrival rate, the flow-control queue and scale from zero read
+# the EPP's metrics, and the docs require them scraped; make setup-prereqs adds
+# the same objects (llmsm_ensure_llmd_monitors, whose functions this calls).
+# An EPP already scraped, by llm-d's router monitoring say, gets none: a
+# second scrape doubles every rate read from it. Never fatal.
+smt_epp_monitors() {
+    local ns="$1" svc svcs monitors f rc=0
+    [ "$SMT_NO_EPP_MON" = false ] || { echo "  EPP ServiceMonitor: not added (--no-epp-monitor)."; return 0; }
+    kc_capture get crd servicemonitors.monitoring.coreos.com -o name || rc=$?
+    if [ "$rc" != 0 ]; then
+        if printf '%s' "$KC_ERR" | grep -qF '(NotFound)'; then
+            echo "  EPP ServiceMonitor: no ServiceMonitor API on this cluster (no Prometheus Operator), so none added. Scrape the EPP in $ns some other way."
+        else
+            echo "  EPP ServiceMonitor: could not tell whether the ServiceMonitor API is served ($(kc_err_line "$KC_ERR")), so none added."
+        fi
+        return 0
+    fi
+    # The owner label of llmsm_epp_scrape_docs: this controller's namespace.
+    LLMSM_NS="$SMT_NS"
+    svcs="$(llmsm_epp_services "$ns")"
+    if [ -z "$svcs" ]; then
+        echo "  EPP ServiceMonitor: no InferencePool in $ns names an EPP, so none added."
+        return 0
+    fi
+    for svc in $svcs; do
+        monitors="$(llmsm_epp_scrapers "$ns" "$svc" | sed 's/^unevaluated://' | paste -sd, - | sed 's/,/, /g')"
+        if [ -n "$monitors" ]; then
+            echo "  EPP $svc: scraped already, or may be ($monitors); none added."
+            continue
+        fi
+        f="$SMT_TMP/epp-scrape-$ns-$svc.yaml"
+        if ! llmsm_epp_scrape_docs "$ns" "$svc" > "$f"; then
+            echo "  EPP $svc: nothing scrapes it, and its Service names no metrics port (http-metrics or metrics), so no ServiceMonitor was added. Scrape it yourself."
+            continue
+        fi
+        echo "  EPP $svc: nothing scrapes it; ServiceMonitor $LLMSM_EPP_SCRAPE_NAME, and the ServiceAccount it scrapes as:"
+        smt_apply "$f"
+    done
 }
 
 # smt_select <part> <file>: the objects of that part.
@@ -1694,21 +1814,27 @@ smt_dry_write() {
 }
 
 smt_dry_admin() {
-    local m
+    local m f
     smt_dry_write 10-admin.yaml admin "$SMT_DIR/$SMT_MAIN"
     smt_dry_write 11-preflight-admin.yaml admin "$SMT_DIR/$SMT_PREFLIGHT"
     if [ "$SMT_SCOPE" = cluster ]; then
         for m in "${SMT_MODEL_NS[@]}"; do
-            smt_dry_write "12-model-namespace-$m.yaml" "" "$(smt_model_file "$m")"
+            f="$(smt_model_file "$m")"
+            smt_ms_port_apply "$f" "$SMT_MS_PORT"
+            smt_dry_write "12-model-namespace-$m.yaml" "" "$f"
         done
     elif [ ${#SMT_MODEL_NS[@]} -gt 0 ]; then
         for m in "${SMT_MODEL_NS[@]}"; do
-            smt_dry_write "12-model-namespace-$m.yaml" "" "$(smt_model_file "$m")"
+            f="$(smt_model_file "$m")"
+            smt_ms_port_apply "$f" "$SMT_MS_PORT"
+            smt_dry_write "12-model-namespace-$m.yaml" "" "$f"
             smt_dry_write "13-preflight-reads-$m.yaml" "" "$(smt_preflight_reads_file "$m")"
         done
     else
+        smt_ms_port_apply "$SMT_DIR/scaling-manager-model-namespace.yaml" "$SMT_MS_PORT"
         smt_dry_write 12-model-namespace.yaml "" "$SMT_DIR/scaling-manager-model-namespace.yaml"
     fi
+    [ "$SMT_NO_EPP_MON" = true ] || echo "  (an EPP ServiceMonitor is not rendered: whether one is needed, and for which port, depends on the EPP Services --dry-run does not read)"
     [ "${SMT_DSETW_WANT:-false}" = true ] || return 0
     if [ "$SMT_SCOPE" = cluster ]; then
         smt_dry_write 14-dset-role-writer.yaml "" "$(smt_dsetw_file "$SMT_NS")"
@@ -1816,12 +1942,15 @@ smt_admin_setup() {
     smt_apply "$SMT_DIR/$SMT_PREFLIGHT" admin
     if [ ${#SMT_MODEL_NS[@]} -eq 0 ]; then
         echo "Model namespace:"
-        smt_apply "$SMT_DIR/scaling-manager-model-namespace.yaml"
+        smt_apply_model_ns "$SMT_NS" "$SMT_DIR/scaling-manager-model-namespace.yaml"
+        smt_epp_monitors "$SMT_NS"
     fi
-    local m
+    local m f
     for m in "${SMT_MODEL_NS[@]}"; do
         echo "Model namespace $m:"
-        smt_apply "$(smt_model_file "$m")"
+        f="$(smt_model_file "$m")"
+        smt_apply_model_ns "$m" "$f"
+        smt_epp_monitors "$m"
         smt_apply "$(smt_preflight_reads_file "$m")"
         if [ "$SMT_PLATFORM" = openshift ]; then
             smt_kc label namespace "$m" openshift.io/user-monitoring=true --overwrite
@@ -1940,7 +2069,8 @@ smt_install_cluster() {
     for m in "${SMT_MODEL_NS[@]}"; do
         echo "Model namespace $m:"
         f="$(smt_model_file "$m")"
-        smt_apply "$f"
+        smt_apply_model_ns "$m" "$f"
+        smt_epp_monitors "$m"
         if [ "$SMT_PLATFORM" = openshift ]; then
             smt_kc label namespace "$m" openshift.io/user-monitoring=true --overwrite
         fi

@@ -1721,6 +1721,95 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+echo "the model-server port (--modelserver-port) and the EPP ServiceMonitor"
+# The release PodMonitor scrapes the port named modelserver; a model server
+# that names it otherwise yields no target, and nothing says so.
+pmport() { obj podmonitor "$1" scaling-manager-modelserver-metrics | jq -c '[.spec.podMetricsEndpoints[] | {port, targetPort}]'; }
+reset
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+for badp in Bad_Port 0 65536 http--x port-name-longer-than-15; do
+    smt admin-setup -n team-a --modelserver-port "$badp"
+    rc=$?
+    if [ "$rc" = 2 ] && grep -q -- '--modelserver-port' "$W/out" && [ "$(writes)" = 0 ]; then ok "--modelserver-port $badp is usage, nothing written"; else bad "--modelserver-port $badp: exit $rc, $(writes) writes: $(tail -1 "$W/out")"; fi
+done
+smt install -n team-a --prometheus-url https://p:9090 --modelserver-port http
+rc=$?
+if [ "$rc" = 2 ] && grep -q 'They run: smt admin-setup -n team-a --modelserver-port http' "$W/out"; then ok "install -n --modelserver-port is usage, naming the admin-setup line"; else bad "namespaced install --modelserver-port: exit $rc: $(tail -1 "$W/out")"; fi
+smt admin-setup -n team-a
+rc=$?
+if [ "$rc" = 0 ] && [ "$(pmport team-a)" = '[{"port":"modelserver","targetPort":null}]' ]; then ok "admin-setup without the flag applies the PodMonitor as shipped (port modelserver)"; else bad "shipped port: exit $rc, $(pmport team-a)"; fi
+smt admin-setup -n team-a --modelserver-port http
+rc=$?
+if [ "$rc" = 0 ] && [ "$(pmport team-a)" = '[{"port":"http","targetPort":null}]' ] && grep -q 'scrapes port http' "$W/out"; then ok "--modelserver-port http renders the PodMonitor for port http"; else bad "--modelserver-port http: exit $rc, $(pmport team-a)"; fi
+smt admin-setup -n team-a
+rc=$?
+if [ "$rc" = 0 ] && [ "$(pmport team-a)" = '[{"port":"http","targetPort":null}]' ] && grep -q 'scrapes port http: kept' "$W/out"; then ok "a re-run without the flag keeps the port the live PodMonitor scrapes"; else bad "re-run: exit $rc, $(pmport team-a): $(grep -i podmonitor "$W/out" | head -2 | tr '\n' ' ')"; fi
+smt admin-setup -n team-a --modelserver-port 8000
+rc=$?
+if [ "$rc" = 0 ] && [ "$(pmport team-a)" = '[{"port":null,"targetPort":8000}]' ]; then ok "--modelserver-port 8000 scrapes the port by number (targetPort)"; else bad "--modelserver-port 8000: exit $rc, $(pmport team-a)"; fi
+smt admin-setup -n team-a --modelserver-port modelserver
+rc=$?
+if [ "$rc" = 0 ] && [ "$(pmport team-a)" = '[{"port":"modelserver","targetPort":null}]' ]; then ok "--modelserver-port modelserver goes back to the shipped port"; else bad "back to shipped: exit $rc, $(pmport team-a)"; fi
+rm -rf "$W/drypm"
+smt admin-setup -n team-a --keda-namespace kk --modelserver-port http --dry-run --out "$W/drypm"
+rc=$?
+want="$(norm "$(sedded scaling-manager-model-namespace.yaml team-a team-a)" | jq -c -S 'if .kind == "PodMonitor" then .spec.podMetricsEndpoints[].port = "http" else . end' | sort)"
+if [ "$rc" = 0 ] && [ "$(norm "$W/drypm/12-model-namespace.yaml")" = "$want" ]; then ok "--dry-run renders the model-namespace file with that port, and nothing else changed"; else bad "--modelserver-port dry-run: exit $rc"; fi
+reset m1
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+SMT_CERT_TIMEOUT=0 smt install --scope cluster --prometheus-url https://p:9090 --model-namespace m1 --modelserver-port vllm
+rc=$?
+if [ "$rc" = 5 ] && [ "$(pmport m1)" = '[{"port":"vllm","targetPort":null}]' ]; then ok "install --scope cluster --modelserver-port renders the PodMonitor of each --model-namespace"; else bad "cluster --modelserver-port: exit $rc, $(pmport m1)"; fi
+
+# The EPP: an InferencePool in team-a names its Service, which serves metrics on
+# http-metrics, and nothing scrapes it.
+epp_fixture() {
+    mkdir -p "$STUB_DIR/obj/customresourcedefinition/_" "$STUB_DIR/obj/inferencepool/team-a" "$STUB_DIR/obj/service/team-a"
+    echo '{"apiVersion":"apiextensions.k8s.io/v1","kind":"CustomResourceDefinition","metadata":{"name":"servicemonitors.monitoring.coreos.com"}}' \
+        > "$STUB_DIR/obj/customresourcedefinition/_/servicemonitors.monitoring.coreos.com.json"
+    echo '{"apiVersion":"inference.networking.k8s.io/v1","kind":"InferencePool","metadata":{"name":"pool","namespace":"team-a"},"spec":{"endpointPickerRef":{"name":"pool-epp"}}}' \
+        > "$STUB_DIR/obj/inferencepool/team-a/pool.json"
+    echo '{"apiVersion":"v1","kind":"Service","metadata":{"name":"pool-epp","namespace":"team-a","labels":{"app.kubernetes.io/name":"pool-epp","helm.sh/chart":"x"}},"spec":{"selector":{"app":"pool-epp"},"ports":[{"name":"grpc","port":9002},{"name":"http-metrics","port":9090}]}}' \
+        > "$STUB_DIR/obj/service/team-a/pool-epp.json"
+}
+reset
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+epp_fixture
+smt admin-setup -n team-a
+rc=$?
+sm="$(obj servicemonitor team-a scaling-manager-epp-metrics | jq -c '[.spec.selector.matchLabels, (.spec.endpoints[0] | .port, .authorization.credentials.name)]')"
+if [ "$rc" = 0 ] && [ "$sm" = '[{"app.kubernetes.io/name":"pool-epp"},"http-metrics","scaling-manager-epp-metrics-scraper-token"]' ] \
+    && has_obj serviceaccount team-a scaling-manager-epp-metrics-scraper && has_obj secret team-a scaling-manager-epp-metrics-scraper-token \
+    && has_obj clusterrolebinding _ scaling-manager-epp-metrics-scraper-team-a; then
+    ok "admin-setup adds a ServiceMonitor for an EPP nothing scrapes, with the identity it scrapes /metrics as"
+else
+    bad "EPP ServiceMonitor: exit $rc, $sm: $(grep EPP "$W/out" | head -2 | tr '\n' ' ')"
+fi
+smt admin-setup -n team-a
+rc=$?
+if [ "$rc" = 0 ] && grep -q 'EPP pool-epp: scraped already, or may be (servicemonitor/scaling-manager-epp-metrics); none added' "$W/out"; then ok "a re-run sees its own ServiceMonitor and adds no second"; else bad "EPP re-run: exit $rc: $(grep EPP "$W/out" | head -2 | tr '\n' ' ')"; fi
+reset
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+epp_fixture
+mkdir -p "$STUB_DIR/obj/servicemonitor/team-a"
+echo '{"apiVersion":"monitoring.coreos.com/v1","kind":"ServiceMonitor","metadata":{"name":"router-epp","namespace":"team-a"},"spec":{"selector":{"matchLabels":{"app.kubernetes.io/name":"pool-epp"}}}}' \
+    > "$STUB_DIR/obj/servicemonitor/team-a/router-epp.json"
+smt admin-setup -n team-a
+rc=$?
+if [ "$rc" = 0 ] && ! has_obj servicemonitor team-a scaling-manager-epp-metrics && grep -q 'servicemonitor/router-epp' "$W/out"; then ok "an EPP llm-d's own monitor scrapes gets no second ServiceMonitor"; else bad "EPP already scraped: exit $rc"; fi
+reset
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+epp_fixture
+smt admin-setup -n team-a --no-epp-monitor
+rc=$?
+if [ "$rc" = 0 ] && ! has_obj servicemonitor team-a scaling-manager-epp-metrics && grep -q 'not added (--no-epp-monitor)' "$W/out"; then ok "--no-epp-monitor adds none"; else bad "--no-epp-monitor: exit $rc"; fi
+reset
+echo "keda-system keda-operator-metrics-apiserver" > "$STUB_DIR/apiservice"
+smt admin-setup -n team-a
+rc=$?
+if [ "$rc" = 0 ] && grep -q 'no ServiceMonitor API on this cluster' "$W/out"; then ok "no ServiceMonitor API: admin-setup says so and goes on"; else bad "no CRD: exit $rc: $(grep EPP "$W/out" | head -1)"; fi
+
+# ---------------------------------------------------------------------------
 echo "release-files and llmsm_make_cmd"
 rm -rf "$W/rf"
 smt release-files --out "$W/rf"
@@ -1773,7 +1862,7 @@ rm -rf "$W/dryp"
 smt_in "$W/imagep" install -n team-a --prometheus-url https://p:9090 --dry-run --out "$W/dryp"
 expect_rc "install checks a baked SHA256SUMS that lists the planner binaries the image does not carry" 0 $?
 
-EXPECT_CASES=205
+EXPECT_CASES=223
 echo
 echo "release install ($(yq --version 2>&1)): $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then
