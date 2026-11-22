@@ -970,6 +970,39 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	},
 	saturation.SwitchDecodeLandedNeedsABound: nil,
 
+	// llm-d-incubation/llm-d-scaling-manager#169 item 1, on from the
+	// constructor (an earlier seam, off, until then): a key with no learned
+	// B pins its ITL line through the floor read below the band, not the
+	// 6 ms default. It moves the seven fixtures whose decode lines sit on
+	// the default B and read a floor: e1 and e1-tuned (B 9.3-12.3 ms; decode
+	// asks one replica fewer on 18 of 762 and 2 of 748 cycles), the three
+	// staircases (B 0.4-3.8 ms, mu falls 23-31 %, no replica moves),
+	// ttft-three-pods (mu falls 12 %, one replica more on 31 of 203 cycles)
+	// and pd-restart. TestGoldens_ITLBaselineFromFloorReplicas holds those
+	// counts. Alone from all off it moves the 31 outputs below. With
+	// SwitchThroughputFloorRaisesVariants on, as from the constructor, it
+	// also moves the composite-variants and warm-pool-pressure outputs of
+	// pd-restart, the staircases b-off, b-on and c-on and ttft-three-pods:
+	// those are in that switch's row, which carries their base digests.
+	saturation.SwitchITLBaselineFromFloor: {
+		"e1-tuned/lines.csv", "e1-tuned/results.csv", "e1-tuned/variant-capacities.csv",
+		"e1/lines.csv", "e1/results.csv", "e1/variant-capacities.csv",
+		"pd-restart/composite-results.csv", "pd-restart/composite-roles.csv",
+		"pd-restart/lines.csv", "pd-restart/results.csv", "pd-restart/variant-capacities.csv",
+		"ttft-staircase-b-off/composite-results.csv", "ttft-staircase-b-off/composite-roles.csv",
+		"ttft-staircase-b-off/lines.csv", "ttft-staircase-b-off/results.csv",
+		"ttft-staircase-b-off/variant-capacities.csv",
+		"ttft-staircase-b-on/composite-results.csv", "ttft-staircase-b-on/composite-roles.csv",
+		"ttft-staircase-b-on/lines.csv", "ttft-staircase-b-on/results.csv",
+		"ttft-staircase-b-on/variant-capacities.csv",
+		"ttft-staircase-c-on/composite-results.csv", "ttft-staircase-c-on/composite-roles.csv",
+		"ttft-staircase-c-on/lines.csv", "ttft-staircase-c-on/results.csv",
+		"ttft-staircase-c-on/variant-capacities.csv",
+		"ttft-three-pods/composite-results.csv", "ttft-three-pods/composite-roles.csv",
+		"ttft-three-pods/lines.csv", "ttft-three-pods/results.csv",
+		"ttft-three-pods/variant-capacities.csv",
+	},
+
 	// llm-d-incubation/llm-d-scaling-manager#188, on from the constructor
 	// since v0.12.3 (an earlier seam, off, until then): a resident reading
 	// above the whole context is priced as read, a shape with no hit takes a
@@ -1113,9 +1146,15 @@ var learner4aSeams = map[string][]string{
 	// time for its first fit at 09:32:00, so it publishes no |both line that
 	// cycle, variant-02 borrows none, and their reported service rates and
 	// the learned-state export lose them, as the slo analyzer's line does
-	// under slo.SwitchITLReadsSettle.
+	// under slo.SwitchITLReadsSettle. Since
+	// llm-d-incubation/llm-d-scaling-manager#169 item 1 is on
+	// (SwitchITLBaselineFromFloor), it moves e1's line, results and variant
+	// capacities too: off, the floor below the band is read from readings the
+	// settle tracker would hold back, and so pins e1's lines through another
+	// B.
 	saturation.SwitchITLReadsSettle: {
 		"acceptance/learned-state.csv", "acceptance/lines.csv", "acceptance/variant-capacities.csv",
+		"e1/lines.csv", "e1/results.csv", "e1/variant-capacities.csv",
 		"engine/learned-state.csv", "engine/lines.csv", "engine/variant-capacities.csv",
 	},
 	saturation.SwitchITLWaitsAfterRestart: {
@@ -1132,7 +1171,13 @@ var learner4aSeams = map[string][]string{
 	saturation.SwitchITLKeepsSettleThroughMissingRow: nil,
 	saturation.SwitchITLReadsFinitePodMean:           nil,
 	saturation.SwitchITLRestartUnderName:             nil,
-	saturation.SwitchITLIdleOnEvidence:               nil,
+	// Since llm-d-incubation/llm-d-scaling-manager#169 item 1 is on
+	// (SwitchITLBaselineFromFloor), off alone it moves e1's line, results
+	// and variant capacities: off, a row with neither an ITL nor a k is idle,
+	// which changes which of e1's readings below the band count as settled,
+	// the readings the floor is read from, and so the B its lines are pinned
+	// through.
+	saturation.SwitchITLIdleOnEvidence: {"e1/lines.csv", "e1/results.csv", "e1/variant-capacities.csv"},
 	slo.SwitchITLReadsSettle: {
 		"acceptance/slo-published.csv", "acceptance/variant-capacities.csv",
 		"engine/slo-published.csv", "engine/variant-capacities.csv",
@@ -1220,14 +1265,6 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// parallelism over more than one data-parallel rank. Its unit tests hold
 	// it (heldBy).
 	saturation.SwitchMoEBusiestRank: nil,
-	// llm-d-incubation/llm-d-scaling-manager#169 item 1: the ITL line's B
-	// pinned through the floor below the band while unlearned. Off from the
-	// constructor, so every golden replay runs it off, and off alone from
-	// all on moves nothing. On, it moves the variant and demand outputs of
-	// the fixtures whose lines sit on the default B;
-	// TestGoldens_ITLBaselineFromFloorReplicas holds what it moves on e1, the
-	// staircases and three-pods, and its unit tests hold it (heldBy).
-	saturation.SwitchITLBaselineFromFloor: nil,
 	// ev-shindin/llm-scaling-manager#275 (two switches) and ev-shindin/llm-scaling-manager#438, this file's own rows before learner PR
 	// 4b-1 (see replaySwitches).
 	saturation.SwitchZeroReplicaDataParallel: nil,
@@ -1656,7 +1693,8 @@ var heldBy = map[string][]heldTest{
 		{".", "TestITLLineAtFloor_OnlyAPDDecodeRole"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {
-		{"../saturation", "TestITLBaselineFromFloor_OffFromTheConstructor"},
+		{"../saturation", "TestITLBaselineFromFloor_OnFromTheConstructor"},
+		{"../saturation", "TestITLBaselineFromFloor_AnalyzePinsAtTheFloorByDefault"},
 		{"../saturation", "TestITLBaselineFromFloor_TheFitLineIsUnchangedOff"},
 		{"../../../signals/itl", "TestTracker_BaselineFromFloorPinsAnUnlearnedKey"},
 		{"../../../signals/itl", "TestTracker_ALearnedBaselineEndsTheFloor"},
@@ -2281,6 +2319,15 @@ var switchBase = withDigests(staircaseBase, map[string]string{
 	"ols-sweep-slo-restart/results.csv":           "49a51c8b1bdbcbfd2401b05b383113727ec51384867dfa49c31e17349d60ae47",
 	"pd-restart/composite-results.csv":            "7cd3bf0237b97c5ec7ec2a26e4c096701275ca79d622ad064c1ce06e3734b3f2",
 	"pd-restart/results.csv":                      "1f7f9e64e4fa1cb7aa467e70358fd74778c45045f7f5460791bd5861e9234637",
+
+	// llm-d-incubation/llm-d-scaling-manager#169 item 1's lines.csv outputs
+	// no other switch names, at main 051086c, where it was off from the
+	// constructor.
+	"pd-restart/lines.csv":           "978e82e489d5db3ec72a436b754ef9fa57eb72f3363ced51f41630f5ebfe84ad",
+	"ttft-staircase-b-off/lines.csv": "b7daf594ce9cbedbf413ed4169ec1ca5c26f1b17ad4742719053ff003baff923",
+	"ttft-staircase-c-on/lines.csv":  "c3c81e8a3fd0e144020f407286eb4cbc43859fd386bf2ed1804410d6666ce1dc",
+	"ttft-three-pods/lines.csv":      "c631b79aade5b2c83e32c35424637b82bf8add7b12bc7039721dca798c3076af",
+
 	// ttft-saturated as ev-shindin/llm-scaling-manager#482 added it, before 5c (1ffdb6ad8).
 	"ttft-saturated/composite-results.csv": "a94dd5a36fea549888a525795b152e7199969f46319e25d95bf2f5c8211688bd",
 	"ttft-saturated/results.csv":           "4c1da5e9d1ecb5f7c084703c99c1907811de56e7974fc62b6d96ec965f05b7d7",
