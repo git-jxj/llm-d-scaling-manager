@@ -181,3 +181,27 @@ func TestDecode_TheBandIsJudgedAtTheFillARequestSees(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, base.Flags, BelowFittedBand)
 }
+
+// With a batch term (#309) the fill has no closed form and is bisected; it
+// reads the same residence as the closed form: the held pull and the
+// burst's fill stand beside the term, so Little's law holds at
+// H + S*ITL(k + e), the line plus the term there.
+func TestDecode_TheBatchTermKeepsTheHeldPullAndTheBurst(t *testing.T) {
+	const held = 0.030
+	d := q32jShortKV()
+	d.Batch = q32jBatchTerm()
+	d.HeldBefore, d.ArrivalCV2 = held, 4
+	lam := 0.5 * d.kneeRate() / float64(d.Replicas)
+	k, ok := d.fillAtReplicaRate(lam)
+	require.True(t, ok)
+	e := d.burstFill()
+	require.Greater(t, e, 0.0)
+	require.Less(t, k+e, d.full().fill, "the fill is read on the line, not at k_full")
+	near(t, "Little's law with the pull held and the burst", k*d.CapacityTokens/d.KVPerRequest,
+		lam*(held+(d.OutputTokens-1)*d.itlAt(k+e)), 1e-6)
+	plain := q32jShortKV()
+	plain.Batch = q32jBatchTerm()
+	k0, ok := plain.fillAtReplicaRate(lam)
+	require.True(t, ok)
+	assert.Greater(t, k, k0, "the pull and the burst raise the fill under the term too")
+}
