@@ -3469,6 +3469,11 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# sample written twice at a chunk edge, an unescaped label value, or a
 	@# failed chunk skipped all parse, and the last reads as a window with no load.
 	@PROMTOOL=$(PROMTOOL) bash hack/check-promjson-to-openmetrics.sh
+	@echo "Checking the capacity planner's manual recording fetch and check steps..."
+	@# Runs the guide's fetch and check against a fake Prometheus. A cache-tier
+	@# series dropped from the export list, an absent series read as a failure,
+	@# or a failed query read as an absent series all run without an error.
+	@bash hack/check-record-export.sh
 	@echo "Checking what warmpool.sh actually emits..."
 	@# Renders the pool manifests and asserts their shape. Every bug this covers
 	@# parses fine: one container with the proxy image under the supervisor's

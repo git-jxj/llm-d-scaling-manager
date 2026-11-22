@@ -183,6 +183,138 @@ Without the first every variant reads as both roles; without the second, give
 | `kube_pod_container_info` | gauge | `container`, `image_spec`, `image` | the vLLM release a `vllm-openai` image tag names | optional |
 | `kube_deployment_annotations` | gauge | `deployment`, `annotation_scaling_manager_llmd_ai_vllm_version` (no `pod`) | the vLLM release the annotation states; needs kube-state-metrics' `--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version]` | optional |
 
+## Cache tiers, offloading and KV transfer
+
+Collect these too when prompts can hit a cache outside the GPU: CPU or disk
+offloading, LMCache, a KV connector, or KV pulled from a peer (P/D). The
+capture checks each one and prints whether it was present; an absent one never
+fails a capture or a manual export. Older engines lack most of them.
+
+Each row has one tier:
+
+- **required today**: the planner reads it now (it is also in the tables
+  above). Listed here for the cached-fleet reading it gives.
+- **needed for TTFT on cached fleets**: says which tier served a prompt's
+  cached tokens, and what loading them cost.
+- **diagnostic**: explains an answer; not priced.
+
+**Without the cached-fleet series** the planner still prices prefill from
+computed tokens (`vllm:request_prefill_kv_computed_tokens`), which leave out
+cached tokens wherever they came from. What it cannot do is say which tier
+served them. So it cannot price TTFT when a tier's hit rate or load time
+changes (more replicas, a smaller host cache), and it reads the time to load a
+hit as compute time.
+
+vLLM flags: `--kv-transfer-config` names the connector (`OffloadingConnector`,
+`LMCacheConnectorV1` in-process, `LMCacheMPConnector` for LMCache's
+multi-process server, `NixlConnector`, or a `MultiConnector` of them).
+`--kv-offloading-size` turns on native CPU offloading with no
+`--kv-transfer-config`. LMCache's multi-process server serves its own
+`/metrics` on `--prometheus-port` (default 9090): your PodMonitor or
+ServiceMonitor must scrape that port too. When that server runs in another
+namespace than the engines, give `capture --lmcache-namespace`, or set
+`LMCACHE_NAMESPACE` for the manual export. The in-process LMCache connector
+exports `lmcache:*` on the engine's own `/metrics`.
+
+| Series | Source and version | Produced with | Tier | Without it |
+| --- | --- | --- | --- | --- |
+| `vllm:prefix_cache_queries_total` | vLLM, all supported | always | required today | no GPU prefix-cache hit rate |
+| `vllm:prefix_cache_hits_total` | vLLM, all supported | always | required today | no GPU prefix-cache hit rate |
+| `vllm:request_prefill_kv_computed_tokens_sum` | vLLM | always | required today | no prefill capacity `V_P` |
+| `vllm:cache_config_info` | vLLM | always; its labels are the cache config, `kv_offloading_size` and `kv_offloading_backend` among them in releases that have those flags | required today | no KV capacity |
+| `vllm:num_preemptions_total` | vLLM | always | required today | preemption recompute not checked |
+| `vllm:nixl_xfer_time_seconds_sum` | vLLM 0.11.1+ | `NixlConnector` | required today | no P/D transfer time |
+| `vllm:nixl_xfer_time_seconds_count` | vLLM 0.11.1+ | `NixlConnector` | required today | no P/D transfer time |
+| `vllm:external_prefix_cache_queries_total` | vLLM 0.11.1+ | any `--kv-transfer-config` connector | needed for TTFT on cached fleets | connector lookups unseen |
+| `vllm:external_prefix_cache_hits_total` | vLLM 0.11.1+ | any `--kv-transfer-config` connector | needed for TTFT on cached fleets | connector hits read as GPU misses |
+| `vllm:prompt_tokens_by_source_total` | vLLM 0.16.0+; `source` = `local_compute`, `local_cache_hit`, `external_kv_transfer` | always | needed for TTFT on cached fleets | no split of computed, GPU-cached and transferred tokens |
+| `vllm:prompt_tokens_cached_total` | vLLM 0.16.0+ | always | needed for TTFT on cached fleets | cached tokens read from the split above, or not at all |
+| `vllm:prompt_tokens_cached_by_source_total` | vLLM 0.32.0+; `source` = `device`, `host`, `disk`, `p2p`, `external_unspecified` | always; tiers other than `device` need a connector | needed for TTFT on cached fleets | no hit rate per tier |
+| `vllm:kv_offload_load_bytes_total` | vLLM 0.24.0+ | `OffloadingConnector` or `--kv-offloading-size` | needed for TTFT on cached fleets | no offload load volume |
+| `vllm:kv_offload_load_time_total` | vLLM 0.24.0+ | `OffloadingConnector` or `--kv-offloading-size` | needed for TTFT on cached fleets | an offload hit's load time read as compute |
+| `vllm:kv_offload_store_bytes_total` | vLLM 0.24.0+ | `OffloadingConnector` or `--kv-offloading-size` | diagnostic | none |
+| `vllm:kv_offload_store_time_total` | vLLM 0.24.0+ | `OffloadingConnector` or `--kv-offloading-size` | diagnostic | none |
+| `vllm:kv_offload_total_bytes_total` | vLLM 0.16.0+, deprecated from 0.24.0; `transfer_type` = `CPU_to_GPU`, `GPU_to_CPU` | `OffloadingConnector` | needed for TTFT on cached fleets | before 0.24.0: no offload load volume |
+| `vllm:kv_offload_total_time_total` | vLLM 0.16.0+, deprecated from 0.24.0; `transfer_type` | `OffloadingConnector` | needed for TTFT on cached fleets | before 0.24.0: no offload load time |
+| `vllm:kv_offload_tiering_chunk_queries_total` | vLLM 0.28.0+; `tier` | `OffloadingConnector` with a tiering spec | needed for TTFT on cached fleets | no hit rate per secondary tier |
+| `vllm:kv_offload_tiering_chunk_hits_total` | vLLM 0.28.0+; `tier` | `OffloadingConnector` with a tiering spec | needed for TTFT on cached fleets | no hit rate per secondary tier |
+| `vllm:kv_offload_tiering_read_bytes_total` | vLLM 0.28.0+ | `OffloadingConnector` with a tiering spec | diagnostic | none |
+| `vllm:kv_offload_tiering_read_time_total` | vLLM 0.28.0+ | `OffloadingConnector` with a tiering spec | diagnostic | none |
+| `vllm:kv_offload_config_info` | vLLM 0.33.0+ | `OffloadingConnector` | diagnostic | offload sizes from the engine arguments only |
+| `vllm:nixl_bytes_transferred_sum` | vLLM 0.11.1+ | `NixlConnector` | needed for TTFT on cached fleets | no P/D transfer volume, so no time per byte |
+| `vllm:nixl_bytes_transferred_count` | vLLM 0.11.1+ | `NixlConnector` | needed for TTFT on cached fleets | as above |
+| `vllm:nixl_xfer_time_seconds_bucket` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | no P/D transfer-time spread |
+| `vllm:nixl_post_time_seconds_sum` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | none |
+| `vllm:nixl_post_time_seconds_count` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | none |
+| `vllm:nixl_num_failed_transfers_total` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | failed transfers unseen |
+| `lmcache_mp_lookup_requested_tokens_total` | LMCache 0.5.6+ multi-process server (checked to 0.5.8rc3) | the server's `--prometheus-port` scraped | needed for TTFT on cached fleets | no LMCache hit rate |
+| `lmcache_mp_lookup_hit_tokens_total` | LMCache 0.5.6+ multi-process server | the server's `--prometheus-port` scraped | needed for TTFT on cached fleets | no LMCache hit rate |
+| `lmcache_mp_lookup_hit_l1_tokens_total` | LMCache 0.5.6+ multi-process server | the server's `--prometheus-port` scraped | needed for TTFT on cached fleets | no split of L1 (memory) and L2 (storage) hits |
+| `lmcache_mp_lookup_hit_l2_tokens_total` | LMCache 0.5.6+ multi-process server | the server's `--prometheus-port` scraped | needed for TTFT on cached fleets | as above |
+| `lmcache_mp_lookup_prompt_tokens_total` | LMCache 0.5.7+ multi-process server | the server's `--prometheus-port` scraped | diagnostic | none |
+| `lmcache_mp_lookup_request_hit_tokens_total` | LMCache 0.5.7+ multi-process server | the server's `--prometheus-port` scraped | diagnostic | none |
+| `lmcache:num_requested_tokens_total` | LMCache in-process connector (checked 0.3.9 to 0.5.7) | `LMCacheConnectorV1` | needed for TTFT on cached fleets | no LMCache hit rate |
+| `lmcache:num_hit_tokens_total` | LMCache in-process connector | `LMCacheConnectorV1` | needed for TTFT on cached fleets | no LMCache hit rate |
+| `lmcache:num_lookup_tokens_total` | LMCache in-process connector | `LMCacheConnectorV1` | diagnostic | none |
+| `lmcache:num_lookup_hits_total` | LMCache in-process connector | `LMCacheConnectorV1` | diagnostic | none |
+| `lmcache:time_to_retrieve_sum` | LMCache in-process connector | `LMCacheConnectorV1` | diagnostic | none |
+| `lmcache:time_to_retrieve_count` | LMCache in-process connector | `LMCacheConnectorV1` | diagnostic | none |
+| `llm_d_epp_request_cached_tokens_sum` | llm-d router v1.0.0 | the engine reports cached tokens in its response (vLLM: `--enable-prompt-tokens-details`) | needed for TTFT on cached fleets | no fleet-wide cached tokens per request |
+| `llm_d_epp_request_cached_tokens_count` | llm-d router v1.0.0 | as above | needed for TTFT on cached fleets | as above |
+| `llm_d_epp_request_cached_tokens_bucket` | llm-d router v1.0.0 | as above | needed for TTFT on cached fleets | no spread of cached tokens per request |
+| `llm_d_epp_prefix_predicted_cached_tokens_sum` | llm-d router v1.0.0 | an `approx-prefix-cache-producer` or `precise-prefix-cache-producer` plugin | diagnostic | none |
+| `llm_d_epp_prefix_predicted_cached_tokens_count` | llm-d router v1.0.0 | as above | diagnostic | none |
+| `llm_d_epp_prefix_best_predicted_cached_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
+| `llm_d_epp_prefix_best_available_cached_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
+| `llm_d_epp_prefix_prompt_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
+| `sglang:cached_tokens_total` | SGLang; `cache_source` label 0.5.9+ | `--enable-metrics` | required today | no prefix-cache hit rate |
+| `sglang:prompt_tokens_total` | SGLang | `--enable-metrics` | required today | no prefix-cache hit rate |
+| `sglang:prefill_effective_tokens_total` | SGLang 0.5.18+; `mode` = `device_hit`, `host_hit`, `storage_hit`, `input` | `--enable-metrics`; host and storage hits need `--enable-hierarchical-cache` | needed for TTFT on cached fleets | no hit rate per tier |
+| `sglang:uncached_prompt_tokens_histogram_sum` | SGLang 0.5.12+ | `--enable-metrics` | needed for TTFT on cached fleets | no computed prompt tokens per request |
+| `sglang:uncached_prompt_tokens_histogram_count` | SGLang 0.5.12+ | `--enable-metrics` | needed for TTFT on cached fleets | as above |
+| `sglang:uncached_prompt_tokens_histogram_bucket` | SGLang 0.5.12+ | `--enable-metrics` | diagnostic | no spread of computed prompt lengths |
+
+The versions are where each name first appears in the upstream source; each
+was checked against vLLM v0.34.0, SGLang v0.5.23, LMCache v0.5.8rc3 and llm-d
+router v1.0.0.
+
+## TTFT outside the engines
+
+Collect these to explain the part of the router's TTFT that the engines'
+own TTFT does not cover: the router's processing and plugins, prompt
+rendering, the P/D sidecar, and the engine's HTTP front end. The planner
+does not price them; each row is **diagnostic: TTFT outside the engines**. The capture checks
+each one and prints whether it was present, like the series above.
+
+| Series | Source and version | Produced with | Tier | Without it |
+| --- | --- | --- | --- | --- |
+| `llm_d_epp_request_processing_duration_seconds_sum` | llm-d router v1.0.0; no model labels | on by default | diagnostic: TTFT outside the engines | the router's own time before it picks an endpoint unseen |
+| `llm_d_epp_request_processing_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_request_processing_duration_seconds_bucket` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | no spread of the router's own time |
+| `llm_d_epp_token_producer_render_duration_seconds_sum` | llm-d router v1.0.0; `plugin_type`, `plugin_name`, `backend`, `result` | on by default; observed only when a token-producer plugin renders prompts | diagnostic: TTFT outside the engines | time spent rendering prompts for the prefix scorer unseen |
+| `llm_d_epp_token_producer_render_duration_seconds_count` | llm-d router v1.0.0 | as above | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_plugin_duration_seconds_sum` | llm-d router v1.0.0; `extension_point`, `plugin_type`, `plugin_name` | on by default | diagnostic: TTFT outside the engines | no split of the router's time by plugin |
+| `llm_d_epp_plugin_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_request_size_bytes_sum` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | no request size, so no check of body-parsing cost |
+| `llm_d_epp_request_size_bytes_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_request_duration_seconds_sum` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | no end-to-end latency at the router to set the engine's against |
+| `llm_d_epp_request_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
+| `llm_d_disagg_sidecar_prefill_duration_seconds_sum` | llm-d router v1.0.0 P/D sidecar; no model labels | off by default: start the sidecar with `--metrics-port` and scrape that port | diagnostic: TTFT outside the engines | the P/D prefill leg, as decode's sidecar sees it, unseen |
+| `llm_d_disagg_sidecar_prefill_duration_seconds_count` | llm-d router v1.0.0 P/D sidecar | as above | diagnostic: TTFT outside the engines | as above |
+| `vllm:e2e_request_latency_seconds_sum` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | no engine end-to-end latency to set the router's against |
+| `vllm:e2e_request_latency_seconds_count` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | as above |
+| `vllm:request_render_duration_seconds_sum` | vLLM 0.34.0+; `request_type` | on by default | diagnostic: TTFT outside the engines | chat-template and tokenization time read as queue or prefill |
+| `vllm:request_render_duration_seconds_count` | vLLM 0.34.0+ | on by default | diagnostic: TTFT outside the engines | as above |
+| `http_request_duration_seconds_sum` | vLLM's API server (prometheus-fastapi-instrumentator); `handler`, `method` | on by default; the export saves every handler, the capture checks `handler="/v1/chat/completions"` | diagnostic: TTFT outside the engines | the engine's HTTP front end, before the scheduler, unseen |
+| `http_request_duration_seconds_count` | vLLM's API server | as above | diagnostic: TTFT outside the engines | as above |
+
+### Optional: tracing and access logs
+
+Traces, and the gateway's (Envoy's) access-log fields such as upstream
+service time, are logs, not metrics: neither path collects them. If you
+keep them, a sample from the same window helps place the remainder these
+series leave; send it beside the export.
+
 ## Counts
 
 | Source | Series | required | TPOT | TTFT | optional |

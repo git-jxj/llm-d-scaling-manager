@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
@@ -29,11 +30,16 @@ const (
 
 var (
 	// seriesName matches a series name of the families a capture reads.
-	seriesName = regexp.MustCompile(`\b(?:(?:vllm|sglang):[A-Za-z0-9_]+|(?:llm_d_epp|inference_extension|kube)_[A-Za-z0-9_]+)`)
+	seriesName = regexp.MustCompile(`\b(?:(?:vllm|sglang|lmcache):[A-Za-z0-9_]+|(?:llm_d_epp|llm_d_disagg_sidecar|inference_extension|kube|lmcache_mp)_[A-Za-z0-9_]+|http_request_duration_seconds_(?:sum|count|bucket))`)
 	// docRow is a row of the reference table: its first cell is the name.
 	docRow = regexp.MustCompile("(?m)^\\| `([^`]+)` \\|")
-	// metricsVar is the METRICS="..." list in the guide's fetch step.
-	metricsVar = regexp.MustCompile(`(?s)METRICS="([^"]*)"`)
+	// cacheRow is a row of the cache-tier table: the name, its source and
+	// version, the flag, then the tier.
+	cacheRow = regexp.MustCompile("(?m)^\\| `([^`]+)` \\|[^|]*\\|[^|]*\\| ([A-Za-z: ]+) \\|")
+	// metricsVar is the METRICS="..." list in the guide's fetch step, and
+	// cacheMetricsVar its CACHE_METRICS="..." list.
+	metricsVar      = regexp.MustCompile(`(?s)\bexport METRICS="([^"]*)"`)
+	cacheMetricsVar = regexp.MustCompile(`(?s)\bexport CACHE_METRICS="([^"]*)"`)
 
 	// What selectedNames strips before reading the names left: strings
 	// (label values, the {{.namespace}} placeholder), matcher bodies,
@@ -137,24 +143,106 @@ func compare(t *testing.T, where string, read map[string][]string, have map[stri
 	require.Emptyf(t, extra, "%s lists series no capture reads", where)
 }
 
+// optionalSections are the headings of metrics.md's sections on the
+// optional series (OptionalSeriesList); their tables are checked apart from
+// the tables of the series a capture reads. cacheSection names them in
+// messages.
+var optionalSections = []string{"## Cache tiers, offloading and KV transfer", "## TTFT outside the engines"}
+
+const cacheSection = "optional series"
+
+// splitMetricsDoc is metrics.md without its optional-series sections, and
+// those sections, each to the next heading of its level.
+func splitMetricsDoc(t *testing.T) (rest, cache string) {
+	t.Helper()
+	b, err := os.ReadFile(metricsDoc)
+	require.NoError(t, err)
+	rest = strings.ReplaceAll(string(b), "\r\n", "\n")
+	var sections strings.Builder
+	for _, heading := range optionalSections {
+		start := strings.Index(rest, "\n"+heading+"\n")
+		require.GreaterOrEqualf(t, start, 0, "%s has no %q section", metricsDoc, heading)
+		end := len(rest)
+		if next := strings.Index(rest[start+1:], "\n## "); next >= 0 {
+			end = start + 1 + next
+		}
+		sections.WriteString(rest[start:end])
+		rest = rest[:start] + rest[end:]
+	}
+	return rest, sections.String()
+}
+
 func TestCapacityPlannerMetricsDocListsEveryCapturedSeries(t *testing.T) {
 	read := capturedSeries(t)
 
-	body, err := os.ReadFile(metricsDoc)
-	require.NoError(t, err)
+	rest, _ := splitMetricsDoc(t)
 	listed := map[string]bool{}
-	for _, m := range docRow.FindAllStringSubmatch(string(body), -1) {
+	for _, m := range docRow.FindAllStringSubmatch(rest, -1) {
 		require.Falsef(t, listed[m[1]], "%s lists %q twice", metricsDoc, m[1])
 		listed[m[1]] = true
 	}
 	compare(t, metricsDoc, read, listed)
 }
 
-func TestManualRecordingSavesEveryCapturedSeries(t *testing.T) {
+// The cache-tier section lists every optional series with the tier the
+// capture files it under, and besides them only series a capture reads,
+// as "required today". A series both read and optional (one the collector
+// started reading) is listed with its optional tier.
+func TestCapacityPlannerMetricsDocListsEveryOptionalSeries(t *testing.T) {
 	read := capturedSeries(t)
+	optional := map[string]Tier{}
+	for _, s := range OptionalSeriesList {
+		require.Truef(t, seriesName.FindString(s.Name) == s.Name, "optional series %q is not a series name of a known family", s.Name)
+		require.NotContainsf(t, optional, s.Name, "OptionalSeriesList holds %q twice", s.Name)
+		require.Containsf(t, []Tier{TierCachedFleet, TierDiagnostic, TierOutsideEngines}, s.Tier, "%s: tier %q", s.Name, s.Tier)
+		optional[s.Name] = s.Tier
+	}
 
+	_, cache := splitMetricsDoc(t)
+	rows := cacheRow.FindAllStringSubmatch(cache, -1)
+	// An empty scan would pass every comparison below.
+	require.GreaterOrEqual(t, len(rows), len(OptionalSeriesList), "the %q table has %d rows", cacheSection, len(rows))
+	require.Len(t, docRow.FindAllStringSubmatch(cache, -1), len(rows), "a row of the %q table is not name | source | flag | tier |", cacheSection)
+	listed := map[string]bool{}
+	for _, m := range rows {
+		name, tier := m[1], Tier(m[2])
+		require.Falsef(t, listed[name], "the %q table lists %q twice", cacheSection, name)
+		listed[name] = true
+		if want, ok := optional[name]; ok {
+			assert.Equalf(t, want, tier, "the %q table files %s under another tier than OptionalSeriesList", cacheSection, name)
+			continue
+		}
+		_, isRead := read[name]
+		assert.Truef(t, isRead, "the %q table lists %s, which is neither optional nor read by a capture", cacheSection, name)
+		assert.Equalf(t, Tier("required today"), tier, "%s is read by a capture: its tier is required today", name)
+	}
+	for name := range optional {
+		assert.Truef(t, listed[name], "the %q table does not list the optional series %s", cacheSection, name)
+	}
+}
+
+// The guide's manual recording saves every optional series, in
+// CACHE_METRICS: the curl-and-jq path collects what the capture checks.
+func TestManualRecordingSavesEveryOptionalSeries(t *testing.T) {
 	body, err := os.ReadFile(recordingYML)
 	require.NoError(t, err)
+	m := cacheMetricsVar.FindStringSubmatch(manualFetch(t, body))
+	require.NotNilf(t, m, "%s: manual.fetch has no CACHE_METRICS=\"...\" list", recordingYML)
+	saved := map[string]bool{}
+	for _, name := range strings.Fields(m[1]) {
+		require.Falsef(t, saved[name], "CACHE_METRICS in %s lists %q twice", recordingYML, name)
+		saved[name] = true
+	}
+	want := map[string]bool{}
+	for _, s := range OptionalSeriesList {
+		want[s.Name] = true
+	}
+	require.Equal(t, want, saved, "CACHE_METRICS in %s and OptionalSeriesList differ", recordingYML)
+}
+
+// manualFetch is the run script of the guide's manual.fetch step.
+func manualFetch(t *testing.T, body []byte) string {
+	t.Helper()
 	var guide struct {
 		Manual struct {
 			Fetch struct {
@@ -163,7 +251,15 @@ func TestManualRecordingSavesEveryCapturedSeries(t *testing.T) {
 		} `yaml:"manual"`
 	}
 	require.NoError(t, yaml.Unmarshal(body, &guide))
-	m := metricsVar.FindStringSubmatch(guide.Manual.Fetch.Run)
+	return guide.Manual.Fetch.Run
+}
+
+func TestManualRecordingSavesEveryCapturedSeries(t *testing.T) {
+	read := capturedSeries(t)
+
+	body, err := os.ReadFile(recordingYML)
+	require.NoError(t, err)
+	m := metricsVar.FindStringSubmatch(manualFetch(t, body))
 	require.NotNilf(t, m, "%s: manual.fetch has no METRICS=\"...\" list", recordingYML)
 	saved := map[string]bool{}
 	for _, name := range strings.Fields(m[1]) {

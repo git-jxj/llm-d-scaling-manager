@@ -33,7 +33,8 @@ A window of more than 10,000 steps is asked in range queries of at most 10,000
 steps, one part after another (`Options.RangeQueryPoints` in tests). The
 collector asks a cycle's queries together, so different queries run at the
 same time, as many as a controller's cycle asks at once. A capture registers
-about 80 queries with kube-state-metrics (67 without).
+about 80 queries with kube-state-metrics (67 without), and then checks the
+[optional series](#optional-series), one range query each (61 for vLLM).
 
 `whatifsource.MaxStepQueries` (1,000,000) steps times registered queries is
 checked before any query: about 12,500 steps with the 80 queries.
@@ -73,12 +74,48 @@ Each line is a learnrec event (`learnrec.Read` reads the file):
 - `capture.Window`: `learnreplay.CaptureWindow`. It holds the namespace, the
   window, the step, where the roles came from, the flags (caveats), and each
   variant's model, role, accelerator, GPU count and parsed engine
-  parameters (`capacity.EngineParams`).
+  parameters (`capacity.EngineParams`). `Optional` (`learnreplay.CaptureSeries`,
+  omitted while empty) holds what the capture found of each optional series,
+  below. Generate does not read it.
 - `capture.Cycle`: `learnreplay.CaptureCycle`. It holds one model's
   `learnrec.Input` at one step (rows in variant and Pod order, the variants'
   states, the merged policy, the scheduler queue, the arrival rate, the
   router latency and the flow-control pools), and the model's parked
   variants.
+
+## Optional series
+
+`whatifsource.OptionalSeriesList` is the cache-tier, offloading and
+KV-transfer series an operator collects for TTFT on cached fleets (vLLM
+connector and offload counters, NIXL bytes, LMCache, the router's cached
+tokens, SGLang's hit tiers), and the router, P/D sidecar and engine front-end
+series that explain the TTFT spent outside the engines. No query the collector registers reads them, so
+a capture does not replay them. `checkOptional` (`internal/whatifsource/optional.go`)
+asks one range query per series of the capture's engine (and every router
+and LMCache series), over the window at the step, on a `windowAPI` of its
+own with its own sample bound per query. A counter (`_total`, `_sum`,
+`_count`) is asked as `sum by (<By>)` and its increase is summed step to
+step, a fall read as a restart; anything else as `count`. The result is
+`Summary.Optional` and the window line's `Optional`; `capture` prints one
+line per series (`whatifsource.OptionalText`).
+
+Unlike the collector's queries, none is required: an empty answer is
+`absent`, and a failed one is recorded with its error (`unchecked`) while
+the capture goes on. Only a cancelled context stops the checks. Their range
+queries and samples count in the summary's totals, but not toward
+`MaxStepQueries`.
+
+The list, the operator table in
+[metrics.md](../guides/capacity-planner/metrics.md#cache-tiers-offloading-and-kv-transfer)
+(with each series' tier) and the record guide's `CACHE_METRICS` are kept in
+step by `internal/whatifsource/metrics_doc_test.go`.
+`hack/check-record-export.sh` (in `make lint-deploy-scripts`) runs the guide's
+fetch and check steps against a fake Prometheus: absent series pass, a failed
+one fails, `LMCACHE_NAMESPACE` reaches the LMCache server's series, and each
+empty kube-state-metrics series gets its `EMPTY:` hint. With a fake `kubectl`
+over fixtures, it runs the describe step and Path 1's engine-arguments step on
+a DisaggregatedSet (each role picked by its `llm-d.ai/role` label), a
+LeaderWorkerSet and a Deployment, and refuses a role with no label.
 
 ## Generate's order
 
@@ -174,7 +211,9 @@ Each of these is either flagged in the capture or fixed by what it writes:
   failing the capture at once, overlapping `--role-of`, replicas counted
   from engine Pods only, the rollout and multi-Pod flags, the step grid,
   the window-size and sample bounds, and whose fault each error is
-  (`IsInputError`).
+  (`IsInputError`); the optional series present, absent and unchecked,
+  a counter's increase across a restart, and only the captured engine's
+  series checked.
 - `cmd/capacity-planner`: the flags, usage errors (exit 2), a Prometheus error
   (exit 1, and the capture that was at `-o` kept), the step and the
   window, and `generate`; the bearer token kept off a redirect's host and
