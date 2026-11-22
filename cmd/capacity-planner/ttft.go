@@ -517,7 +517,7 @@ func (f *answerFlags) onsetNotes(pf *pricedFleet) {
 // as a clause to append; empty otherwise.
 func burstyNote(p whatif.Prefill) string {
 	if r := p.PromptMaxRatio; r > 0 && r <= whatif.MaxPSPromptSupport && p.ArrivalCV2 > 1 {
-		return fmt.Sprintf(", and the longest prompt's bound clears it only at Ca^2 up to 1, not %s", num(p.ArrivalCV2))
+		return ", and the longest prompt's bound clears it only at Ca^2 up to 1, not " + num(p.ArrivalCV2)
 	}
 	return ""
 }
