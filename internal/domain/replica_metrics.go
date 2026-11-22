@@ -603,6 +603,40 @@ type ReplicaMetrics struct {
 	// of fill the line is fitted from. Each keeps only what the line and its
 	// admission read (EngineReading), so a recording grows by little.
 	GroupEngines []EngineReading `learnrec:"omitzero"`
+
+	// --- Recorded for the cache tiers ---
+	//
+	// Where a prompt's cached tokens came from: PrefixCacheHitRate counts the
+	// GPU prefix cache alone, so a hit from an offload tier or a KV
+	// connector reads there as computed (PrefillComputedTokenRate counts
+	// only what the engine computed). No analyzer reads them. Recorded as
+	// the TTFT model's inputs are, only while a learner recording is on, and
+	// left out of a recording while zero. vLLM only.
+
+	// ExternalPrefixCacheHitTokenRate and ExternalPrefixCacheQueryTokenRate
+	// are the prompt tokens a second the pod's KV connector served and was
+	// asked for, over [1m] (vllm:external_prefix_cache_hits and _queries,
+	// v0.11.1 and later, with a --kv-transfer-config). Each Known bit is set
+	// when its rate was read from a present, finite, non-negative series; a
+	// pod whose ranks did not all report one is not known.
+	ExternalPrefixCacheHitTokenRate        float64 `learnrec:"omitzero"`
+	ExternalPrefixCacheHitTokenRateKnown   bool    `learnrec:"omitzero"`
+	ExternalPrefixCacheQueryTokenRate      float64 `learnrec:"omitzero"`
+	ExternalPrefixCacheQueryTokenRateKnown bool    `learnrec:"omitzero"`
+	// CachedTokenRateBySource is the cached prompt tokens a second the pod
+	// read from each tier, over [1m], sorted by source
+	// (vllm:prompt_tokens_cached_by_source, v0.32.0 and later): device (the
+	// GPU prefix cache), host, disk, p2p, external_unspecified. A pod's ranks
+	// merge by summing each source's rate, and the pod has the split only
+	// when every rank had one. Nil when absent.
+	CachedTokenRateBySource []SourceRate `learnrec:"omitzero"`
+}
+
+// SourceRate is one tier's cached prompt tokens a second
+// (ReplicaMetrics.CachedTokenRateBySource).
+type SourceRate struct {
+	Source string
+	Rate   float64
 }
 
 // EngineReading is one engine of a LeaderWorkerSet group, as the ITL line

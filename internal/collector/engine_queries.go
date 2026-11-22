@@ -86,6 +86,12 @@ var agnosticReplicaQueries = []string{
 	registration.QueryAvgKVTransferTime,
 	registration.QueryTPOTBuckets,
 	registration.QueryComputedTokensBuckets,
+	// vLLM's KV-connector hits and cached tokens by tier, recorded only
+	// (registration/cache_tiers.go); SGLang publishes its own under other
+	// names, not read here.
+	registration.QueryExternalPrefixCacheHitTokenRate,
+	registration.QueryExternalPrefixCacheQueryTokenRate,
+	registration.QueryCachedTokenRateBySource,
 }
 
 // ttftAgnosticQueries are the agnostic queries above that carry model_name
@@ -96,6 +102,9 @@ var ttftAgnosticQueries = []string{
 	registration.QueryAvgKVTransferTime,
 	registration.QueryTPOTBuckets,
 	registration.QueryComputedTokensBuckets,
+	registration.QueryExternalPrefixCacheHitTokenRate,
+	registration.QueryExternalPrefixCacheQueryTokenRate,
+	registration.QueryCachedTokenRateBySource,
 }
 
 // recordOnlyReplicaQueries are the replica queries above issued only while a
@@ -108,6 +117,10 @@ var recordOnlyReplicaQueries = map[string]bool{
 	registration.QueryQueueTimeBuckets:    true,
 	registration.QueryAvgPrefillTime:      true,
 	registration.QueryTPOTBuckets:         true,
+	// The cache tiers: nothing reads them yet.
+	registration.QueryExternalPrefixCacheHitTokenRate:   true,
+	registration.QueryExternalPrefixCacheQueryTokenRate: true,
+	registration.QueryCachedTokenRateBySource:           true,
 }
 
 // ttftReadReplicaQueries are the replica queries above that the TTFT pricing

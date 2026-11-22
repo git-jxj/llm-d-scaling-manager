@@ -72,6 +72,9 @@ it.
 | `vllm:request_generation_tokens_bucket` | histogram buckets | `le` | output-length spread `D`: KV per request | optional |
 | `vllm:prefix_cache_hits_total` | counter | | prefix-cache hit rate: the prompt tokens a request computes (prefill only; a hit does not shrink the KV a decode request holds) | optional |
 | `vllm:prefix_cache_queries_total` | counter | | prefix-cache hit rate | optional |
+| `vllm:external_prefix_cache_hits_total` | counter | | prompt tokens a KV connector served (an offload tier, LMCache, a P/D pull), which the prefix-cache hits above do not count; recorded (vLLM 0.11.1 and later, with a KV connector) | optional |
+| `vllm:external_prefix_cache_queries_total` | counter | | prompt tokens a KV connector was asked for; recorded | optional |
+| `vllm:prompt_tokens_cached_by_source_total` | counter | `source` | cached prompt tokens by the tier that supplied them (`device`, `host`, `disk`, `p2p`, `external_unspecified`); recorded (vLLM 0.32 and later) | optional |
 | `vllm:request_prefill_kv_computed_tokens_sum` | histogram sum | | computed prompt tokens per second: prefill capacity `V_P` | TTFT |
 | `vllm:request_prefill_kv_computed_tokens_bucket` | histogram buckets | `le` | prompt spread `cv` | optional |
 | `vllm:request_inference_time_seconds_sum` | histogram sum | | service time: the fixed prefill latency `a` | TTFT |

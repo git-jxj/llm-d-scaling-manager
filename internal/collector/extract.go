@@ -128,6 +128,14 @@ type podMetricData struct {
 	avgKVTransferTimeKnown bool
 	queueMin               float64
 	queueMinKnown          bool
+	// The cache tiers (cache_tiers.go): the connector's token rates with
+	// their presence bits, and the cached tokens by source, nil when no
+	// source was read.
+	externalHitRate        float64
+	externalHitRateKnown   bool
+	externalQueryRate      float64
+	externalQueryRateKnown bool
+	cachedBySource         map[string]float64
 }
 
 // extractPodMetrics reads every series the replica queries returned into one

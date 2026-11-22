@@ -352,6 +352,17 @@ func mergePodInstances(group []domain.ReplicaMetrics) domain.ReplicaMetrics {
 	pod.QueueMin, pod.QueueMinKnown = mergeKnownSum(group, func(m domain.ReplicaMetrics) (float64, bool) {
 		return m.QueueMin, m.QueueMinKnown
 	})
+	// The cache tiers (cache_tiers.go): rates, summed over the ranks, each
+	// present only when every rank had it.
+	pod.ExternalPrefixCacheHitTokenRate, pod.ExternalPrefixCacheHitTokenRateKnown = mergeKnownSum(group,
+		func(m domain.ReplicaMetrics) (float64, bool) {
+			return m.ExternalPrefixCacheHitTokenRate, m.ExternalPrefixCacheHitTokenRateKnown
+		})
+	pod.ExternalPrefixCacheQueryTokenRate, pod.ExternalPrefixCacheQueryTokenRateKnown = mergeKnownSum(group,
+		func(m domain.ReplicaMetrics) (float64, bool) {
+			return m.ExternalPrefixCacheQueryTokenRate, m.ExternalPrefixCacheQueryTokenRateKnown
+		})
+	pod.CachedTokenRateBySource = mergeSources(group)
 
 	pod.Metadata = mergeMetadata(group)
 	return pod
