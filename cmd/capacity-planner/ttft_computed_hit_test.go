@@ -194,6 +194,12 @@ func TestTTFT_ComputedHitTheLoadShapeMatchesTheMeasured(t *testing.T) {
 		sw := map[string]map[string]bool{learnreplay.PackageSLO: {slo.SwitchTTFTComputedHit: on}}
 		st, err := learnreplay.StateAt(context.Background(), rec, learnreplay.Options{Switches: sw}, learnreplay.StateQuery{})
 		require.NoError(t, err)
+		// The served-work floor (prefill-vp-served-unqueued) raises a
+		// lower-bound knee at the measured prompt only; the knees compared
+		// here are the ones V_P gives.
+		for i := range st.Prefill {
+			st.Prefill[i].ServedComputed, st.Prefill[i].ServedComputedWindow = nil, nil
+		}
 		var dec learnreplay.VariantState
 		for _, v := range st.Variants {
 			if domain.CanonicalRole(v.Role) == domain.RoleDecode {

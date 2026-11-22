@@ -66,7 +66,7 @@ func TestExperimentalTTFT_TurnsOnExactlyItsSwitches(t *testing.T) {
 // and TTFT figure is flagged ExperimentalTTFT and reads OUTSIDE VALIDATED
 // REGION, and the assumed line lists the switches.
 func TestExperimentalTTFT_AtReplicasGolden(t *testing.T) {
-	checkGolden(t, "at-replicas-experimental-ttft", 4,
+	checkGolden(t, "at-replicas-experimental-ttft", 0,
 		slices.Concat([]string{"at-replicas"}, experimentalArgs, []string{"--" + experimentalTTFTFlag}))
 }
 

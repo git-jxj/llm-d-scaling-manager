@@ -133,7 +133,11 @@ func impliedPhi(scored, at1 []BacktestStep) []float64 {
 		}
 		p := s.TTFT[0]
 		p1 := at1[i].TTFT[0].Predicted.Value
-		if p.Statistic != statisticMean || p.Unscored != "" || p.Measured == nil || p.Predicted.Value == nil || p1 == nil {
+		// A TTFT priced from a lower bound of V_P that held is not scored
+		// (UnscoredUpperBound), but it is a price beside a measurement, as
+		// the fit needs: phi is read from it as from any other.
+		unscored := p.Unscored != "" && p.Unscored != UnscoredUpperBound
+		if p.Statistic != statisticMean || unscored || p.Measured == nil || p.Predicted.Value == nil || p1 == nil {
 			continue
 		}
 		d := *p1 - *p.Predicted.Value

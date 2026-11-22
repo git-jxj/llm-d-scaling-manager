@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -207,18 +208,36 @@ func raiseTTFT(t *testing.T, v any, d float64, prefillVariant string) int {
 }
 
 // meanBias is the backtest's mean-TTFT bias over every judged step, the
-// median of predicted over measured.
+// median of predicted over measured. A step priced from a lower bound of V_P
+// that held is counted too (whatifapi.UnscoredUpperBound): the backtest does
+// not score it, as only an upper bound, but leaving it out would keep only
+// the steps that read low.
 func meanBias(t *testing.T, out string) (float64, int) {
 	t.Helper()
 	var bt whatifapi.BacktestResponse
 	require.NoError(t, json.Unmarshal([]byte(out), &bt), out)
-	for _, sc := range bt.Summary.TTFT {
-		if sc.Statistic == statMean && sc.All.Bias != nil {
-			return *sc.All.Bias, sc.All.Steps
+	var ratios []float64
+	for _, s := range bt.Steps {
+		if s.Excluded != "" {
+			continue
+		}
+		for _, p := range s.TTFT {
+			if p.Statistic != statMean || p.Measured == nil || p.Predicted.Value == nil || !(*p.Measured > 0) ||
+				(p.Unscored != "" && p.Unscored != whatifapi.UnscoredUpperBound) {
+				continue
+			}
+			ratios = append(ratios, *p.Predicted.Value / *p.Measured)
 		}
 	}
-	t.Fatalf("no mean TTFT scored: %s", bt.Verdict)
-	return 0, 0
+	if len(ratios) == 0 {
+		t.Fatalf("no mean TTFT priced beside a measurement: %s", bt.Verdict)
+	}
+	slices.Sort(ratios)
+	n := len(ratios)
+	if n%2 == 1 {
+		return ratios[n/2], n
+	}
+	return (ratios[n/2-1] + ratios[n/2]) / 2, n
 }
 
 // End to end on a public recording made to hold cached tokens that cost a
