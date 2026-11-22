@@ -550,6 +550,10 @@ type SaturationAnalyzer struct {
 	// constructor, planner-only. No analyzer reads it: the capacity
 	// planner's replay fits and prices the term.
 	itlBatchTerm bool
+	// prefillALowLoadByRate is SwitchPrefillALowLoadByRate, and
+	// prefillAMedianOverhead SwitchPrefillAMedianOverhead: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillALowLoadByRate, prefillAMedianOverhead bool
 	// itlLineAtFloor is SwitchITLLineAtFloor: off from the constructor,
 	// planner-only; the analyzer accepts it for the planner's replay
 	// (learnreplay.StatesFrom reads it) and reads it nowhere.
@@ -578,10 +582,14 @@ type SaturationAnalyzer struct {
 	// the constructor; a replay turns it off (SetSwitchesForReplay). It
 	// bounds nothing without a TPOT objective.
 	k2AtITLTarget bool
-	// itlBaselineFromFloor is SwitchITLBaselineFromFloor
-	// (itl_baseline_floor.go): off from the constructor; only a replay
-	// turns it on.
+	// itlBaselineFromFloor is SwitchITLBaselineFromFloor (issue
+	// llm-d-incubation/llm-d-scaling-manager#169, itl_baseline_floor.go): on
+	// from the constructor; a replay turns it off (SetSwitchesForReplay).
 	itlBaselineFromFloor bool
+	// itlFloorBaselineHeld is SwitchITLFloorBaselineHeld (issue
+	// llm-d-incubation/llm-d-scaling-manager#333, itl_baseline_floor.go): on
+	// from the constructor; a replay turns it off (SetSwitchesForReplay).
+	itlFloorBaselineHeld bool
 	// itlOneSidedAtCap is SwitchITLOneSidedAtCap (issue ev-shindin/llm-scaling-manager#467,
 	// itl_one_sided.go): on from the constructor; a replay turns it off
 	// (SetSwitchesForReplay).
@@ -872,6 +880,8 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		prefillBusyMinutes:     true,
 		prefillAQuadratic:      true,
 		itlOneSidedAtCap:       true,
+		itlBaselineFromFloor:   true,
+		itlFloorBaselineHeld:   true,
 		itlTierHysteresis:      true,
 		itlClearsOnRevision:    true,
 		floorRaisesVariants:    true,

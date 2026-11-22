@@ -73,6 +73,27 @@ How to read it:
   figure at that mean is comparable. Neither TTFT nor TPOT is scored there.
   A load past the knee shorter than the measurement window is therefore
   never scored; the summary counts such steps.
+- **TTFT not settled**: a step so near the prefill knee that the prefill
+  queue does not settle inside its measurement window. Its relaxation time,
+  2 rho S (Ca^2 + cv^2) / (N (1 - rho)^2) for a pod's service time S, N
+  pods, the share of the knee rho, the arrivals' spread Ca^2 and the prompt
+  spread cv priced, is over a fifth of the window. A queue's wait is
+  correlated over about one relaxation time, so such a window holds fewer
+  than five independent readings of it: its TTFT is a noisy sample of the
+  steady state the planner prices, even where the load held for many steps
+  (and, right after a change of load, the queue may still be on its way
+  there). Its TTFT is not scored ("unsettled"); its TPOT is. The
+  self-check's near-knee rule reads only the steps scored, and says so
+  when steps it would have read did not settle.
+- **A backlog carried over**: where a step ran past the prefill knee, what
+  it could not serve is still queued at the next step (a fluid queue: it
+  grows by the rate less the knee over the step, and drains at the knee
+  less the rate). The next steps' TTFT predictions add the mean wait of that
+  backlog over their measurement window, and their bound the most; each
+  such step shows it (`backlog`, `backlogWait`). A step with no requests
+  drains the backlog at the knee last priced; a step the planner could not
+  price (no knee, or a refusal) clears it, since nothing says what was
+  served there.
 
 Below that are each step and then the scores: the mean, p50, p90 and p95 of
 TTFT and TPOT, then the same split by load. The page draws the same steps over
@@ -145,7 +166,15 @@ prefill + 2 decode`. An `at-replicas` verdict at another rate, fleet or
 shape says `not covered by the self-check`. A verdict that rests on the
 figures an inconsistent self-check names says `not trusted`, and the command
 exits 4 (`verdict.trust` and `exitCode` in the JSON); the verdict is still
-printed.
+printed. `day-plan` judges each bucket's verdict the same way, at the
+bucket's sized rate on the fleet it had, or its stated shape: `not trusted`
+or `not covered by the self-check` beside the hour (`buckets[].trust`, `hours[].trust`, `summary.counts.untrusted` and
+`notCovered` in the JSON), and it exits 4 when a bucket is not trusted.
+
+A recording whose engine rows do not stand for the fleet gets no badge: the
+planner refuses it outright, as an input error. That happens on multi-Pod
+groups where only one rank's engine is scraped. See
+[troubleshooting](troubleshooting.md#a-recording-is-refused-engine-rows-do-not-stand-for-the-fleet).
 
 On **inconsistent**, the answer offers an issue to file: a link to a new
 GitHub issue, prefilled with diagnostics. It holds the planner's version,

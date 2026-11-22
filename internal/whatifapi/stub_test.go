@@ -55,6 +55,8 @@ type stubResolver struct {
 	knees atomic.Int64
 	// gpus, when set, is each role's GPUs per replica the inputs state.
 	gpus *FleetCounts
+	// noPolicyTTFT, when set, is a policy that sets no TTFT target.
+	noPolicyTTFT bool
 }
 
 var pinnedB = whatif.Unanswerable{Reason: whatif.PinnedDefaultB, Detail: "stub: a pinned-b line on the default intercept"}
@@ -89,6 +91,9 @@ func (r *stubResolver) Resolve(_ context.Context, req InputsRequest) (*Resolved,
 	}
 	if req.Model == "decode-only" || r.noPrefillRole {
 		in.Fleet.Prefill = nil
+	}
+	if r.noPolicyTTFT {
+		in.Policy.TTFT = nil
 	}
 	// ctx-16k is a source whose engines' arguments set a 16k context window.
 	// ctx-refused and ctx-zero carry the term with no window: refused, and 0.

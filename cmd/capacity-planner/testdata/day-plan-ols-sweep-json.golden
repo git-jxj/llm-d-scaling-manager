@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "whatifSchema": "schema-v3",
-  "dayPlanId": "sha256:ae0b14862cd2867adbd874dba43ea1e74632b8eb532406f655954b09042f1b52",
+  "dayPlanId": "sha256:2d728561c4026c8a0113e4562aaeb6620ba683af593f320deab65272bfa957df",
   "inputsId": "sha256:615136db4ad0cc3f5fb97b94410f23727f1cb1cfe4d968f3564d287ee654b87b",
   "banner": "TTFT model UNVALIDATED. Not a bound, and which way it errs depends on the prompt spread. At the assumed cv 2 (flags AssumedPromptSpread, SpreadBeyondProcessorSharing) it reads high: over the router at 13 of 14 points, worst 3.15x at p90 and 4.13x at p95. At the spread actually sent it reads low: under at 9 of 14, worst 33% under.",
   "from": "2026-11-01T21:50:00Z",
@@ -10,6 +10,16 @@
   "sizeFor": "p95",
   "sizeForSource": "default",
   "minRequests": 30,
+  "lead": {
+    "prefill": {
+      "seconds": 67.33333333333333,
+      "source": "learned"
+    },
+    "decode": {
+      "seconds": 67.66666666666667,
+      "source": "learned"
+    }
+  },
   "ttft": {
     "statistic": "p95",
     "target": 0.5
@@ -28,7 +38,7 @@
       "role": "prefill",
       "term": "ttft",
       "reason": "TargetBelowFloor",
-      "detail": "target 0.5 s at or below the TTFT floor 0.6788 s",
+      "detail": "target 0.5 s at or below the TTFT floor 0.681 s",
       "hint": "The TTFT target is under the TTFT at zero load: no replica count meets it. Raise the TTFT target above the floor in the detail.",
       "effect": "Prefill is not sized: decode is sized alone, on its TPOT target and its knee times headroom.",
       "buckets": 4
@@ -48,6 +58,10 @@
         "source": "window"
       },
       "status": "tooLittleData",
+      "held": {
+        "prefill": 1,
+        "decode": 1
+      },
       "actual": {
         "prefill": 1,
         "decode": 1
@@ -79,7 +93,7 @@
         "decode": 1
       },
       "limit": {
-        "value": 1.3622779373899458,
+        "value": 1.3621165894891216,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -100,8 +114,12 @@
           "AssumedPoissonArrivals"
         ]
       },
+      "held": {
+        "prefill": 1,
+        "decode": 2
+      },
       "hadLimit": {
-        "value": 1.3622779373899458,
+        "value": 1.3621165894891216,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -166,7 +184,7 @@
         "decode": 2
       },
       "limit": {
-        "value": 2.716313627870333,
+        "value": 2.715850980955678,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -187,8 +205,12 @@
           "AssumedPoissonArrivals"
         ]
       },
+      "held": {
+        "prefill": 1,
+        "decode": 4
+      },
       "hadLimit": {
-        "value": 1.3622779373899458,
+        "value": 1.3621165894891216,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -253,7 +275,7 @@
         "decode": 4
       },
       "limit": {
-        "value": 11.731843882702066,
+        "value": 11.716883768168724,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -275,8 +297,12 @@
           "ExtrapolatedFill"
         ]
       },
+      "held": {
+        "prefill": 4,
+        "decode": 4
+      },
       "hadLimit": {
-        "value": 3.087802507640303,
+        "value": 3.0873295181928446,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -343,7 +369,7 @@
         "decode": 2
       },
       "limit": {
-        "value": 35.39168272366424,
+        "value": 35.27416112709824,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -365,8 +391,12 @@
           "AssumedPoissonArrivals"
         ]
       },
+      "held": {
+        "prefill": 4,
+        "decode": 2
+      },
       "hadLimit": {
-        "value": 13.555893210131739,
+        "value": 13.485721817078078,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -431,7 +461,7 @@
         "decode": 2
       },
       "limit": {
-        "value": 36.15022476314212,
+        "value": 35.96310104831588,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -453,8 +483,13 @@
           "AssumedPoissonArrivals"
         ]
       },
+      "held": {
+        "prefill": 4,
+        "decode": 2,
+        "atLeast": true
+      },
       "hadLimit": {
-        "value": 13.56558476257338,
+        "value": 13.49522646812186,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -536,6 +571,10 @@
           "OutputSpreadUnread"
         ]
       },
+      "held": {
+        "decode": 2,
+        "atLeast": true
+      },
       "hadLimit": {
         "value": 4.9032541764919895,
         "unit": "r/s",
@@ -602,6 +641,10 @@
           "AssumedShape",
           "OutputSpreadUnread"
         ]
+      },
+      "held": {
+        "decode": 2,
+        "atLeast": true
       },
       "hadLimit": {
         "value": 2.64530984585084,
@@ -670,6 +713,11 @@
           "OutputSpreadUnread"
         ]
       },
+      "held": {
+        "prefill": 2,
+        "decode": 2,
+        "atLeast": true
+      },
       "hadLimit": {
         "value": 1.8300911218853688,
         "unit": "r/s",
@@ -721,7 +769,7 @@
         "decode": 2
       },
       "limit": {
-        "value": 17.179636983424583,
+        "value": 17.142151665821235,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -743,8 +791,12 @@
           "AssumedPoissonArrivals"
         ]
       },
+      "held": {
+        "prefill": 5,
+        "decode": 2
+      },
       "hadLimit": {
-        "value": 9.075521922811769,
+        "value": 9.071385525289092,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -810,7 +862,7 @@
         "decode": 1
       },
       "limit": {
-        "value": 16.76289886158615,
+        "value": 16.72989384359654,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -833,8 +885,13 @@
           "AssumedPoissonArrivals"
         ]
       },
+      "held": {
+        "prefill": 5,
+        "decode": 2,
+        "atLeast": true
+      },
       "hadLimit": {
-        "value": 5.801037343836157,
+        "value": 5.746874313832301,
         "unit": "r/s",
         "boundBy": [
           "TTFT p95, end to end"
@@ -919,6 +976,10 @@
           "ExtrapolatedFill"
         ]
       },
+      "held": {
+        "decode": 2,
+        "atLeast": true
+      },
       "hadLimit": {
         "value": 1.8143456555570647,
         "unit": "r/s",
@@ -983,6 +1044,14 @@
         "prefill": 1,
         "decode": 1
       },
+      "busiest": {
+        "prefill": 1,
+        "decode": 1
+      },
+      "held": {
+        "prefill": 1,
+        "decode": 2
+      },
       "actual": {
         "prefill": 1,
         "decode": 1
@@ -999,8 +1068,18 @@
         "max": 29.82
       },
       "needed": {
+        "prefill": 5,
+        "decode": 4,
+        "atLeast": true
+      },
+      "busiest": {
         "prefill": 4,
         "decode": 2
+      },
+      "held": {
+        "prefill": 5,
+        "decode": 4,
+        "atLeast": true
       },
       "actual": {
         "prefill": 1,
@@ -1013,6 +1092,11 @@
   ],
   "summary": {
     "peakNeeded": {
+      "prefill": 5,
+      "decode": 4,
+      "atLeast": true
+    },
+    "busiestNeeded": {
       "prefill": 4,
       "decode": 2
     },
@@ -1029,6 +1113,9 @@
     "hadReplicaHoursAll": {
       "prefill": 1.0833333333333333,
       "decode": 1.0833333333333333
+    },
+    "heldReplicaHours": {
+      "decode": 1.8627777777777774
     },
     "gpusPerReplica": {
       "prefill": 1,
@@ -1055,11 +1142,12 @@
       "prefillNotPriced": 4
     }
   },
-  "searched": 67,
+  "searched": 82,
   "notes": [
-    "Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
+    "Steady state: each bucket is sized as if its rate held. A replica must be Ready when its bucket starts, so it starts one lead time before (prefill 67 s learned, decode 68 s learned): held is each role's most need over the bucket and every bucket that starts within its lead after it ends, and the held replica-hours count each scale-up's replicas from one lead before their bucket. The verdicts judge the need, not the held fleet.",
     "Each bucket is sized for the p95 of its cycles' rates. A p95 needs 20 cycles in the bucket; with fewer the bucket is sized for its mean, which is less conservative (FewCyclesForP95).",
     "Needed is the fewest replicas whose fleet limit, at the SLO and headroom 0.85, reaches the rate: the fewest in all, ties to fewer decode (POST /v1/size's search, whatifapi.SmallestFleet). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: under when its limit falls short, over when one replica fewer of either role would still serve it.",
+    "An hour's need, and the peak, is a fleet that holds every sized bucket in it, priced again at each bucket's rate and shape: the cheapest of the buckets' own fleets that holds them all, in the order a bucket's need is chosen, else each role's most over them. It is not searched for the cheapest: a smaller mix may hold them too. The busiest bucket's own fleet is given beside it (busiest); it need not hold a bucket of a lower rate but longer requests.",
     "A bucket with fewer than 30 requests is not sized (too little data); a bucket no cycle fell in has no data.",
     "Had is the median serving pods of the priced prefill and decode variants over the bucket's cycles; the rate is the model's. A bucket in which another variant also served is flagged OtherVariantsServed. The prefix hit rate is reported, not priced.",
     "Where prefill is not priced, decode is sized on its own limit alone: a lower bound (at least). The fleet's limit, which decode admission can hold down, is not priced."

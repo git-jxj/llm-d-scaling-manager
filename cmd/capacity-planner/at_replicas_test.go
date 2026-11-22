@@ -204,9 +204,12 @@ func TestAtReplicas_OverProvisionedNamesTheRole(t *testing.T) {
 	assert.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Reason)
 	assert.Equal(t, []string{roleDecode}, v.Grow, v.Summary)
 	require.NotNil(t, v.Needed)
+	got := *v.Needed
+	assert.Len(t, got.FSensitivity, len(sensitivityImbalances), "two prefill pods rest on f")
+	got.FSensitivity = nil // TestAtReplicas_TheFleetNeededAtEachF
 	gpus := 4
 	assert.Equal(t, whatifapi.ReportNeeded{Prefill: 2, Decode: 2, MaxReplicas: whatifapi.DefaultSizeBound, Minimizes: whatifapi.MinimizesGPUs,
-		GPUsPerReplica: &whatifapi.FleetCounts{Prefill: 1, Decode: 1}, GPUs: &gpus}, *v.Needed)
+		GPUsPerReplica: &whatifapi.FleetCounts{Prefill: 1, Decode: 1}, GPUs: &gpus}, got)
 	assert.Contains(t, v.Summary, "needs 2 prefill + 2 decode (has 2 + 1)")
 }
 
@@ -482,6 +485,25 @@ func TestAtReplicas_APIIsTheCommand(t *testing.T) {
 	want.Source.Recording = ""
 	assert.Equal(t, want, got)
 	assert.Contains(t, got.Shapes[0].Assumed, "arrivals Ca^2 2 (--arrival-cv2)", "the stated Ca^2 is priced")
+
+	// The load seen, not stated: the API reads the load's shape off the only
+	// decode variant, which it does not name, and prices the shape "load" as
+	// the command does.
+	code, body = apiPost(t, h, "/v1/report", whatifapi.ReportRequest{InputsID: in.InputsID,
+		Fleet: &whatifapi.FleetKnob{Decode: ip(3)}, Shapes: []string{"measured", "load"},
+		SLO:    &whatifapi.SLORequest{TTFT: &whatifapi.Objective{Statistic: "p90", Target: fp(2)}, TPOT: &whatifapi.Objective{Statistic: statMean, Target: fp(0.030)}},
+		Assume: &whatifapi.Assume{VP: fp(200000), A: fp(0.020)}})
+	require.Equal(t, http.StatusOK, code, "%s", body)
+	var seen whatifapi.ReportResponse
+	require.NoError(t, json.Unmarshal(body, &seen))
+	text, exit = runCmd(t, atStair("--decode", "3", "--shape", "measured", "--shape", "load", "-o", "json")...)
+	require.Equal(t, 0, exit, text)
+	var cmd whatifapi.ReportResponse
+	require.NoError(t, json.Unmarshal([]byte(text), &cmd))
+	require.Len(t, seen.Shapes, 2)
+	require.NotNil(t, seen.Shapes[0].LoadShape, "the served report reads the load's shape")
+	assert.Equal(t, cmd.Shapes[0].LoadShape, seen.Shapes[0].LoadShape)
+	assert.Equal(t, cmd.Shapes[1].InputTokens, seen.Shapes[1].InputTokens, "the shape load is the load's cycles'")
 }
 
 // A report asked wrongly is refused before anything is priced.

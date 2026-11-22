@@ -56,10 +56,12 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.Lookup("headroom").Usage = "the operating point as a fraction of the fleet knee, in (0, 1); default the policy's scaleUpThreshold"
 	fs.Lookup("variant").Usage = "the decode variant to judge; required when the model has several (the refusal names them)"
 	var rf reportFlags
-	fs.Var(&rf.shapes, "shape", "a request shape to answer for, repeatable: measured (the default), or IL/OL[/hit] in tokens, k for 1024 (8k/200, 1k/4k/0.3)")
+	fs.Var(&rf.shapes, "shape", "a request shape to answer for, repeatable: measured (the default), load (the shape of the cycles the load judged at was read from), "+
+		"or IL/OL[/hit] in tokens, k for 1024 (8k/200, 1k/4k/0.3)")
 	fs.Var(&rf.loads, "load", "a rate the tables price, repeatable: 5r/s, 80% of the shape's fleet knee, seen, or seen x1.5 (a growth what-if with its own verdict); default 50%, 80%, 100% and seen")
 	fs.StringVar(&rf.loadStatistic, "load-statistic", whatifapi.DefaultLoadStatistic,
-		"the statistic of the window's per-cycle arrival rate to judge at: mean, p95 or peak")
+		"the statistic of the window's per-cycle arrival rate to judge at: mean, p95, peak, or p95-modulation (the p95 less the one-minute rate's counting noise, "+
+			"which the queueing model already prices)")
 	fs.Float64Var(&rf.loadSeen, "load-seen", 0, "the load to judge at, requests per second, in place of the window's")
 	fs.Float64Var(&rf.seenX, "load-seen-x", 0, "an alias for --load 'seen xN': a column and a verdict at the load seen times N "+
 		"(1.5 asks what 50% more traffic does), beside the verdict at the load seen, which it never changes")
@@ -358,7 +360,7 @@ func loadText(l whatifapi.ReportLoad) string {
 	case sourceObserved:
 		// A refused load (WindowGapAtPeak) read no statistic to name.
 		if l.Seen != nil {
-			s += fmt.Sprintf(", the %s of the %d of %d cycles with traffic", l.Statistic, l.CyclesWithTraffic, l.Cycles)
+			s += fmt.Sprintf(", the %s of the %d of %d cycles with traffic", statWords(l.Statistic), l.CyclesWithTraffic, l.Cycles)
 		}
 	case sourceAsked:
 		s += " (--load-seen)"
@@ -369,6 +371,9 @@ func loadText(l whatifapi.ReportLoad) string {
 			p95 += " (= peak: fewer than 20 cycles)"
 		}
 		s += fmt.Sprintf("\n%-16sper cycle (1-minute rates): mean %.2f, p95 %s, peak %.2f r/s", "load seen", *l.Mean, p95, *l.Peak)
+		if l.P95Modulation != nil {
+			s += fmt.Sprintf("; p95 less counting noise %.2f", *l.P95Modulation)
+		}
 		if l.Rolling != nil {
 			s += fmt.Sprintf("; busiest %s (%d cycles): %.2f r/s", time.Duration(l.Rolling.WindowSeconds*float64(time.Second)).Round(time.Second),
 				l.Rolling.Cycles, l.Rolling.Peak)
@@ -452,6 +457,7 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 	if s.Extrapolated {
 		fmt.Fprintf(b, "  EXTRAPOLATED: %s\n", s.ExtrapolatedWhy)
 	}
+	b.WriteString(loadShapeText(s))
 	b.WriteString("utilization at the load judged\n")
 	d := s.Utilization.Decode
 	fmt.Fprintf(b, "  %-14sKV fill %s (band top %s), slots %s of %d, wait p %s\n", "decode",

@@ -59,6 +59,7 @@
     "mean": 31.59170423955871,
     "p95": 41.7,
     "peak": 43.24,
+    "p95Modulation": 41.658088992699376,
     "rolling": {
       "windowSeconds": 120.20136059205555,
       "cycles": 8,
@@ -90,6 +91,16 @@
       "outputTokens": 199.97577579895813,
       "prefixHitRate": 0,
       "source": "measured, cycles 269-288",
+      "loadShape": {
+        "statistic": "p95",
+        "inputTokens": 8001.465219986615,
+        "outputTokens": 199.98767816409364,
+        "prefixHitRate": 0,
+        "cycles": 15,
+        "fromCycle": 247,
+        "toCycle": 283,
+        "mismatch": false
+      },
       "extrapolated": false,
       "utilization": {
         "decode": {
@@ -565,7 +576,7 @@
       ],
       "verdict": {
         "verdict": "UNDER-PROVISIONED",
-        "summary": "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2) (prefill f 1.5 assumed at 3 pods).",
+        "summary": "UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2); the same at f 1 to 1.5 (prefill f 1 assumed at 3 pods).",
         "scope": "fleet",
         "reason": "2 prefill + 2 decode: 41.70 r/s is 1.1x the fleet knee of 36.98 r/s; TTFT p90 saturated misses 2000.0 ms; TPOT mean saturated misses 30.0 ms. Add decode: decode sets the knee",
         "needed": {
@@ -577,7 +588,19 @@
             "prefill": 1,
             "decode": 1
           },
-          "gpus": 6
+          "gpus": 6,
+          "fSensitivity": [
+            {
+              "f": 1,
+              "prefill": 3,
+              "decode": 3
+            },
+            {
+              "f": 1.5,
+              "prefill": 3,
+              "decode": 3
+            }
+          ]
         },
         "roles": [],
         "shrink": [],

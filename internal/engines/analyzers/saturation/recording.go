@@ -130,12 +130,14 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
 // SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
 // SwitchPrefillFBusyMinutes, SwitchPrefillVPFloorServed,
+// SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
 // SwitchITLAdaptiveBandFloor,
 // SwitchITLHoldSteadySlope, SwitchITLLineAtFloor, SwitchMoEBusiestRank,
 // SwitchITLBatchTerm,
 // SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
 // SwitchK2BatchAtITLTarget,
-// SwitchITLBaselineFromFloor, SwitchITLOneSidedAtCap,
+// SwitchITLBaselineFromFloor, SwitchITLFloorBaselineHeld,
+// SwitchITLOneSidedAtCap,
 // SwitchPrefillBoundHeldConfidence, SwitchThroughputFloorRaisesVariants,
 // SwitchQueuePricedAsDrain, SwitchFloorTrustReadsCompletions,
 // SwitchPrefillKeepsRouterPrompts, SwitchPrefillBusyShareBound,
@@ -271,6 +273,12 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// pod was seen to compute (prefill.Cycle.VPFloorServed). Off from
 		// the constructor.
 		SwitchPrefillVPFloorServed: &a.prefillVPFloorServed,
+		// The planner's a: low load read by rate against the prompt
+		// cluster's service time, and the median overhead
+		// (prefill.Cycle.ALowLoadByRate, AMedianOverhead). Off from the
+		// constructor.
+		SwitchPrefillALowLoadByRate:  &a.prefillALowLoadByRate,
+		SwitchPrefillAMedianOverhead: &a.prefillAMedianOverhead,
 		// The planner's ITL band floor on a low-fill fleet
 		// (itl_band_floor.go). Off from the constructor.
 		SwitchITLAdaptiveBandFloor: &a.itlAdaptiveFloor,
@@ -302,8 +310,12 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// objective (k2_itl_bound.go). On from the constructor.
 		SwitchK2BatchAtITLTarget: &a.k2AtITLTarget,
 		// The ITL line's B pinned at the floor read below the band while
-		// unlearned (itl_baseline_floor.go). Off from the constructor.
+		// unlearned (itl_baseline_floor.go). On from the constructor.
 		SwitchITLBaselineFromFloor: &a.itlBaselineFromFloor,
+		// Issue llm-d-incubation/llm-d-scaling-manager#333: the B a key
+		// last read from its floor held on the cycles that read none
+		// (itl_baseline_floor.go). On from the constructor.
+		SwitchITLFloorBaselineHeld: &a.itlFloorBaselineHeld,
 		// Issue ev-shindin/llm-scaling-manager#467: the ITL line priced one-sided at the sequence cap
 		// while B is unlearned (itl_one_sided.go).
 		SwitchITLOneSidedAtCap: &a.itlOneSidedAtCap,

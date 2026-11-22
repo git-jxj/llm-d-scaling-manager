@@ -177,6 +177,18 @@ func nearKneeOf(pts []scPoint) *SelfCheckNearKnee {
 	return &SelfCheckNearKnee{Steps: len(near), Worst: near[max(int(math.Ceil(0.9*float64(len(near))))-1, 0)].ratio}
 }
 
+// nearKneeUnsettled is how many judged steps at 0.8 to 1.0 of the knee had
+// their TTFT left unscored because the queue does not settle in the window.
+func nearKneeUnsettled(steps []BacktestStep) int {
+	n := 0
+	for _, st := range steps {
+		if st.Excluded == "" && st.Unsettled && st.Load == LoadNearKnee {
+			n++
+		}
+	}
+	return n
+}
+
 // cmpFloat orders a before b.
 func cmpFloat(a, b float64) int {
 	switch {

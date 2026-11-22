@@ -106,6 +106,14 @@ type State struct {
 	// per ArrivalRates entry: where the recording has holes
 	// (whatifapi.WindowGapsOf).
 	CycleTimes []time.Time
+	// RoleStartSeconds is, for each role with a measured variant, how long a
+	// new replica of its slowest measured variant took to become Ready, as
+	// the saturation analyzer reported it at the cycle
+	// (domain.AnalyzerResult.RoleStartSeconds); nil where it reported none.
+	// RoleStartSeeded names each role whose start is a ScaledObject's
+	// replicaStartSeconds seed, no replica of it measured.
+	RoleStartSeconds map[string]float64
+	RoleStartSeeded  map[string]bool
 }
 
 // VariantState is one variant's learned state at the cycle: everything the
@@ -185,6 +193,10 @@ type VariantState struct {
 	// with traffic up to the one asked: what the recording saw, and what a
 	// stated shape is extrapolated past.
 	ShapeRange ShapeRange
+	// ShapeSeries is the variant's shape at every cycle with traffic up to
+	// the one asked, oldest first: what a load read at some cycles is priced
+	// at the shape of (the planner's load shape).
+	ShapeSeries []CycleShape
 	// ReadingsFrom and ReadingsTo are the first and the last cycle of the
 	// LineReadings, 0 with none.
 	ReadingsFrom, ReadingsTo int
@@ -270,6 +282,12 @@ type shapeSample struct {
 //     counted by its capacity part only, so deferred waits are not a queue.
 //   - saturation.SwitchPrefillFBusyMinutes: f, the prefill imbalance, the
 //     median of the busiest minutes, not of every minute.
+//   - saturation.SwitchPrefillALowLoadByRate: a's low-load minutes read by
+//     their rate against their prompt cluster's service time, not their own.
+//   - saturation.SwitchPrefillAMedianOverhead: a's overhead the median of
+//     the low-load minutes', not the least. Both raise a; on the staircase
+//     backtests and the Qwen3-32B validation table no figure moves under
+//     what was measured (issue llm-d-incubation/llm-d-scaling-manager#306).
 //   - saturation.SwitchITLAdaptiveBandFloor: the ITL band's floor lowered to
 //     the fill a low-fill fleet has.
 //   - saturation.SwitchPrefillVPFloorServed: a lower-bound V_P raised to the
@@ -314,15 +332,30 @@ type shapeSample struct {
 // refuse; it takes the warm-up and the 1k-prompt A-off phase together (n_roof
 // 120 per rank, 0.034 ms per sequence) to read it, so a recording of one
 // shape cannot. A replay turns it on by name.
+//
+// One controller switch, on from its constructor, is turned off here:
+//
+//   - saturation.SwitchITLFloorBaselineHeld: a decode line with no full fit
+//     keeps the B it last read from its floor below the band after the
+//     floor's readings are 30 minutes old (issue
+//     llm-d-incubation/llm-d-scaling-manager#333). On from the controller's
+//     constructor, for a fleet held in the band. The planner reads B from the
+//     floor of the last 30 minutes only, as before, and refuses a line with
+//     none (PinnedDefaultB): held, it priced decode on hours of the
+//     staircase and three-pods recordings it refused, and no check yet says
+//     those figures do not read under what was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
 		saturation.SwitchPrefillALowLoadPerRank: true,
 		saturation.SwitchPrefillAEngineTiming:   true,
 		saturation.SwitchPrefillQueueByCapacity: true,
 		saturation.SwitchPrefillFBusyMinutes:    true,
+		saturation.SwitchPrefillALowLoadByRate:  true,
+		saturation.SwitchPrefillAMedianOverhead: true,
 		saturation.SwitchITLAdaptiveBandFloor:   true,
 		saturation.SwitchPrefillVPFloorServed:   true,
 		saturation.SwitchPlannerCapAtStepBudget: true,
+		saturation.SwitchITLFloorBaselineHeld:   false,
 	}, PackageSLO: {
 		slo.SwitchTTFTHopUnqueued: true,
 	}}
@@ -427,6 +460,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		arrivals []float64
 		times    []time.Time
 		ranges   = map[string]ShapeRange{}
+		series   = map[string][]CycleShape{}
 	)
 	// Read once: the switches are set before the replay starts.
 	lineAtFloor := opts.Switches[PackageSaturation][saturation.SwitchITLLineAtFloor]
@@ -471,6 +505,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		}
 		noteShapes(shapes, in.ReplicaMetrics, n)
 		noteRanges(ranges, shapes, n)
+		noteSeries(series, shapes, n)
 		noteResident(resident, in, n)
 		ttft.note(in, n, ev.Now)
 		args := func(variant string) string {
@@ -492,12 +527,18 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			for i := range s.Variants {
 				v := &s.Variants[i]
 				v.ShapeRange = ranges[v.Variant]
+				v.ShapeSeries = slices.Clone(series[v.Variant])
 				if domain.CanonicalRole(v.Role) != domain.RolePrefill {
 					v.Resident = residentOf(resident[v.Variant], v.Shape)
 				}
 			}
 			r.fillTTFT(s, in, ttft)
 			batch.fit(s)
+			// The replay applied the cycle's Analyze before asking: its
+			// result is the cycle's.
+			if res, ok := r.Result(domain.SaturationAnalyzerName, in.Namespace, in.ModelID); ok {
+				s.RoleStartSeconds, s.RoleStartSeeded = maps.Clone(res.RoleStartSeconds), maps.Clone(res.RoleStartSeeded)
+			}
 			if n == cycle {
 				st = s
 				return true
@@ -895,6 +936,28 @@ func (vs *VariantState) refit() {
 	}
 	if got := itl.RefitAboveBand(vs.Readings.Above, vs.Readings.AboveSteady, vs.MinSettled); got.Tier != "" && sameLine(got.Model, vs.Line) {
 		vs.Tier, vs.LineReadings, vs.Refitted = whatif.TierAboveBand, got.Read, true
+	}
+}
+
+// CycleShape is one cycle's shape of a variant: its mean lengths and prefix
+// hit rate, and its rows' summed request rate, 0 where none read one. Cycle
+// counts from 1, as State.Cycle does: State.ArrivalRates[Cycle-1] is the
+// model's arrival rate at it.
+type CycleShape struct {
+	Cycle                                    int
+	InputTokens, OutputTokens, PrefixHitRate float64
+	RequestRate                              float64
+}
+
+// noteSeries adds each variant's sample of cycle n, if it has one, to its
+// series.
+func noteSeries(series map[string][]CycleShape, shapes map[string][]shapeSample, n int) {
+	for v, s := range shapes {
+		if len(s) == 0 || s[len(s)-1].cycle != n {
+			continue
+		}
+		x := s[len(s)-1]
+		series[v] = append(series[v], CycleShape{Cycle: n, InputTokens: x.il, OutputTokens: x.ol, PrefixHitRate: x.hit, RequestRate: x.req})
 	}
 }
 
