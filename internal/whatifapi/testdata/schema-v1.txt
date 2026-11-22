@@ -16,6 +16,7 @@ Figure.sensitivity.lo number
 Figure.sensitivity.loRefused string
 Figure.uncapped number
 Figure.unit string
+Figure.upperBound boolean
 Figure.validation object
 Figure.validation.errorHi number
 Figure.validation.errorLo number
@@ -474,6 +475,7 @@ inputs.selfCheck.tpot.refused.* number
 inputs.selfCheck.tpot.servedPastKnee number
 inputs.selfCheck.tpot.statistic string
 inputs.selfCheck.tpot.steps number
+inputs.selfCheck.tpot.upperBound number
 inputs.selfCheck.tpot.within number
 inputs.selfCheck.tpot.withinBound number
 inputs.selfCheck.trust string
@@ -498,6 +500,7 @@ inputs.selfCheck.ttft.refused.* number
 inputs.selfCheck.ttft.servedPastKnee number
 inputs.selfCheck.ttft.statistic string
 inputs.selfCheck.ttft.steps number
+inputs.selfCheck.ttft.upperBound number
 inputs.selfCheck.ttft.within number
 inputs.selfCheck.ttft.withinBound number
 inputs.selfCheck.untrusted array
@@ -892,6 +895,7 @@ report.selfCheck.tpot.refused.* number
 report.selfCheck.tpot.servedPastKnee number
 report.selfCheck.tpot.statistic string
 report.selfCheck.tpot.steps number
+report.selfCheck.tpot.upperBound number
 report.selfCheck.tpot.within number
 report.selfCheck.tpot.withinBound number
 report.selfCheck.trust string
@@ -916,6 +920,7 @@ report.selfCheck.ttft.refused.* number
 report.selfCheck.ttft.servedPastKnee number
 report.selfCheck.ttft.statistic string
 report.selfCheck.ttft.steps number
+report.selfCheck.ttft.upperBound number
 report.selfCheck.ttft.within number
 report.selfCheck.ttft.withinBound number
 report.selfCheck.untrusted array

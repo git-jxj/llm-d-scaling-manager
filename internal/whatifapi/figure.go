@@ -46,11 +46,29 @@ func figureOf(r whatif.Result, unit string, worseIsHigh bool) Figure {
 		if v.Floor > 0 {
 			f.Floor = ptr(v.Floor)
 		}
+		f.UpperBound = TTFTUpperBound(v.Flags)
 		return f
 	case whatif.Unanswerable:
 		return Figure{Refused: refusalOf(v)}
 	}
 	return Figure{}
+}
+
+// TTFTUpperBound says a TTFT carrying flags is an upper bound: priced from a
+// V_P that is only a lower bound (whatif.VPLowerBound), not a stated one
+// (whatif.AssumedVP). A pod's prompt time and its queue's wait both fall as
+// V_P rises, at every rate under the knee, so the true TTFT is at most the
+// one priced (#369).
+func TTFTUpperBound(flags []whatif.Flag) bool {
+	return slices.Contains(flags, whatif.VPLowerBound) && !slices.Contains(flags, whatif.AssumedVP)
+}
+
+// upperBoundFigure says f is a latency priced as an upper bound
+// (TTFTUpperBound), read from its flags, so that a saved prediction that
+// predates Figure.UpperBound reads the same.
+func upperBoundFigure(f Figure) bool {
+	return f.Value != nil && f.Unit == unitSeconds && slices.Contains(f.Flags, string(whatif.VPLowerBound)) &&
+		!slices.Contains(f.Flags, string(whatif.AssumedVP))
 }
 
 // refusalOf is a refusal on the wire.

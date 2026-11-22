@@ -150,6 +150,15 @@ const (
 	// measured figure reads the bucket's grid, not the traffic, and the
 	// bucket cannot say which side of the prediction the truth is.
 	UnscoredUnresolvable = "unresolvable"
+	// UnscoredUpperBound is a TTFT priced from a V_P that is only a lower
+	// bound (Figure.UpperBound): the true TTFT is at most the one priced, so
+	// a prediction above what was measured is the bound holding, not a miss
+	// the planner made, and its ratio says nothing of the model's accuracy.
+	// It is counted here, not scored, where the fleet measured at most
+	// BacktestTolerance above it. Where it measured more, the bound broke:
+	// the pair is scored as any other, read low, so a figure under what was
+	// measured is never hidden (#369).
+	UnscoredUpperBound = "upperBound"
 )
 
 // MeasuredBucketWidth is the widest bucket, as a share of its own lower
@@ -1875,6 +1884,11 @@ func scoredPoint(p BacktestPoint, meas *float64, requests, top float64, why stri
 	default:
 		p.Unscored = UnscoredNotMeasured
 	}
+	if p.Ratio != nil && upperBoundFigure(pred) && boundHeld(p) {
+		// An upper bound the fleet measured under is consistent with it,
+		// and no reading of the model's accuracy (UnscoredUpperBound).
+		p.Ratio, p.OutsideBucket, p.Unscored = nil, "", UnscoredUpperBound
+	}
 	return p
 }
 
@@ -1883,6 +1897,14 @@ func scoredPoint(p BacktestPoint, meas *float64, requests, top float64, why stri
 // bucketEps, as the bounds are written in decimal.
 func inBucket(v float64, b Band) bool {
 	return v > b.Lo*(1+bucketEps) && v <= b.Hi*(1+bucketEps)
+}
+
+// boundHeld says a scored pair's measured figure was at most
+// BacktestTolerance above its prediction: neither above the histogram's top
+// bucket nor in a coarse bucket wholly above it, nor read more than
+// BacktestTolerance low.
+func boundHeld(p BacktestPoint) bool {
+	return !p.AboveHistogram && p.OutsideBucket != OutsideUnder && *p.Ratio >= 1-BacktestTolerance
 }
 
 // judgeTarget is the step against the TTFT target, predicted (from its
@@ -1898,9 +1920,13 @@ func judgeTarget(target *ReportTarget, points []BacktestPoint, m measured) *Back
 		return j
 	}
 	if v := points[i].Predicted.Value; v != nil {
-		j.Predicted = judgedMissed
-		if *v <= target.Seconds {
+		switch {
+		case *v <= target.Seconds:
 			j.Predicted = judgedMet
+		case upperBoundFigure(points[i].Predicted):
+			// At most a figure over the target: the miss is not known (#369).
+		default:
+			j.Predicted = judgedMissed
 		}
 	}
 	v := m.ttft[i]
@@ -2267,6 +2293,13 @@ func backtestHint(reason string, only bool) string {
 // bucket could place.
 func verdictPart(name string, scores []BacktestScore, unit string) (line string, quoted *BacktestScore) {
 	quoted = primaryScore(scores)
+	if quoted == nil && upperBoundSteps(scores) > 0 {
+		w := fmt.Sprintf("The planner's %s was not scored in any step.%s", name, upperBoundWords(name, scores, ""))
+		if other := refusedSteps(scores); other > 0 {
+			w += fmt.Sprintf(" %d more were refused (see the steps).", other)
+		}
+		return w, nil
+	}
 	if quoted == nil {
 		var why []string
 		hint := ""
@@ -2345,10 +2378,54 @@ func verdictPart(name string, scores []BacktestScore, unit string) (line string,
 		w += fmt.Sprintf(" %d held the start or the end of a load near a prefill knee priced from a lower bound of V_P: "+
 			"its TTFT, which a queue building there may set, is not scored.", n)
 	}
+	w += upperBoundWords(name, []BacktestScore{*sc}, " more")
 	if sc.Statistic != statP90 {
 		w += percentileWords(name, scores)
 	}
 	return w, quoted
+}
+
+// upperBoundSteps is the steps of the first of primaryStats whose figure
+// was an upper bound the fleet measured under (UnscoredUpperBound), 0 with
+// none.
+func upperBoundSteps(scores []BacktestScore) int {
+	for _, stat := range primaryStats {
+		if i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == stat }); i >= 0 {
+			if n := scores[i].Unscored[UnscoredUpperBound]; n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// refusedSteps is the refused steps of the first of primaryStats that has
+// any, 0 with none.
+func refusedSteps(scores []BacktestScore) int {
+	for _, stat := range primaryStats {
+		if i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == stat }); i >= 0 {
+			n := 0
+			for _, c := range scores[i].Refused {
+				n += c
+			}
+			if n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// upperBoundWords is what a verdict says of the steps whose figure was an
+// upper bound the fleet measured under (UnscoredUpperBound), "" with none;
+// more is " more" beside steps already counted.
+func upperBoundWords(name string, scores []BacktestScore, more string) string {
+	n := upperBoundSteps(scores)
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" In %d%s steps its %s was priced from a lower bound of V_P, so the true %s is at most the figure (an upper bound), "+
+		"and the fleet measured at or under it: consistent, and not scored for accuracy (upperBound).", n, more, name, name)
 }
 
 // percentileWords is the p90 beside the figure a verdict quotes: within 20%

@@ -230,6 +230,12 @@ type Figure struct {
 	// plan reads (the points A and B, the knees and the limits), not on a
 	// curve's points.
 	Validation *Validation `json:"validation,omitempty"`
+	// UpperBound says the figure, a latency, is priced from a prefill speed
+	// (V_P) known only as a lower bound (flag VPLowerBound): a faster prefill
+	// only lowers it, so the true figure is at most Value. A target it meets
+	// is met; one it misses is not known to be missed (issue
+	// llm-d-incubation/llm-d-scaling-manager#369).
+	UpperBound bool `json:"upperBound,omitempty"`
 }
 
 // Band is a bootstrap band, Lo to Hi.
