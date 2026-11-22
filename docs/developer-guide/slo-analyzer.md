@@ -98,6 +98,30 @@ or the whole prompt by more than `MaxVPShapeRatio` with a hit rate above 0.1
 on either side. A state that recorded no whole prompt raises nothing new. No
 committed recording has a prefix hit, so no golden moves.
 
+`ComputedHit` (`slo-ttft-computed-hit`, planner-only, off from the
+constructor) nets a whole prompt the planner prices for the prefill pods
+(`--assume-input-tokens`, `--shape load`, a stated shape with no hit, a
+backtest or day-plan step) by the prefill pods' computed-token hit,
+`1 − computed tokens / whole prompt tokens`
+(`whatif.PromptWindow.ComputedHit`). It reads `PrefillComputedTokenRate`
+and the one-minute prompt `AvgInputTokensRecent` from the same rows and
+minute. `vllm:prefix_cache_hits` counts only the GPU prefix cache, so a hit
+from an offload tier or a KV connector reads there as computed. The planner
+then priced more prefill work per request than the engines' own counter
+showed, and V_P is read from that counter. Details:
+
+- The planner reads the switch through `learnreplay.PrefillState.ComputedHit`
+  (`pricedFleet.netByComputedHit`).
+- A hit the question states (`--prefix-hit`, an `IL/OL/hit` shape) still
+  governs. One the load's cycles filled in (`whatifapi.Knobs.PrefixHitRead`)
+  does not.
+- It applies only where the computed-token hit or the hit it replaces is
+  above `MaterialPrefixHitMove`. No committed recording has a hit, so it
+  moves no golden.
+- The hit rate printed beside the prompt stays the prefix-cache one, which is
+  what V_P's is compared with.
+- The measured shape is unchanged: its prompt is already the computed one.
+
 One more switch sets an input, not a `TTFTFleet` field:
 `slo-ttft-imbalance-across-counts` (off, `whatif.DefaultImbalanceAcrossCounts`;
 the capacity planner's `--imbalance-across-counts` is on by default,

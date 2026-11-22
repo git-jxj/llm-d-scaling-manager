@@ -526,6 +526,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	residence := opts.Switches[PackageSaturation][saturation.SwitchDecodeResidencePull]
 	burst := opts.Switches[PackageSaturation][saturation.SwitchDecodeBurstFill]
 	ttft.prefixAttention = opts.Switches[PackageSLO][slo.SwitchTTFTPrefixAttention]
+	ttft.computedHit = opts.Switches[PackageSLO][slo.SwitchTTFTComputedHit]
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false

@@ -179,6 +179,21 @@ const SwitchTTFTPromptSupport = "slo-ttft-prompt-support"
 // prefix hit, so on or off it moves no golden.
 const SwitchTTFTPrefixAttention = "slo-ttft-prefix-attention"
 
+// SwitchTTFTComputedHit is the replay switch for the hit a whole prompt is
+// netted by in the capacity planner. On: a whole prompt priced for the
+// prefill pods (--assume-input-tokens, --shape load, a stated shape with no
+// hit, a backtest or day-plan step) is netted by the prefill variant's
+// computed-token hit, 1 - computed tokens / whole prompt tokens over the
+// prefill rows' one-minute rates (whatif.PromptWindow.ComputedHit), where it
+// or the hit it replaces is above whatif.MaterialPrefixHitMove.
+// vllm:prefix_cache_hits counts the GPU prefix cache alone, so a hit from an
+// offload tier or a KV connector reads as computed there, and the prefill
+// work as more than the engines' own computed-token counter shows; V_P is
+// read from that counter. A hit stated by the question still governs. Off,
+// as before. Planner-only: off from the constructor; the analyzer prices no
+// stated prompt.
+const SwitchTTFTComputedHit = "slo-ttft-computed-hit"
+
 // SwitchTTFTMeasuredTransfer is the replay switch for the KV transfer term:
 // on, the pricing reads AvgKVTransferTime from the decode rows that carry one
 // (transferPerToken). Off, it reads none and raises whatif.TransferOmitted, as

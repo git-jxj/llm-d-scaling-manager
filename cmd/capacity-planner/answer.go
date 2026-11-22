@@ -78,6 +78,9 @@ type answerFlags struct {
 	// prefixHit is a stated prefix-cache hit rate, nil the measured one (a
 	// report shape, at-replicas --shape).
 	prefixHit *float64
+	// prefixHitRead says prefixHit was read from the source (the load
+	// cycles, --shape load), not stated (whatifapi.Knobs.PrefixHitRead).
+	prefixHitRead bool
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
 	// assumeTransferBase is --assume-transfer-base, a TTFT flag (ttft.go,
@@ -451,6 +454,9 @@ type pricedVariant struct {
 	assumedIL, assumedOL bool
 	// assumedHit says the prefix-hit rate was stated.
 	assumedHit bool
+	// hitRead says that hit was read from the source, not stated
+	// (answerFlags.prefixHitRead).
+	hitRead bool
 	// kvSource says where the decode KV per request came from (residentKV).
 	kvSource string
 	// bandFloor is the ITL band floor the replay adapted to the fleet's fill
@@ -605,7 +611,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		// length is asked: as the prompt's cv (prefillShape).
 		hit := vs.Shape.PrefixHitRate
 		if f.prefixHit != nil {
-			hit, pv.assumedHit = *f.prefixHit, true
+			hit, pv.assumedHit, pv.hitRead = *f.prefixHit, true, f.prefixHitRead
 		}
 		pv.shape = shape.New(il, ol, hit).WithOutputDispersion(vs.Shape.OutputDispersion)
 		replicas := vs.Replicas

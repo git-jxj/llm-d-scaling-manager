@@ -266,6 +266,11 @@ type pricedFleet struct {
 	// variant's measured shape: its hit rate is what the prefill pods skip.
 	prefixAttention bool
 	prefillServed   learnreplay.MeasuredShape
+	// computedHit is slo.SwitchTTFTComputedHit, as the replay read it
+	// (PrefillState.ComputedHit), and promptWindow the prefill variant's
+	// window its hit is read from (whatif.PromptWindow.ComputedHit).
+	computedHit  bool
+	promptWindow *whatif.PromptWindow
 	// flags are the fleet's own, beside P3's.
 	flags []whatif.Flag
 	// inputsText is where the fleet's inputs came from, for the human
@@ -424,6 +429,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	}
 	pf.variant = ps.Variant
 	pf.prefixAttention = ps.PrefixAttention
+	pf.computedHit, pf.promptWindow = ps.ComputedHit, ps.PromptWindow
 	for _, vs := range st.Variants {
 		if vs.Variant == ps.Variant {
 			pf.prefillTP, pf.prefillServed = vs.TensorParallel, vs.Shape
@@ -741,6 +747,9 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 		p.WholePromptTokens = f.inputTokens
 		pf.in.PromptSource = shapeAssumed
 		pf.assume("prompt %s tokens "+assumeInputTokensWords, num(round(p.PromptTokens)))
+		if hit, replaced, ok := pf.netByComputedHit(); ok {
+			pf.assume("prompt netted by the prefill pods' computed-token hit %.3f, not the prefix-cache hit %.3f", hit, replaced)
+		}
 	case ps.PromptTokens > 0:
 		p.PromptTokens, pf.in.PromptSource = ps.PromptTokens, shapeMeasured
 		pf.in.PromptFromCycle, pf.in.PromptToCycle = ps.PromptFromCycle, ps.PromptToCycle
@@ -850,7 +859,52 @@ func (pf *pricedFleet) transferPerToken(read, base float64) float64 {
 // governs the prefill pods too; else the prefill variant's where its shape
 // was read (prefillHit): the prefill pods compute the prompt less their own
 // hits, not decode's; else the decode variant's, as off.
+//
+// With slo.SwitchTTFTComputedHit on, where netByComputedHit holds, it is il
+// less the prefill pods' computed-token hit instead, which counts the hits
+// of every tier; the hit rate beside it stays a prefix-cache one, the
+// prefill variant's where read, so it compares with V_P's (prefixMoved).
 func (pf *pricedFleet) effectivePrompt(il float64) (float64, float64) {
+	prompt, hit := pf.prefixCachePrompt(il)
+	if computed, _, ok := pf.netByComputedHit(); ok {
+		if h, read := pf.prefillHit(); read {
+			hit = h
+		}
+		return il * (1 - computed), hit
+	}
+	return prompt, hit
+}
+
+// netByComputedHit is the prefill variant's computed-token hit
+// (whatif.PromptWindow.ComputedHit) and the prefix-cache hit
+// prefixCachePrompt nets by, true where slo.SwitchTTFTComputedHit is on, the
+// computed-token hit was read, no hit was stated, and either hit is above
+// whatif.MaterialPrefixHitMove: below it the two agree to within what a
+// minute's counters resolve (no committed recording has a hit), and nothing
+// moves. A hit the question states (--prefix-hit, an IL/OL/hit shape)
+// governs; one the load's cycles filled in (--shape load) is read, not
+// stated, and does not.
+func (pf *pricedFleet) netByComputedHit() (computed, replaced float64, ok bool) {
+	if !pf.computedHit {
+		return 0, 0, false
+	}
+	if pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead {
+		return 0, 0, false
+	}
+	computed, ok = pf.promptWindow.ComputedHit()
+	if !ok {
+		return 0, 0, false
+	}
+	_, replaced = pf.prefixCachePrompt(0)
+	if max(computed, replaced) <= whatif.MaterialPrefixHitMove {
+		return 0, 0, false
+	}
+	return computed, replaced, true
+}
+
+// prefixCachePrompt is effectivePrompt netted by a prefix-cache hit rate, as
+// before slo.SwitchTTFTComputedHit.
+func (pf *pricedFleet) prefixCachePrompt(il float64) (float64, float64) {
 	if pf.prefixAttention {
 		if pf.pv != nil && pf.pv.assumedHit {
 			hit := pf.pv.shape.PrefixHitRate

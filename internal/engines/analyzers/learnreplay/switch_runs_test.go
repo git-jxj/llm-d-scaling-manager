@@ -655,6 +655,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// committed recording has a prefix hit, so it moves no golden. Its unit
 	// tests hold it (heldBy).
 	slo.SwitchTTFTPrefixAttention: nil,
+	// A whole prompt netted by the prefill pods' computed-token hit in the
+	// planner, planner-only: the analyzer prices no stated prompt, and the
+	// planner nets by it only where a hit is above
+	// whatif.MaterialPrefixHitMove, which no committed recording has, so it
+	// moves no golden. Its unit tests hold it (heldBy).
+	slo.SwitchTTFTComputedHit: nil,
 
 	// Learner PR 5c, on main after 5b (602054e98): the replicaStartSeconds
 	// seed is the prior (SwitchStartReadsSeed), and the first starts blend
@@ -2018,6 +2024,15 @@ var heldBy = map[string][]heldTest{
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionPricesThePrefillVariantsHit"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionAStatedHitGovernsThePrefill"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionMovesTheTransferByTheDecodeHit"},
+	},
+	slo.SwitchTTFTComputedHit: {
+		{"../slo", "TestTTFT_TheComputedHitOffFromTheConstructor"},
+		{".", "TestStateAt_TheComputedHitSwitchReachesThePrefillState"},
+		{"../../../signals/whatif", "TestPromptWindow_ComputedHit"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitNetsTheWholePrompt"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitAStatedHitGoverns"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitNeedsAMaterialHit"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitTheLoadShapeMatchesTheMeasured"},
 	},
 	// Issue ev-shindin/llm-scaling-manager#275's lift: an aggregated figure sizes once the GPS check has
 	// agreed. Both run the switch on and fail with it off: the first checks

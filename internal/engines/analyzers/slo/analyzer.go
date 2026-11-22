@@ -179,6 +179,9 @@ type Analyzer struct {
 	// ttftPrefixAttention is SwitchTTFTPrefixAttention (ttft.go): off from
 	// the constructor, planner-only; the analyzer holds it for the name.
 	ttftPrefixAttention bool
+	// ttftComputedHit is SwitchTTFTComputedHit (ttft.go): off from the
+	// constructor, planner-only; the analyzer holds it for the name.
+	ttftComputedHit bool
 	// ttftQuietTransfer is SwitchTTFTQuietTransfer (ttft.go): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	ttftQuietTransfer bool

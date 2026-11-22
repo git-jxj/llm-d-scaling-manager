@@ -2888,6 +2888,7 @@ slo-model
 slo-tpot
 slo-transient
 slo-ttft
+slo-ttft-computed-hit
 slo-ttft-decode-gate-charge
 slo-ttft-decode-term
 slo-ttft-hop-unqueued

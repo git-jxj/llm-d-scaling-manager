@@ -421,7 +421,7 @@ func (r *reporter) fleet(np, nd int, ttftQ, tpotQ float64) (*servedFleet, error)
 	kn := whatifapi.Knobs{Prefill: np, Decode: nd, TTFTPercentile: ttftQ, TPOTPercentile: tpotQ,
 		Assume: assume, Headroom: r.headroom, ArrivalCV2: r.q.ArrivalCV2}
 	if !r.sh.Measured {
-		kn.PromptTokens, kn.OutputTokens, kn.PrefixHit = r.sh.IL, r.sh.OL, r.sh.Hit
+		kn.PromptTokens, kn.OutputTokens, kn.PrefixHit, kn.PrefixHitRead = r.sh.IL, r.sh.OL, r.sh.Hit, r.sh.Load
 	}
 	sf, err := r.s.fleetAtImbalance(kn, r.fixedF)
 	if err != nil {

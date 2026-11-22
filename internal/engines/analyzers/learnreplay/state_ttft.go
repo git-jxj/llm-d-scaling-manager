@@ -50,6 +50,10 @@ type PrefillState struct {
 	// variant's hit on the prefill work, the decode variant's on the KV
 	// transfer). Off unless the replay's options turn it on.
 	PrefixAttention bool
+	// ComputedHit is slo.SwitchTTFTComputedHit: the planner nets a whole
+	// prompt it prices by the hit PromptWindow.ComputedHit reads, not by the
+	// prefix-cache hit rate. Off unless the replay's options turn it on.
+	ComputedHit bool
 	// RawShare is f_raw, the busiest pod's share of the computed-token rate
 	// over the mean share, not de-biased: the largest over the latest
 	// whatif.TTFTWindowCycles cycles that read one at the cycle's pod count. A pod with
@@ -145,6 +149,8 @@ type ttftSamples struct {
 	// prefixAttention is slo.SwitchTTFTPrefixAttention
 	// (PrefillState.PrefixAttention).
 	prefixAttention bool
+	// computedHit is slo.SwitchTTFTComputedHit (PrefillState.ComputedHit).
+	computedHit bool
 	// hopUnqueued is slo.SwitchTTFTHopUnqueued, for the decode term's
 	// router windows (noteTerm).
 	hopUnqueued bool
@@ -453,6 +459,7 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 		ps.PromptWindow = t.prompts[v].Clone()
 		ps.PromptSupport = t.promptSupport
 		ps.PrefixAttention = t.prefixAttention
+		ps.ComputedHit = t.computedHit
 		ps.Estimate, ps.EstimateRead = estimateAt(r.sat.PrefillEstimate, in.Namespace, in.ModelID, v, st.At)
 		st.Prefill = append(st.Prefill, ps)
 	}
