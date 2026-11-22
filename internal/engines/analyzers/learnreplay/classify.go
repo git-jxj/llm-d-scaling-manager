@@ -205,6 +205,8 @@ var valueRules = map[string]rule{
 	"Quantization": {class: classVocab}, "KVConnector": {class: classVocab},
 	"VLLMVersionFrom":     {class: classVocab},
 	"KVOffloadingBackend": {class: classVocab}, "MemoryLayout": {class: classVocab},
+	// A KV transfer's kind (domain.KVTransferOffloadLoad and the others).
+	"KVTransferRates.Kind": {class: classVocab},
 
 	"Accelerator": {classAccelerator, "accelerator"}, "AcceleratorName": {classAccelerator, "accelerator"},
 	"Answer": {classAccelerator, "accelerator"}, "Accelerators.Name": {classAccelerator, "accelerator"},
