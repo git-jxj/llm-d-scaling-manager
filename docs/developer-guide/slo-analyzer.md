@@ -31,8 +31,8 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   `D`'s per-token part is net of the pull (`netOfPull`). Past a prompt cv of
   `MaxPSPromptCV` (0.25) a price is the larger of that and first come
   (`ttftPlan.price`, flagged `SpreadBeyondProcessorSharing`), unless the
-  longest prompt is at most `MaxPSPromptSupport` (1.6) times the mean with
-  `slo-ttft-prompt-support` on
+  longest prompt is at most `MaxPSPromptSupport` (1.6) times the mean, at
+  `Ca²` up to 1, with `slo-ttft-prompt-support` on
   (`Prefill.BeyondProcessorSharing`). Off, a first-come wait on the busiest
   pod (`prefillPlan.engineWait`).
 - `PromptSupport` (`slo-ttft-prompt-support`, planner-only, off from the
@@ -41,7 +41,8 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   requests), priced as `Prefill.PromptMaxRatio`: the prompt's gamma is
   stretched so its held mean stays the measured mean (`holdScale`) and
   censored there (`ownTime.capped` on first come, `ePoly.expect`'s hold on
-  processor sharing), and the bound, not the cv, decides processor sharing.
+  processor sharing), and the bound, not the cv, decides processor sharing
+  at Poisson arrivals.
   Off, `MaxRatio` is zeroed in `promptSpread` and the gamma runs on. The
   planner's replay does not turn it on either (`learnreplay.PlannerSwitches`):
   on, its backtests read TTFT under measured where they read at or above it.

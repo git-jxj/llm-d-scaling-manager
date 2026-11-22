@@ -272,12 +272,14 @@ type shapeSample struct {
 // llm-d-incubation/llm-d-scaling-manager#304): it holds the prompt at the
 // longest its computed-token histogram allows, keeping the measured mean,
 // and a bound at whatif.MaxPSPromptSupport or under prices processor sharing
-// alone. On the Qwen3-32B and 0.6B staircase backtests, each step priced at
-// its own histogram's cv and bound, 15 TTFT figures that read at or above
-// measured read under it, the lowest at 0.92 of measured: 13 are p90 and p95
-// where the bound clears processor sharing, 2 are p95 on the 1000-token
-// phases, where the hold at twice the mean removes the tail that held them
-// up. It stays off until the term that reads that tail low is found.
+// alone at Poisson arrivals. On the Qwen3-32B and 0.6B staircase backtests,
+// each step priced at its own histogram's cv and bound, 14 TTFT figures that
+// read at or above measured read under it, the lowest at 0.92 of measured.
+// The hold moves them, not processor sharing (the same 14 go under with the
+// bound kept from clearing it), and each lands in the same router histogram
+// bucket as its measured figure: the bucket-wide cv was standing in for a
+// spread of the service time that no term prices. It stays off until one
+// does (docs/proposals/slo-capacity-planner-ttft.md).
 //
 // saturation.SwitchPlannerCapAtStepBudget is planner-only and not listed
 // either: no recording holds an engine whose step budget runs fewer

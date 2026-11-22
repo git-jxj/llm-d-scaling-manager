@@ -632,9 +632,14 @@ func (pl prefillPlan) own() ownTime {
 
 // BeyondProcessorSharing says processor sharing is not priced alone on p's
 // prompt (SpreadBeyondProcessorSharing): a spread past MaxPSPromptCV that no
-// support bound at MaxPSPromptSupport or under clears.
+// support bound at MaxPSPromptSupport or under clears. The bound clears it
+// only at arrivals no burstier than Poisson (ArrivalCV2 at most 1, 0 being
+// Poisson): the steps processor sharing was measured to hold on were, and on
+// the 8000-token phase run at Ca^2 4 the bound read p50 7% under the
+// measured, where the larger of the two held it (issue
+// llm-d-incubation/llm-d-scaling-manager#304).
 func (p Prefill) BeyondProcessorSharing() bool {
-	if r := p.PromptMaxRatio; r > 0 && r <= MaxPSPromptSupport {
+	if r := p.PromptMaxRatio; r > 0 && r <= MaxPSPromptSupport && p.ArrivalCV2 <= 1 {
 		return false
 	}
 	return p.PromptCV > MaxPSPromptCV

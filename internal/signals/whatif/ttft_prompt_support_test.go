@@ -208,6 +208,27 @@ func TestTTFT_ThePromptsSupportDecidesProcessorSharing(t *testing.T) {
 	nearRel(t, "first come mean, held against free", fc(1.25, 0).Seconds, fc(0, 0).Seconds, 1e-6)
 }
 
+// The bound clears processor sharing only at arrivals no burstier than
+// Poisson: at Ca^2 4 the 8000-token phase read p50 7% under with processor
+// sharing alone, where the larger of it and first come held. Ca^2 0 is
+// Poisson, and 1 is too.
+func TestTTFT_ThePromptsSupportClearsOnlyAtPoissonArrivals(t *testing.T) {
+	for _, c := range []struct {
+		ca2  float64
+		flag bool
+	}{{0, false}, {0.5, false}, {1, false}, {1.01, true}, {4, true}} {
+		fl := supportFleet(1.25)
+		fl.Prefill.ArrivalCV2 = c.ca2
+		if got := fl.Prefill.BeyondProcessorSharing(); got != c.flag {
+			t.Errorf("Ca^2 %g: beyond processor sharing %v, want %v", c.ca2, got, c.flag)
+		}
+		res := mustTTFT(t, ttftAt(t, fl, 2, 0.5))
+		if got := slices.Contains(res.Flags, SpreadBeyondProcessorSharing); got != c.flag {
+			t.Errorf("Ca^2 %g: flagged %v, want %v (%v)", c.ca2, got, c.flag, res.Flags)
+		}
+	}
+}
+
 // A longest prompt under the mean, or not a number, is the caller's mistake.
 func TestTTFT_ALongestPromptUnderTheMeanIsRefused(t *testing.T) {
 	for _, r := range []float64{0.5, -1, math.NaN(), math.Inf(1)} {
