@@ -106,6 +106,14 @@ type State struct {
 	// per ArrivalRates entry: where the recording has holes
 	// (whatifapi.WindowGapsOf).
 	CycleTimes []time.Time
+	// RoleStartSeconds is, for each role with a measured variant, how long a
+	// new replica of its slowest measured variant took to become Ready, as
+	// the saturation analyzer reported it at the cycle
+	// (domain.AnalyzerResult.RoleStartSeconds); nil where it reported none.
+	// RoleStartSeeded names each role whose start is a ScaledObject's
+	// replicaStartSeconds seed, no replica of it measured.
+	RoleStartSeconds map[string]float64
+	RoleStartSeeded  map[string]bool
 }
 
 // VariantState is one variant's learned state at the cycle: everything the
@@ -526,6 +534,11 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			}
 			r.fillTTFT(s, in, ttft)
 			batch.fit(s)
+			// The replay applied the cycle's Analyze before asking: its
+			// result is the cycle's.
+			if res, ok := r.Result(domain.SaturationAnalyzerName, in.Namespace, in.ModelID); ok {
+				s.RoleStartSeconds, s.RoleStartSeeded = maps.Clone(res.RoleStartSeconds), maps.Clone(res.RoleStartSeeded)
+			}
 			if n == cycle {
 				st = s
 				return true

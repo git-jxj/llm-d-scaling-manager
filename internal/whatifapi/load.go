@@ -11,8 +11,12 @@ const LoadP95Modulation = "p95-modulation"
 // collector reads, rate(...[1m]): the counting noise of a steady Poisson
 // stream of rate r read over it is r/60 in variance. Prometheus extrapolates
 // a rate from the samples inside the window, which span less than a minute,
-// so the noise read is somewhat larger: taking a minute's takes the noise
-// out short, never past it.
+// so the noise read is somewhat larger. But a bucket's readings overlap (a
+// 1-minute rate every 15 s cycle), so their sample variance holds less of
+// the counting noise than r/60: about 0.86 of it over 20 readings. Taking a
+// minute's out then errs past the noise by up to about 15% of it, and a
+// bucket sized at p95-modulation can read a little low; that is one reason
+// it stays opt-in.
 const RateWindowSeconds = 60.0
 
 // ModulationP95 is the p95 of rates with the counting noise of a one-minute

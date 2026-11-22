@@ -242,10 +242,10 @@ func TestDayPlanRefusalAtMoreReplicas(t *testing.T) {
 func TestDayPlanP95NeedsTwentyCycles(t *testing.T) {
 	q := &dayQuestion{sizeFor: SizeForP95}
 	r := DayRate{Mean: 5, P95: 9, Max: 10}
-	stat, rate := q.sizedRate(r, MinPercentileCycles)
+	stat, rate := q.sizedRate(&r, make([]SeriesSample, MinPercentileCycles))
 	assert.Equal(t, SizeForP95, stat)
 	assert.Equal(t, 9.0, rate)
-	stat, rate = q.sizedRate(r, MinPercentileCycles-1)
+	stat, rate = q.sizedRate(&r, make([]SeriesSample, MinPercentileCycles-1))
 	assert.Equal(t, SizeForMean, stat)
 	assert.Equal(t, 5.0, rate)
 	assert.Equal(t, 20, MinPercentileCycles, "the docs, the CLI help and the page say 20")

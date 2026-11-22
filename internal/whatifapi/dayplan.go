@@ -90,6 +90,21 @@ const (
 	SizeForMean = "mean"
 	SizeForP95  = "p95"
 	SizeForMax  = "max"
+	// SizeForP95Modulation is the p95 less the counting noise of a one-minute
+	// rate (ModulationP95): a bucket of a steady Poisson stream is sized for
+	// its mean, one whose rate swings for close to its p95.
+	SizeForP95Modulation = LoadP95Modulation
+)
+
+// maxDayPlanLead bounds a stated scale-up lead time, seconds.
+const maxDayPlanLead = 24 * 3600.0
+
+// Where a role's scale-up lead time came from (RoleLead.Source).
+const (
+	LeadFromRequest = "request"
+	LeadLearned     = "learned"
+	LeadSeeded      = "seeded"
+	LeadNone        = "none"
 )
 
 // A bucket's status.
@@ -158,14 +173,45 @@ type DayPlanRequest struct {
 	MaxReplicas *FleetKnob  `json:"maxReplicas,omitempty"`
 	// Step is a bucket's length, a Go duration ("5m"); default 5m.
 	Step string `json:"step,omitempty"`
-	// SizeFor is the rate of a bucket the fleet is sized for: "mean", "p95"
-	// or "max" of its cycles' rates; default p95. A bucket of fewer than
-	// MinPercentileCycles cycles asked for its p95 is sized for its mean.
+	// SizeFor is the rate of a bucket the fleet is sized for: "mean", "p95",
+	// "p95-modulation" (the p95 less counting noise) or "max" of its cycles'
+	// rates; default p95. A bucket of fewer than MinPercentileCycles cycles
+	// asked for its p95 or its p95 less counting noise is sized for its mean.
 	SizeFor string `json:"sizeFor,omitempty"`
+	// Lead is each role's scale-up lead time asked, seconds: how long before
+	// its bucket a replica must start to be Ready when the bucket starts. A
+	// role it does not set takes the start time the source learned
+	// (fleet.<role>.startSeconds), else 0.
+	Lead *DayLead `json:"lead,omitempty"`
 	// MinRequests is the fewest requests a bucket must hold to be sized;
 	// default 30.
 	MinRequests *float64 `json:"minRequests,omitempty"`
 }
+
+// DayLead is each role's scale-up lead time, seconds; a role left out takes
+// the source's.
+type DayLead struct {
+	Prefill *float64 `json:"prefill,omitempty"`
+	Decode  *float64 `json:"decode,omitempty"`
+}
+
+// RoleLead is one role's scale-up lead time as the plan took it: Seconds,
+// and Source "request", "learned" (the source's start time), "seeded" (a
+// ScaledObject's replicaStartSeconds seed, nothing of the role measured) or
+// "none" (0: neither asked nor learned).
+type RoleLead struct {
+	Seconds float64 `json:"seconds"`
+	Source  string  `json:"source"`
+}
+
+// DayLeads is each role's scale-up lead time as the plan took it.
+type DayLeads struct {
+	Prefill RoleLead `json:"prefill"`
+	Decode  RoleLead `json:"decode"`
+}
+
+// any says a role's lead is above 0.
+func (l DayLeads) any() bool { return l.Prefill.Seconds > 0 || l.Decode.Seconds > 0 }
 
 // DayPlanResponse is a day plan: every bucket, the hours they make, the
 // summary, and what the source could not price.
@@ -187,6 +233,9 @@ type DayPlanResponse struct {
 	SizeFor       string  `json:"sizeFor"`
 	SizeForSource string  `json:"sizeForSource"`
 	MinRequests   float64 `json:"minRequests"`
+	// Lead is each role's scale-up lead time the held fleets are priced at
+	// (DayBucket.Held); absent where neither role has one.
+	Lead *DayLeads `json:"lead,omitempty"`
 	// TTFT is absent with no TTFT target: neither the request nor the
 	// policy sets one, and decode is sized alone (Refused, term ttft).
 	TTFT *ResolvedObjective `json:"ttft,omitempty"`
@@ -228,6 +277,9 @@ type DayRate struct {
 	Mean float64 `json:"mean"`
 	P95  float64 `json:"p95"`
 	Max  float64 `json:"max"`
+	// P95Modulation is the p95 less the counting noise of a one-minute rate
+	// (ModulationP95); given only on a bucket sized for it.
+	P95Modulation *float64 `json:"p95Modulation,omitempty"`
 }
 
 // DayShape is the lengths a bucket was priced at, and Source "bucket" (its
@@ -299,6 +351,12 @@ type DayBucket struct {
 	// the limit they were sized on.
 	Needed *DayNeeded `json:"needed,omitempty"`
 	Limit  *Figure    `json:"limit,omitempty"`
+	// Held is the fleet the plan holds in the bucket with each role's
+	// scale-up lead: the role's most need over the bucket and every bucket
+	// that starts within the lead after it ends, whose replicas must start
+	// in it to be Ready in time (heldOf). Given only with a lead; a bucket
+	// not sized itself can hold the replicas of one after it.
+	Held *DayNeeded `json:"held,omitempty"`
 	// HadLimit is the limit of the fleet the bucket had, priced whole at the
 	// same targets and headroom: the verdict's basis.
 	HadLimit *Figure `json:"hadLimit,omitempty"`
@@ -327,6 +385,10 @@ type DayHour struct {
 	// at a lower rate can need more decode.
 	Needed  *DayNeeded `json:"needed,omitempty"`
 	Busiest *DayNeeded `json:"busiest,omitempty"`
+	// Held is each role's most held over the hour's buckets
+	// (DayBucket.Held): the need and the replicas starting ahead of the
+	// next buckets. Given only with a lead.
+	Held *DayNeeded `json:"held,omitempty"`
 	// NotConfirmed says Needed, priced again, fell short at a bucket of the
 	// hour: a fleet limit that does not rise with the replicas.
 	NotConfirmed bool         `json:"notConfirmed,omitempty"`
@@ -356,6 +418,13 @@ type DaySummary struct {
 	NeededReplicaHours *RoleHours `json:"neededReplicaHours,omitempty"`
 	HadReplicaHours    *RoleHours `json:"hadReplicaHours,omitempty"`
 	HadReplicaHoursAll RoleHours  `json:"hadReplicaHoursAll"`
+	// HeldReplicaHours is the need's replica-hours with each scale-up's
+	// replicas held from one lead before their bucket, over the plan (the
+	// held fleet at every moment, heldHours); HeldGPUHours its GPU-hours.
+	// Given only with a lead, prefill's only when every sized bucket priced
+	// prefill.
+	HeldReplicaHours *RoleHours `json:"heldReplicaHours,omitempty"`
+	HeldGPUHours     *float64   `json:"heldGpuHours,omitempty"`
 	// GPUsPerReplica is the priced variants' GPUs per replica, where the
 	// source states them; the GPU-hours follow the replica-hours.
 	GPUsPerReplica *FleetCounts `json:"gpusPerReplica,omitempty"`
@@ -396,6 +465,9 @@ type DayCounts struct {
 	SizedForMean  int `json:"sizedForMean"`
 	SizedForP95   int `json:"sizedForP95"`
 	SizedForMax   int `json:"sizedForMax"`
+	// SizedForP95Modulation is how many were sized for the p95 less
+	// counting noise.
+	SizedForP95Modulation int `json:"sizedForP95Modulation,omitempty"`
 	// PrefillNotPriced is how many sized buckets have no prefill figure.
 	PrefillNotPriced int `json:"prefillNotPriced"`
 }
@@ -493,6 +565,8 @@ type dayQuestion struct {
 	// noTTFT says neither the request nor the policy sets a TTFT target:
 	// prefill is not sized, and decode is sized alone.
 	noTTFT bool
+	// lead is each role's scale-up lead time.
+	lead DayLeads
 }
 
 // key is what names the day plan's answer.
@@ -504,7 +578,8 @@ func (q *dayQuestion) key() any {
 		MinRequests float64
 		Bound       FleetCounts
 		NoTTFT      bool
-	}{q.sc, q.step, q.sizeFor, q.minRequests, q.bound, q.noTTFT}
+		Lead        DayLeads
+	}{q.sc, q.step, q.sizeFor, q.minRequests, q.bound, q.noTTFT, q.lead}
 }
 
 // stated is what the plan states in place of what its source gave, named
@@ -557,12 +632,41 @@ func dayQuestionOfRequest(req DayPlanRequest) (*dayQuestion, error) {
 	}
 	switch req.SizeFor {
 	case "":
-	case SizeForMean, SizeForP95, SizeForMax:
+	case SizeForMean, SizeForP95, SizeForP95Modulation, SizeForMax:
 		q.sizeFor, q.sizeFromReq = req.SizeFor, true
 	default:
-		return nil, InputErrorf("sizeFor %q, want %s, %s or %s", req.SizeFor, SizeForMean, SizeForP95, SizeForMax)
+		return nil, InputErrorf("sizeFor %q, want %s, %s, %s or %s", req.SizeFor, SizeForMean, SizeForP95, SizeForP95Modulation, SizeForMax)
+	}
+	if l := req.Lead; l != nil {
+		for _, x := range []struct {
+			name string
+			v    *float64
+			to   *RoleLead
+		}{{"lead.prefill", l.Prefill, &q.lead.Prefill}, {"lead.decode", l.Decode, &q.lead.Decode}} {
+			if x.v == nil {
+				continue
+			}
+			if !(*x.v >= 0) || *x.v > maxDayPlanLead {
+				return nil, InputErrorf("%s %g, want 0 to %g seconds", x.name, *x.v, maxDayPlanLead)
+			}
+			*x.to = RoleLead{Seconds: *x.v, Source: LeadFromRequest}
+		}
 	}
 	return q, nil
+}
+
+// leadOf is a role's lead: the one asked, else the start time the source
+// learned for the role, else none.
+func leadOf(asked RoleLead, role *RoleInfo) RoleLead {
+	switch {
+	case asked.Source == LeadFromRequest:
+		return asked
+	case role != nil && role.StartSeconds != nil && *role.StartSeconds > 0 && role.StartSeeded:
+		return RoleLead{Seconds: *role.StartSeconds, Source: LeadSeeded}
+	case role != nil && role.StartSeconds != nil && *role.StartSeconds > 0:
+		return RoleLead{Seconds: *role.StartSeconds, Source: LeadLearned}
+	}
+	return RoleLead{Source: LeadNone}
 }
 
 // dayScenarioOf is the scenario a day plan prices on in: req's SLO, mix,
@@ -608,6 +712,7 @@ func dayQuestionOf(e *inputsEntry, req DayPlanRequest) (*dayQuestion, error) {
 		return nil, err
 	}
 	q.e = e
+	q.lead = DayLeads{Prefill: leadOf(q.lead.Prefill, e.doc.Fleet.Prefill), Decode: leadOf(q.lead.Decode, &e.doc.Fleet.Decode)}
 	if q.sc, q.noTTFT, err = dayScenarioOf(&e.doc, e.id, req); err != nil {
 		return nil, err
 	}
@@ -735,10 +840,19 @@ func bucketShape(samples []SeriesSample) (prompt, output, hit float64, ok bool) 
 // MinPercentileCycles cycles (a nearest-rank p95 of so few is the highest
 // cycle). The mean is the less conservative of the two: the bucket is
 // flagged FewCyclesForP95.
-func (q *dayQuestion) sizedRate(r DayRate, n int) (string, float64) {
+func (q *dayQuestion) sizedRate(r *DayRate, samples []SeriesSample) (string, float64) {
+	n := len(samples)
 	switch {
 	case q.sizeFor == SizeForP95 && n >= MinPercentileCycles:
 		return SizeForP95, r.P95
+	case q.sizeFor == SizeForP95Modulation && n >= MinPercentileCycles:
+		rates := make([]float64, n)
+		for i, x := range samples {
+			rates[i] = x.Rate
+		}
+		m := ModulationP95(rates, r.Mean, r.P95)
+		r.P95Modulation = &m
+		return SizeForP95Modulation, m
 	case q.sizeFor == SizeForMax:
 		return SizeForMax, r.Max
 	}
@@ -1166,8 +1280,8 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 			out.Buckets = append(out.Buckets, db)
 			continue
 		}
-		stat, rate := q.sizedRate(r, len(b.samples))
-		if q.sizeFor == SizeForP95 && stat != SizeForP95 {
+		stat, rate := q.sizedRate(db.Rate, b.samples)
+		if (q.sizeFor == SizeForP95 || q.sizeFor == SizeForP95Modulation) && stat == SizeForMean {
 			db.Flags = append(db.Flags, FlagFewCyclesForP95)
 		}
 		db.SizedFor, db.SizedRate = stat, ptr(rate)
@@ -1211,16 +1325,39 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	if g := q.e.doc.Fleet.GPUsPerReplica(); WeighsGPUs(g) {
 		out.Summary.SizedOnGPUs = &g
 	}
+	asked := q.lead.Prefill.Source == LeadFromRequest || q.lead.Decode.Source == LeadFromRequest
+	if q.lead.any() || asked {
+		l := q.lead
+		out.Lead = &l
+	}
+	if q.lead.any() {
+		heldOf(out, q.step, gpus)
+	}
 	if err := q.confirmHolding(ctx, out, sized); err != nil {
 		return nil, err
 	}
 	for _, g := range groups {
 		out.Searched += g.z.searched() + len(g.limits)
 	}
+	steady := "Steady state: each bucket is sized as if its rate held. A replica must be Ready when its bucket starts, so it starts one lead time " +
+		"before: no role's lead is known (none learned from the source, none asked), so nothing is held ahead; state one with --lead (API lead)."
+	if asked && !q.lead.any() {
+		steady = "Steady state: each bucket is sized as if its rate held. The lead asked is 0 for each role, so nothing is held ahead."
+	}
+	if q.lead.any() {
+		steady = fmt.Sprintf("Steady state: each bucket is sized as if its rate held. A replica must be Ready when its bucket starts, so it starts "+
+			"one lead time before (prefill %s, decode %s): held is each role's most need over the bucket and every bucket that starts within its lead "+
+			"after it ends, and the held replica-hours count each scale-up's replicas from one lead before their bucket. The verdicts judge the need, "+
+			"not the held fleet.", leadWords(q.lead.Prefill), leadWords(q.lead.Decode))
+	}
+	what := q.sizeFor
+	if what == SizeForP95Modulation {
+		what = "p95 less counting noise (the p95 less a steady one-minute rate's Poisson spread, var - mean/60)"
+	}
 	out.Notes = append(out.Notes,
-		"Steady state: each bucket is sized as if its rate held, with no scale-up lag. A fleet that follows the plan must start replicas one start time before the rate arrives.",
+		steady,
 		fmt.Sprintf("Each bucket is sized for the %s of its cycles' rates. A p95 needs %d cycles in the bucket; with fewer the bucket is sized for its mean, "+
-			"which is less conservative (FewCyclesForP95).", q.sizeFor, MinPercentileCycles),
+			"which is less conservative (FewCyclesForP95).", what, MinPercentileCycles),
 		fmt.Sprintf("Needed is the %s whose fleet limit, at the SLO and headroom %.2f, reaches the rate: %s "+
 			"(POST /v1/size's search, whatifapi.SmallestFleet). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: "+
 			"under when its limit falls short, over when one replica fewer of either role would still serve it.", neededWhat(q.e.doc.Fleet.GPUsPerReplica()), q.sc.Headroom,
@@ -1624,6 +1761,8 @@ func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus Fl
 			s.Counts.SizedForP95++
 		case SizeForMax:
 			s.Counts.SizedForMax++
+		case SizeForP95Modulation:
+			s.Counts.SizedForP95Modulation++
 		}
 		switch b.Verdict {
 		case DayVerdictUnder:
@@ -1691,4 +1830,142 @@ func valueOr(p *float64) float64 {
 		return 0
 	}
 	return *p
+}
+
+// leadWords is a role's lead in words.
+func leadWords(l RoleLead) string {
+	switch l.Source {
+	case LeadFromRequest:
+		return fmt.Sprintf("%.0f s asked", l.Seconds)
+	case LeadLearned:
+		return fmt.Sprintf("%.0f s learned", l.Seconds)
+	case LeadSeeded:
+		return fmt.Sprintf("%.0f s, a ScaledObject's seed", l.Seconds)
+	}
+	return "none known"
+}
+
+// leadBuckets is how many buckets after one a role's replicas start in it
+// for: every bucket that starts within the lead after it ends.
+func leadBuckets(lead float64, step time.Duration) int {
+	if !(lead > 0) {
+		return 0
+	}
+	return int(math.Ceil(lead / step.Seconds()))
+}
+
+// heldOf sets each bucket's and each hour's held fleet, and the summary's
+// held replica-hours, at q's leads (DayBucket.Held).
+func heldOf(out *DayPlanResponse, step time.Duration, gpus FleetCounts) {
+	mp, md := leadBuckets(out.Lead.Prefill.Seconds, step), leadBuckets(out.Lead.Decode.Seconds, step)
+	bs := out.Buckets
+	for k := range bs {
+		var h DayNeeded
+		var any, prefill bool
+		for j := k; j < len(bs) && j <= k+max(mp, md); j++ {
+			n := bs[j].Needed
+			if n == nil {
+				continue
+			}
+			if j <= k+md {
+				any = true
+				h.Decode = max(h.Decode, n.Decode)
+				h.AtLeast = h.AtLeast || n.AtLeast
+			}
+			if j <= k+mp {
+				any = true
+				if n.Prefill == nil {
+					// Prefill held over a bucket it was not priced in is a
+					// lower bound, past the decode lead too: AtLeast covers
+					// both roles (DayNeeded).
+					h.AtLeast = true
+				} else {
+					prefill = true
+					h.Prefill = ptrInt(max(valueOrZeroInt(h.Prefill), *n.Prefill))
+				}
+			}
+		}
+		if any {
+			if !prefill {
+				h.Prefill = nil
+			}
+			bs[k].Held = &h
+		}
+	}
+	for i := range out.Hours {
+		hr := &out.Hours[i]
+		var h *DayNeeded
+		for _, b := range bs {
+			if b.Held == nil || !b.Start.Truncate(time.Hour).Equal(hr.Start) {
+				continue
+			}
+			if h == nil {
+				c := *b.Held
+				h = &c
+				continue
+			}
+			h.Decode = max(h.Decode, b.Held.Decode)
+			h.AtLeast = h.AtLeast || b.Held.AtLeast
+			if b.Held.Prefill != nil {
+				h.Prefill = ptrInt(max(valueOrZeroInt(h.Prefill), *b.Held.Prefill))
+			}
+		}
+		hr.Held = h
+	}
+	s := &out.Summary
+	if s.Counts.Sized == 0 {
+		return
+	}
+	needP, needD := make([]float64, len(bs)), make([]float64, len(bs))
+	for k, b := range bs {
+		if b.Needed == nil {
+			continue
+		}
+		needD[k] = float64(b.Needed.Decode)
+		if b.Needed.Prefill != nil {
+			needP[k] = float64(*b.Needed.Prefill)
+		}
+	}
+	held := RoleHours{Decode: heldHours(needD, step.Seconds(), out.Lead.Decode.Seconds)}
+	if s.Counts.PrefillNotPriced == 0 {
+		held.Prefill = ptr(heldHours(needP, step.Seconds(), out.Lead.Prefill.Seconds))
+		if gpus.Prefill > 0 && gpus.Decode > 0 {
+			s.HeldGPUHours = ptr(*held.Prefill*float64(gpus.Prefill) + held.Decode*float64(gpus.Decode))
+		}
+	}
+	s.HeldReplicaHours = &held
+}
+
+// heldHours is the replica-hours of a role held at every moment of the
+// plan, where need is its need in each bucket of step seconds (0 where none
+// was sized) and a replica starts lead seconds before the bucket that needs
+// it: at a moment t the role holds its most need over the buckets that meet
+// [t, t+lead]. With no lead it is the need's own replica-hours.
+func heldHours(need []float64, step, lead float64) float64 {
+	n := len(need)
+	end := float64(n) * step
+	pts := []float64{}
+	for j := 0; j <= n; j++ {
+		pts = append(pts, float64(j)*step)
+		if p := float64(j)*step - lead; j < n && p > 0 {
+			pts = append(pts, p)
+		}
+	}
+	slices.Sort(pts)
+	pts = slices.Compact(pts)
+	var sum float64
+	for i := 0; i+1 < len(pts); i++ {
+		a, b := pts[i], min(pts[i+1], end)
+		if !(b > a) {
+			continue
+		}
+		mid := (a + b) / 2
+		lo, hi := int(mid/step), min(int((mid+lead)/step), n-1)
+		var m float64
+		for j := lo; j <= hi; j++ {
+			m = max(m, need[j])
+		}
+		sum += m * (b - a)
+	}
+	return sum / 3600
 }

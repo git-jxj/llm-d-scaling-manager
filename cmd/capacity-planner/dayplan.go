@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-logr/logr"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
@@ -27,6 +29,7 @@ type dayPlanFlags struct {
 	recording, model, prefillVariant, output string
 	decodeVariant, ttft, tpot, bucket        string
 	sizeFor                                  string
+	lead                                     string
 	minRequests, headroom                    float64
 	maxPrefill, maxDecode                    int
 	assumeVP, assumePromptCV                 float64
@@ -61,7 +64,10 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.tpot, "tpot", "", "the TPOT target: a mean (4ms) or a percentile (4ms@p90), or none; default the policy's")
 	fs.Float64Var(&f.headroom, "headroom", 0, "the operating point as a fraction of the knee; default the policy's")
 	fs.StringVar(&f.bucket, "bucket", whatifapi.DefaultDayPlanStep.String(), "the length of a bucket, each sized on its own")
-	fs.StringVar(&f.sizeFor, "size-for", "", "the rate of a bucket to size for: mean, p95 or max of its cycles; default p95, but the mean, less conservative and flagged FewCyclesForP95, for a bucket of fewer than 20 cycles")
+	fs.StringVar(&f.sizeFor, "size-for", "", "the rate of a bucket to size for: mean, p95, p95-modulation (the p95 less counting noise) or max of its cycles; "+
+		"default p95, but the mean, less conservative and flagged FewCyclesForP95, for a bucket of fewer than 20 cycles")
+	fs.StringVar(&f.lead, "lead", "", "each role's scale-up lead time, the replicas held ahead of the buckets that need them: one duration for both roles (90s), "+
+		"or prefill=3m,decode=90s; a role not given takes the start time the source learned, else none")
 	fs.Float64Var(&f.minRequests, "min-requests", whatifapi.DefaultMinRequests, "the fewest requests a bucket must hold to be sized")
 	fs.IntVar(&f.maxPrefill, "max-prefill", 0, "the most prefill replicas a bucket is sized to; 0 is 32")
 	fs.IntVar(&f.maxDecode, "max-decode", 0, "the most decode replicas a bucket is sized to; 0 is 32")
@@ -181,6 +187,9 @@ func (f *dayPlanFlags) request() (whatifapi.DayPlanRequest, error) {
 	req := whatifapi.DayPlanRequest{Step: f.bucket, SizeFor: f.sizeFor, MinRequests: &f.minRequests}
 	slo := &whatifapi.SLORequest{}
 	var err error
+	if req.Lead, err = leadOf(f.lead); err != nil {
+		return req, err
+	}
 	if slo.TTFT, err = objectiveOf("ttft", f.ttft); err != nil {
 		return req, err
 	}
@@ -237,6 +246,48 @@ func (f *dayPlanFlags) request() (whatifapi.DayPlanRequest, error) {
 	return req, nil
 }
 
+// leadOf reads --lead: one duration for both roles, or role=duration pairs
+// separated by commas. Empty asks none.
+func leadOf(s string) (*whatifapi.DayLead, error) {
+	if s == "" {
+		return nil, nil
+	}
+	bad := usagef("--lead %q: want a duration (90s), or prefill=3m,decode=90s", s)
+	secs := func(v string) (*float64, error) {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 {
+			return nil, bad
+		}
+		return ptrTo(d.Seconds()), nil
+	}
+	l := &whatifapi.DayLead{}
+	if !strings.Contains(s, "=") {
+		v, err := secs(s)
+		if err != nil {
+			return nil, err
+		}
+		w := *v
+		l.Prefill, l.Decode = v, &w
+		return l, nil
+	}
+	for _, part := range strings.Split(s, ",") {
+		role, v, _ := strings.Cut(part, "=")
+		d, err := secs(v)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case role == rolePrefill && l.Prefill == nil:
+			l.Prefill = d
+		case role == domain.RoleDecode && l.Decode == nil:
+			l.Decode = d
+		default:
+			return nil, bad
+		}
+	}
+	return l, nil
+}
+
 // statNone is a TPOT target of none, and a list of nothing.
 const statNone = "none"
 
@@ -275,9 +326,17 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		}
 		return t.Format("15:04")
 	}
+	sizedFor := p.SizeFor
+	if sizedFor == whatifapi.SizeForP95Modulation {
+		sizedFor = "p95 less counting noise"
+	}
 	fmt.Fprintf(&b, "Day plan for %s/%s, %s to %s UTC, buckets of %s, each sized for the %s of its cycle rates (%s; the mean where a bucket holds fewer than %d cycles)\n",
 		in.Namespace, in.Model, p.From.Format("2006-01-02 15:04"), p.To.Format("2006-01-02 15:04"),
-		time.Duration(p.Step*float64(time.Second)), p.SizeFor, p.SizeForSource, whatifapi.MinPercentileCycles)
+		time.Duration(p.Step*float64(time.Second)), sizedFor, p.SizeForSource, whatifapi.MinPercentileCycles)
+	if l := p.Lead; l != nil {
+		fmt.Fprintf(&b, "scale-up lead: prefill %s, decode %s; held = the need and the replicas starting in the bucket for the buckets after it\n",
+			leadText(l.Prefill), leadText(l.Decode))
+	}
 	if p.TTFT != nil {
 		fmt.Fprintf(&b, "SLO: TTFT %s %s", p.TTFT.Statistic, fmtSeconds(p.TTFT.Target))
 	} else {
@@ -295,8 +354,15 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	b.WriteString("\n")
 	b.WriteString("each hour: a fleet that holds every bucket in it (priced again at each), the busiest bucket's own fleet, the fewest pods it had, " +
 		"and the fleet it had judged whole at each bucket's rate\n")
-	const layout = "%-17s %9s %9s %6s %6s %7s %6s %6s  %s\n"
-	fmt.Fprintf(&b, layout, "hour (UTC)", "rate mean", "rate p95", "need P", "need D", "busiest", "had P", "had D", "")
+	layout := "%-17s %9s %9s %6s %6s %7s %6s %6s  %s\n"
+	row := func(cells ...any) { fmt.Fprintf(&b, layout, cells[:len(cells)-1]...) }
+	if p.Lead != nil {
+		layout = "%-17s %9s %9s %6s %6s %7s %7s %6s %6s  %s\n"
+		row = func(cells ...any) {
+			fmt.Fprintf(&b, layout, slices.Concat(cells[:6], cells[len(cells)-1:], cells[6:len(cells)-1])...)
+		}
+	}
+	row("hour (UTC)", "rate mean", "rate p95", "need P", "need D", "busiest", "had P", "had D", "", "held")
 	for _, h := range p.Hours {
 		mean, p95 := "-", "-"
 		if h.Rate != nil {
@@ -321,13 +387,21 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		if h.NotConfirmed {
 			verdict += ", need NOT CONFIRMED (falls short at a bucket)"
 		}
-		fmt.Fprintf(&b, layout, h.Start.Format("2006-01-02 15:04"), mean, p95, np, nd, busiest, ap, ad, verdict)
+		held := "-"
+		if n := h.Held; n != nil {
+			held = heldCell(n)
+		}
+		row(h.Start.Format("2006-01-02 15:04"), mean, p95, np, nd, busiest, ap, ad, verdict, held)
 	}
 	s := p.Summary
 	c := s.Counts
-	fmt.Fprintf(&b, "\nbuckets: %d sized (%d under, %d over, %d match; %d for the p95, %d for the mean, %d for the max), "+
+	stats := fmt.Sprintf("%d for the p95, ", c.SizedForP95)
+	if p.SizeFor == whatifapi.SizeForP95Modulation {
+		stats = fmt.Sprintf("%d for the p95 less counting noise, ", c.SizedForP95Modulation)
+	}
+	fmt.Fprintf(&b, "\nbuckets: %d sized (%d under, %d over, %d match; %s%d for the mean, %d for the max), "+
 		"%d beyond the bound, %d refused, %d too little data, %d no data\n",
-		c.Sized, c.Under, c.Over, c.Match, c.SizedForP95, c.SizedForMean, c.SizedForMax, c.Unmet, c.Refused, c.TooLittleData, c.NoData)
+		c.Sized, c.Under, c.Over, c.Match, stats, c.SizedForMean, c.SizedForMax, c.Unmet, c.Refused, c.TooLittleData, c.NoData)
 	hours := func(r *whatifapi.RoleHours) string {
 		if r.Prefill == nil {
 			return fmt.Sprintf("%.2f decode (prefill not priced in %d of the %d)", r.Decode, c.PrefillNotPriced, c.Sized)
@@ -350,6 +424,13 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 			c.Sized, hours(s.NeededReplicaHours), hours(s.HadReplicaHours))
 		if s.NeededGPUHours != nil {
 			fmt.Fprintf(&b, "GPU-hours over the sized buckets: needed %.2f, had %.2f\n", *s.NeededGPUHours, *s.HadGPUHours)
+		}
+		if r := s.HeldReplicaHours; r != nil {
+			fmt.Fprintf(&b, "replica-hours held with the scale-up lead, each scale-up's replicas from one lead before their bucket: %s", hours(r))
+			if s.HeldGPUHours != nil {
+				fmt.Fprintf(&b, ", %.2f GPU-hours", *s.HeldGPUHours)
+			}
+			b.WriteString("\n")
 		}
 	} else {
 		b.WriteString("needed: no bucket was sized\n")
@@ -411,6 +492,28 @@ func busiestCell(n *whatifapi.DayNeeded) string {
 		return "D>=" + strconv.Itoa(n.Decode)
 	}
 	return strconv.Itoa(*n.Prefill) + "+" + strconv.Itoa(n.Decode)
+}
+
+// heldCell is a held fleet in one cell: busiestCell's, ">=" in front where
+// it is a lower bound with prefill priced.
+func heldCell(n *whatifapi.DayNeeded) string {
+	if n.AtLeast && n.Prefill != nil {
+		return ">=" + busiestCell(n)
+	}
+	return busiestCell(n)
+}
+
+// leadText is a role's scale-up lead in words.
+func leadText(l whatifapi.RoleLead) string {
+	switch l.Source {
+	case whatifapi.LeadFromRequest:
+		return fmt.Sprintf("%s (asked)", time.Duration(l.Seconds*float64(time.Second)).Round(time.Second))
+	case whatifapi.LeadLearned:
+		return fmt.Sprintf("%s (learned)", time.Duration(l.Seconds*float64(time.Second)).Round(time.Second))
+	case whatifapi.LeadSeeded:
+		return fmt.Sprintf("%s (a ScaledObject's seed)", time.Duration(l.Seconds*float64(time.Second)).Round(time.Second))
+	}
+	return "none (not learned; --lead states one)"
 }
 
 // valueOrZero is *p, or 0 when p is nil.
