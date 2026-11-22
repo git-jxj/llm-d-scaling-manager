@@ -172,6 +172,7 @@ ErrImagePull
 Error
 Events
 Every
+ExperimentalTTFT
 External
 ExtrapolatedFill
 FMA
@@ -2414,9 +2415,9 @@ prefill-spare
 prefill-throughput-bound-reading
 prefill-vp-at-served-work
 prefill-vp-floor-served
+prefill-vp-occupancy-plateau
 prefill-vp-served-unqueued
 prefill-vp-window-best
-prefill-vp-occupancy-plateau
 prefillBoundHeld
 prefillBounds
 prefillDemandAfter

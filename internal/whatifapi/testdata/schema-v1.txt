@@ -381,6 +381,7 @@ inputs.cachedTokenCost.phi number
 inputs.cachedTokenCost.secondHalf number
 inputs.cachedTokenCost.steps number
 inputs.cachedTokenCost.why string
+inputs.experimentalTTFT boolean
 inputs.fleet object
 inputs.fleet.decode object
 inputs.fleet.decode.engine object
@@ -543,6 +544,7 @@ inputs.terms[]{} Figure
 inputs.whatifSchema string
 inputsRequest object
 inputsRequest.decodeVariant string
+inputsRequest.experimentalTTFT boolean
 inputsRequest.model string
 inputsRequest.prefillVPPlateau boolean
 inputsRequest.prefillVariant string
