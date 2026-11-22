@@ -29,7 +29,8 @@ func (f LineFloor) ok() bool {
 // put B at 1.13 ms where the engines read 1.75 ms at a fill of 0.0006 to
 // 0.0011, and
 // the planner's decode fill at a rate is B / (C/KVreq - lambda*OL*A) times
-// lambda*OL (Decode.fillAtReplicaRate): proportional to B, so the fill and
+// lambda*OL (Decode.fillAtReplicaRate; a burst adds S*A*e to B there):
+// proportional to B, so the fill and
 // TPOT it predicted were about 0.7 of what the pods held (issue
 // llm-d-incubation/llm-d-scaling-manager#274).
 //

@@ -15,6 +15,7 @@ shape measured: IL 8003 OL 200, prefix hit 0.00 (measured, cycles 269-288)
   the load's cycles (the p95 and above: 15, cycles 247-283): IL 8001 OL 200, prefix hit 0.00
 utilization at the load judged
   decode        KV fill saturated (band top 0.8), slots saturated of 222, wait p saturated
+  KV pull       utilization 1.257 per decode pod, saturated: TTFT is refused
   prefill       utilization pooled 0.83, worst pod 0.83 (f 1)
   verdict       UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2); the same at f 1 to 1.5 (prefill f 1 assumed at 3 pods).
 capacity            req/s     out tok/s   bound by

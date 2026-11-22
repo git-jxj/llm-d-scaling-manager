@@ -123,6 +123,11 @@
               "reason": "Saturated",
               "detail": "41.7 r/s at or above the knee 36.98 r/s"
             }
+          },
+          "kvPull": {
+            "utilization": 1.2567072654765727,
+            "unpriced": "ttftRefused",
+            "setsTTFT": false
           }
         },
         "prefill": {

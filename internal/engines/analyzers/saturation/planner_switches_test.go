@@ -27,6 +27,7 @@ func TestPlannerSwitches_OffFromTheConstructor(t *testing.T) {
 	for _, name := range []string{SwitchPrefillALowLoadPerRank, SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
 		SwitchPrefillFBusyMinutes, SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
 		SwitchITLAdaptiveBandFloor, SwitchITLHoldSteadySlope, SwitchITLLineAtFloor,
+		SwitchTPOTRatioCensored, SwitchDecodeResidencePull, SwitchDecodeBurstFill,
 		SwitchPlannerCapAtStepBudget, SwitchPrefillVPFloorServed, SwitchMoEBusiestRank,
 		SwitchITLBatchTerm} {
 		require.Contains(t, fields, name)

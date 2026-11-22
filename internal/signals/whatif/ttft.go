@@ -411,6 +411,10 @@ func (d DecodeTTFT) at(i float64) float64 {
 	return d.Seconds * max(1, i/d.PromptTokens)
 }
 
+// At is the decode term for a prompt of i tokens, as the TTFT prices it:
+// 0 when unmeasured.
+func (d DecodeTTFT) At(i float64) float64 { return d.at(i) }
+
 // TTFTTarget is a TTFT service level, end to end.
 type TTFTTarget struct {
 	// Seconds is the target.
@@ -1251,7 +1255,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 			return m, nil
 		}
 		mixes[key{}] = withGate(m, false)
-		out.Parts.EngineWait, out.Parts.KVPullWait = parts.prefill, parts.pull
+		out.Parts.EngineWait, out.Parts.KVPullWait, out.Parts.KVPullUtilization = parts.prefill, parts.pull, parts.pullRho
 	} else {
 		theta := pf.waitScale(rho)
 		var tail float64
@@ -1306,12 +1310,15 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 			u := refuse(Saturated, fmt.Sprintf("no decode fill carries %.4g r/s", rate))
 			return priced{u: &u}
 		}
-		fill := k
-		if k < d.Band.Lo {
+		// fill is the fill the request runs at (seenFill): its first step
+		// and the term are read there, as its TPOT is; k for Poisson
+		// arrivals, higher where they cluster.
+		fill := d.seenFill(k)
+		if fill < d.Band.Lo {
 			out.Flags = addFlags(out.Flags, BelowFittedBand)
 		}
 		lowest := d.lowestFill()
-		k = max(k, lowest)
+		k = max(fill, lowest)
 		first, floorStep = d.itlAt(k), d.itlAt(lowest)
 		oldFirst, oldFloorStep = first, floorStep
 		if t := pl.term; t != nil {

@@ -554,6 +554,14 @@ func noRoleHint(variants []pricedVariant) string {
 		"(capture --role-of, or a role label such as llm-d.ai/role)", len(variants))
 }
 
+// residenceUnread is a P/D decode figure priced, on
+// saturation.SwitchDecodeResidencePull, without the KV pull in its residence:
+// the decode engine read no finite TTFT, read it with requests waiting on
+// decode capacity, whose wait holds no KV, or read it in a window whose
+// decode backlog is unread (always, on an engine without
+// num_requests_waiting_by_reason).
+const residenceUnread whatif.Flag = "ResidenceUnread"
+
 // decodeVariants is the variants a question prices: every variant that is not
 // prefill (decode, and aggregated, whose line prices decode too), or the one
 // --variant names.
@@ -603,6 +611,33 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			// it. A B from the floor puts the line through the floor itself.
 			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL},
 			AssumedB:  pv.itlB.Applied,
+		}
+		if st.DecodeResidencePull && domain.CanonicalRole(vs.Role) == domain.RoleDecode && slices.ContainsFunc(st.Variants, func(v learnreplay.VariantState) bool {
+			return domain.CanonicalRole(v.Role) == domain.RolePrefill
+		}) {
+			// A P/D decode holds the KV from the pull: the decode engine's
+			// TTFT at the prompt priced (saturation.SwitchDecodeResidencePull).
+			// One read with requests waiting on decode capacity is a queue,
+			// and a waiting request holds no KV; a window whose decode rows
+			// did not say why they waited (BacklogUnread) may be one. Neither
+			// is priced, nor is an unread or non-finite TTFT, and the
+			// figures say so (residenceUnread). An aggregated variant
+			// prefills its own prompt and holds no pull.
+			if et := vs.DecodeTTFT.EngineTTFT; et.Waiting == 0 && !vs.DecodeTTFT.BacklogUnread &&
+				whatif.Finite(et.At(pv.shape.ILeff)) && et.At(pv.shape.ILeff) > 0 {
+				pv.decode.HeldBefore = et.At(pv.shape.ILeff)
+			} else {
+				pv.flags = append(pv.flags, residenceUnread)
+			}
+		}
+		if st.DecodeBurstFill && f.set["arrival-cv2"] && f.arrivalCV2 > 1 {
+			// Clustered arrivals put more sequences beside a request than
+			// the time average (saturation.SwitchDecodeBurstFill): its
+			// TPOT is read at that fill, from the Ca^2 stated, and says so.
+			// The decode admission chain stays Poisson (DecodeAdmission):
+			// its wait probability is not raised with the fill.
+			pv.decode.ArrivalCV2 = f.arrivalCV2
+			pv.flags = append(pv.flags, assumedArrivalCV2)
 		}
 		if t := batchTerm(vs, pv.itlB.Applied); !t.IsZero() {
 			pv.decode.Batch = t
@@ -775,7 +810,9 @@ func (pv pricedVariant) qualify(r whatif.Result) whatif.Result {
 			flags = append(flags, fl)
 		}
 	}
-	if top, ok := pv.observedFillMax(); ok && a.Basis.Fill > top && !slices.Contains(flags, whatif.ExtrapolatedFill) {
+	// The line is read at the fill a request sees, above Basis.Fill where
+	// arrivals cluster (decode-burst-fill), so that is the fill checked.
+	if top, ok := pv.observedFillMax(); ok && pv.decode.SeenFill(a.Basis.Fill) > top && !slices.Contains(flags, whatif.ExtrapolatedFill) {
 		flags = append(flags, whatif.ExtrapolatedFill)
 	}
 	a.Flags = flags
@@ -878,11 +915,33 @@ func onHostBound(res whatif.Result, pv pricedVariant, r resolvedRatio) whatif.Re
 	return res
 }
 
-// tpotRatioRead is R_q as the histograms read it (tpotRatioFor).
+// tpotRatioRead is R_q as the histograms read it (tpotRatioFor). Where the
+// censored fit reads the router's buckets (saturation.SwitchTPOTRatioCensored),
+// it reads inside a coarse bucket rather than at its edge, so a coarse
+// engine's edge reading does not replace it: the switch is the remedy for
+// the coarse grid. A fine engine reading is a measurement where the fit is a
+// model of one, and stands as without the switch, so the switch never
+// refuses (hostBoundRefusal) what it priced off. Where the fit does not
+// read, the router's edge reading falls back to the engine's as without the
+// switch.
 func (f *answerFlags) tpotRatioRead(st *learnreplay.State, q float64) (whatif.TPOTRatio, []whatif.Flag, *whatif.Unanswerable) {
+	f.engineTPOT = false
 	r, flags, refused := whatif.TPOTRatio{}, []whatif.Flag(nil), &whatif.Unanswerable{Reason: whatif.NoTPOTHistogram,
 		Detail: "the recording carries no TPOT histogram; pass --assume-tpot-ratio for a flagged answer"}
-	if len(st.TPOTWindows) > 0 {
+	switch {
+	case len(st.TPOTWindows) > 0 && st.TPOTRatioCensored:
+		var fitted bool
+		r, flags, refused, fitted = whatif.TPOTRatioCensoredFit(st.TPOTWindows, q)
+		if fitted {
+			if slices.Contains(flags, whatif.CoarseTPOTBucket) && len(st.EngineTPOTWindows) > 0 {
+				if er, eflags, erefused := whatif.EngineTPOTRatio(st.EngineTPOTWindows, q); erefused == nil && !slices.Contains(eflags, whatif.CoarseTPOTBucket) {
+					f.engineTPOT = true
+					return er, eflags, nil
+				}
+			}
+			return r, flags, refused
+		}
+	case len(st.TPOTWindows) > 0:
 		r, flags, refused = whatif.TPOTRatioFromWindows(st.TPOTWindows, q)
 	}
 	coarse := refused == nil && slices.Contains(flags, whatif.CoarseTPOTBucket)

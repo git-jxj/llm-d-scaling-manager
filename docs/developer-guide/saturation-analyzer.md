@@ -1002,6 +1002,36 @@ p90 TTFT on the B-off and B-on phases reads 15% to 23% under; the lift alone,
 on the steeper line the hold replaces, reads TPOT higher still (1.84 to
 2.06).
 
+Three more planner-only switches, all off, price the decode side; the analyzer
+accepts them and does not read them. `saturation.SwitchDecodeBurstFill`
+(issue llm-d-incubation/llm-d-scaling-manager#291) reads a decode's TPOT at
+the fill a request sees beside clustered arrivals: with a stated
+`--arrival-cv2` above 1, `whatif.Decode.ArrivalCV2` adds
+`(Ca² - 1)/N_d` sequences to the fill each step runs at (`burstFill`,
+`seenFill`), and Little's law reads the replica's own fill at those longer
+steps; at Poisson it moves nothing. TTFT's first decode step and the
+below-band and extrapolated-fill flags are read at that fill too
+(`whatif.Decode.SeenFill`). It stays off because, with all four decode
+switches on, other figures still read under what was measured.
+`saturation.SwitchDecodeResidencePull` (issue
+llm-d-incubation/llm-d-scaling-manager#301) holds a request's KV on the
+decode pod from the KV pull, not from its first token:
+`whatif.Decode.HeldBefore` is the decode engine's TTFT at the prompt priced
+(`learnreplay.VariantState.DecodeTTFT.EngineTTFT`), and the residence is
+`HeldBefore + (OL - 1) * ITL(k)`, since that TTFT ends at the first output
+token. A TTFT read with requests waiting on decode capacity is not used
+(a waiting request holds no KV), nor is an unread one, nor one from a window
+whose decode backlog is unread (`DecodeTTFT.BacklogUnread`, always set on an
+engine without `num_requests_waiting_by_reason`, so there the switch prices no
+residence); the figures are then flagged `ResidenceUnread`. It should go on
+only together with the hold and the lift (nothing enforces it).
+`saturation.SwitchTPOTRatioCensored` (issue
+llm-d-incubation/llm-d-scaling-manager#279) reads `R_q` by a pooled
+interval-censored lognormal fit of the bucket counts
+(`whatif.TPOTRatioCensored`), never above the upper-edge reading; it stays
+off because on the Qwen3-32B recordings it reads the p90 TPOT under the
+measured p90 interpolated in its bucket.
+
 `saturation.SwitchMoEBusiestRank` (`moe-dp-busiest-rank`, issue
 llm-d-incubation/llm-d-scaling-manager#312) is planner-only, off, and
 replay-only: no CLI flag or API field sets it, and it is not in
