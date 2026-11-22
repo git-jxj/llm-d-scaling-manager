@@ -145,7 +145,7 @@ func TestDecodeFit_RefusesWhatCannotBe(t *testing.T) {
 // row a gate let through would pull the fit (a slope of 5) off it.
 func TestDecodeRow_TheGates(t *testing.T) {
 	good := decodeRow("d", 0.02, 0.003, 1000)
-	_, _, _, ok := admittedDecodeRow(good)
+	_, _, _, ok := admittedDecodeRow(good, false)
 	require.True(t, ok)
 	for name, spoil := range map[string]func(*domain.ReplicaMetrics){
 		"not ready":          func(r *domain.ReplicaMetrics) { r.Ready = false },
@@ -169,12 +169,12 @@ func TestDecodeRow_TheGates(t *testing.T) {
 	} {
 		r := good
 		spoil(&r)
-		_, _, _, ok := admittedDecodeRow(r)
+		_, _, _, ok := admittedDecodeRow(r, false)
 		assert.False(t, ok, name)
 	}
 	r := good
 	r.QueueLength, r.RequestRate = MaxDecodeQueue, 25
-	_, _, _, ok = admittedDecodeRow(r)
+	_, _, _, ok = admittedDecodeRow(r, false)
 	assert.True(t, ok, "the pull in transit is D")
 }
 

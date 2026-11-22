@@ -385,6 +385,14 @@ type shapeSample struct {
 // spread of the service time that no term prices. It stays off until one
 // does (docs/proposals/slo-capacity-planner-ttft.md).
 //
+// slo.SwitchTTFTDecodeSpeculatingHeld is planner-only and not listed: on a
+// decode fleet that speculates (MTP), every decode row is refused by D's
+// fit, and with it the decode engine's measured TTFT of a quiet speculating
+// row is held for D, its ITL read per accepted token. No committed recording
+// has a decode row that speculates, so no golden moves with it on; it stays
+// off until a backtest of a recording that speculates shows it reads no
+// figure under what was measured.
+//
 // saturation.SwitchMoEBusiestRank is not listed either: it reads a
 // data-parallel MoE engine's line at its busiest rank (issue
 // llm-d-incubation/llm-d-scaling-manager#312), and its only evidence is
@@ -555,6 +563,11 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	burst := opts.Switches[PackageSaturation][saturation.SwitchDecodeBurstFill]
 	ttft.prefixAttention = opts.Switches[PackageSLO][slo.SwitchTTFTPrefixAttention]
 	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
+	ttft.specHeld = opts.Switches[PackageSLO][slo.SwitchTTFTDecodeSpeculatingHeld]
+	// SwitchITLPerToken is on from the saturation analyzer's constructor: a
+	// replay that does not name it fits the line per accepted token.
+	perToken, named := opts.Switches[PackageSaturation][saturation.SwitchITLPerToken]
+	ttft.itlPerToken = perToken || !named
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false

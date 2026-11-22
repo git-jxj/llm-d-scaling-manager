@@ -1012,6 +1012,11 @@ func (pf *pricedFleet) decodeTerm() {
 	case t.EngineOmitted:
 		pf.in.DecodeTermSource = sideOmitted
 		pf.assume("decode term omitted (no fit, %s, and no quiet decode row): T_xfer + ITL stands for it", t.EngineRefused)
+	case t.StepAssumed && t.StepTokens > 0:
+		pf.in.DecodeTermSource = shapeAssumed
+		pf.in.TransferSource = termHoldsTransfer
+		pf.assume("decode TTFT %.1f ms held from a quiet speculating row (%.2f tokens a step), slope %s on ITL per token above %.2f ms (no fit: %s)",
+			1000*t.Engine.Base, t.StepTokens, num(t.PerStep), 1000*t.FromITL, t.EngineRefused)
 	case t.StepAssumed:
 		pf.in.DecodeTermSource = shapeAssumed
 		pf.in.TransferSource = termHoldsTransfer

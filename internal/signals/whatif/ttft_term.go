@@ -59,6 +59,10 @@ type DecodeTerm struct {
 	// quiet rows and PerStep AssumedDecodeStepSlope. EngineOmitted is no D at
 	// all: the old sum stands for it.
 	StepAssumed, EngineOmitted bool
+	// StepTokens is the tokens a step emitted on the speculating row a
+	// StepAssumed D is held from, its ITL read per token
+	// (prefill.HeldDecode.StepTokens); 0 for any other D.
+	StepTokens float64
 	// HopAssumed is an R not learned: AssumedRouterHopSeconds, or the
 	// operator's.
 	HopAssumed bool
@@ -73,6 +77,10 @@ type DecodeTerm struct {
 // none, the decode engine's TTFT on the window's quiet rows, held, climbing from
 // the ITL it was read at by AssumedDecodeStepSlope, flagged
 // DecodeStepSlopeAssumed; with no quiet row, omitted, flagged DecodeTermOmitted.
+// A row held from a speculating row with its ITL read per token
+// (prefill.HeldDecode.StepTokens) climbs by AssumedDecodeStepSlope per second
+// of its step, StepTokens times its time per token: the slope is in TTFT per
+// step time, and the line it is read on is per token.
 // Busy rows are never held: their TTFT holds the slot wait the model prices
 // apart as W_decode, and a load the question may not ask about. R is the fit, or
 // else AssumedRouterHopSeconds, flagged RouterHopAssumed. An unknown input takes
@@ -87,6 +95,9 @@ func TermFromEstimate(est prefill.DecodeTermEstimate) DecodeTerm {
 	case h.Seconds > 0 && h.PromptTokens >= MinDecodeTTFTPrompt:
 		t.Engine = PromptLine{Base: h.Seconds, HeldPromptTokens: h.PromptTokens}
 		t.PerStep, t.FromITL, t.StepAssumed = AssumedDecodeStepSlope, h.ITLSeconds, true
+		if h.StepTokens > 1 {
+			t.PerStep, t.StepTokens = AssumedDecodeStepSlope*h.StepTokens, h.StepTokens
+		}
 		t.EngineRefused = refusalOf(f.Refused, prefill.TooFewDecodeMinutes)
 	default:
 		t.EngineOmitted = true
@@ -119,14 +130,14 @@ func (t DecodeTerm) HopAt(i float64) float64 {
 // check refuses a term with a figure no reading gives.
 func (t DecodeTerm) check() *Unanswerable {
 	for _, x := range []float64{t.Engine.Base, t.Engine.PerToken, t.Engine.HeldPromptTokens, t.Hop.Base, t.Hop.PerToken,
-		t.Hop.HeldPromptTokens, t.PerStep, t.FromITL, t.WholePromptTokens} {
+		t.Hop.HeldPromptTokens, t.PerStep, t.FromITL, t.WholePromptTokens, t.StepTokens} {
 		if !Finite(x) {
 			u := refuse(InvalidInput, fmt.Sprintf("decode term %+v", t))
 			return &u
 		}
 	}
 	if t.PerStep < 0 || t.FromITL < 0 || t.Engine.PerToken < 0 || t.Hop.PerToken < 0 ||
-		t.Engine.HeldPromptTokens < 0 || t.Hop.HeldPromptTokens < 0 || t.WholePromptTokens < 0 {
+		t.Engine.HeldPromptTokens < 0 || t.Hop.HeldPromptTokens < 0 || t.WholePromptTokens < 0 || t.StepTokens < 0 {
 		u := refuse(InvalidInput, fmt.Sprintf("decode term %+v", t))
 		return &u
 	}
@@ -143,7 +154,7 @@ func (t DecodeTerm) withoutAssumed() (DecodeTerm, bool) {
 		t.Hop, t.HopAssumed = PromptLine{}, false
 	}
 	if t.StepAssumed {
-		t.Engine, t.PerStep, t.FromITL = PromptLine{}, 0, 0
+		t.Engine, t.PerStep, t.FromITL, t.StepTokens = PromptLine{}, 0, 0, 0
 		t.StepAssumed, t.EngineOmitted = false, true
 	}
 	return t, true

@@ -127,6 +127,22 @@ const SwitchTTFTLowLoadDecodeTTFT = "slo-ttft-low-load-decode-ttft"
 // (llm-d-incubation/llm-d-scaling-manager#281).
 const SwitchTTFTHopUnqueued = "slo-ttft-hop-unqueued"
 
+// SwitchTTFTDecodeSpeculatingHeld is the replay switch for a decode engine
+// that speculates (MTP or a draft model), whose rows D's fit never reads:
+// their AvgITL is a step, not a token. On, such a row, quiet by every other
+// gate, is read for the held D where no row that does not speculate is
+// (prefill.DecodeTermCycle.SpeculatingHeld): the decode engine's own measured
+// TTFT, the KV pull, the wait for it and its first steps, from its TTFT
+// histogram, with no step time in it. Its ITL is the point the assumed slope
+// climbs from, read per accepted token where the line is (the planner's,
+// saturation.SwitchITLPerToken), and the slope per second of the step. Off,
+// as before, a fleet whose every decode row speculates has no D, and the old
+// sum T_xfer + ITL(k) stands for it: on a P/D recording with MTP on every
+// decode pod, a fraction of the decode engine's measured TTFT. Planner-only:
+// off from the constructor; the slo analyzer's line is per step, so it reads
+// the ITL as it is.
+const SwitchTTFTDecodeSpeculatingHeld = "slo-ttft-decode-speculating-held"
+
 // SwitchTTFTDecodeGateCharge is the replay switch for
 // whatif.TTFTFleet.ChargeDecodeGate: on, the published rate is charged the
 // share of time the decode flow-control gate is closed below its onset, in
@@ -501,9 +517,10 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 	if len(decodes) == 1 && a.ttftDecodeTerm {
 		est := a.noteDecodeTerm(decodeKey, accelerator, engineArgs, prefill.DecodeTermCycle{
 			Now: now, Prefill: prefillRows, Decode: decodeRows, PromptTokens: modelPrompt, Router: router,
-			Settled:     &prefill.Settle{View: a.settleView(), Model: utils.GetNamespacedKey(input.Namespace, input.ModelID)},
-			RouterHeld:  input.SchedulerQueue != nil && input.SchedulerQueue.QueueSize > 0,
-			HopUnqueued: a.ttftHopUnqueued,
+			Settled:         &prefill.Settle{View: a.settleView(), Model: utils.GetNamespacedKey(input.Namespace, input.ModelID)},
+			RouterHeld:      input.SchedulerQueue != nil && input.SchedulerQueue.QueueSize > 0,
+			HopUnqueued:     a.ttftHopUnqueued,
+			SpeculatingHeld: a.ttftDecodeSpeculatingHeld,
 		})
 		t := whatif.TermFromEstimate(est)
 		term = &t

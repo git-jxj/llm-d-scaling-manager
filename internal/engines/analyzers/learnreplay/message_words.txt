@@ -2895,6 +2895,7 @@ slo-tpot
 slo-transient
 slo-ttft
 slo-ttft-decode-gate-charge
+slo-ttft-decode-speculating-held
 slo-ttft-decode-term
 slo-ttft-hop-unqueued
 slo-ttft-imbalance-across-counts

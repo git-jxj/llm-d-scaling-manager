@@ -179,9 +179,15 @@ type HopFit struct {
 // largest of the last HeldDecodeAge, as a pair with its prompt and step time.
 // Quiet is what admits a row to the fit, so it holds no slot wait, which the
 // model prices apart, and no speculating row, whose AvgITL is a step and not a
-// token. Zero with no such row.
+// token. With DecodeTermCycle.SpeculatingHeld, a speculating quiet row is held
+// where no other is (StepTokens). Zero with no such row.
 type HeldDecode struct {
 	Seconds, PromptTokens, ITLSeconds float64
+	// StepTokens is the tokens a step of a speculating row emitted, 1 + its
+	// SpecAcceptedPerStep, when ITLSeconds is that row's AvgITL over them
+	// (DecodeTermCycle.ITLPerToken): per token, as the line it is set
+	// against. 0 for a row read as it is.
+	StepTokens float64
 }
 
 // DecodeTermEstimate is what a decode variant's window has learned.
@@ -223,12 +229,28 @@ type DecodeTermCycle struct {
 	// at low load, and the line through them put 0.31 s on every 8k prompt
 	// (slo.SwitchTTFTHopUnqueued).
 	HopUnqueued bool
+	// SpeculatingHeld reads a decode row that speculates (SpecAcceptedPerStep
+	// above 0), quiet by every other gate, for the held D alone, never for
+	// D's fit: its AvgTTFT is the decode engine's own measured mean, the KV
+	// pull, the queue for it and the first steps, whatever a step emits. Its
+	// AvgITL is a step, so where the line it is set against is per token
+	// (ITLPerToken) it is read over the tokens a step emits. Off, as before,
+	// such a row is no reading, and where every decode row speculates the
+	// term is omitted: T_xfer + ITL stands for a measured decode TTFT
+	// (slo.SwitchTTFTDecodeSpeculatingHeld).
+	SpeculatingHeld bool
+	// ITLPerToken says the line the term is priced on is per accepted token
+	// (saturation.SwitchITLPerToken), as the planner's is; the slo analyzer's
+	// is per step. Read with SpeculatingHeld only.
+	ITLPerToken bool
 }
 
 // decodeSample is one pod-minute of a decode row.
 type decodeSample struct {
 	at                time.Time
 	ttft, itl, prompt float64
+	// stepTokens is HeldDecode.StepTokens.
+	stepTokens float64
 }
 
 // engineCycle is one cycle's engine means, for the router's window.
@@ -251,8 +273,11 @@ type hopSample struct {
 // persisted state, as the rest of the package does not, and takes its lock from
 // its owner.
 type DecodeTermWindow struct {
-	lastAt  map[string]time.Time
-	decode  []decodeSample
+	lastAt map[string]time.Time
+	decode []decodeSample
+	// spec is the speculating rows' minutes, read with
+	// DecodeTermCycle.SpeculatingHeld for held alone, never for D's fit.
+	spec    []decodeSample
 	engines []engineCycle
 	hops    []hopSample
 	lastHop time.Time
@@ -367,7 +392,8 @@ func (w *DecodeTermWindow) Observe(c DecodeTermCycle) {
 		return
 	}
 	for _, rm := range c.Decode {
-		itl, ttft, prompt, ok := admittedDecodeRow(rm)
+		speculating := c.SpeculatingHeld && rm.SpecAcceptedPerStep > 0
+		itl, ttft, prompt, ok := admittedDecodeRow(rm, speculating)
 		if !ok || !c.Settled.Settled(rm, c.Now) {
 			continue
 		}
@@ -375,10 +401,22 @@ func (w *DecodeTermWindow) Observe(c DecodeTermCycle) {
 			continue
 		}
 		w.lastAt[rm.PodName] = c.Now
-		w.decode = append(w.decode, decodeSample{at: c.Now, ttft: ttft, itl: itl, prompt: prompt})
+		s := decodeSample{at: c.Now, ttft: ttft, itl: itl, prompt: prompt}
+		if !speculating {
+			w.decode = append(w.decode, s)
+			continue
+		}
+		if c.ITLPerToken {
+			s.stepTokens = 1 + rm.SpecAcceptedPerStep
+			s.itl /= s.stepTokens
+		}
+		w.spec = append(w.spec, s)
 	}
 	if len(w.decode) > maxDecodeSamples {
 		w.decode = slices.Clone(w.decode[len(w.decode)-maxDecodeSamples:])
+	}
+	if len(w.spec) > maxDecodeSamples {
+		w.spec = slices.Clone(w.spec[len(w.spec)-maxDecodeSamples:])
 	}
 	w.observeRouter(c)
 }
@@ -388,12 +426,14 @@ func (w *DecodeTermWindow) Observe(c DecodeTermCycle) {
 // requests at the prompt it states, with its slot queue read and empty (that
 // wait is W_decode, priced apart; an unknown queue is not an empty one) and no
 // more than MaxDecodeQueue waiting at all, and with no speculation, where AvgITL
-// is a step and the line a token.
-func admittedDecodeRow(rm domain.ReplicaMetrics) (itl, ttft, prompt float64, ok bool) {
+// is a step and the line a token. speculating admits a row that speculates,
+// every other gate held: the caller reads it for the held D alone, never for
+// D's fit (DecodeTermCycle.SpeculatingHeld).
+func admittedDecodeRow(rm domain.ReplicaMetrics, speculating bool) (itl, ttft, prompt float64, ok bool) {
 	switch {
 	case !Serving(rm), !rm.AvgTTFTKnown, !finitePositive(rm.AvgTTFT),
 		rm.ITLState() != domain.ITLFinite, !finitePositive(rm.AvgITL),
-		rm.SpecAcceptedPerStep > 0, !rm.CapacityQueueKnown, rm.CapacityQueueLength > 0, rm.QueueLength > MaxDecodeQueue:
+		rm.SpecAcceptedPerStep > 0 && !speculating, !rm.CapacityQueueKnown, rm.CapacityQueueLength > 0, rm.QueueLength > MaxDecodeQueue:
 		return 0, 0, 0, false
 	}
 	rate, known := requestRate(rm)
@@ -537,6 +577,7 @@ func engineMean(rows []domain.ReplicaMetrics) (mean, rate float64, ok bool) {
 // prune drops what is older than Retention.
 func (w *DecodeTermWindow) prune(now time.Time) {
 	w.decode = slices.DeleteFunc(w.decode, func(s decodeSample) bool { return now.Sub(s.at) > Retention })
+	w.spec = slices.DeleteFunc(w.spec, func(s decodeSample) bool { return now.Sub(s.at) > Retention })
 	w.hops = slices.DeleteFunc(w.hops, func(s hopSample) bool { return now.Sub(s.at) > Retention })
 	w.engines = slices.DeleteFunc(w.engines, func(e engineCycle) bool { return now.Sub(e.at) > engineHorizon })
 	maps.DeleteFunc(w.lastAt, func(_ string, at time.Time) bool { return now.Sub(at) > Retention })
@@ -550,12 +591,22 @@ func (w *DecodeTermWindow) Estimate() DecodeTermEstimate {
 
 // held is the largest TTFT of the last HeldDecodeAge's quiet rows, a pair from
 // one row: the largest, as S1 reads the measured figure, the side that asks for
-// more.
+// more. With no such row that does not speculate, the largest of the
+// speculating ones (DecodeTermCycle.SpeculatingHeld), by the same rule.
 func (w *DecodeTermWindow) held() HeldDecode {
+	if top := w.largest(w.decode); top.Seconds > 0 {
+		return top
+	}
+	return w.largest(w.spec)
+}
+
+// largest is the sample of the last HeldDecodeAge with the largest TTFT, as a
+// held pair.
+func (w *DecodeTermWindow) largest(samples []decodeSample) HeldDecode {
 	var top HeldDecode
-	for _, s := range w.decode {
+	for _, s := range samples {
 		if w.now.Sub(s.at) <= HeldDecodeAge && s.ttft > top.Seconds {
-			top = HeldDecode{Seconds: s.ttft, PromptTokens: s.prompt, ITLSeconds: s.itl}
+			top = HeldDecode{Seconds: s.ttft, PromptTokens: s.prompt, ITLSeconds: s.itl, StepTokens: s.stepTokens}
 		}
 	}
 	return top
