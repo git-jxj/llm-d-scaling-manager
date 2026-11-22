@@ -347,8 +347,9 @@ type shapeSample struct {
 // slo.SwitchTTFTHopWindowMeans, planner-only, reads the router hop on its
 // windows' means: the median of at least prefill.MinHopMeanWindows windows,
 // held at their median prompt (prefill.DecodeTermCycle.HopWindowMeans). It is
-// not listed until backtests show it moves no figure to reading under what
-// was measured.
+// not listed: on the public cross-validation it moved four TTFT figures of
+// the Qwen3-32B staircase's C phases from at or above 0.80 of measured to
+// just under it (0.798 to 0.799). It goes on once no public figure newly reads under what was measured.
 //
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
