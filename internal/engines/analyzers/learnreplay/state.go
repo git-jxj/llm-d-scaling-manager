@@ -185,6 +185,10 @@ type VariantState struct {
 	// with traffic up to the one asked: what the recording saw, and what a
 	// stated shape is extrapolated past.
 	ShapeRange ShapeRange
+	// ShapeSeries is the variant's shape at every cycle with traffic up to
+	// the one asked, oldest first: what a load read at some cycles is priced
+	// at the shape of (the planner's load shape).
+	ShapeSeries []CycleShape
 	// ReadingsFrom and ReadingsTo are the first and the last cycle of the
 	// LineReadings, 0 with none.
 	ReadingsFrom, ReadingsTo int
@@ -448,6 +452,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		arrivals []float64
 		times    []time.Time
 		ranges   = map[string]ShapeRange{}
+		series   = map[string][]CycleShape{}
 	)
 	// Read once: the switches are set before the replay starts.
 	lineAtFloor := opts.Switches[PackageSaturation][saturation.SwitchITLLineAtFloor]
@@ -492,6 +497,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		}
 		noteShapes(shapes, in.ReplicaMetrics, n)
 		noteRanges(ranges, shapes, n)
+		noteSeries(series, shapes, n)
 		noteResident(resident, in, n)
 		ttft.note(in, n, ev.Now)
 		args := func(variant string) string {
@@ -513,6 +519,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			for i := range s.Variants {
 				v := &s.Variants[i]
 				v.ShapeRange = ranges[v.Variant]
+				v.ShapeSeries = slices.Clone(series[v.Variant])
 				if domain.CanonicalRole(v.Role) != domain.RolePrefill {
 					v.Resident = residentOf(resident[v.Variant], v.Shape)
 				}
@@ -916,6 +923,28 @@ func (vs *VariantState) refit() {
 	}
 	if got := itl.RefitAboveBand(vs.Readings.Above, vs.Readings.AboveSteady, vs.MinSettled); got.Tier != "" && sameLine(got.Model, vs.Line) {
 		vs.Tier, vs.LineReadings, vs.Refitted = whatif.TierAboveBand, got.Read, true
+	}
+}
+
+// CycleShape is one cycle's shape of a variant: its mean lengths and prefix
+// hit rate, and its rows' summed request rate, 0 where none read one. Cycle
+// counts from 1, as State.Cycle does: State.ArrivalRates[Cycle-1] is the
+// model's arrival rate at it.
+type CycleShape struct {
+	Cycle                                    int
+	InputTokens, OutputTokens, PrefixHitRate float64
+	RequestRate                              float64
+}
+
+// noteSeries adds each variant's sample of cycle n, if it has one, to its
+// series.
+func noteSeries(series map[string][]CycleShape, shapes map[string][]shapeSample, n int) {
+	for v, s := range shapes {
+		if len(s) == 0 || s[len(s)-1].cycle != n {
+			continue
+		}
+		x := s[len(s)-1]
+		series[v] = append(series[v], CycleShape{Cycle: n, InputTokens: x.il, OutputTokens: x.ol, PrefixHitRate: x.hit, RequestRate: x.req})
 	}
 }
 

@@ -72,7 +72,8 @@ type ReportQuery struct {
 	// Loads are the table's rates; none is 50%, 80%, 100% and seen.
 	Loads []ReportLoadAsk
 	// LoadStatistic is the statistic of the source's per-cycle arrival rate
-	// judged at (LoadMean, LoadP95, LoadPeak); "" is DefaultLoadStatistic.
+	// judged at (LoadMean, LoadP95, LoadPeak, LoadP95Modulation); "" is
+	// DefaultLoadStatistic.
 	LoadStatistic string
 	// LoadSeen is the load to judge at; 0 is the source's. LoadSeenX, when
 	// above 0 and not 1, adds the growth load "seen xLoadSeenX" to Loads.
@@ -100,8 +101,11 @@ type ReportQuery struct {
 // output lengths in tokens and, when Hit is set, the prefix-cache hit rate.
 type ReportShapeAsk struct {
 	Measured bool
-	IL, OL   float64
-	Hit      *float64
+	// Load asks the shape of the cycles the load judged at was read from
+	// (ReportLoadShape): the lengths are filled in from the source.
+	Load   bool
+	IL, OL float64
+	Hit    *float64
 	// Label is the shape as asked ("measured", "8k/200").
 	Label string
 }
@@ -145,7 +149,8 @@ const (
 
 // The statistics of the source's per-cycle arrival rate a fleet can be judged
 // at: the mean, the 95th percentile (nearest rank) and the highest, over the
-// cycles that read a rate above 0.
+// cycles that read a rate above 0; and LoadP95Modulation, the p95 with the
+// one-minute rate's counting noise taken out (load.go).
 const (
 	LoadMean = "mean"
 	LoadP95  = "p95"
@@ -204,6 +209,10 @@ type ReportShape struct {
 	PrefixHitRate float64 `json:"prefixHitRate"`
 	// Source is where the lengths came from: the measured window, or asked.
 	Source string `json:"source"`
+	// LoadShape is the shape of the cycles the load judged at was read
+	// from, beside the shape priced; nil with a stated load or no shape read
+	// at those cycles. Its Mismatch flags the shape FlagShapeLoadMismatch.
+	LoadShape *ReportLoadShape `json:"loadShape,omitempty"`
 	// Extrapolated says IL or OL lies outside what the recording saw, and
 	// ExtrapolatedWhy by how much.
 	Extrapolated    bool          `json:"extrapolated"`
@@ -274,6 +283,9 @@ type ReportLoad struct {
 	Mean              *float64 `json:"mean,omitempty"`
 	P95               *float64 `json:"p95,omitempty"`
 	Peak              *float64 `json:"peak,omitempty"`
+	// P95Modulation is the p95 with the one-minute rate's counting noise
+	// taken out (ModulationP95), reported whichever statistic is judged.
+	P95Modulation *float64 `json:"p95Modulation,omitempty"`
 	// P95IsPeak says the window has too few cycles (under 20) for its p95
 	// to be anything but its peak.
 	P95IsPeak bool `json:"p95IsPeak,omitempty"`
@@ -684,13 +696,14 @@ func ReportQueryOf(req ReportRequest) (ReportQuery, error) {
 	return q, nil
 }
 
-// CheckLoadStatistic checks a load statistic: LoadMean, LoadP95 or LoadPeak.
+// CheckLoadStatistic checks a load statistic: LoadMean, LoadP95, LoadPeak or
+// LoadP95Modulation.
 func CheckLoadStatistic(s string) error {
 	switch s {
-	case LoadMean, LoadP95, LoadPeak:
+	case LoadMean, LoadP95, LoadPeak, LoadP95Modulation:
 		return nil
 	}
-	return fmt.Errorf("%q, want %s, %s or %s", s, LoadMean, LoadP95, LoadPeak)
+	return fmt.Errorf("%q, want %s, %s, %s or %s", s, LoadMean, LoadP95, LoadPeak, LoadP95Modulation)
 }
 
 // ParseReportShape reads a shape: "measured", or "IL/OL[/hit]", lengths in
@@ -699,9 +712,12 @@ func ParseReportShape(s string) (ReportShapeAsk, error) {
 	if s == "measured" {
 		return ReportShapeAsk{Measured: true, Label: s}, nil
 	}
+	if s == ShapeLoad {
+		return ReportShapeAsk{Load: true, Label: s}, nil
+	}
 	parts := strings.Split(s, "/")
 	if len(parts) < 2 || len(parts) > 3 {
-		return ReportShapeAsk{}, fmt.Errorf("shape %q, want measured or IL/OL[/hit] (8k/200, 1k/4k/0.3)", s)
+		return ReportShapeAsk{}, fmt.Errorf("shape %q, want measured, load or IL/OL[/hit] (8k/200, 1k/4k/0.3)", s)
 	}
 	sh := ReportShapeAsk{Label: s}
 	var err error

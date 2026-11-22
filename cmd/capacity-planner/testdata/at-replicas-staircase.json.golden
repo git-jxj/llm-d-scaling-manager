@@ -59,6 +59,7 @@
     "mean": 31.59170423955871,
     "p95": 41.7,
     "peak": 43.24,
+    "p95Modulation": 41.658088992699376,
     "rolling": {
       "windowSeconds": 120.20136059205555,
       "cycles": 8,
@@ -90,6 +91,16 @@
       "outputTokens": 199.97577579895813,
       "prefixHitRate": 0,
       "source": "measured, cycles 269-288",
+      "loadShape": {
+        "statistic": "p95",
+        "inputTokens": 8001.465219986615,
+        "outputTokens": 199.98767816409364,
+        "prefixHitRate": 0,
+        "cycles": 15,
+        "fromCycle": 247,
+        "toCycle": 283,
+        "mismatch": false
+      },
       "extrapolated": false,
       "utilization": {
         "decode": {

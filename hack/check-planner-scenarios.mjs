@@ -449,6 +449,7 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   const {reportShapeProblem, shapeText, reportShapes, parseReportLoads, reportRequest, reportView, reportMissing, reportCurrent,
     refusalText, flagSummary} = ctx;
   check("measured is a shape", reportShapeProblem("measured") === "");
+  check("load is a shape", reportShapeProblem("load") === "");
   check("IL/OL is a shape", reportShapeProblem("8k/200") === "");
   check("IL/OL/hit is a shape", reportShapeProblem("1k/4k/0.3") === "");
   check("one length is not a shape", reportShapeProblem("8k") !== "");
@@ -606,6 +607,10 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
     {role: "prefill", spare: false}]})) === JSON.stringify(["Decode: has a replica to spare (3 decode hold).", "Prefill: no replica to spare."]));
   check("a p95 that is the peak says so", loadLine({rate: {value: 12}, statistic: "p95", p95IsPeak: true, p95: 12, peak: 12, cyclesWithTraffic: 9})
     .startsWith("Judged at the p95 load of 12 r/s (= peak: fewer than 20 cycles);"));
+  check("a p95 less noise of few cycles says so", loadLine({rate: {value: 11}, statistic: "p95-modulation", p95IsPeak: true, p95: 12, cyclesWithTraffic: 9})
+    .includes("(from the peak: fewer than 20 cycles)"));
+  check("the p95 less counting noise is said in words", loadLine({rate: {value: 11}, statistic: "p95-modulation", p95: 12, p95Modulation: 11, cyclesWithTraffic: 40})
+    .startsWith("Judged at the p95 less counting noise load of 11 r/s; the source saw p95 12, p95 less counting noise 11 r/s"));
   check("a half rounds up", ctx.roundRate(62.55) === "62.6");
   check("a TTFT is never marked as a floor", ctx.reportView({slo, load: {rate: {value: 10}}, loads: ["10r/s"], shapes: [{label: "m", capacity: knees(38.14, "decode"), verdict: {},
     utilization: {decode: {}, prefill: {}}, table: [Object.assign(row("10r/s", 10, {value: 0.5, flags: ["BelowFittedBand"]}, {value: 0.007}, "met"))]}]}).rows[0].cells[0].parts[0] === "TTFT 500 ms");
@@ -675,7 +680,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 322;
+const EXPECTED_CASES = 325;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

@@ -87,6 +87,9 @@ type reporter struct {
 	// loadRefused is why the observed load was refused (gapAtPeak), nil
 	// otherwise; load is then 0.
 	loadRefused *whatif.Unanswerable
+	// loadShape is the shape of the cycles the load was read from, nil with
+	// a stated load or none read there (load_shape.go).
+	loadShape *whatifapi.ReportLoadShape
 	// peak is the window's peak a shrink must also hold at, 0 with a stated
 	// load; brief shortens the verdict's sentence, for a growth line.
 	peak   float64
@@ -139,6 +142,14 @@ func buildReport(ctx context.Context, st *learnreplay.State, s *servedState, q w
 	}) {
 		r.q.Loads = append(slices.Clone(r.q.Loads), whatifapi.GrowthLoad(x))
 	}
+	// The load is read first: a shape asked as the load's takes its lengths
+	// from the cycles the load was read at.
+	var load whatifapi.ReportLoad
+	r.loadOf(&load)
+	r.q.Shapes = slices.Clone(r.q.Shapes)
+	if err := r.resolveLoadShapes(); err != nil {
+		return nil, err
+	}
 	r.sh = r.q.Shapes[0]
 	base, err := r.fleet(q.Prefill, q.Decode, r.sloTTFTQ(), r.sloTPOTQ())
 	if err != nil {
@@ -154,7 +165,7 @@ func buildReport(ctx context.Context, st *learnreplay.State, s *servedState, q w
 	if base.pf.variant != "" {
 		out.Fleet.PrefillEngine = engineInfo(variantParams(st, base.pf.variant))
 	}
-	r.loadOf(&out.Load)
+	out.Load = load
 	out.SLO = r.sloOf()
 	for _, l := range r.q.Loads {
 		out.Loads = append(out.Loads, l.Label)
@@ -207,6 +218,9 @@ func (r *reporter) shapeReport(ctx context.Context, np, nd int) (whatifapi.Repor
 		PrefixHitRate: r.pv.shape.PrefixHitRate, Source: measuredText(r.pv), Flags: []string{}, Assumed: []string{}}
 	if !r.sh.Measured {
 		rs.Source = sourceAsked
+		if r.sh.Load {
+			rs.Source = sourceLoadCycles
+		}
 		if why := r.extrapolated(); why != "" {
 			rs.Extrapolated, rs.ExtrapolatedWhy = true, why
 			r.results = append(r.results, whatif.Answer{Flags: []whatif.Flag{extrapolatedShape}})
@@ -235,6 +249,7 @@ func (r *reporter) shapeReport(ctx context.Context, np, nd int) (whatifapi.Repor
 		return rs, 0, false, err
 	}
 	rs.Flags = flagNamesOf(r.results)
+	r.shapeLoad(&rs)
 	for _, w := range r.assumed {
 		// A stated shape is priced as --assume-input-tokens prices a prompt.
 		rs.Assumed = append(rs.Assumed, strings.ReplaceAll(w, assumeInputTokensWords, "(--shape)"))
@@ -288,7 +303,7 @@ func (r *reporter) growth(np, nd int) ([]whatifapi.ReportGrowth, error) {
 			continue
 		}
 		r.load, r.peak = l.X*seen, l.X*peak
-		r.loadWords = fmt.Sprintf("%s x the %s load (%s)", num(l.X), r.loadStat, rateWords(r.load))
+		r.loadWords = fmt.Sprintf("%s x the %s load (%s)", num(l.X), statWords(r.loadStat), rateWords(r.load))
 		ev, err := r.evaluate(np, nd)
 		if err != nil {
 			return nil, err
@@ -456,6 +471,9 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 		stats = loadStats(rates)
 		mean, p95, peak := stats[whatifapi.LoadMean], stats[whatifapi.LoadP95], stats[whatifapi.LoadPeak]
 		l.Mean, l.P95, l.Peak = &mean, &p95, &peak
+		mod := whatifapi.ModulationP95(rates, mean, p95)
+		stats[whatifapi.LoadP95Modulation] = mod
+		l.P95Modulation = &mod
 		l.P95IsPeak = len(rates) < minP95Cycles
 		gaps := whatifapi.WindowGapsOf(r.st.CycleTimes)
 		l.Rolling = rollingPeak(r.st.ArrivalRates, rollingCycle(r.st, gaps), whatifapi.RollingWindow.Seconds())
@@ -474,6 +492,7 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 	case len(rates) > 0:
 		seen, l.Source = stats[l.Statistic], sourceObserved
 		r.peak = stats[whatifapi.LoadPeak]
+		r.loadShape = loadShapeOf(r.decodeShapeSeries(), loadCycles(r.st.ArrivalRates, l.Statistic, stats), l.Statistic)
 	default:
 		l.Source = "none"
 		l.Rate = whatifapi.FigureOf(whatif.Unanswerable{Reason: whatif.NoTraffic,
@@ -483,9 +502,12 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 	l.Seen = &seen
 	r.load, r.loadStat = seen, l.Statistic
 	l.Rate = whatifapi.FigureOf(whatif.Answer{Value: r.load}, unitRate, false)
-	r.loadWords = fmt.Sprintf("the %s load of %s", l.Statistic, rateWords(r.load))
+	r.loadWords = fmt.Sprintf("the %s load of %s", statWords(l.Statistic), rateWords(r.load))
 	if l.P95IsPeak && l.Statistic == whatifapi.LoadP95 {
 		r.loadWords = "the p95 load (= peak, few cycles) of " + rateWords(r.load)
+	}
+	if l.P95IsPeak && l.Statistic == whatifapi.LoadP95Modulation {
+		r.loadWords = "the p95 load less counting noise (from the peak, few cycles) of " + rateWords(r.load)
 	}
 }
 
@@ -1682,3 +1704,7 @@ const sourceAsked = "asked"
 
 // sourceObserved is a load the source read.
 const sourceObserved = "observed"
+
+// sourceLoadCycles is a shape asked as the load's: read at the cycles the
+// load was read from.
+const sourceLoadCycles = "the load's cycles"

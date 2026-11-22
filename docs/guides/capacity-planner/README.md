@@ -525,16 +525,31 @@ It replays the recording once and answers, for each shape and load:
 
 - **Load judged.** The p95 of the arrival rate the window read, one reading
   per cycle with traffic. The report prints the mean, p95 and peak, and the
-  busiest 2 minutes (a rolling mean). `--load-statistic mean|p95|peak` picks
+  busiest 2 minutes (a rolling mean). `--load-statistic mean|p95|peak|p95-modulation` picks
   the one judged; `--load-seen` states a load instead. The mean hides a busy
   part: on the staircase sample it is 31.6 r/s, the p95 41.7 and the peak
   43.2.
+- **Counting noise.** Each reading is a 1-minute rate, so even a steady
+  Poisson stream reads above its rate at the p95 (about 21% at 1 r/s, 6% at
+  12 r/s), and the queueing model already prices that noise. The report
+  prints the p95 less it, `p95 less counting noise`; `--load-statistic
+  p95-modulation` judges at it. A steady load is then judged near its mean,
+  a load that swings near its p95.
+- **The load's shape.** Under each shape the report prints the shape of the
+  cycles the load was read from (for the p95, every cycle at or above it).
+  When the mix moved in the window, the measured shape (the last cycles')
+  is not that traffic: a measured shape more than 20% off it in prompt or
+  output length is flagged `ShapeLoadMismatch`, and `--shape load` prices
+  the load at its own cycles' shape. On the guide's sample the p95, 29.7
+  r/s, ran at 1000/500 tokens while the measured shape is 4569/1855: the
+  measured shape needs 14 prefill + 23 decode, `--shape load` 4 + 2, what
+  `day-plan` sizes the same rate at.
 - **Growth.** `--load "seen x1.5"` (also `seen×1.5`, `seen*1.5`) asks what
   50% more traffic does: a column of its own and a short `x1.5 (...)` line
   under the verdict. It never changes the verdict at the load seen.
   `--load-seen-x 1.5` is an alias that adds the same column.
-- **Summary.** One row per shape (`--shape`, repeatable: `measured`, or
-  `IL/OL[/hit]` in tokens, `k` for 1024), one column per load (`--load`,
+- **Summary.** One row per shape (`--shape`, repeatable: `measured`,
+  `load`, or `IL/OL[/hit]` in tokens, `k` for 1024), one column per load (`--load`,
   repeatable: `80%` of that shape's fleet knee, `5r/s`, `seen`, or
   `seen x1.5`). A cell
   such as `617/3.2 @18.49 ok` is the TTFT and TPOT at the statistics the
@@ -614,7 +629,7 @@ ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-
 decode engine   vLLM release not recorded
 prefill engine  vLLM release not recorded
 load judged     41.70 r/s, the p95 of the 282 of 289 cycles with traffic
-load seen       per cycle (1-minute rates): mean 31.59, p95 41.70, peak 43.24 r/s; busiest 2m0s (8 cycles): 42.13 r/s
+load seen       per cycle (1-minute rates): mean 31.59, p95 41.70, peak 43.24 r/s; p95 less counting noise 41.66; busiest 2m0s (8 cycles): 42.13 r/s
 SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
 cell = TTFT p90 ms / TPOT mean ms @ the rate priced, r/s; - refused (the shape's table says why)
 mark = the SLO (TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
