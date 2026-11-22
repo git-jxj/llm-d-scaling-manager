@@ -57,6 +57,10 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   stays off until a cluster staircase with several held steps past the onset
   passes
   ([the router stage](../proposals/slo-capacity-planner-ttft.md#as-built-the-router-stage)).
+  The analyzer has no switch for `TTFTFleet.RouterWaitInPrefill`, which the
+  capacity planner turns on by default (`whatif.DefaultRouterWaitInPrefill`,
+  #287), so past the prefill onset the planner's flag is `FlowControlWaitPriced`
+  where the analyzer's is `AboveFlowControlOnset`.
 - `PSOnsets` (`slo-ttft-ps-onsets`, off, the CLI's `--ps-onsets` default):
   places the prefill onset on the processor-sharing stage
   (`prefillPlan.psMeanScore`, `ttftPlan.placement`) at `Prefill.RunningCap`.

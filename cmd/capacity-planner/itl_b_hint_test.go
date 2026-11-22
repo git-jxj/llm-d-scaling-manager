@@ -77,11 +77,17 @@ func TestSelfCheckStatedSwitches(t *testing.T) {
 	assert.Contains(t, st.Replayed[0], "--imbalance-across-counts=")
 	assert.True(t, st.Outside)
 
-	// The router's flow control and wait replay, as backtest takes them.
+	// The router's flow control and wait replay, as backtest takes them: the
+	// wait in prefill is the default (#287), so it replays as the default,
+	// and off replays as none.
 	f = answerFlags{flowControl: "on", routerWaitInPrefill: true, set: map[string]bool{"flow-control": true, "router-wait-in-prefill": true}}
 	st, err = f.stated()
 	require.NoError(t, err)
 	assert.Empty(t, st.Other)
 	assert.Equal(t, "on", st.Assume.FlowControl)
-	assert.Equal(t, whatifapi.RouterWaitInPrefill, st.Assume.RouterWait)
+	assert.Empty(t, st.Assume.RouterWait, "the default")
+	f = answerFlags{flowControl: "on", set: map[string]bool{"flow-control": true, "router-wait-in-prefill": true}}
+	st, err = f.stated()
+	require.NoError(t, err)
+	assert.Equal(t, whatifapi.RouterWaitNone, st.Assume.RouterWait, "--router-wait-in-prefill=false")
 }

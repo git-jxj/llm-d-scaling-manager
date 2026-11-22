@@ -103,11 +103,15 @@ func TestSelfCheck_RanWithoutTheStatedInputs(t *testing.T) {
 	assert.True(t, strings.HasPrefix(st.Line, "Self-check not run: the recording spans "), st.Line)
 	assert.True(t, strings.HasSuffix(st.Line, " It was not run with the stated --assume-prompt-cv 0.06 either."), st.Line)
 
-	// The router's flow control and wait are named, the wait outside.
+	// The router's flow control and wait are named; only the gate stage puts
+	// a figure outside. inPrefill (the default since #287) and none state
+	// nothing: a figure the switch prices carries FlowControlWaitPriced.
 	fc := &Stated{Assume: Assume{FlowControl: FlowControlOn, RouterWait: RouterWaitInPrefill}, CLI: true}
 	_, words := fc.replayed()
 	assert.Equal(t, []string{"--flow-control on", "--router-wait-in-prefill"}, words)
-	assert.True(t, fc.outside())
+	assert.False(t, fc.outside(), "the default restated")
+	assert.False(t, (&Stated{Assume: Assume{RouterWait: RouterWaitNone}}).outside(), "off is how the run was priced")
+	assert.True(t, (&Stated{Assume: Assume{RouterWait: RouterWaitGateStage}}).outside(), "the gate stage")
 	fc.CLI = false
 	_, words = fc.replayed()
 	assert.Equal(t, []string{"assume.flowControl on", "assume.routerWait inPrefill"}, words)

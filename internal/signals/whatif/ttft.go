@@ -225,16 +225,30 @@ const MaxPSPromptSupport = 1.6
 const DefaultPriceRouterWait = false
 
 // DefaultRouterWaitInPrefill is TTFTFleet.RouterWaitInPrefill's default, for
-// the CLI (--router-wait-in-prefill): off, so a TTFT past the prefill onset
-// is flagged AboveFlowControlOnset, a miss. The planner API states it as
-// assume.routerWait inPrefill; the SLO analyzer has no switch for it.
-// Measured on router v1.0.0 at six bursty steps of one fleet (Ca^2 4, up to
-// 0.88 of the prefill knee); no Poisson step past the onset has been run on
-// v1.0.0, and those recordings hold no saturation cycle, so no backtest
-// replays them. The planner cannot read the router's version, and on v0.11.0
-// the backtests read this figure more than 20 % short at 18 of 41 steps past
-// the onset, 15 of them where the gate collapsed: so it is not the default.
-const DefaultRouterWaitInPrefill = false
+// the CLI (--router-wait-in-prefill) and the planner API (assume.routerWait
+// absent): on, so past the prefill onset, up to MaxRouterWaitKneeShare of the
+// prefill knee, a TTFT is flagged FlowControlWaitPriced and stands, and a
+// rate answer may pass the onset. --price-router-wait, or
+// --router-wait-in-prefill=false (assume.routerWait gateStage or none), turns
+// it off. The SLO analyzer has no switch for it.
+//
+// On by the router v1.0.0 staircase of issue #287 (Qwen3-32B, 2 prefill and
+// 2 decode, three seeds at Ca^2 4 and two at Poisson), backtested against its
+// warm-up: at the 15 scored steps past the onset where the switch took, the
+// figure read 1.33 to 3.39 times the router's measured TTFT at the mean, p90
+// and p95, never under; no step at or under 0.9 of the knee collapsed; and
+// the client's mean and p95 TTFT with flow control on were 0.88 to 0.99 of
+// those with it off at the same arrivals, so the wait moves rather than
+// adds. One further switched step, which the backtest excludes as
+// warm-up, read 0.78 at the p95: both prefill pods were replaced in its
+// window. Its exclusion was decided after the run.
+//
+// Router v0.11.0 is not this model: there the backtests read this figure
+// more than 20 % short at 18 of 41 steps past the onset, 15 of them where
+// the gate collapsed on its TTL. The planner cannot read the router's
+// version: on v0.11.0 set --router-wait-in-prefill=false (or
+// --price-router-wait).
+const DefaultRouterWaitInPrefill = true
 
 // MaxRouterWaitKneeShare is the highest rate, as a share of the prefill knee,
 // at which TTFTFleet.PriceRouterWait or RouterWaitInPrefill takes; past it
@@ -374,8 +388,9 @@ type TTFTFleet struct {
 	// AboveFlowControlOnset where it takes (as PriceRouterWait: processor
 	// sharing at a prompt spread up to MaxPSPromptCV, a rate up to
 	// MaxRouterWaitKneeShare of the prefill knee), so a rate answer may stand
-	// past the onset. Opt-in, off by default (DefaultRouterWaitInPrefill),
-	// and measured on llm-d-router v1.0.0 only.
+	// past the onset. The CLI and the planner API turn it on by default
+	// (DefaultRouterWaitInPrefill); it is measured on llm-d-router v1.0.0
+	// only. The struct's zero value is off.
 	//
 	// On v1.0.0 the gate moves the wait from the pods to the router rather
 	// than adding to it: on the Qwen3-32B flow-control A/B, at six bursty

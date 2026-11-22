@@ -54,14 +54,17 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.StringVar(&f.assumeITLB, "assume-itl-b", "", "the decode line's intercept B (12ms), or floor for B from the floor read below the band, "+
 		"where the fit measured none (PinnedDefaultB); the slope is refitted through it (flagged AssumedITLB)")
 	fs.StringVar(&f.flowControl, "flow-control", "", "the router's flow control, on or off, in place of its inference from the fit's queue series (flagged as stated)")
-	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0)")
-	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0)")
+	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's, on by default: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0); =false for router v0.11.0")
+	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0); set, it turns the default --router-wait-in-prefill off")
 }
 
-// parsed records the flags given, once fs is parsed.
+// parsed records the flags given, once fs is parsed, and lets the default
+// --router-wait-in-prefill give way to a --price-router-wait set alone
+// (routerWaitGivesWay), as answer's flags do.
 func (f *backtestFlags) parsed(fs *flag.FlagSet) {
 	f.set = map[string]bool{}
 	fs.Visit(func(fl *flag.Flag) { f.set[fl.Name] = true })
+	routerWaitGivesWay(f.set, f.priceRouterWait, &f.routerWaitInPrefill)
 }
 
 // runBacktest is `capacity-planner backtest`: the planner fitted on one

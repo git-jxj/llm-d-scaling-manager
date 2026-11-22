@@ -314,7 +314,7 @@ Size from the planner when, below the load it thinks the fleet can carry:
 | `--assume-router-hop`, `--assume-itl-b` | | The router hop, and decode's ITL B (`12ms`, or `floor`), as an answer's flags of the same names: check an answer with the inputs it stated. Flagged. |
 | `--allow-config-mismatch` | off | Score a test of another configuration, with the difference printed. |
 | `--flow-control` | inferred | `on` or `off`: the router's flow control, in place of what the fit's queue series says. To score a test that ran with flow control on against a fit that ran with it off, add `--allow-config-mismatch` too. |
-| `--router-wait-in-prefill`, `--price-router-wait` | off | How a step past the prefill flow-control onset carries the router's wait: `--router-wait-in-prefill` for router v1.0.0, `--price-router-wait` for v0.11.0. Off, the step is flagged `AboveFlowControlOnset`. Set at most one: together they are refused. |
+| `--router-wait-in-prefill`, `--price-router-wait` | on, off | How a step past the prefill flow-control onset carries the router's wait: `--router-wait-in-prefill` (on by default) for router v1.0.0, `--price-router-wait` for v0.11.0, which turns the default off. With `--router-wait-in-prefill=false` and no `--price-router-wait`, the step is flagged `AboveFlowControlOnset`; use that on router v0.11.0. Set both and they are refused. |
 | `-o json` | text | The same answer as `POST /v1/backtest` ([the API](api.md#the-backtest)). |
 
 The command exits 0 when it judged at least one step, 3 when it judged none,

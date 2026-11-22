@@ -91,7 +91,9 @@ type answerFlags struct {
 	// off by default.
 	priceRouterWait bool
 	// routerWaitInPrefill is --router-wait-in-prefill, a TTFT flag (ttft.go):
-	// opt-in, off by default, measured on router v1.0.0 only.
+	// on by default (whatif.DefaultRouterWaitInPrefill), measured on router
+	// v1.0.0 only; --price-router-wait turns it off unless it is set too
+	// (routerWaitGivesWay).
 	routerWaitInPrefill bool
 	// psOnsets is --ps-onsets, chargeDecodeGate --charge-decode-gate and
 	// prefillRunningCap --prefill-running-cap, TTFT flags (ttft.go): off by
@@ -161,8 +163,8 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.prefillVariant, "prefill-variant", "", "the prefill variant to price, when the model has several")
 	fs.DurationVar(&f.assumeA, "assume-a", 0, "a, the fixed latency one request pays on a prefill pod (11ms), in place of the learned one (flagged)")
 	fs.DurationVar(&f.assumeTransferBase, "assume-transfer-base", 0, "replicas-to-slo and slo-to-rate only: the fixed part of the KV transfer per request, e.g. 20ms; the rest of the measured transfer scales with the tokens moved. Held at the measured transfer; ignored with none. Default 0: all of it scales (named on the assumed line)")
-	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "opt-in, validated at one staircase step: price the flow-control gate past the prefill onset, its wait at the router and behind the burst it releases to one prefill pod (FlowControlWaitPriced); off, the wait is flagged AboveFlowControlOnset, a miss")
-	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "opt-in, measured on router v1.0.0 only, at six bursty steps: take the router's wait past the prefill onset, up to 0.9 of the prefill knee, as inside the processor-sharing prefill price, so the figure stands (FlowControlWaitPriced) and a rate answer may pass the onset; reads short on router v0.11.0")
+	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "opt-in, validated at one staircase step: price the flow-control gate past the prefill onset, its wait at the router and behind the burst it releases to one prefill pod (FlowControlWaitPriced), for router v0.11.0; set, it turns the default --router-wait-in-prefill off")
+	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "on by default, measured on router v1.0.0 only: take the router's wait past the prefill onset, up to 0.9 of the prefill knee, as inside the processor-sharing prefill price, so the figure stands (FlowControlWaitPriced) and a rate answer may pass the onset; on router v0.11.0 it reads short where the gate collapses, so set =false there (off, the wait is flagged AboveFlowControlOnset, a miss); --price-router-wait turns it off")
 	fs.BoolVar(&f.psOnsets, "ps-onsets", whatif.DefaultPSOnsets, "experimental, unvalidated: place the prefill flow-control onset on the processor-sharing model, the prompts past --prefill-running-cap counted as waiting")
 	fs.IntVar(&f.prefillRunningCap, "prefill-running-cap", 0, "with --ps-onsets, the most prompts a prefill pod computes at once (about max_num_batched_tokens over the prompt); 0 (unknown, the default) takes the lower of processor sharing at 1 and first come")
 	fs.BoolVar(&f.chargeDecodeGate, "charge-decode-gate", whatif.DefaultChargeDecodeGate, "experimental, unvalidated, slo-to-rate only: charge the time the decode flow-control gate is closed below its onset to the rate answer")
@@ -179,6 +181,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 func (f *answerFlags) check(fs *flag.FlagSet) error {
 	f.set = map[string]bool{}
 	fs.Visit(func(fl *flag.Flag) { f.set[fl.Name] = true })
+	routerWaitGivesWay(f.set, f.priceRouterWait, &f.routerWaitInPrefill)
 	if err := f.checkSource(); err != nil {
 		return err
 	}
