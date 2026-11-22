@@ -994,6 +994,10 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// also moves the composite-variants and warm-pool-pressure outputs of
 	// pd-restart, the staircases b-off, b-on and c-on and ttft-three-pods:
 	// those are in that switch's row, which carries their base digests.
+	// The capacity planner's replay turns it off (PlannerSwitches, issue
+	// llm-d-incubation/llm-d-scaling-manager#318's regression), so none of
+	// this reaches a planner figure; TestPlannerSwitches_TheFloorBIsOffInThePlanner
+	// holds that.
 	saturation.SwitchITLBaselineFromFloor: {
 		"e1-tuned/lines.csv", "e1-tuned/results.csv", "e1-tuned/variant-capacities.csv",
 		"e1/lines.csv", "e1/results.csv", "e1/variant-capacities.csv",
@@ -1755,6 +1759,7 @@ var heldBy = map[string][]heldTest{
 	},
 	saturation.SwitchITLBaselineFromFloor: {
 		{"../saturation", "TestITLBaselineFromFloor_OnFromTheConstructor"},
+		{".", "TestPlannerSwitches_TheFloorBIsOffInThePlanner"},
 		{"../saturation", "TestITLBaselineFromFloor_AnalyzePinsAtTheFloorByDefault"},
 		{"../saturation", "TestITLBaselineFromFloor_TheFitLineIsUnchangedOff"},
 		{"../../../signals/itl", "TestTracker_BaselineFromFloorPinsAnUnlearnedKey"},

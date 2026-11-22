@@ -110,9 +110,10 @@ smt_parse() {
     SMT_NS="" SMT_KEDA_NS="" SMT_PROM_URL="" SMT_PROM_CA="" SMT_QUOTA="" SMT_SETS=() SMT_FILES=""
     SMT_DRY_RUN=false SMT_OUT="" SMT_SCOPE=namespace SMT_MODEL_NS=() SMT_PLATFORM="" SMT_STRICT=false
     SMT_RESTART_KEDA=false SMT_IMAGE_REPO="" SMT_WL_IMAGE="" SMT_WL_OFF=false SMT_ALLOW_HTTP=false SMT_SINGLE=false SMT_DSETW=false SMT_NO_DSETW=false
+    SMT_SHARE="" SMT_MS_PORT="" SMT_NO_EPP_MON=false
     case "$cmd" in
-        admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope --model-namespace --single-namespace --dset-role-writer --no-dset-role-writer " ;;
-        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller --dset-role-writer --no-dset-role-writer " ;;
+        admin-setup) allowed=" -n --keda-namespace --files --dry-run --out --platform --scope --model-namespace --single-namespace --dset-role-writer --no-dset-role-writer --modelserver-port --no-epp-monitor " ;;
+        install) allowed=" -n --keda-namespace --prometheus-url --prometheus-ca --quota --utilization-share --set --files --dry-run --out --scope --model-namespace --platform --strict --restart-keda --image-repo --allow-http --weights-labeller-image --no-weights-labeller --dset-role-writer --no-dset-role-writer --modelserver-port --no-epp-monitor " ;;
         admin-finish) allowed=" -n --keda-namespace --files --platform --strict --restart-keda --scope " ;;
         release-files) allowed=" --out " ;;
     esac
@@ -124,7 +125,7 @@ smt_parse() {
             *) smt_usage "$cmd: unknown option $1 (see $cmd --help)" ;;
         esac
         case "$flag" in
-            --dry-run|--strict|--restart-keda|--no-weights-labeller|--allow-http|--single-namespace|--dset-role-writer|--no-dset-role-writer) ;;
+            --dry-run|--strict|--restart-keda|--no-weights-labeller|--allow-http|--single-namespace|--dset-role-writer|--no-dset-role-writer|--no-epp-monitor) ;;
             *) [ $# -ge 2 ] && [ -n "$2" ] || smt_usage "$cmd: $1 needs a value" ;;
         esac
         case "$flag" in
@@ -133,6 +134,9 @@ smt_parse() {
             --prometheus-url) SMT_PROM_URL="$2"; shift 2 ;;
             --prometheus-ca) SMT_PROM_CA="$2"; shift 2 ;;
             --quota) SMT_QUOTA="$2"; shift 2 ;;
+            --utilization-share) SMT_SHARE="$2"; shift 2 ;;
+            --modelserver-port) SMT_MS_PORT="$2"; shift 2 ;;
+            --no-epp-monitor) SMT_NO_EPP_MON=true; shift ;;
             --set) SMT_SETS+=("$2"); shift 2 ;;
             --files) SMT_FILES="$2"; shift 2 ;;
             --out) SMT_OUT="$2"; shift 2 ;;
@@ -209,6 +213,26 @@ smt_parse() {
     if [ -n "$SMT_QUOTA" ]; then
         printf '%s' "$SMT_QUOTA" | grep -qE '^[A-Za-z0-9._-]+=-?[0-9]+(,[A-Za-z0-9._-]+=-?[0-9]+)*$' \
             || smt_usage "$cmd --quota: '$SMT_QUOTA' is not GPU=N[,GPU=N]"
+    fi
+    case "$SMT_SHARE" in
+        ""|off|shadow|active) ;;
+        *) smt_usage "$cmd --utilization-share is off, shadow or active, not '$SMT_SHARE'" ;;
+    esac
+    if [ -n "$SMT_MS_PORT" ]; then
+        if [[ "$SMT_MS_PORT" =~ ^[0-9]+$ ]]; then
+            [ "${#SMT_MS_PORT}" -le 5 ] && [ "$((10#$SMT_MS_PORT))" -ge 1 ] && [ "$((10#$SMT_MS_PORT))" -le 65535 ] \
+                || smt_usage "$cmd --modelserver-port: $SMT_MS_PORT is not a port number (1 to 65535)"
+            SMT_MS_PORT="$((10#$SMT_MS_PORT))"
+        else
+            # A container port name (IANA_SVC_NAME): what the PodMonitor can name.
+            { [ "${#SMT_MS_PORT}" -le 15 ] && [[ "$SMT_MS_PORT" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] \
+                && [[ "$SMT_MS_PORT" =~ [a-z] ]] && [[ "$SMT_MS_PORT" != *--* ]]; } \
+                || smt_usage "$cmd --modelserver-port: '$SMT_MS_PORT' is neither a container port name (up to 15 lower-case letters, digits and dashes) nor a port number"
+        fi
+    fi
+    if [ "$cmd" = install ] && [ "$SMT_SCOPE" = namespace ]; then
+        [ -z "$SMT_MS_PORT" ] || smt_usage "install --modelserver-port: the model-server PodMonitor is the cluster admin's, applied by admin-setup. They run: smt admin-setup -n $SMT_NS --modelserver-port $SMT_MS_PORT"
+        [ "$SMT_NO_EPP_MON" = false ] || smt_usage "install --no-epp-monitor: the EPP ServiceMonitor is the cluster admin's, added by admin-setup. Give it to smt admin-setup"
     fi
     if [ -n "$SMT_PROM_URL" ]; then
         smt_check_scheme "$SMT_PROM_URL" "--prometheus-url $SMT_PROM_URL"
@@ -376,6 +400,108 @@ smt_model_file() {
     sed -e "s/__NAMESPACE__/$SMT_NS/g" -e "s/__MODEL_NAMESPACE__/$1/g" "$SMT_SHIPPED/scaling-manager-model-namespace.yaml" > "$out" \
         || smt_exit 2 "cannot render scaling-manager-model-namespace.yaml for $1"
     printf '%s\n' "$out"
+}
+
+# --- The model-server port and the EPP monitor ----------------------------------
+#
+# The model-namespace file carries PodMonitor scaling-manager-modelserver-metrics,
+# which scrapes the container port named `modelserver`, as llm-d's own base
+# names it. A PodMonitor naming a port no container declares has no target at
+# all: nothing is scraped and nothing reports an error. --modelserver-port
+# renders it for another port, by name or by number (targetPort, which every
+# Prometheus Operator version reads). Without the flag a re-run keeps the port
+# the live PodMonitor scrapes, as it keeps the model namespaces: a re-run must
+# not take a working scrape away.
+SMT_MS_PODMONITOR=scaling-manager-modelserver-metrics
+
+# smt_ms_port_shipped echoes the port the release PodMonitor scrapes.
+smt_ms_port_shipped() {
+    yq ea 'select(.kind == "PodMonitor") | .spec.podMetricsEndpoints[0].port // ""' "$SMT_SHIPPED/scaling-manager-model-namespace.yaml"
+}
+
+# smt_ms_port_decide <namespace>: SMT_MS_PORT_USE, the port the PodMonitor
+# there is rendered for: the flag; else the live one's when it differs from
+# the shipped port; else empty (as shipped). --dry-run reads no cluster.
+smt_ms_port_decide() {
+    local ns="$1" live rc=0 shipped
+    SMT_MS_PORT_USE="$SMT_MS_PORT"
+    [ -z "$SMT_MS_PORT_USE" ] || return 0
+    [ "$SMT_DRY_RUN" != true ] || return 0
+    kc_capture get podmonitor "$SMT_MS_PODMONITOR" -n "$ns" -o json || rc=$?
+    if [ "$rc" != 0 ]; then
+        printf '%s' "$KC_ERR" | grep -qF '(NotFound)' && return 0
+        smt_kubectl_failed "get podmonitor $SMT_MS_PODMONITOR -n $ns"
+    fi
+    live="$(printf '%s' "$KC_OUT" | jq -r '(.spec.podMetricsEndpoints[0] // {}) | (.port // .targetPort // "") | tostring')"
+    shipped="$(smt_ms_port_shipped)"
+    [ -n "$live" ] && [ "$live" != "$shipped" ] || return 0
+    SMT_MS_PORT_USE="$live"
+    echo "  PodMonitor $SMT_MS_PODMONITOR in $ns scrapes port $live: kept (--modelserver-port $shipped goes back to the shipped port)."
+}
+
+# smt_ms_port_apply <file> <port>: the PodMonitor of the file scrapes <port>,
+# a name or a number; nothing to do for an empty port.
+smt_ms_port_apply() {
+    local f="$1" p="$2" n
+    [ -n "$p" ] || return 0
+    n="$(yq ea '[select(.kind == "PodMonitor")] | length' "$f")"
+    [ "$n" = 1 ] || smt_exit 2 "${f##*/} holds $n PodMonitors, not the one model-server PodMonitor"
+    if [[ "$p" =~ ^[0-9]+$ ]]; then
+        P="$p" yq -i '(select(.kind == "PodMonitor") | .spec.podMetricsEndpoints[]) |= (del(.port) | .targetPort = env(P))' "$f"
+    else
+        P="$p" yq -i '(select(.kind == "PodMonitor") | .spec.podMetricsEndpoints[]) |= (del(.targetPort) | .port = strenv(P))' "$f"
+    fi || smt_exit 2 "cannot set the model-server port $p in ${f##*/}"
+}
+
+# smt_apply_model_ns <namespace> <file>: the model-namespace file, its
+# PodMonitor scraping the port smt_ms_port_decide chose.
+smt_apply_model_ns() {
+    smt_ms_port_decide "$1"
+    smt_ms_port_apply "$2" "$SMT_MS_PORT_USE"
+    smt_apply "$2"
+    [ -z "$SMT_MS_PORT_USE" ] || echo "  PodMonitor $SMT_MS_PODMONITOR scrapes port $SMT_MS_PORT_USE."
+}
+
+# smt_epp_monitors <namespace>: a ServiceMonitor for each EPP there that
+# nothing scrapes yet, with the identity it scrapes as (the EPP authenticates
+# /metrics). The arrival rate, the flow-control queue and scale from zero read
+# the EPP's metrics, and the docs require them scraped; make setup-prereqs adds
+# the same objects (llmsm_ensure_llmd_monitors, whose functions this calls).
+# An EPP already scraped, by llm-d's router monitoring say, gets none: a
+# second scrape doubles every rate read from it. Never fatal.
+smt_epp_monitors() {
+    local ns="$1" svc svcs monitors f rc=0
+    [ "$SMT_NO_EPP_MON" = false ] || { echo "  EPP ServiceMonitor: not added (--no-epp-monitor)."; return 0; }
+    kc_capture get crd servicemonitors.monitoring.coreos.com -o name || rc=$?
+    if [ "$rc" != 0 ]; then
+        if printf '%s' "$KC_ERR" | grep -qF '(NotFound)'; then
+            echo "  EPP ServiceMonitor: no ServiceMonitor API on this cluster (no Prometheus Operator), so none added. Scrape the EPP in $ns some other way."
+        else
+            echo "  EPP ServiceMonitor: could not tell whether the ServiceMonitor API is served ($(kc_err_line "$KC_ERR")), so none added."
+        fi
+        return 0
+    fi
+    # The owner label of llmsm_epp_scrape_docs: this controller's namespace.
+    LLMSM_NS="$SMT_NS"
+    svcs="$(llmsm_epp_services "$ns")"
+    if [ -z "$svcs" ]; then
+        echo "  EPP ServiceMonitor: no InferencePool in $ns names an EPP, so none added."
+        return 0
+    fi
+    for svc in $svcs; do
+        monitors="$(llmsm_epp_scrapers "$ns" "$svc" | sed 's/^unevaluated://' | paste -sd, - | sed 's/,/, /g')"
+        if [ -n "$monitors" ]; then
+            echo "  EPP $svc: scraped already, or may be ($monitors); none added."
+            continue
+        fi
+        f="$SMT_TMP/epp-scrape-$ns-$svc.yaml"
+        if ! llmsm_epp_scrape_docs "$ns" "$svc" > "$f"; then
+            echo "  EPP $svc: nothing scrapes it, and its Service names no metrics port (http-metrics or metrics), so no ServiceMonitor was added. Scrape it yourself."
+            continue
+        fi
+        echo "  EPP $svc: nothing scrapes it; ServiceMonitor $LLMSM_EPP_SCRAPE_NAME, and the ServiceAccount it scrapes as:"
+        smt_apply "$f"
+    done
 }
 
 # smt_select <part> <file>: the objects of that part.
@@ -951,14 +1077,16 @@ smt_activate_file() {
 
 # smt_settings_pairs: SMT_PAIRS, the settings keys the flags set, KEY=VALUE.
 # One table: --prometheus-url prometheusURL, --prometheus-ca
-# prometheusCACertPath, --quota limiter=quota and quotas, --allow-http
-# prometheusAllowHTTP=true, --set KEY=VALUE.
+# prometheusCACertPath, --quota limiter=quota and quotas,
+# --utilization-share utilizationShare, --allow-http prometheusAllowHTTP=true,
+# --set KEY=VALUE.
 smt_settings_pairs() {
     local kv key known
     SMT_PAIRS=()
     [ -z "$SMT_PROM_URL" ] || SMT_PAIRS+=("prometheusURL=$SMT_PROM_URL")
     [ -z "$SMT_PROM_CA" ] || SMT_PAIRS+=("prometheusCACertPath=$SMT_PROM_CA_PATH")
     [ -z "$SMT_QUOTA" ] || SMT_PAIRS+=("limiter=quota" "quotas=$SMT_QUOTA")
+    [ -z "$SMT_SHARE" ] || SMT_PAIRS+=("utilizationShare=$SMT_SHARE")
     [ "$SMT_ALLOW_HTTP" != true ] || SMT_PAIRS+=("prometheusAllowHTTP=true")
     known="$(yq '.data | keys | .[]' "$SMT_SHIPPED/scaling-manager-settings.yaml")"
     for kv in "${SMT_SETS[@]}"; do
@@ -973,9 +1101,106 @@ smt_settings_pairs() {
             quotas) smt_usage "--set quotas: give --quota \"GPU=N\"" ;;
             prometheusAllowHTTP) smt_usage "--set prometheusAllowHTTP: give --allow-http; it also applies the controller without PROMETHEUS_TOKEN_PATH, which a plain HTTP Prometheus needs" ;;
             limiter) [ -z "$SMT_QUOTA" ] || smt_usage "--set limiter with --quota: --quota sets limiter to quota" ;;
+            utilizationShare) [ -z "$SMT_SHARE" ] || smt_usage "--set utilizationShare with --utilization-share: give one of them" ;;
         esac
+        smt_check_setting "$key" "${kv#*=}"
         SMT_PAIRS+=("$kv")
     done
+}
+
+# smt_check_setting <key> <value>: a value the controller accepts for that
+# key (internal/config/settings.go), or exit 2. The controller rejects a bad
+# value only when it reads the settings, and a rejected limiter costs the
+# whole default entry; here the install stops before anything is written.
+# Keys with free-form values (prometheusServerName) pass.
+smt_check_setting() {
+    local k="$1" v="$2" t
+    case "$k" in
+        utilizationShare)
+            case "$v" in off|shadow|active) return 0 ;; esac
+            smt_usage "--set utilizationShare=$v: off, shadow or active" ;;
+        limiter)
+            for t in $(printf '%s' "$v" | tr ',' ' '); do
+                case "$t" in gpu-inventory|quota) ;; *) smt_usage "--set limiter=$v: gpu-inventory, quota, or both comma-separated" ;; esac
+            done ;;
+        quotaScope)
+            case "$v" in namespace|cluster) return 0 ;; esac
+            smt_usage "--set quotaScope=$v: namespace or cluster" ;;
+        kueue|kueueBorrow|scaleToZero|prometheusInsecureSkipVerify)
+            # strconv.ParseBool, which the controller reads them with.
+            case "$v" in 1|t|T|TRUE|true|True|0|f|F|FALSE|false|False) return 0 ;; esac
+            smt_usage "--set $k=$v: true or false" ;;
+        logVerbosity)
+            case "$v" in ""|*[!0-9]*) smt_usage "--set logVerbosity=$v: a number, 0 or more" ;; esac ;;
+        kueueNamespace)
+            smt_check_ns "--set kueueNamespace" "$v" ;;
+        watchNamespaces)
+            for t in $(printf '%s' "$v" | tr ',' ' '); do smt_check_ns "--set watchNamespaces" "$t"; done ;;
+    esac
+}
+
+# smt_share_mode echoes the utilizationShare these flags set, or empty.
+smt_share_mode() {
+    local kv
+    for kv in "${SMT_PAIRS[@]}"; do
+        [ "${kv%%=*}" != utilizationShare ] || { printf '%s\n' "${kv#*=}"; return 0; }
+    done
+}
+
+# smt_share_needs_limiter: settings created with utilizationShare shadow or
+# active name a limiter, or exit 2. The optimizer divides a GPU budget; with
+# none it has nothing to divide, and the share mode would read as set while
+# nothing is computed.
+smt_share_needs_limiter() {
+    local mode kv
+    mode="$(smt_share_mode)"
+    case "$mode" in shadow|active) ;; *) return 0 ;; esac
+    for kv in "${SMT_PAIRS[@]}"; do
+        [ "${kv%%=*}" != limiter ] || [ -z "${kv#*=}" ] || return 0
+    done
+    smt_usage "utilizationShare $mode divides a GPU budget, and these flags set no limiter: add --quota \"GPU=N\" (the GPUs of that product the models may hold together; kubectl get nodes -L nvidia.com/gpu.product names the product), or --set limiter=gpu-inventory"
+}
+
+# smt_share_targets echoes the namespaces whose pods sharing patches, one a
+# line: the model namespaces, else the namespace of the controller.
+smt_share_targets() {
+    if [ ${#SMT_MODEL_NS[@]} -gt 0 ]; then
+        printf '%s\n' "${SMT_MODEL_NS[@]}"
+    else
+        printf '%s\n' "$SMT_NS"
+    fi
+}
+
+# smt_share_grant: with utilizationShare active from the flags, the pod-patch
+# grant (scaling-manager-activate.yaml) in each namespace sharing reaches,
+# before the settings and the preflight, whose activation check FAILs without
+# it. One already there is left as it is. A refused apply is exit 3, with the
+# command the cluster admin runs: a namespace owner may grant it in their own
+# namespace, not always in another.
+smt_share_grant() {
+    local m f rc
+    [ "$(smt_share_mode)" = active ] || return 0
+    smt_need scaling-manager-activate.yaml
+    echo "Utilization share active: the pod-patch grant (scaling-manager-activate.yaml):"
+    while read -r m; do
+        if kc_capture get rolebinding "scaling-manager-pod-writer-$SMT_NS" -n "$m" -o name \
+            && kc_capture get role scaling-manager-pod-writer -n "$m" -o name; then
+            echo "  $m: in place"
+            continue
+        fi
+        f="$(smt_activate_file "$m")"
+        rc=0
+        kc_capture apply -f "$f" || rc=$?
+        if [ "$rc" = 0 ]; then
+            printf '%s\n' "$KC_OUT" | sed '/^$/d; s/^/  /'
+            continue
+        fi
+        printf '%s' "$KC_ERR" | grep -qF '(Forbidden)' || smt_kubectl_failed "apply the pod-patch grant in $m"
+        echo "--utilization-share active: you may not grant the controller patch on pods in $m ($(kc_err_line "$KC_ERR")). Ask the cluster admin to run, from the release files (smt release-files --out <dir>):" >&2
+        echo "  sed -e \"s/__NAMESPACE__/$SMT_NS/g\" -e \"s/__MODEL_NAMESPACE__/$m/g\" scaling-manager-activate.yaml | kubectl apply -f -" >&2
+        echo "Then run this install again; or install with --utilization-share shadow, which needs no grant." >&2
+        exit 3
+    done < <(smt_share_targets)
 }
 
 # smt_settings_file: the settings file with the values of the flags, in SMT_TMP.
@@ -1021,6 +1246,22 @@ smt_settings() {
     echo "Settings: created $SMT_SETTINGS ($(printf '%s ' "${SMT_PAIRS[@]%%=*}")from the flags; passive)."
 }
 
+# smt_share_summary: after an install whose flags set utilizationShare, what
+# is in force and the read that shows it. Settings this run did not create
+# were left as they are; smt_settings printed the patch for each difference.
+smt_share_summary() {
+    local mode
+    mode="$(smt_share_mode)"
+    [ -n "$mode" ] || return 0
+    if [ "$SMT_SETTINGS_CREATED" != true ]; then
+        echo "Utilization share: $SMT_SETTINGS existed, so utilizationShare $mode was not written (the patch is above, when it differs)."
+        return 0
+    fi
+    echo "Utilization share: $mode$([ -z "$SMT_QUOTA" ] || printf ', quota %s' "$SMT_QUOTA"). While a model of a group is passive, the group computes and publishes its shares and moves nothing (llmsm_utilization_share_passive_shadow is 1)."
+    echo "  In force once the controller has read the settings, within a minute:"
+    echo "    kubectl get configmap $SMT_STATUS_CM -n $SMT_NS -o jsonpath='{.data.limiter} {.data.utilizationShare}'"
+}
+
 # smt_settings_preconditions: with no settings, a Prometheus URL is needed
 # before anything is created. Run before the first write.
 #
@@ -1056,6 +1297,8 @@ $(smt_switch_patches "$want" | sed 's/^/  /')"
             smt_usage "no $SMT_SETTINGS in $SMT_NS yet, and no --prometheus-url: give the Prometheus base URL, https (http with --allow-http)"
         fi
     fi
+    smt_settings_pairs
+    smt_share_needs_limiter
 }
 
 # smt_switch_patches <to http: true|false>: the kubectl patches, one a line,
@@ -1571,21 +1814,27 @@ smt_dry_write() {
 }
 
 smt_dry_admin() {
-    local m
+    local m f
     smt_dry_write 10-admin.yaml admin "$SMT_DIR/$SMT_MAIN"
     smt_dry_write 11-preflight-admin.yaml admin "$SMT_DIR/$SMT_PREFLIGHT"
     if [ "$SMT_SCOPE" = cluster ]; then
         for m in "${SMT_MODEL_NS[@]}"; do
-            smt_dry_write "12-model-namespace-$m.yaml" "" "$(smt_model_file "$m")"
+            f="$(smt_model_file "$m")"
+            smt_ms_port_apply "$f" "$SMT_MS_PORT"
+            smt_dry_write "12-model-namespace-$m.yaml" "" "$f"
         done
     elif [ ${#SMT_MODEL_NS[@]} -gt 0 ]; then
         for m in "${SMT_MODEL_NS[@]}"; do
-            smt_dry_write "12-model-namespace-$m.yaml" "" "$(smt_model_file "$m")"
+            f="$(smt_model_file "$m")"
+            smt_ms_port_apply "$f" "$SMT_MS_PORT"
+            smt_dry_write "12-model-namespace-$m.yaml" "" "$f"
             smt_dry_write "13-preflight-reads-$m.yaml" "" "$(smt_preflight_reads_file "$m")"
         done
     else
+        smt_ms_port_apply "$SMT_DIR/scaling-manager-model-namespace.yaml" "$SMT_MS_PORT"
         smt_dry_write 12-model-namespace.yaml "" "$SMT_DIR/scaling-manager-model-namespace.yaml"
     fi
+    [ "$SMT_NO_EPP_MON" = true ] || echo "  (an EPP ServiceMonitor is not rendered: whether one is needed, and for which port, depends on the EPP Services --dry-run does not read)"
     [ "${SMT_DSETW_WANT:-false}" = true ] || return 0
     if [ "$SMT_SCOPE" = cluster ]; then
         smt_dry_write 14-dset-role-writer.yaml "" "$(smt_dsetw_file "$SMT_NS")"
@@ -1605,6 +1854,14 @@ smt_dry_install() {
     [ -n "$SMT_PROM_URL" ] || [ "$SMT_PLATFORM" = openshift ] \
         || smt_usage "--dry-run renders a fresh install: give --prometheus-url"
     [ -n "$SMT_PROM_URL" ] || { SMT_PROM_URL="$SMT_THANOS_URL"; smt_check_scheme "$SMT_PROM_URL" "the OpenShift default, $SMT_PROM_URL,"; smt_settings_pairs; }
+    smt_share_needs_limiter
+    if [ "$(smt_share_mode)" = active ]; then
+        smt_need scaling-manager-activate.yaml
+        local m
+        while read -r m; do
+            smt_dry_write "15-activate-$m.yaml" "" "$(smt_activate_file "$m")"
+        done < <(smt_share_targets)
+    fi
     smt_dry_write 20-settings.yaml "" "$(smt_settings_file)"
     if [ -n "$SMT_PROM_CA" ]; then
         smt_prometheus_ca_yaml > "$SMT_OUT/25-prometheus-ca.yaml"
@@ -1685,12 +1942,15 @@ smt_admin_setup() {
     smt_apply "$SMT_DIR/$SMT_PREFLIGHT" admin
     if [ ${#SMT_MODEL_NS[@]} -eq 0 ]; then
         echo "Model namespace:"
-        smt_apply "$SMT_DIR/scaling-manager-model-namespace.yaml"
+        smt_apply_model_ns "$SMT_NS" "$SMT_DIR/scaling-manager-model-namespace.yaml"
+        smt_epp_monitors "$SMT_NS"
     fi
-    local m
+    local m f
     for m in "${SMT_MODEL_NS[@]}"; do
         echo "Model namespace $m:"
-        smt_apply "$(smt_model_file "$m")"
+        f="$(smt_model_file "$m")"
+        smt_apply_model_ns "$m" "$f"
+        smt_epp_monitors "$m"
         smt_apply "$(smt_preflight_reads_file "$m")"
         if [ "$SMT_PLATFORM" = openshift ]; then
             smt_kc label namespace "$m" openshift.io/user-monitoring=true --overwrite
@@ -1758,7 +2018,9 @@ smt_install() {
     smt_render_preflight_watch
     [ ${#SMT_MODEL_NS[@]} -eq 0 ] || echo "Manages $(smt_model_list | sed 's/,/, /g') (ConfigMap $SMT_STAMP); runs in $SMT_NS."
     smt_check_adoptable
+    smt_settings_pairs
     smt_settings_preconditions
+    smt_share_grant
     smt_settings
     smt_prometheus_ca
     smt_preflight_first
@@ -1769,6 +2031,7 @@ smt_install() {
     smt_preflight_gate "the controller is installed"
     echo
     echo "Installed in $SMT_NS, passive$([ "${SMT_DSETW_ON:-false}" = true ] && printf '; the DisaggregatedSet role writer is on and writes no replicas while a model is passive')."
+    smt_share_summary
     smt_summary_lines
     echo
     echo "Left for the cluster admin (KEDA's client certificate, then drop the preflight's cluster reads):"
@@ -1792,6 +2055,7 @@ smt_install_cluster() {
     smt_render
     smt_render_dsetw_switch "$SMT_DSETW_WANT"
     smt_check_adoptable
+    smt_settings_pairs
     smt_settings_preconditions
     if ! smt_get namespace "$SMT_NS"; then
         smt_kc create namespace "$SMT_NS"
@@ -1805,12 +2069,14 @@ smt_install_cluster() {
     for m in "${SMT_MODEL_NS[@]}"; do
         echo "Model namespace $m:"
         f="$(smt_model_file "$m")"
-        smt_apply "$f"
+        smt_apply_model_ns "$m" "$f"
+        smt_epp_monitors "$m"
         if [ "$SMT_PLATFORM" = openshift ]; then
             smt_kc label namespace "$m" openshift.io/user-monitoring=true --overwrite
         fi
     done
     smt_dsetw_apply
+    smt_share_grant
     smt_settings
     smt_prometheus_ca
     smt_preflight_first
@@ -1821,6 +2087,7 @@ smt_install_cluster() {
     smt_finish
     echo
     echo "Installed in $SMT_NS for the cluster, passive, serving the scaler over mutual TLS$([ "$SMT_DSETW_WANT" = true ] && printf '; the DisaggregatedSet role writer is on and writes no replicas while a model is passive')."
+    smt_share_summary
     smt_summary_lines
 }
 

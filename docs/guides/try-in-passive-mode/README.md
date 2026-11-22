@@ -36,6 +36,10 @@ Follow [Install the scaling manager in a namespace](../install-in-namespace/),
 steps 1 to 4. Leave `passive: "true"` in the settings, as shipped. Install it
 before you register any model, so that it never acts on one.
 
+To try the utilization-share optimizer as well, give its settings to `smt
+install` in this step: see [one install for the
+share](#one-install-for-the-share).
+
 ### 2. Check it is passive
 
 <!-- guide:deploy.passivedefault start -->
@@ -265,6 +269,30 @@ export GPUS=<gpus>
 ```
 <!-- guide:share.vars end -->
 
+### One install for the share
+
+On a first install, the namespace owner's `smt install` of [step
+1](#1-install-the-controller) takes the share settings. It writes the quota
+and the mode into the settings it creates, and for `active` applies the
+pod-patch grant first, in each namespace the controller manages:
+
+<!-- guide:share.install start -->
+```bash
+# Namespace owner, on a first install. The quota, the share mode and, for active, the pod-patch grant, with the controller. Add --prometheus-ca <file> for a private CA.
+smt install -n ${CONTROLLER_NAMESPACE} --prometheus-url https://<prometheus>:9090 \
+  --quota "${ACCELERATOR}=${GPUS}" --utilization-share active
+```
+<!-- guide:share.install end -->
+
+The install refuses a share mode without a quota, and a value it does not
+know, before it writes anything. Where you may not grant `patch` on pods in a
+model namespace, it stops with exit 3 and prints the command for your admin;
+`--utilization-share shadow` needs no grant. The settings exist already? The
+install never writes them: it prints the patch for each value that differs.
+Run those, or the steps below.
+
+### Turn it on in a running install
+
 Each step is a patch of the settings, read live:
 
 <!-- guide:share.quota start -->
@@ -305,7 +333,9 @@ kubectl patch configmap scaling-manager-settings -n ${CONTROLLER_NAMESPACE} --ty
 ```
 <!-- guide:share.activate end -->
 
-The status now says `active`, because that is how the optimizer is configured.
+### Read what it would move
+
+The status says `active`, because that is how the optimizer is configured.
 What tells you it is held is `llmsm_utilization_share_passive_shadow`: it is
 `1` for every group that holds a passive model. During a busy period the log
 says what it would move:
@@ -356,6 +386,124 @@ For two to three minutes nothing in the group scales. Then
 `llmsm_utilization_share_passive_shadow` reads `0`, and a transfer shows as
 `UtilizationShareGiving` and `UtilizationShareReceiving` Events, then
 `UtilizationShareReceived` once the receiver's replica is up.
+
+## On a DisaggregatedSet
+
+For a P/D model served by a DisaggregatedSet, on plain Kubernetes with KEDA
+and the Prometheus Operator. The scaling manager sizes each role, prefill and
+decode, as its own variant. Passive, it changes no role's replicas on either
+kind of role ([details](../../reference/disaggregatedset.md#passive-mode)).
+
+### 1. Check LeaderWorkerSet
+
+<!-- guide:dset.lws start -->
+```bash
+# External roles need LeaderWorkerSet v0.10.0 or later, its CRDs and its controller. The first must list disaggregatedsetrolescalers; the second prints the controller image.
+kubectl api-resources --api-group=disaggregatedset.x-k8s.io
+kubectl get deployments -A -l app.kubernetes.io/name=lws \
+  -o jsonpath='{range .items[*]}{.spec.template.spec.containers[0].image}{"\n"}{end}'
+```
+<!-- guide:dset.lws end -->
+
+You should see `disaggregatedsetrolescalers` and an image of `v0.10.0` or
+later. The preflight (`lws.disaggregatedset`) checks the same. With an older
+LeaderWorkerSet, External roles are not observed at all in passive mode: KEDA
+never calls the trigger, so nothing is published for them. Use Static roles
+with the role writer (step 3), or upgrade.
+
+### 2. External roles: register them with KEDA
+
+<!-- guide:dset.vars start -->
+```bash
+# The DisaggregatedSet and the model it serves.
+export SET=<your DisaggregatedSet>
+export MODEL_ID=<the model it serves>
+```
+<!-- guide:dset.vars end -->
+
+A role in `scaling.mode: External` is scaled through its
+`DisaggregatedSetRoleScaler`, named `<set>-<role>`. Register it as in
+[step 3 of the install](#3-register-the-models): the plan writes one
+ScaledObject per role, targeting the role scaler.
+
+### 3. Static roles: turn on the role writer
+
+A Static role has no `/scale` for KEDA. The role writer reads it instead. It
+needs `patch` on DisaggregatedSets, so it is off by default. Re-run the
+install with the flags you used, plus:
+
+<!-- guide:dset.writer start -->
+```bash
+# Static roles only. The grant (cluster admin) and the switch. Passive, the writer reads the roles and writes nothing.
+smt admin-setup -n ${NAMESPACE} --dset-role-writer
+smt install -n ${NAMESPACE} --prometheus-url <url> --dset-role-writer
+```
+<!-- guide:dset.writer end -->
+
+<!-- guide:dset.annotate start -->
+```bash
+# Static roles only. Opt the set in; max-replicas is groups per role.
+kubectl annotate disaggregatedset ${SET} -n ${NAMESPACE} \
+  scaling-manager.llmd.ai/role-writer=true \
+  scaling-manager.llmd.ai/model-id=${MODEL_ID} \
+  scaling-manager.llmd.ai/min-replicas=1 \
+  scaling-manager.llmd.ai/max-replicas=<max>
+```
+<!-- guide:dset.annotate end -->
+
+Use `force` instead of `true` if the set was created with `kubectl create`,
+plain `kubectl apply` or Helm
+([ownership](../../reference/disaggregatedset.md#ownership-of-replicas)).
+While the model is passive the writer writes nothing either way.
+
+### 4. Turn sharing on
+
+As in [Utilization share in passive mode](#utilization-share-in-passive-mode):
+the quota, then `shadow` or `active`. All roles of all models in the
+namespace on one GPU product form one group.
+
+### 5. Check
+
+The would-be counts and the share are published as for any model. For an
+External role the variant is its ScaledObject; for a Static role it is
+`<set>-<role>-llmsm`:
+
+```promql
+llmsm_desired_replicas{exported_namespace="<namespace>"}
+llmsm_utilization_share_target_gpus{exported_namespace="<namespace>"}
+llmsm_utilization_share_passive_shadow == 1
+```
+
+A role whose would-be count differs from what it runs gets a
+`PassiveRecommendation` Event ([verify, step 2](#2-compare-what-it-would-order-with-what-runs)).
+For a Static role the Event names a ScaledObject `<set>-<role>-llmsm` that
+does not exist: read it with `kubectl get events`, not `kubectl describe`.
+With the quota spent, a role that needs more cannot get it without a
+transfer, so its would-be count stays at what it runs; the growth shows in
+`llmsm_utilization_share_target_gpus`. Nothing moves:
+
+<!-- guide:dset.held start -->
+```bash
+# The replicas of each role, and of each role scaler. They do not change while the model is passive.
+kubectl get disaggregatedset ${SET} -n ${NAMESPACE} \
+  -o jsonpath='{range .spec.roles[*]}{.name}={.spec.replicas} {end}{"\n"}'
+kubectl get disaggregatedsetrolescalers -n ${NAMESPACE}
+```
+<!-- guide:dset.held end -->
+
+### Not yet tested
+
+The e2e behind this section runs both role kinds on LeaderWorkerSet v0.10.0
+with groups of one and two pods, one emulated GPU each. It does not run:
+
+- a whole 8-GPU node per group, or data-parallel ranks: the simulator serves
+  one rank per pod;
+- dozens of groups per role;
+- the plan (`scaledobjects-plan`) writing the role ScaledObjects: the e2e
+  writes them itself.
+
+On such a fleet, compare the would-be counts with what you know of its
+capacity before you go live.
 
 ## Cleanup
 

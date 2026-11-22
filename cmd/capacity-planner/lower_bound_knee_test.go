@@ -125,6 +125,8 @@ func TestLowerBoundKnee_Golden(t *testing.T) {
 		args []string
 	}{
 		{"lower-bound-knee-at-replicas", []string{"at-replicas", "--recording", rec}},
+		// A stated load of the shape priced: the verdict past the knee (#280).
+		{"lower-bound-knee-at-replicas-stated-load", []string{"at-replicas", "--recording", rec, "--load-seen", "8"}},
 		{"lower-bound-knee-backtest", []string{"backtest", "--recording", rec, "--split", "50%"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {

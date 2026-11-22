@@ -99,6 +99,27 @@ type CaptureWindow struct {
 	Flags []string `learnrec:"omitzero"`
 	// Variants is every variant the capture found, by model and name.
 	Variants []CaptureVariant
+	// Optional is what the capture found of the optional series it
+	// checks but does not replay: cache tiers, KV offloading, KV
+	// transfer (whatifsource.OptionalSeries). Nothing reads it back; it
+	// says which of them the fleet exported in the window.
+	Optional []CaptureSeries `learnrec:"omitzero"`
+}
+
+// CaptureSeries is one optional series as the capture found it in the
+// window.
+type CaptureSeries struct {
+	Name string
+	// Present is whether the window held a sample of it. Err, when not
+	// empty, is why the check failed: then Present is false and says
+	// nothing.
+	Present bool   `learnrec:"omitzero"`
+	Err     string `learnrec:"omitzero"`
+	// Increase is a counter's increase over the window, summed over its
+	// series, and By the same per value of its breakdown label; a gauge or
+	// a histogram's buckets have neither.
+	Increase float64            `learnrec:"omitzero"`
+	By       map[string]float64 `learnrec:"omitzero"`
 }
 
 // CaptureVariant is one variant's engine configuration, filed in the store

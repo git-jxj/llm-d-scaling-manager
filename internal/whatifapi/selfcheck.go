@@ -203,13 +203,23 @@ type Stated struct {
 
 // outside says the terms st replays put a figure outside the validated
 // region (the CLI's flagsOutside, and a stated B, which does once it
-// applies); a stated prompt spread and arrivals are inside.
+// applies); a stated prompt spread and arrivals are inside, and so is a
+// router wait other than the gate stage (routerWaitOutside).
 func (st *Stated) outside() bool {
 	if st == nil {
 		return false
 	}
 	a := st.Assume
-	return st.Outside || a.VP != nil || a.A != nil || a.RouterHop != nil || a.ITLB != nil || a.ITLBFromFloor || a.RouterWait != ""
+	return st.Outside || a.VP != nil || a.A != nil || a.RouterHop != nil || a.ITLB != nil || a.ITLBFromFloor || routerWaitOutside(a.RouterWait)
+}
+
+// routerWaitOutside says an Assume.RouterWait puts a figure outside, as the
+// CLI's envelope classes its flags: the gate stage (--price-router-wait,
+// flagsOutside) does; inPrefill and none (--router-wait-in-prefill on, the
+// default, or off) state nothing, a figure it prices carrying
+// FlowControlWaitPriced, which is outside on its own.
+func routerWaitOutside(w string) bool {
+	return w == RouterWaitGateStage
 }
 
 // replayed is the request terms the self-check replays st with, and their

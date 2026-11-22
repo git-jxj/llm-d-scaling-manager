@@ -2434,8 +2434,11 @@ mean, with no step below the onset moved. Until then it stays opt-in.
 In short: on router v1.0.0 the gate moves time from the prefill pods to the
 router; it does not add any. So past the onset the processor-sharing figure
 stands. A new opt-in switch, `TTFTFleet.RouterWaitInPrefill`
-(`--router-wait-in-prefill`), says so. It is off by default, and the gate
-stage above stays the switch for v0.11.0.
+(`--router-wait-in-prefill`), says so. It was off by default until #287's
+router v1.0.0 staircase, backtested, turned it on in the CLI and the planner
+API (docs/developer-guide/testing.md, "Router v1.0.0, backtested"); the SLO
+analyzer has no switch for it yet. The gate stage above stays the switch for
+v0.11.0, where this one must be set off.
 
 ### What was measured
 

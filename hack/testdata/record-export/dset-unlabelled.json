@@ -1,0 +1,19 @@
+{
+  "apiVersion": "disaggregatedset.x-k8s.io/v1",
+  "kind": "DisaggregatedSet",
+  "metadata": {"name": "unlabelled", "namespace": "llm"},
+  "spec": {
+    "roles": [
+      {
+        "name": "decode",
+        "spec": {
+          "leaderWorkerTemplate": {
+            "workerTemplate": {
+              "spec": {"containers": [{"name": "vllm", "args": ["Qwen/Qwen3-32B", "--max-num-seqs", "128"]}]}
+            }
+          }
+        }
+      }
+    ]
+  }
+}

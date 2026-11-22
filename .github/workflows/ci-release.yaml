@@ -222,6 +222,17 @@ jobs:
           fi
           echo "capacity planner newTag: ${have}"
 
+      # And for the tools image the install guides tell users to run. Its
+      # digest exists only after this run builds it (it carries the signed
+      # release files), so the tagged commit pins it by this tag, and the docs
+      # PR after the run moves the pin to the digest. A tag whose docs name
+      # another image -- v0.12.2's named v0.12.1's digest -- is refused here,
+      # before anything is built.
+      - name: Verify the docs pin this release's tools image
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: bash deploy/ci-pr-checks/tools-pin.sh check "$VERSION"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
@@ -539,6 +550,11 @@ jobs:
             echo "cosign verify $IMAGE@$DIGEST \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
             echo "  --certificate-identity https://github.com/$WORKFLOW_REF"
+            echo '```'
+            echo ""
+            echo "The docs PR pins this digest (release-process.md, step 5):"
+            echo '```'
+            echo "bash deploy/ci-pr-checks/tools-pin.sh pin @$DIGEST"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

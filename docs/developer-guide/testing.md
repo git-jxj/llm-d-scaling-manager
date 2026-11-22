@@ -1967,16 +1967,19 @@ How a reading becomes a crossing:
   less the client's, which r1 put within 4 ms.
 
 **Above the prefill flow-control onset.** Once the router's prefill gate closes,
-requests wait in its queue. By default the model flags that wait
-(`AboveFlowControlOnset`) and does not price it, in the CLI and the SLO analyzer
-alike; the opt-in `--price-router-wait` prices it as a stage
-(`FlowControlWaitPriced`) up to 0.9 of the prefill knee (see the TTFT page, "As
-built: the router stage"). The second run's onset steps are replayed by
+requests wait in its queue. The SLO analyzer flags that wait
+(`AboveFlowControlOnset`) and does not price it. The capacity planner, by default
+since #287, takes it as inside the processor-sharing prefill price
+(`--router-wait-in-prefill`, router v1.0.0) and flags the figure
+`FlowControlWaitPriced` up to 0.9 of the prefill knee; with
+`--router-wait-in-prefill=false` it flags the wait as the analyzer does. The opt-in
+`--price-router-wait` prices it as a stage instead, for router v0.11.0 (see the TTFT
+page, "As built: the router stage"). The second run's onset steps are replayed by
 `TestStaircaseR2_PSPriceReadsAboveTheClientNearTheOnset` and
 `TestStaircaseR2_TheStepWithARouterWaitReadsShort`, the Qwen3-32B run's by
 `TestStaircaseQ32_SwitchOff_ReadsShortAtTheHeldStep` and
 `TestStaircaseQ32_SwitchOn_TheGateStageHoldsTheClient`, and the router v1.0.0
-A/B's steps, for the opt-in `--router-wait-in-prefill`, by
+A/B's steps, for `--router-wait-in-prefill`, by
 `TestRouterV1_TheWaitIsInsidePrefill`. A bucket's `measureAboveOnset` in the spec adds steps at those
 multiples of its frozen prefill onset, after its scored steps and held the same way.
 They are never scored: no crossing, knee or falsifier reads them. The report's "Above
@@ -2024,10 +2027,44 @@ the measured mean TTFT at 18 s or more, the router evicting requests on its TTL.
 The two unpriced ways give one figure; they differ only in the flag. The gate stage
 roughly doubles the figure at held steps and still reads short at every collapse. No
 wait added to a fixed service rate reaches a collapse, where the gate itself starves
-the pods, so both switches stay off: past the onset the default flags the figure a miss
-and caps the rate answer at the onset. Router v1.0.0's A/B did not collapse, but its
+the pods, so on router v0.11.0 neither switch is safe: there, set
+`--router-wait-in-prefill=false`, and past the onset the figure is flagged a miss and
+the rate answer capped at the onset. Router v1.0.0's A/B did not collapse, but its
 recordings hold no saturation cycle, so no backtest replays them; its steps are checked
-against the client by `TestRouterV1_TheWaitIsInsidePrefill`. The onset placement is
+against the client by `TestRouterV1_TheWaitIsInsidePrefill`.
+
+**Router v1.0.0, backtested (#287).** A router v1.0.0 staircase recorded with saturation
+cycles decided `--router-wait-in-prefill`'s default by a rule written before the run.
+Qwen3-32B at TP 2, 2 prefill and 2 decode, with a warm-up and seven phases: bucket C
+(8000/200 tokens, Ca2 4) with flow control on at three seeds and off at the first
+seed's arrivals, bucket B (Poisson) on at two seeds and off at the first. C's steps ran
+at 0.95 to 1.10 of the frozen prefill onset (3.09 r/s) and at 0.9 of the knee (3.64 r/s).
+Each flow-control-on phase was backtested against the warm-up:
+
+```bash
+capacity-planner backtest --fit warmup.jsonl --test C-on-r1.jsonl --allow-config-mismatch \
+  --arrival-cv2 4 --assume-prompt-cv 0.0577 --flow-control on --router-wait-in-prefill -o json
+```
+
+| Rule | Result |
+| --- | --- |
+| At least 8 steps past the onset where the switch took, from 2 of C's 3 seeds | 15 scored steps, 5 per seed |
+| No step at or under 0.9 of the knee collapsed (mean TTFT 15 s or more, or TTL evictions) | Largest router mean 7.98 s; no eviction in any phase |
+| No switched step more than 20% under the router's TTFT at the mean, p90 or p95 | Predicted over measured 1.33 to 2.53 (mean), 1.47 to 3.05 (p90), 1.51 to 3.39 (p95) |
+| Client mean and p95 TTFT, on over off at the same arrivals, at most 1.2 | 0.94 to 0.97 (mean), 0.88 to 0.99 (p95) at C's six levels and B's one under 0.9 of the knee |
+
+One switched step is not among the 15. C-on-r2's step at 00:55 reads 1.18 (mean),
+1.27 (p90) and **0.78** (p95) against a measured p95 of 20.18 s: more than 20% under,
+so as written the third rule fails there. The backtest excludes that step as warm-up
+(its window starts within 2 minutes of the recording's first cycle). Both prefill pods
+were replaced between 00:58 and 01:01, the client got 311 HTTP 503 responses, and the
+backtest excluded the next step as scaling. The exclusion was decided after the run,
+and the switch was turned on with it. B's steps under 0.9 of the knee all sat below
+B's onset, so the third rule rests on C alone. The figure reads high past the onset,
+1.3 to 3.4 times the router's TTFT: it does not claim an SLO the run missed, and it
+overstates the wait. On router v0.11.0 the same figure reads short at every collapse
+(the table above), so an operator on that router sets `--router-wait-in-prefill=false`.
+`TestTTFT_RouterWaitInPrefillIsTheDefault` pins the default. The onset placement is
 pinned by `TestPSOnsets_TheQ32CrossingKeepsThemOff`: first come falls between the last
 step with no router wait and the first with one in both Qwen3-32B buckets, and
 processor sharing at the engine's running cap puts bucket C's past it.
@@ -2271,7 +2308,7 @@ read the `-v` output.
 
 ### Passive-mode specs (own CI job)
 
-Label `passive`, 19 specs in seven containers, about 45 minutes. They check
+Label `passive`, 22 specs in eight containers, about 65 minutes. They check
 [passive mode](../reference/scaling-policy.md#passive) against a real KEDA,
 HPA and controller. They carry the `full` label, but the full tier's label
 filter excludes them: with them it outgrew its 90-minute CI job. They run in
@@ -2287,11 +2324,13 @@ USE_SIMULATOR=true SCALE_TO_ZERO_ENABLED=true make test-e2e-passive
 ```
 
 `USE_SIMULATOR=true` and `SCALE_TO_ZERO_ENABLED=true` are required: without
-the simulator's `--fake-metrics` or EPP flow control the specs skip. Check the
-summary says `Ran 19 of ... Specs` with no skips. The budget is
-`E2E_PASSIVE_TIMEOUT=70m` (ginkgo), `E2E_PASSIVE_GO_TIMEOUT=75m` and a
-95-minute job: the 19 specs took 43 minutes on a 22-CPU kind host, and setup
-about 15.
+the simulator's `--fake-metrics` or EPP flow control the specs skip. The setup
+installs LeaderWorkerSet (`DEPLOY_LWS=true`, chart `LWS_CHART_VERSION`) for the
+DisaggregatedSet spec, which fails without it. Check the summary says
+`Ran 22 of ... Specs` with no skips. The budget is `E2E_PASSIVE_TIMEOUT=100m`
+(ginkgo), `E2E_PASSIVE_GO_TIMEOUT=105m` and a 125-minute job: the first 19
+specs took 43 minutes on a 22-CPU kind host, the DisaggregatedSet container
+about 20 more, and setup about 15.
 
 - **`passive_mode_test.go`**: hold controller-wide (`LLMSM_PASSIVE=true`) and per
   model, hold at zero under queued requests, a `kubectl scale` that sticks,
@@ -2301,6 +2340,15 @@ about 15.
 - **`passive_mode_pool_test.go`**: a utilization-share group holding a passive
   donor, and a warm pool beside a passive model. Each ends by switching the
   model to active, which must start the transfer or the borrow.
+- **`passive_mode_dset_share_test.go`**: utilization share `active` under the
+  release settings (passive as shipped) on two DisaggregatedSet P/D models,
+  one with External roles (KEDA, role scalers) and one with Static roles
+  (the role writer), beside a Deployment, under a spent quota. Checks the
+  shares and would-be counts are published in shadow, then that nothing moves
+  for 5 minutes (set roles, role scalers, child LeaderWorkerSets, pods, share
+  marks, transfer counters, role-writer events). The control switches passive
+  off and needs a transfer of a decode group from the Static set to the
+  External one. Lines starting `DSET-PASSIVE-` are its evidence.
 
 Every hold is a 90 s window, three HPA syncs plus the 30 s scale-down window
 the specs set on each ScaledObject. A window fails if `spec.replicas` moves

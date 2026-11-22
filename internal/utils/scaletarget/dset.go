@@ -81,6 +81,7 @@ func fetchDisaggregatedSetRole(ctx context.Context, c client.Client, name, names
 		constants.StandardBackoff, constants.DisaggregatedSetKind); err != nil {
 		return nil, err
 	}
+	statusFromChildren(ctx, c, set)
 	return NewDisaggregatedSetRoleAccessor(scaler, set)
 }
 
@@ -103,6 +104,7 @@ func fetchStaticRole(ctx context.Context, c client.Client, name, namespace strin
 		switch {
 		case err == nil:
 			if RoleScalingMode(set, role) == "Static" {
+				statusFromChildren(ctx, c, set)
 				acc, aerr := NewDisaggregatedSetStaticRoleAccessor(set, role)
 				if aerr != nil {
 					return nil, aerr
@@ -145,6 +147,82 @@ func DisaggregatedSetRoleGone(ctx context.Context, c client.Client, name, namesp
 		return false, err
 	}
 	return acc == nil || acc.GetDeletionTimestamp() != nil, nil
+}
+
+// lwsListGVK lists the child LeaderWorkerSets of a DisaggregatedSet.
+var lwsListGVK = schema.GroupVersionKind{Group: lwsv1.GroupVersion.Group, Version: lwsv1.GroupVersion.Version, Kind: "LeaderWorkerSetList"}
+
+// dsetRevisionLabelKey is the template revision a child LeaderWorkerSet runs.
+const dsetRevisionLabelKey = "disaggregatedset.x-k8s.io/revision"
+
+// statusFromChildren gives set the per-role status that LeaderWorkerSet
+// v0.10.0 never writes. Its DisaggregatedSet controller creates the child
+// LeaderWorkerSets and the role scalers but leaves the set's status empty
+// (roleStatuses and observedGeneration arrived in v0.11.0). Read as it is,
+// such a set has every role rolling out forever and every Static role at
+// zero groups. When the set reports no role status at all, each role's is
+// summed from its children: replicas, readyReplicas and, while one revision
+// runs, updatedReplicas; two revisions with groups read as rolling out. A set
+// whose controller writes status is left as it is. A failed list leaves the
+// set as it was read.
+func statusFromChildren(ctx context.Context, c client.Client, set *unstructured.Unstructured) {
+	if _, found, _ := unstructured.NestedFieldNoCopy(set.Object, "status", "roleStatuses"); found {
+		return
+	}
+	if _, found, _ := unstructured.NestedFieldNoCopy(set.Object, "status", "observedGeneration"); found {
+		return
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(lwsListGVK)
+	if err := c.List(ctx, list, client.InNamespace(set.GetNamespace()),
+		client.MatchingLabels{constants.DisaggregatedSetNameLabelKey: set.GetName()}); err != nil {
+		return
+	}
+	type sum struct {
+		replicas, ready, updated int64
+		revisions                map[string]bool
+	}
+	byRole := map[string]*sum{}
+	var order []string
+	for i := range list.Items {
+		lws := &list.Items[i]
+		role := lws.GetLabels()[constants.DisaggregatedSetRoleLabelKey]
+		if role == "" || lws.GetLabels()[constants.DisaggregatedSetSubRoleLabelKey] != "" {
+			continue
+		}
+		s := byRole[role]
+		if s == nil {
+			s = &sum{revisions: map[string]bool{}}
+			byRole[role] = s
+			order = append(order, role)
+		}
+		replicas, _, _ := unstructured.NestedInt64(lws.Object, "status", "replicas")
+		ready, _, _ := unstructured.NestedInt64(lws.Object, "status", "readyReplicas")
+		updated, _, _ := unstructured.NestedInt64(lws.Object, "status", "updatedReplicas")
+		s.replicas += replicas
+		s.ready += ready
+		s.updated += updated
+		if replicas > 0 {
+			s.revisions[lws.GetLabels()[dsetRevisionLabelKey]] = true
+		}
+	}
+	if len(order) == 0 {
+		return
+	}
+	statuses := make([]any, 0, len(order))
+	for _, role := range order {
+		s := byRole[role]
+		updated := s.updated
+		if len(s.revisions) > 1 {
+			updated = 0
+		}
+		statuses = append(statuses, map[string]any{
+			"name": role, "replicas": s.replicas, "readyReplicas": s.ready, "updatedReplicas": updated,
+		})
+	}
+	_ = unstructured.SetNestedSlice(set.Object, statuses, "status", "roleStatuses")
+	// No generation is observed on v0.10.0: the children are what it applied.
+	_ = unstructured.SetNestedField(set.Object, set.GetGeneration(), "status", "observedGeneration")
 }
 
 // disaggregatedSetOf is the DisaggregatedSet a role scaler belongs to: its

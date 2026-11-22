@@ -486,8 +486,11 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 
 // assumeFlowControl sets the flags assume's flow control stands for: the
 // CLI's --flow-control, and --router-wait-in-prefill or --price-router-wait,
-// each marked set as the CLI's parse marks it, so a switch that is on puts
-// the figures outside the validated envelope there too (statedOutside).
+// each marked set as the CLI's parse marks it, so the envelope classes them
+// alike (statedOutside): gateStage, --price-router-wait, puts the figures
+// outside; inPrefill (the default) and none, --router-wait-in-prefill on or
+// off, state nothing, a figure the switch prices carrying
+// FlowControlWaitPriced, which is outside on its own.
 func (f *answerFlags) assumeFlowControl(a whatifapi.Assume) error {
 	if err := a.CheckFlowControl(); err != nil {
 		return usageError{err}

@@ -59,7 +59,7 @@ const cellTTFTQ = 0.9
 // pins them to the file): the error a decode knee outside its region is
 // sized at.
 const (
-	decodeKneeGoldensLow  = 0.172
+	decodeKneeGoldensLow  = 0.43
 	decodeKneeGoldensHigh = 0.991
 )
 
@@ -623,8 +623,19 @@ type fleetEval struct {
 	under         bool
 	pastOperating bool
 	op            float64
-	slo           sloAt
-	reason        string
+	// lowerBound says the fleet knee is a prefill knee priced from a lower
+	// bound of V_P (whatif.VPLowerBound): the true knee may be higher, so the
+	// fleet's knee is at least that rate. pastLowerBound is a load past its
+	// operating point while decode's own holds: whether the fleet saturates
+	// there is not priced, and the check is not judged unless a target is
+	// missed. satKnee and satRole are the knee a load past the operating
+	// point is judged against, and its role: the fleet knee, or decode's
+	// where the fleet knee is a lower bound.
+	lowerBound, pastLowerBound bool
+	satKnee                    float64
+	satRole                    string
+	slo                        sloAt
+	reason                     string
 	// decodeOK and prefillOK are each role's own check at the rate: its knee
 	// with headroom (dOp, pOp) and its own target (TPOT for decode, TTFT
 	// for prefill).
@@ -633,6 +644,14 @@ type fleetEval struct {
 	// fAssumed names an f the prefill side was priced with that no run
 	// learned at its count, "" with none.
 	fAssumed string
+}
+
+// decodeKneeRate is the decode knee's rate, +Inf where it did not price.
+func (e fleetEval) decodeKneeRate() float64 {
+	if v, ok := valueOf(e.decodeKnee); ok {
+		return v
+	}
+	return math.Inf(1)
 }
 
 // sloAt is the targets judged at rate on sf: each target's figure, whether
@@ -747,14 +766,34 @@ func (r *reporter) evaluateAt(np, nd int, rate float64, words bool) (fleetEval, 
 	var parts []string
 	e.known, e.holds = true, true
 	e.op = r.headroom * e.knee
-	if rate > e.op {
+	e.satKnee, e.satRole = e.knee, e.binds
+	e.lowerBound = e.binds == rolePrefill && slices.Contains(pk.Flags, whatif.VPLowerBound)
+	switch {
+	case e.lowerBound && rate > e.op && rate <= r.headroom*dk.Value:
+		// A knee priced from a lower bound of V_P reads low by construction:
+		// a load past it does not show the fleet saturated (#280).
+		e.holds, e.known, e.pastLowerBound = false, false, true
+		past := fmt.Sprintf("past %s x", num(r.headroom))
+		if rate >= e.knee {
+			past = fmt.Sprintf("%.1fx", rate/e.knee)
+		}
+		parts = append(parts, fmt.Sprintf("%.2f r/s is %s a prefill knee of at least %.2f r/s (V_P is a lower bound): "+
+			"whether the fleet saturates is not priced", rate, past, e.knee))
+	case e.lowerBound && rate > e.op:
+		// Decode's own operating point is crossed too: that is known
+		// whatever V_P is, so the load is judged against decode's knee.
+		e.holds, e.under, e.pastOperating = false, true, true
+		e.satKnee, e.satRole, e.op = dk.Value, roleDecodeWord, r.headroom*dk.Value
+		parts = append(parts, fmt.Sprintf("%.2f r/s is %.1fx the decode knee of %.2f r/s (the prefill knee, priced from a lower bound of V_P, is at least %.2f r/s)",
+			rate, rate/dk.Value, dk.Value, e.knee))
+	case rate > e.op:
 		e.holds, e.under, e.pastOperating = false, true, true
 		if rate >= e.knee {
 			parts = append(parts, fmt.Sprintf("%.2f r/s is %.1fx the fleet knee of %.2f r/s", rate, rate/e.knee, e.knee))
 		} else {
 			parts = append(parts, fmt.Sprintf("%.2f r/s is above %s x the fleet knee %.2f r/s = %.2f r/s", rate, num(r.headroom), e.knee, e.op))
 		}
-	} else {
+	default:
 		parts = append(parts, fmt.Sprintf("%.2f r/s within %s x the fleet knee %.2f r/s = %.2f r/s", rate, num(r.headroom), e.knee, e.op))
 	}
 	if !e.prefillPriced {
@@ -901,6 +940,9 @@ func (r *reporter) capacity(c *whatifapi.ReportLimits, base *servedFleet, ev fle
 	ol := r.pv.shape.AvgOutputTokens
 	r.results = append(r.results, ev.prefillKnee, ev.decodeKnee)
 	c.PrefillKnee = r.rate(ev.prefillKnee, ol, prefillBinds(base))
+	if a, ok := ev.prefillKnee.(whatif.Answer); ok && slices.Contains(a.Flags, whatif.VPLowerBound) {
+		c.PrefillKnee.LowerBound = true
+	}
 	c.DecodeKnee = r.rate(ev.decodeKnee, ol, decodeBinds(ev.decodeKnee))
 	r.kneeV = decodeKneeValidation(r.pv.class(), ev.decodeKnee)
 	if c.DecodeKnee.Value != nil {
@@ -919,6 +961,9 @@ func (r *reporter) capacity(c *whatifapi.ReportLimits, base *servedFleet, ev fle
 	}
 	c.FleetKnee = r.rate(whatif.Answer{Value: ev.knee}, ol, binds)
 	c.Operating = r.rate(whatif.Answer{Value: r.headroom * ev.knee}, ol, fmt.Sprintf("%s x fleet knee (%s)", num(r.headroom), r.headroomSource))
+	// A fleet knee a lower-bound prefill knee sets is at least its rate, and
+	// so is the operating point on it (#280).
+	c.FleetKnee.LowerBound, c.Operating.LowerBound = ev.lowerBound, ev.lowerBound
 	maxRate, binds := r.maxAtSLO(base, ev)
 	r.results = append(r.results, maxRate)
 	c.MaxAtSLO = r.rate(maxRate, ol, binds)
@@ -1165,7 +1210,7 @@ func (r *reporter) table(ctx context.Context, ev fleetEval) ([]whatifapi.ReportR
 		// (evaluate), not at every row.
 		ttftMean, _ := mean.TTFTPoint(row.Rate)
 		row.E2EMeanSum = whatifapi.FigureOf(e2eSum(ttftMean, tm, r.pv.shape.AvgOutputTokens), unitSeconds, true)
-		row.Cell = r.cell(slo, cellTTFT, row)
+		row.Cell = r.cell(slo, cellTTFT, row, ev)
 		rows = append(rows, row)
 	}
 	return rows, nil
@@ -1186,7 +1231,7 @@ func (r *reporter) ttftStat(sf *servedFleet, q, rate float64) whatifapi.ReportSt
 // judged at (TTFT p90 and the table's TPOT percentile where no target is
 // set), and the targets judged at the row's rate. A TPOT percentile that is
 // refused leaves the mean, which TPOT.Statistic names.
-func (r *reporter) cell(slo, ttft *servedFleet, row whatifapi.ReportRow) whatifapi.ReportCell {
+func (r *reporter) cell(slo, ttft *servedFleet, row whatifapi.ReportRow, ev fleetEval) whatifapi.ReportCell {
 	c := whatifapi.ReportCell{}
 	ttftQ, ttftFleet := cellTTFTQ, ttft
 	if r.ttft != nil {
@@ -1214,9 +1259,15 @@ func (r *reporter) cell(slo, ttft *servedFleet, row whatifapi.ReportRow) whatifa
 		c.TPOT = *row.TPOTPercentile
 	}
 	s := r.sloAtRate(slo, row.Rate, false)
+	pastKnee := row.ShareOfKnee != nil && *row.ShareOfKnee >= 1
+	// At or past a lower-bound prefill knee, short of decode's, the rate is
+	// not shown saturated (#280); a known miss there is still a miss.
+	pastLowerBound := pastKnee && ev.lowerBound && !(row.Rate >= ev.decodeKneeRate())
 	switch {
-	case s.saturated || (row.ShareOfKnee != nil && *row.ShareOfKnee >= 1):
+	case s.saturated || (pastKnee && !pastLowerBound):
 		c.Mark = whatifapi.CellSaturated
+	case pastLowerBound && (!s.known || s.met):
+		c.Mark = whatifapi.CellPastLowerBound
 	case s.targetCount == 0:
 		c.Mark = whatifapi.CellNoTarget
 	case s.met:
@@ -1297,6 +1348,9 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 			return v, err
 		}
 		v.Summary = fmt.Sprintf("%s%s: %s%s; %s%s.", v.Verdict, scope, lead, cause, need, noteText(notes))
+		return v, nil
+	case base.pastLowerBound:
+		r.lowerBoundVerdict(base, lead, &v)
 		return v, nil
 	case !base.known:
 		v.Verdict = whatifapi.VerdictNotJudged
@@ -1394,6 +1448,33 @@ func (r *reporter) notJudgedUnder(np, nd int, base fleetEval, v *whatifapi.Repor
 	v.Reason += ". " + why
 	v.Summary = fmt.Sprintf("%s: %s %s.", v.Verdict, lead, why)
 	return true
+}
+
+// lowerBoundKneeWords says why a load past a lower-bound prefill knee is not
+// judged.
+const lowerBoundKneeWords = "the prefill knee rests on a lower bound of V_P, and the true knee may be higher, " +
+	"so whether the fleet saturates is not priced"
+
+// lowerBoundVerdict makes v NOT JUDGED where the load is past the operating
+// point of a prefill knee priced from a lower bound of V_P while decode's own
+// holds (fleetEval.pastLowerBound): that knee reads low by construction, so
+// it never shows the fleet saturated, and the summary gives it as "at least"
+// its rate (#280). A load of other traffic than the shape priced says so
+// first, as it does where it withholds an UNDER (notJudgedUnder).
+func (r *reporter) lowerBoundVerdict(base fleetEval, lead string, v *whatifapi.ReportVerdict) {
+	v.Verdict = whatifapi.VerdictNotJudged
+	if why := r.phasesDiffer(base.binds); why != "" {
+		v.Reason += ". " + why
+		v.Summary = fmt.Sprintf("%s: %s %s.", v.Verdict, phasesWords, why)
+		return
+	}
+	past := "past the operating point of a prefill knee of at least " + rateWords(base.knee)
+	if r.load >= base.knee {
+		past = fmt.Sprintf("%.1fx a prefill knee of at least %s", r.load/base.knee, rateWords(base.knee))
+	}
+	v.Reason += ". " + lowerBoundKneeWords
+	v.Summary = fmt.Sprintf("%s: %s%s: %s; decode holds its operating point; --assume-vp states a V_P to price it.",
+		v.Verdict, lead, past, lowerBoundKneeWords)
 }
 
 // phasesDiffer says how the load's cycles ran at another shape than the
@@ -1882,15 +1963,22 @@ func (r *reporter) targetWords() string {
 func (r *reporter) underWords(e fleetEval) (cause, role, why string) {
 	s := e.slo
 	knee := e.binds + " sets the knee"
+	// Past a lower-bound prefill knee, a load is judged against decode's
+	// (satKnee): the words name that knee, never the lower bound's.
+	sat, satName, its := e.satKnee, "the fleet knee", ""
+	if e.satRole != e.binds {
+		satName, its = "the "+e.satRole+" knee", " "+e.satRole
+		knee = e.satRole + " sets the knee (the prefill knee rests on a lower bound of V_P)"
+	}
 	switch {
-	case e.pastOperating && r.load >= e.knee:
+	case e.pastOperating && r.load >= sat:
 		if r.brief {
-			return fmt.Sprintf("%.1fx the fleet knee (%s)", r.load/e.knee, rateWords(e.knee)), e.binds, knee
+			return fmt.Sprintf("%.1fx %s (%s)", r.load/sat, satName, rateWords(sat)), e.satRole, knee
 		}
-		return fmt.Sprintf("%.1fx the fleet knee of %s, the fleet saturates", r.load/e.knee, rateWords(e.knee)), e.binds, knee
+		return fmt.Sprintf("%.1fx %s of %s, the fleet saturates", r.load/sat, satName, rateWords(sat)), e.satRole, knee
 	case e.pastOperating:
-		return fmt.Sprintf("the fleet runs past its operating point of %s (%s of its %s knee)",
-			rateWords(e.op), num(r.headroom), rateWords(e.knee)), e.binds, knee
+		return fmt.Sprintf("the fleet runs past its operating point of %s (%s of its %s%s knee)",
+			rateWords(e.op), num(r.headroom), rateWords(sat), its), e.satRole, knee
 	case s.ttftMissed && s.onset:
 		return fmt.Sprintf("TTFT %s misses, past the prefill flow-control onset", whatifapi.ReportStatisticName(r.ttft.Percentile)),
 			rolePrefill, "the rate is past the prefill flow-control onset, where the router queues"

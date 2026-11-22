@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# A kubectl for hack/check-record-export.sh: answers "kubectl -n NS get OBJ -o json" from the JSON
+# fixtures beside it, by the object's kind and name, and fails like kubectl for
+# anything else. Each call is logged to $KUBECTL_LOG when it is set.
+set -u
+[ -n "${KUBECTL_LOG:-}" ] && echo "$*" >> "$KUBECTL_LOG"
+FIX="$(cd "$(dirname "$0")" && pwd)"
+obj=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    get) obj=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "${obj}" in
+  disaggregatedsets.disaggregatedset.x-k8s.io/*) f="$FIX/dset-${obj#*/}.json" ;;
+  lws/*) f="$FIX/lws-${obj#lws/}.json" ;;
+  deploy/*) f="$FIX/deploy-${obj#deploy/}.json" ;;
+  *) f= ;;
+esac
+if [ -n "$f" ] && [ -f "$f" ]; then
+  cat "$f"
+  exit 0
+fi
+echo "Error from server (NotFound): ${obj} not found" >&2
+exit 1

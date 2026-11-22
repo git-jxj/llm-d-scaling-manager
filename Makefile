@@ -1562,20 +1562,22 @@ test-e2e-kueue-borrow-with-setup: ## Deploy e2e infra + Kueue, then run the live
 # simulator's --fake-metrics (USE_SIMULATOR=true) and EPP flow control
 # (SCALE_TO_ZERO_ENABLED=true, on the infra deploy too), and skip without the
 # last two, so read the -v output. -ginkgo.fail-on-empty fails a filter that
-# matches nothing. 19 specs took 43 minutes on a 22-CPU kind host; the budget
-# allows a CI runner about 1.6 times that.
-E2E_PASSIVE_TIMEOUT    ?= 70m
-E2E_PASSIVE_GO_TIMEOUT ?= 75m
+# matches nothing. 19 specs took 43 minutes on a 22-CPU kind host, and the
+# DisaggregatedSet share container (3 specs) about 20 more; the budget allows
+# a CI runner about 1.6 times that.
+E2E_PASSIVE_TIMEOUT    ?= 100m
+E2E_PASSIVE_GO_TIMEOUT ?= 105m
 .PHONY: test-e2e-passive
 test-e2e-passive: ## Run the passive-mode e2e specs
 	$(MAKE) test-e2e-full E2E_FULL_LABEL_FILTER="passive" E2E_FULL_GINKGO_ARGS="-ginkgo.fail-on-empty" \
 		E2E_TIMEOUT=$(E2E_PASSIVE_TIMEOUT) E2E_GO_TIMEOUT=$(E2E_PASSIVE_GO_TIMEOUT)
 
 # Deploys the e2e infra on kind and runs the passive-mode specs alone. It never
-# deletes the cluster. No LWS and no Kueue: no passive spec uses either.
+# deletes the cluster. LWS (LWS_CHART_VERSION, v0.10.0: DisaggregatedSet and its
+# role scaler) for the DisaggregatedSet share spec; no Kueue: no passive spec uses it.
 .PHONY: test-e2e-passive-with-setup
 test-e2e-passive-with-setup: ## Deploy e2e infra, then run the passive-mode specs
-	SCALER_BACKEND=keda $(MAKE) deploy-e2e-infra
+	DEPLOY_LWS=true SCALER_BACKEND=keda $(MAKE) deploy-e2e-infra
 	$(MAKE) test-e2e-passive
 
 # Installs the scaling manager from the rendered release files with kubectl
@@ -3467,6 +3469,11 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# sample written twice at a chunk edge, an unescaped label value, or a
 	@# failed chunk skipped all parse, and the last reads as a window with no load.
 	@PROMTOOL=$(PROMTOOL) bash hack/check-promjson-to-openmetrics.sh
+	@echo "Checking the capacity planner's manual recording fetch and check steps..."
+	@# Runs the guide's fetch and check against a fake Prometheus. A cache-tier
+	@# series dropped from the export list, an absent series read as a failure,
+	@# or a failed query read as an absent series all run without an error.
+	@bash hack/check-record-export.sh
 	@echo "Checking what warmpool.sh actually emits..."
 	@# Renders the pool manifests and asserts their shape. Every bug this covers
 	@# parses fine: one container with the proxy image under the supervisor's
@@ -3631,6 +3638,11 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@echo "Checking no doc applies the sample scaling policy over an install..."
 	@# The sample has no limiters: applying it removes the GPU limit.
 	@bash hack/check-policy-apply-docs.sh
+	@echo "Checking the docs pin the tools image of the release their newTag names..."
+	@# The v0.12.2 tag pinned v0.12.1's tools digest in every install guide: the
+	@# digest exists only after the run builds the image, and nothing said so.
+	@bash -n deploy/ci-pr-checks/tools-pin.sh
+	@bash hack/check-tools-pin.sh
 	@echo "Checking only the highest final release tag moves latest..."
 	@# Runs the release workflow step against a scratch repository. A backport
 	@# tagged after a newer release used to move latest back to the old line.
@@ -3746,11 +3758,12 @@ docker-build-warmpool-launcher: ## Build the warm-pool launcher image (pulls the
 docker-push-warmpool-launcher: ## Push the warm-pool launcher image.
 	$(CONTAINER_TOOL) push ${WARMPOOL_LAUNCHER_IMG}
 
-# The launcher's own unit tests. They stub vLLM, so they need only the packages
-# in warmpool/supervisor/tests/requirements.txt (pip install -r it first).
-.PHONY: test-warmpool-launcher
+# The launcher's own unit tests live in make/warmpool-launcher.mk, so that
+# ci-pr-checks.yaml builds the ~10 GB launcher image for a change to that file
+# and not for every Makefile edit. Only the help line stays here, to keep its
+# place in `make help`; give the target no prerequisites or recipe here.
 test-warmpool-launcher: ## Run the warm-pool launcher's Python unit tests (needs warmpool/supervisor/tests/requirements.txt installed)
-	cd warmpool/supervisor && python3 -m pytest -v -p no:cacheprovider tests
+include make/warmpool-launcher.mk
 
 # BuildKit reads Dockerfile.tools.dockerignore; the default .dockerignore
 # excludes deploy/, which is all this image carries.

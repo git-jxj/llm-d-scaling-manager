@@ -23,11 +23,15 @@ const lwsRoleScalerChart = "0.10.0"
 // DisaggregatedSetRoleScaler cannot do.
 const RoleScalerUnservedMessage = "LeaderWorkerSet in this cluster serves DisaggregatedSet but not DisaggregatedSetRoleScaler " +
 	"(LeaderWorkerSet older than " + LWSRoleScalerRelease + "), so KEDA cannot scale DisaggregatedSet roles: " +
-	"they have nothing with a /scale subresource for the HPA to drive. Until it is upgraded, only the role writer " +
-	"(DSET_ROLE_WRITER=true) scales them"
+	"they have nothing with a /scale subresource for the HPA to drive. In passive mode this means the roles are " +
+	"not observed at all: no ScaledObject can target them, so KEDA never calls the trigger and no would-be count " +
+	"is published for them. Until it is upgraded, only the role writer (DSET_ROLE_WRITER=true, Static roles) " +
+	"reads and scales them; for a passive model it reads them and writes nothing"
 
 // RoleScalerUnservedFix is the fix for RoleScalerUnservedMessage.
-const RoleScalerUnservedFix = "upgrade LeaderWorkerSet to " + LWSRoleScalerRelease + " or later, the way it was installed " +
+const RoleScalerUnservedFix = "either turn on the role writer for the Static roles " +
+	"(docs/reference/disaggregatedset.md, \"Turn on the role writer\"), or " +
+	"upgrade LeaderWorkerSet to " + LWSRoleScalerRelease + " or later, the way it was installed " +
 	"(on OpenShift, through its operator). If it was installed with the upstream Helm chart, apply the new CRDs first, " +
 	"because helm upgrade never updates them: " +
 	"helm pull oci://registry.k8s.io/lws/charts/lws --version " + lwsRoleScalerChart + " --untar && " +

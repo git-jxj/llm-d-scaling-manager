@@ -20,6 +20,32 @@ This guide saves such a window. There are two ways:
 [Which series, and what each one feeds](../capacity-planner/metrics.md)
 is the reference for both.
 
+## What to send us
+
+For an operator collecting a window for someone else to plan from.
+
+1. **Record with Path 2** ([curl and jq](#path-2-record-with-curl-and-jq)).
+   It saves the raw series, the cache-tier ones included. A Path 1 capture
+   keeps only whether each cache-tier series was present and its total.
+2. **Take 24 hours**, the 24 hours before now if Prometheus still holds them.
+   Set `FROM` 5 minutes before the start.
+3. **Engine arguments.** The describe step writes them to `window.txt`.
+   Check it holds the full arguments, `--kv-transfer-config` and any
+   offloading flags (`--kv-offloading-size`) included.
+4. **Router version:** the image of the router (EPP) Deployment, for example
+   `kubectl -n <namespace> get deploy <router deployment> -o jsonpath='{..image}'`.
+5. **LMCache, if used:** its config file or `LMCACHE_*` environment, and,
+   for the multi-process server, its namespace (set `LMCACHE_NAMESPACE` before
+   the fetch when it differs) and that Prometheus scrapes its
+   `--prometheus-port`.
+6. **Check before you send.** The check step prints `bad=0`, then one
+   `present:` or `absent:` line per cache-tier series. `absent` is fine for a
+   feature you do not run; `present` should cover the ones you do. An
+   `EMPTY:` line names a kube-state-metrics series that came back empty, the
+   kube-state-metrics setting that turns it on, and what is lost without it.
+7. Send `planner-export.tgz`, and the router version and LMCache config
+   beside it.
+
 ## Prerequisites
 
 - [ ] Your Prometheus scrapes the model servers every 15 s (30 s at most),
@@ -74,14 +100,42 @@ export NAMESPACE=<model namespace>
 export FROM=2026-11-01T12:00:00Z
 export TO=2026-11-01T13:00:00Z
 
-# The engine arguments the Deployments ran with. kube-state-metrics does not export them.
-# For a P/D fleet, set PREFILL_ENGINE_ARGS to the prefill Deployment's; leave it unset and prefill takes ENGINE_ARGS.
-kubectl -n ${NAMESPACE} get deploy <decode deployment> \
-  -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}'
-export ENGINE_ARGS="<those arguments, space-separated>"
-# P/D only: export PREFILL_ENGINE_ARGS="<the prefill Deployment's arguments, space-separated>"
+# The engine arguments the workloads ran with. kube-state-metrics does not export them.
+# A workload is deploy/NAME, lws/NAME (a LeaderWorkerSet), dset/NAME (a DisaggregatedSet: the role whose
+# llm-d.ai/role label is decode, or prefill), or pod/NAME (a leader Pod). ENGINE_CONTAINER is the engine's container.
+# For a P/D fleet, set PREFILL_WORKLOAD; leave it empty and prefill takes ENGINE_ARGS.
+export ENGINE_CONTAINER=vllm
+export DECODE_WORKLOAD=deploy/<decode deployment>
+export PREFILL_WORKLOAD=
+engine_args() {
+  obj=$1
+  case "${obj}" in dset/*) obj=disaggregatedsets.disaggregatedset.x-k8s.io/${obj#dset/} ;; esac
+  out=$(kubectl -n "${NAMESPACE}" get "${obj}" -o json | jq -r --arg c "${ENGINE_CONTAINER}" --arg role "$2" '
+    def role_of: (.metadata.labels // {})["llm-d.ai/role"];
+    (if .kind == "DisaggregatedSet" then
+       {spec: ([.spec.roles[] | select(role_of == $role
+           or (.spec.leaderWorkerTemplate.leaderTemplate // {} | role_of) == $role
+           or (.spec.leaderWorkerTemplate.workerTemplate // {} | role_of) == $role)][0].spec // {})}
+     else . end)
+    | [(.spec.template.spec // .spec.leaderWorkerTemplate.leaderTemplate.spec
+      // .spec.leaderWorkerTemplate.workerTemplate.spec // .spec)
+     | (.containers // [])[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
+     | gsub("\n"; " ")
+     | if test("^[[{]") then (try (fromjson | tojson) catch .) else . end]
+    | join(" ")')
+  [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in $1" \
+    "(or, for a DisaggregatedSet, no role labelled llm-d.ai/role=$2)" >&2; return 1; }
+  echo "${out}"
+}
+ENGINE_ARGS=$(engine_args "${DECODE_WORKLOAD}" decode) && export ENGINE_ARGS && echo "decode: ${ENGINE_ARGS}"
+unset PREFILL_ENGINE_ARGS
+if [ -n "${PREFILL_WORKLOAD}" ]; then
+  PREFILL_ENGINE_ARGS=$(engine_args "${PREFILL_WORKLOAD}" prefill) && export PREFILL_ENGINE_ARGS \
+    && echo "prefill: ${PREFILL_ENGINE_ARGS}"
+fi
 
 # Replays the window through the controller's own queries. Exit 0 done, 2 your input (a flag, nothing found), 1 a failed query.
+# It also checks the optional cache-tier series and prints which were present; an absent one never fails it.
 bin/capacity-planner capture --prometheus ${PROM_URL} --namespace ${NAMESPACE} --kube-state-metrics \
   --from ${FROM} --to ${TO} --engine vllm --engine-args "${ENGINE_ARGS}" \
   ${PREFILL_ENGINE_ARGS+--prefill-engine-args "${PREFILL_ENGINE_ARGS}"} \
@@ -103,6 +157,11 @@ captured 57 steps of demo from 2026-11-12T19:48:04Z to 2026-11-12T20:02:04Z ever
   Qwen/Qwen3-0.6B/demo-decode  decode  1 GPU NVIDIA-H100-80GB-HBM3
   flag: engine parameters from flags, which may differ from the window's workloads
   flag: rollouts not seen: every scale target filed as not rolling out
+optional series (cache tiers, offloading, KV transfer, TTFT outside the engines): 2 present, 59 absent, 0 unchecked
+  present   vllm:external_prefix_cache_queries_total  increase 1.832e+06
+  present   vllm:external_prefix_cache_hits_total  increase 6.14e+05
+  absent    vllm:prompt_tokens_by_source_total
+  ...
 wrote run.capture.jsonl.gz
 generated 57 steps into run.jsonl.gz: 72688 bytes, analyzes map[saturation.Analyze:57]
   caveat: engine parameters from flags, which may differ from the window's workloads
@@ -111,6 +170,12 @@ generated 57 steps into run.jsonl.gz: 72688 bytes, analyzes map[saturation.Analy
 
 A `flag:` or `caveat:` line names something the window could not show, such
 as readiness without kube-state-metrics. Read them before the answers.
+
+The `optional series` lines are the
+[cache-tier, offloading and KV-transfer series](../capacity-planner/metrics.md#cache-tiers-offloading-and-kv-transfer):
+which ones the window held, and a counter's increase over it. `absent` is
+normal on an engine without that feature or release. `unchecked` means the
+query failed (the line says why); the capture still completes.
 
 Exit codes: `0` done; `2` your input (a bad flag, no replica with a KV-cache
 series in the namespace and window, a window too large without `--force`);
@@ -125,7 +190,7 @@ How to read their answers: [Read the command-line answers](#read-the-command-lin
 
 To look at the recording in the planner's page, put `run.jsonl.gz` (the
 recording, not `run.capture.jsonl.gz`) in a directory and serve it:
-[Start the planner](../capacity-planner/README.md#start-the-planner).
+[Start the planner](../capacity-planner/install-options.md#start-the-planner).
 
 **Go easy on Prometheus.** A capture asks one range query per planner query
 over the whole window: about 56 for one vLLM model. An hour is light; a day
@@ -154,6 +219,8 @@ export CURL_OPTS=""
 # Each is one instant query for a range, metric{namespace=...}[1h]: it returns stored samples, not a resampled grid.
 # A failed query saves its error, so the check below and the converter refuse it. Needs bash, jq and curl 7.76 or later.
 # Lower CHUNK if a query fails with "too many samples".
+# CACHE_METRICS are the optional series: cache tiers, offloading, KV transfer, and the TTFT spent outside the engines.
+# Older releases lack many of them, and an absent one saves an empty answer, not a failure. Set LMCACHE_NAMESPACE first if the LMCache server runs in another namespace.
 export METRICS="
 vllm:kv_cache_usage_perc vllm:cache_config_info vllm:inter_token_latency_seconds_sum
 vllm:inter_token_latency_seconds_count vllm:generation_tokens_total vllm:num_requests_running
@@ -194,12 +261,44 @@ kube_pod_status_ready kube_pod_status_ready_time kube_pod_created kube_pod_start
 kube_pod_deletion_timestamp kube_pod_container_resource_requests kube_node_labels
 kube_deployment_spec_replicas kube_pod_container_info kube_deployment_annotations
 "
+export CACHE_METRICS="
+vllm:external_prefix_cache_queries_total vllm:external_prefix_cache_hits_total
+vllm:prompt_tokens_by_source_total vllm:prompt_tokens_cached_total vllm:prompt_tokens_cached_by_source_total
+vllm:kv_offload_load_bytes_total vllm:kv_offload_load_time_total vllm:kv_offload_store_bytes_total
+vllm:kv_offload_store_time_total vllm:kv_offload_total_bytes_total vllm:kv_offload_total_time_total
+vllm:kv_offload_tiering_chunk_queries_total vllm:kv_offload_tiering_chunk_hits_total
+vllm:kv_offload_tiering_read_bytes_total vllm:kv_offload_tiering_read_time_total vllm:kv_offload_config_info
+vllm:nixl_bytes_transferred_sum vllm:nixl_bytes_transferred_count vllm:nixl_xfer_time_seconds_bucket
+vllm:nixl_post_time_seconds_sum vllm:nixl_post_time_seconds_count vllm:nixl_num_failed_transfers_total
+lmcache_mp_lookup_requested_tokens_total lmcache_mp_lookup_hit_tokens_total
+lmcache_mp_lookup_hit_l1_tokens_total lmcache_mp_lookup_hit_l2_tokens_total
+lmcache_mp_lookup_prompt_tokens_total lmcache_mp_lookup_request_hit_tokens_total
+lmcache:num_requested_tokens_total lmcache:num_hit_tokens_total lmcache:num_lookup_tokens_total
+lmcache:num_lookup_hits_total lmcache:time_to_retrieve_sum lmcache:time_to_retrieve_count
+llm_d_epp_request_cached_tokens_sum llm_d_epp_request_cached_tokens_count
+llm_d_epp_request_cached_tokens_bucket llm_d_epp_prefix_predicted_cached_tokens_sum
+llm_d_epp_prefix_predicted_cached_tokens_count llm_d_epp_prefix_best_predicted_cached_tokens_sum
+llm_d_epp_prefix_best_available_cached_tokens_sum llm_d_epp_prefix_prompt_tokens_sum
+sglang:prefill_effective_tokens_total sglang:uncached_prompt_tokens_histogram_sum
+sglang:uncached_prompt_tokens_histogram_count sglang:uncached_prompt_tokens_histogram_bucket
+llm_d_epp_request_processing_duration_seconds_sum llm_d_epp_request_processing_duration_seconds_count
+llm_d_epp_request_processing_duration_seconds_bucket llm_d_epp_token_producer_render_duration_seconds_sum
+llm_d_epp_token_producer_render_duration_seconds_count llm_d_epp_plugin_duration_seconds_sum
+llm_d_epp_plugin_duration_seconds_count llm_d_epp_request_size_bytes_sum llm_d_epp_request_size_bytes_count
+llm_d_epp_request_duration_seconds_sum llm_d_epp_request_duration_seconds_count
+llm_d_disagg_sidecar_prefill_duration_seconds_sum llm_d_disagg_sidecar_prefill_duration_seconds_count
+vllm:e2e_request_latency_seconds_sum vllm:e2e_request_latency_seconds_count
+vllm:request_render_duration_seconds_sum vllm:request_render_duration_seconds_count
+http_request_duration_seconds_sum http_request_duration_seconds_count
+"
+export LMCACHE_NAMESPACE=${LMCACHE_NAMESPACE:-${NAMESPACE}}
 rm -rf planner-export
 mkdir -p planner-export
 failed=0
-for m in ${METRICS}; do
+for m in ${METRICS} ${CACHE_METRICS}; do
   sel="${m}{namespace='${NAMESPACE}'}"
   [ "${m}" = kube_node_labels ] && sel="${m}"
+  case "${m}" in lmcache_mp_*) sel="${m}{namespace='${LMCACHE_NAMESPACE}'}" ;; esac
   t=${FROM}
   while [ "${t}" -lt "${TO}" ]; do
     end=$(( t + CHUNK )); [ "${end}" -gt "${TO}" ] && end=${TO}
@@ -214,7 +313,8 @@ echo "failed=${failed}"
 
 # What loading the export needs and Prometheus does not hold: the window, the engine, and the engine
 # arguments of the decode and prefill workloads (leave PREFILL_WORKLOAD empty without one).
-# A workload is deploy/NAME, lws/NAME (a LeaderWorkerSet; for a DisaggregatedSet, the role's), or pod/NAME (a leader Pod).
+# A workload is deploy/NAME, lws/NAME (a LeaderWorkerSet), dset/NAME (a DisaggregatedSet: the role whose
+# llm-d.ai/role label is decode, or prefill, on the role or its leader or worker template), or pod/NAME (a leader Pod).
 # ENGINE is vllm or sglang; ENGINE_CONTAINER is the engine's container name.
 # It stops, and writes no window.txt, when a workload or its container is not found.
 export ENGINE=vllm
@@ -222,22 +322,31 @@ export ENGINE_CONTAINER=vllm
 export DECODE_WORKLOAD=deploy/<decode deployment>
 export PREFILL_WORKLOAD=
 engine_args() {
-  out=$(kubectl -n "${NAMESPACE}" get "$1" -o json | jq -r --arg c "${ENGINE_CONTAINER}" '
-    [(.spec.template.spec // .spec.leaderWorkerTemplate.leaderTemplate.spec
+  obj=$1
+  case "${obj}" in dset/*) obj=disaggregatedsets.disaggregatedset.x-k8s.io/${obj#dset/} ;; esac
+  out=$(kubectl -n "${NAMESPACE}" get "${obj}" -o json | jq -r --arg c "${ENGINE_CONTAINER}" --arg role "$2" '
+    def role_of: (.metadata.labels // {})["llm-d.ai/role"];
+    (if .kind == "DisaggregatedSet" then
+       {spec: ([.spec.roles[] | select(role_of == $role
+           or (.spec.leaderWorkerTemplate.leaderTemplate // {} | role_of) == $role
+           or (.spec.leaderWorkerTemplate.workerTemplate // {} | role_of) == $role)][0].spec // {})}
+     else . end)
+    | [(.spec.template.spec // .spec.leaderWorkerTemplate.leaderTemplate.spec
       // .spec.leaderWorkerTemplate.workerTemplate.spec // .spec)
-     | .containers[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
+     | (.containers // [])[] | select(.name == $c) | (.command // []) + (.args // []) | .[]
      | gsub("\n"; " ")
      | if test("^[[{]") then (try (fromjson | tojson) catch .) else . end]
     | join(" ")')
-  [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in $1" >&2; return 1; }
+  [ -n "${out}" ] || { echo "no container ${ENGINE_CONTAINER} with a command or args in $1" \
+    "(or, for a DisaggregatedSet, no role labelled llm-d.ai/role=$2)" >&2; return 1; }
   echo "${out}"
 }
 rm -f planner-export/window.txt
 (
   [ -n "${DECODE_WORKLOAD}" ] || { echo "set DECODE_WORKLOAD" >&2; exit 1; }
-  decode_args=$(engine_args "${DECODE_WORKLOAD}") || exit 1
+  decode_args=$(engine_args "${DECODE_WORKLOAD}" decode) || exit 1
   prefill_args=
-  if [ -n "${PREFILL_WORKLOAD}" ]; then prefill_args=$(engine_args "${PREFILL_WORKLOAD}") || exit 1; fi
+  if [ -n "${PREFILL_WORKLOAD}" ]; then prefill_args=$(engine_args "${PREFILL_WORKLOAD}" prefill) || exit 1; fi
   {
     echo "NAMESPACE=${NAMESPACE}"
     echo "FROM=${FROM}"
@@ -255,10 +364,11 @@ if grep -E '^[A-Z]+_ARGS=.*([$]|sh -c)' planner-export/window.txt 2>/dev/null; t
 fi
 
 # Every chunk saved and a success, then how many series each metric had. It prints bad=0 when nothing is missing.
-# Zero series is fine for a metric your fleet does not export.
+# Zero series is fine for a metric your fleet does not export. Then, which cache-tier series it holds.
+# Last, an EMPTY: line for each kube-state-metrics series the planner reads that came back empty: why, and what is lost.
 want=$(( (TO - FROM + CHUNK - 1) / CHUNK ))
 bad=0
-for m in ${METRICS}; do
+for m in ${METRICS} ${CACHE_METRICS}; do
   have=$(ls planner-export/"${m//:/_}".*.json 2>/dev/null | wc -l)
   [ "${have}" -eq "${want}" ] || { echo "MISSING: ${m} has ${have} of ${want} chunks"; bad=1; }
 done
@@ -269,6 +379,28 @@ echo "bad=${bad}"
 for f in planner-export/*.json; do
   echo "$(jq '.data.result | length' "${f}" 2>/dev/null || echo 0) $(basename "${f}" | cut -d. -f1)"
 done | awk '{n[$2] += $1} END {for (m in n) print n[m], m}' | sort -n
+for m in ${CACHE_METRICS}; do
+  n=$(cat planner-export/"${m//:/_}".*.json 2>/dev/null | jq -s '[.[].data.result | length] | add // 0')
+  if [ "${n:-0}" -gt 0 ]; then echo "present: ${m}"; else echo "absent: ${m}"; fi
+done
+for m in kube_node_labels kube_pod_created kube_pod_deletion_timestamp kube_deployment_annotations; do
+  n=$(cat planner-export/"${m}".*.json 2>/dev/null | jq -s '[.[].data.result | length] | add // 0')
+  [ "${n:-0}" -gt 0 ] && continue
+  case "${m}" in
+    kube_node_labels) echo "EMPTY: kube_node_labels: kube-state-metrics exports node labels only with" \
+      "--metric-labels-allowlist=nodes=[nvidia.com/gpu.product]. Without it the accelerator is unknown:" \
+      "give --accelerator when the export is loaded." ;;
+    kube_pod_created) echo "EMPTY: kube_pod_created: disabled or denylisted in kube-state-metrics" \
+      "(--metric-denylist, --resources). Without it no Pod has a creation time, so start-up time" \
+      "(creation to Ready) is not read." ;;
+    kube_pod_deletion_timestamp) echo "EMPTY: kube_pod_deletion_timestamp: normal when no Pod was deleted in" \
+      "the window; otherwise disabled or denylisted in kube-state-metrics. Without it a Pod being deleted" \
+      "counts as a replica until its series stop." ;;
+    kube_deployment_annotations) echo "EMPTY: kube_deployment_annotations: off unless kube-state-metrics has" \
+      "--metric-annotations-allowlist=deployments=[scaling-manager.llmd.ai/vllm-version], or denylisted." \
+      "Without it the vLLM release comes from the image tag, or is unknown (vLLM defaults then unknown)." ;;
+  esac
+done
 
 # One file to send. It holds your metric labels (Pod, node, model names) and engine arguments, no request content.
 # COPYFILE_DISABLE=1 keeps macOS tar from adding a ._ file beside each answer.
@@ -293,11 +425,15 @@ example `DECODE_ARGS=--max-num-seqs 256 --tensor-parallel-size 2`. `capacity-pla
 splits these on whitespace: a JSON value is written compact (no spaces between
 its tokens), but a space inside one of its strings still splits it.
 
-**A LeaderWorkerSet or DisaggregatedSet fleet.** Set `DECODE_WORKLOAD` (and
-`PREFILL_WORKLOAD`) to the role's LeaderWorkerSet, `lws/<name>`, which reads
-its leader template, or to a leader Pod, `pod/<name>`, which reads the
-arguments that Pod ran with. A DisaggregatedSet runs one LeaderWorkerSet per
-role and revision: `kubectl -n <namespace> get lws` lists them. Where the
+**A LeaderWorkerSet or DisaggregatedSet fleet.** For a DisaggregatedSet, set
+both `DECODE_WORKLOAD` and `PREFILL_WORKLOAD` to `dset/<name>`: each reads the
+role whose `llm-d.ai/role` label is `decode` or `prefill` (on the role, or on
+its leader or worker template), from its leader template. If no role carries
+the label, the step stops and says so; name the role's LeaderWorkerSet
+instead (`kubectl -n <namespace> get lws` lists them). For a LeaderWorkerSet,
+`lws/<name>` reads its leader template; a leader Pod, `pod/<name>`, reads the
+arguments that Pod ran with. Path 1's engine-arguments step takes the same
+forms. Where the
 arguments are built at start, in a script or from environment variables,
 neither shows them: copy them from the engine's startup log instead (vLLM
 prints them on its `non-default args` line) into `window.txt`. Each Pod's
@@ -475,7 +611,7 @@ capacity-planner capture  --prometheus URL --namespace NS (--kube-state-metrics 
                           [--gpus-per-replica 1] [--accelerator NAME]
                           [--vllm-version 0.34] [--engine-image IMAGE]
                           [--bearer-token-file FILE] [--ca-file FILE] [--insecure-skip-verify]
-                          [--timeout 2m30s] [--force]
+                          [--timeout 2m30s] [--force] [--lmcache-namespace NS]
 capacity-planner generate -in run.capture.jsonl.gz -o run.jsonl.gz
 ```
 
@@ -498,6 +634,7 @@ capacity-planner generate -in run.capture.jsonl.gz -o run.jsonl.gz
 | `--insecure-skip-verify` | Do not verify the certificate. Warned about on stderr. Refused with an http URL. |
 | `--timeout` | How long one HTTP request may take. Default 2m30s, a little over Prometheus' own 2-minute query timeout. |
 | `--force` | Capture past the load and memory bounds in [Load on Prometheus](#load-on-prometheus). |
+| `--lmcache-namespace` | Where LMCache's multi-process server runs, when not in `--namespace`: its `lmcache_mp_` series are checked there. |
 | `-o` | Where to write the capture. Written beside it and renamed over it when whole, so a failed run leaves the file that was there. |
 
 `generate` takes `-in` (the capture, gzipped or not) and `-o` (the recording;

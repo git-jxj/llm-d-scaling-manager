@@ -46,18 +46,23 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MAKEFILE="$ROOT/Makefile"
 [ -f "$MAKEFILE" ] || { echo "no Makefile at $MAKEFILE" >&2; exit 1; }
 
-bad="$(tr -d '\r' < "$MAKEFILE" | awk '
+# The Makefile and the makefiles it includes from make/.
+status=0
+bad=""
+for f in "$MAKEFILE" "$ROOT"/make/*.mk; do
+    [ -f "$f" ] || continue
+    out="$(tr -d '\r' < "$f" | awk -v name="${f#"$ROOT"/}" '
     # Only recipe lines matter (they start with a tab).
     /^\t/ {
         if (cont && $0 ~ /^\t[[:space:]]*@#/) {
-            printf "  Makefile:%d: [@# runs as a command] %s\n", NR, $0
+            printf "  %s:%d: [@# runs as a command] %s\n", name, NR, $0
             found = 1
         }
         else if (cont && $0 ~ /^\t[[:space:]]*#/) {
             if ($0 ~ /\\$/)
-                printf "  Makefile:%d: [swallows the next line] %s\n", NR, $0
+                printf "  %s:%d: [swallows the next line] %s\n", name, NR, $0
             else
-                printf "  Makefile:%d: [truncates the command] %s\n", NR, $0
+                printf "  %s:%d: [truncates the command] %s\n", name, NR, $0
             found = 1
         }
         # A trailing backslash continues into the next line.
@@ -66,7 +71,10 @@ bad="$(tr -d '\r' < "$MAKEFILE" | awk '
     }
     { cont = 0 }
     END { exit(found ? 1 : 0) }
-')" && { echo "make recipe comments OK"; exit 0; }
+')" || { status=1; bad="${bad:+$bad
+}$out"; }
+done
+[ "$status" -eq 0 ] && { echo "make recipe comments OK"; exit 0; }
 
 echo "ERROR: a comment sits inside a continued recipe:" >&2
 printf '%s\n' "$bad" >&2

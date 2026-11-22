@@ -575,6 +575,13 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("the load line names the statistic and the others", vg.load ===
     "Judged at the p95 load of 41.7 r/s; the source saw mean 31.6, p95 41.7, peak 43.2 r/s over 282 busy cycles.", vg.load);
   check("a missed-at-onset cell says so", S("REPORT_MARKS")["missed at onset"][1] === "MISS at onset");
+  check("a cell past a lower-bound knee is not called saturated", S("REPORT_MARKS")["past a lower-bound knee"][0] === "unknown" &&
+    S("REPORT_MARKS")["past a lower-bound knee"][1] === "past a lower-bound knee");
+  const lb = reportView({slo, load: {rate: {value: 12.48}}, loads: [], shapes: [{label: "measured", utilization: {decode: {}, prefill: {}}, table: [],
+    capacity: Object.assign(knees(4.04, "prefill"), {prefillKnee: {value: 4.04, lowerBound: true}, fleetKnee: {value: 4.04, binds: "prefill", lowerBound: true}}),
+    verdict: {verdict: "NOT JUDGED", scope: "fleet", summary: "NOT JUDGED: at the p95 load of 12.5 r/s, 3.1x a prefill knee of at least 4.0 r/s."}}]});
+  check("a lower-bound knee reads as at least its rate", lb.details[0].lines.some(l => l.startsWith("Knees: prefill at least 4.04 r/s,") &&
+    l.includes("the fleet's is at least 4.04 r/s")), JSON.stringify(lb.details[0].lines));
   // The fleet needed: a chip of its own, the sentence not repeating it.
   const {neededText, verdictLine, roleLines, loadLine} = ctx;
   const has = {prefill: 2, decode: 2};
@@ -698,7 +705,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 335;
+const EXPECTED_CASES = 337;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

@@ -15,6 +15,7 @@
 # Namespace is Forbidden, as for a namespace owner), forbid-daemonsets
 # (reading DaemonSets is Forbidden), forbid-roles (reading a Role by name is
 # Forbidden), roles-fail (reading a Role by name fails with a server error),
+# forbid-rbac-apply (applying a Role or RoleBinding is Forbidden),
 # apply-fails (a
 # server-side apply is refused by the API server).
 D="${STUB_DIR:?}"
@@ -65,11 +66,16 @@ res() {
         roles) r=role ;;
         rolebindings) r=rolebinding ;;
         podmonitors) r=podmonitor ;;
+        svc|services) r=service ;;
+        servicemonitors) r=servicemonitor ;;
+        serviceaccounts|sa) r=serviceaccount ;;
+        inferencepools) r=inferencepool ;;
+        crd|crds|customresourcedefinitions) r=customresourcedefinition ;;
     esac
     printf '%s' "$r"
 }
 cluster_scoped() {
-    case "$1" in namespace|clusterrole|clusterrolebinding|clustertriggerauthentication|apiservice) return 0 ;; esac
+    case "$1" in namespace|clusterrole|clusterrolebinding|clustertriggerauthentication|apiservice|customresourcedefinition) return 0 ;; esac
     return 1
 }
 path() {
@@ -198,6 +204,15 @@ case "$verb" in
         case "$ALL" in *--server-side*) [ ! -f "$D/apply-fails" ] || { echo "Error from server (InternalError): the server refused the apply" >&2; exit 1; } ;; esac
         while IFS= read -r o; do
             selected "$o" || continue
+            # forbid-rbac-apply: a Role or RoleBinding is refused, as for a
+            # namespace owner outside their namespace.
+            if [ -f "$D/forbid-rbac-apply" ]; then
+                case "$(printf '%s' "$o" | jq -r .kind)" in
+                    Role|RoleBinding)
+                        echo "Error from server (Forbidden): error when creating \"$file\": roles.rbac.authorization.k8s.io is forbidden: User \"owner\" cannot create resource \"roles\" in API group \"rbac.authorization.k8s.io\"" >&2
+                        exit 1 ;;
+                esac
+            fi
             echo "$(store "$o") configured"
         done < <(docs "$file")
         exit 0 ;;

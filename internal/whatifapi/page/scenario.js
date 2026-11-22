@@ -529,13 +529,15 @@ function reportRequest(o) {
 }
 
 // REPORT_MARKS are a summary cell's marks: its class, and the word that says
-// it without colour.
+// it without colour. A rate past a prefill knee priced from a lower bound of
+// V_P is not judged, never saturated: the true knee may be higher.
 const REPORT_MARKS = {met: ["met", "ok"], missed: ["missed", "MISS"], "missed at onset": ["missed", "MISS at onset"], saturated: ["saturated", "SAT"],
-  unknown: ["unknown", "?"], "no target": ["notarget", "no SLO"]};
+  "past a lower-bound knee": ["unknown", "past a lower-bound knee"], unknown: ["unknown", "?"], "no target": ["notarget", "no SLO"]};
 
 // REFUSAL_WORDS are the refusals a report shows most, in words.
 const REFUSAL_WORDS = {
   Saturated: "saturated: no steady state at this load",
+  PastLowerBoundKnee: "past a prefill knee priced from a lower bound of V_P: not priced (assume V_P to price it)",
   AboveDecodeOnset: "past the decode flow-control onset: not priced",
   NoPrefillCapacity: "no prefill speed learned (assume V_P to price it)",
   NoFixedLatency: "no prefill fixed latency learned (assume a to price it)",
@@ -716,7 +718,8 @@ function reportView(r) {
   });
   const details = shapes.map(s => {
     const c = s.capacity || {}, u = s.utilization || {decode: {}, prefill: {}};
-    const rate = f => (f && f.value != null ? roundRate(f.value) + " r/s" : refusalText(f));
+    // A knee priced from a lower bound of V_P is at least its rate.
+    const rate = f => (f && f.value != null ? (f.lowerBound ? "at least " : "") + roundRate(f.value) + " r/s" : refusalText(f));
     const share = f => (f && f.value != null ? f.value.toFixed(2) : refusalText(f));
     return {
       summary: `${s.label}: IL ${Math.round(s.inputTokens)}, OL ${Math.round(s.outputTokens)}, prefix hit ${Number(s.prefixHitRate).toFixed(2)} (${s.source})`,

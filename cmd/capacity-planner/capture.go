@@ -60,6 +60,8 @@ type captureFlags struct {
 	vllmVersion, engineImage      string
 	force                         bool
 	out                           string
+	// lmcacheNamespace is capture's --lmcache-namespace.
+	lmcacheNamespace string
 }
 
 func runCapture(ctx context.Context, args []string, out, warn io.Writer) error {
@@ -69,6 +71,8 @@ func runCapture(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.namespace, "namespace", "", "the namespace whose models to capture (required)")
 	fs.IntVar(&f.batchCap, "batch-cap", 0, "the engine's batch cap (--max-num-seqs); 0 leaves the engine's default")
 	fs.StringVar(&f.out, "o", "", "where to write the capture, gzipped JSON lines (required)")
+	fs.StringVar(&f.lmcacheNamespace, "lmcache-namespace", "", "the namespace LMCache's multi-process server runs in, "+
+		"where its series are checked; --namespace when empty")
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
@@ -76,6 +80,7 @@ func runCapture(ctx context.Context, args []string, out, warn io.Writer) error {
 	if err != nil {
 		return redactedError(err, f.prometheus)
 	}
+	opts.LMCacheNamespace = f.lmcacheNamespace
 	// Written beside -o and renamed over it once whole: a failed or
 	// cancelled capture leaves the file that was there.
 	var sum *whatifsource.Summary
@@ -102,6 +107,12 @@ func runCapture(ctx context.Context, args []string, out, warn io.Writer) error {
 	}
 	for _, note := range sum.Notes {
 		fmt.Fprintf(out, "  note: %s\n", note)
+	}
+	lines, present, absent := whatifsource.OptionalText(sum.Optional)
+	fmt.Fprintf(out, "optional series (cache tiers, offloading, KV transfer, TTFT outside the engines): %d present, %d absent, %d unchecked\n",
+		present, absent, len(sum.Optional)-present-absent)
+	for _, line := range lines {
+		fmt.Fprintf(out, "  %s\n", line)
 	}
 	fmt.Fprintf(out, "wrote %s\n", f.out)
 	return nil

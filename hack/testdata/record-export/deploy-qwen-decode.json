@@ -1,0 +1,10 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {"name": "qwen-decode", "namespace": "llm"},
+  "spec": {
+    "template": {
+      "spec": {"containers": [{"name": "vllm", "args": ["Qwen/Qwen3-32B", "--max-num-seqs", "32"]}]}
+    }
+  }
+}

@@ -111,6 +111,18 @@ func (t ttftQuestion) label() string {
 	return "TTFT p" + strconv.FormatFloat(math.Round(1e8*t.q)/1e6, 'f', -1, 64)
 }
 
+// routerWaitGivesWay turns *inPrefill off when --price-router-wait is set and
+// --router-wait-in-prefill is not: the latter is on by default
+// (whatif.DefaultRouterWaitInPrefill), and asking for router v0.11.0's gate
+// stage is asking for the other router's model, not for both. Set together,
+// the two stay on and are refused ("set one"). answer and backtest call it
+// once their flags are parsed.
+func routerWaitGivesWay(set map[string]bool, priceRouterWait bool, inPrefill *bool) {
+	if priceRouterWait && !set["router-wait-in-prefill"] {
+		*inPrefill = false
+	}
+}
+
 // checkTTFT validates the TTFT flags both questions share. It changes no
 // flag.
 func (f *answerFlags) checkTTFT() error {
@@ -476,7 +488,8 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 // prefill onset, and whether the decode gate was charged; and that
 // --router-wait-in-prefill took the router's wait as inside the prefill
 // price, which leaves the same flag as --price-router-wait. Nothing with
-// none of the three, so the default output does not move.
+// none of the three; --router-wait-in-prefill, on by default, is named
+// unasked only where it takes.
 func (f *answerFlags) onsetNotes(pf *pricedFleet) {
 	if f.psOnsets {
 		switch p, ok := whatif.PrefillOnsetPlacement(pf.fleet); {
@@ -505,8 +518,13 @@ func (f *answerFlags) onsetNotes(pf *pricedFleet) {
 			pf.assume("%s (--charge-decode-gate)", g)
 		}
 	}
+	// On by default, so it is named where it takes, and where it does not
+	// only when it was asked for: the default output says nothing of a
+	// switch that did not apply.
 	if f.routerWaitInPrefill {
 		switch {
+		case !f.set["router-wait-in-prefill"] && (pf.fleet.FlowControl.State != whatif.FlowControlOn || !pf.fleet.ProcessorSharing ||
+			pf.fleet.Prefill.BeyondProcessorSharing()):
 		case pf.fleet.FlowControl.State != whatif.FlowControlOn:
 			pf.assume("--router-wait-in-prefill not applied: flow control is not on")
 		case !pf.fleet.ProcessorSharing:

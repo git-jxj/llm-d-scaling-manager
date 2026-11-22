@@ -47,8 +47,13 @@ var (
 		"from", "to", "step", "force", "no-self-check",
 		// Set, it states nothing until it applies: assumeIntercept then adds
 		// --assume-itl-b to the variant's stated inputs, which puts its figures outside.
-		"assume-itl-b"}
-	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait", "router-wait-in-prefill",
+		"assume-itl-b",
+		// On by default (whatif.DefaultRouterWaitInPrefill), it states
+		// nothing either way: where it takes, the figure carries
+		// FlowControlWaitPriced, which is outside on its own, and off is how
+		// the run was priced (the SLO analyzer has no switch for it).
+		"router-wait-in-prefill"}
+	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait",
 		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "prefill-engine-args", "gpus-per-replica",
 		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts", "assume-transfer-base",
 		"load-aware-router"}

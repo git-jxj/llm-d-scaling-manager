@@ -76,9 +76,9 @@ tuning has been measured yet; when one is, its rows will print `validated on
 a holdout`.
 
 **The decode knee.** Inside its region (the row below) the decode knee held
-to within the run's 3% hold rule. Outside it, on the Qwen3-0.6B goldens, four
-knees read 17% to 99% high past the table's bound and one 42% low; the
-planner says the same 17% to 99%. `at-replicas` prints the label under the decode knee
+to within the run's 3% hold rule. Outside it, on the Qwen3-0.6B goldens, three
+knees read 43% to 99% high past the table's bound and one 42% low; the
+planner says the same 43% to 99%. `at-replicas` prints the label under the decode knee
 in its capacity table, says the 0.6B range under `not validated` only when
 the knee is outside, and sizes decode at the label's upper error inside the
 region, or at 99.1% outside it, beside the point answer
@@ -166,13 +166,21 @@ priced:
 
 Past the onset on router v1.0.0, `--router-wait-in-prefill` takes the
 router's wait as part of the prefill time, so the figure stands and a rate
-answer can pass the onset (up to 0.9 of the prefill knee). On six bursty
-steps (Ca² 4, up to 0.88 of the knee) it read 1.5x to 3.7x the client's
-TTFT, never under; that margin comes from the learned V_P being a lower
-bound, not from the switch. It is off by default, because no Poisson step past the onset has run on
-v1.0.0, and setting it puts every figure outside the validated region, even
-where it does not apply. Do not use it on router
-v0.11.0, where the wait adds to TTFT and this reads short.
+answer can pass the onset (up to 0.9 of the prefill knee). It is on by
+default. On a router v1.0.0 staircase (Qwen3-32B, 2 prefill and 2 decode,
+three seeds), the figure read 1.3x to 3.4x the router's measured TTFT at 15
+steps past the onset, never under, and no step up to 0.9 of the knee
+collapsed. One more step, disturbed when both prefill pods were replaced, read
+0.78x at the p95; the backtest excludes it as warm-up, a choice made after the
+run. The figure errs high: it overstates the wait rather than claiming an SLO
+the fleet misses.
+
+**On router v0.11.0, set `--router-wait-in-prefill=false`** (the API's
+`assume.routerWait: none`). There the router's gate collapsed on its TTL at 15
+of 41 steps past the onset, and this figure reads short at every one of them.
+Off, a figure past the onset is flagged `AboveFlowControlOnset`, a miss, and
+the rate answer stops at the onset. The planner cannot read the router's
+version, so this is the operator's call.
 
 To ask the CLI the way the run was priced, for example:
 

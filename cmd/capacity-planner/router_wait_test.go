@@ -40,41 +40,84 @@ func TestTTFT_PriceRouterWaitFlag(t *testing.T) {
 	assert.True(t, pf.fleet.PriceRouterWait, "with the flag")
 }
 
-// --router-wait-in-prefill is whatif.TTFTFleet.RouterWaitInPrefill: opt-in,
-// off by default, on with the flag, and refused beside --price-router-wait,
-// which prices the same wait the other router's way. The output names it, so
-// it is told apart from --price-router-wait, which leaves the same flag.
+// --router-wait-in-prefill is whatif.TTFTFleet.RouterWaitInPrefill: on by
+// default (issue #287), off with =false, and refused beside
+// --price-router-wait when both are set; --price-router-wait set alone turns
+// it off, so router v0.11.0's gate stage needs one flag. The output names it,
+// so it is told apart from --price-router-wait, which leaves the same flag.
 func TestTTFT_RouterWaitInPrefillFlag(t *testing.T) {
 	for _, c := range []struct {
-		args []string
-		want bool
-	}{{nil, whatif.DefaultRouterWaitInPrefill}, {[]string{"--router-wait-in-prefill"}, true}} {
+		args          []string
+		inPrefill     bool
+		priceGateWait bool
+	}{
+		{nil, true, false},
+		{[]string{"--router-wait-in-prefill"}, true, false},
+		{[]string{"--router-wait-in-prefill=false"}, false, false},
+		{[]string{"--price-router-wait"}, false, true},
+	} {
 		var f answerFlags
 		fs := flag.NewFlagSet("t", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		f.register(fs)
-		require.NoError(t, fs.Parse(c.args))
-		assert.Equal(t, c.want, f.routerWaitInPrefill, "%v", c.args)
+		require.NoError(t, fs.Parse(append([]string{"--recording", outputSpreadRun}, c.args...)))
+		require.NoError(t, f.check(fs), "%v", c.args)
+		assert.Equal(t, c.inPrefill, f.routerWaitInPrefill, "%v", c.args)
+		assert.Equal(t, c.priceGateWait, f.priceRouterWait, "%v", c.args)
 	}
-	require.False(t, whatif.DefaultRouterWaitInPrefill, "opt-in: off by default")
 
 	pf := fleetOf(t, learnedState(), answerFlags{})
 	require.Nil(t, pf.refused)
-	assert.False(t, pf.fleet.RouterWaitInPrefill, "the default")
+	assert.False(t, pf.fleet.RouterWaitInPrefill, "the struct's zero value")
 	pf = fleetOf(t, learnedState(), answerFlags{routerWaitInPrefill: true})
 	assert.True(t, pf.fleet.RouterWaitInPrefill, "with the flag")
 
+	// Bucket C past the prefill onset: the default and the flag answer alike,
+	// FlowControlWaitPriced; =false caps the rate answer at the onset.
 	args := q32TTFT("slo-to-rate", "--ttft", "22.71s@p95", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "4", "--flow-control", "on")
+	def, code := runCmd(t, args...)
+	require.Equal(t, 0, code, def)
+	assert.Contains(t, def, "(--router-wait-in-prefill)", "named where it takes, unasked")
+	assert.Contains(t, def, "FlowControlWaitPriced")
 	out, code := runCmd(t, slices.Concat(args, []string{"--router-wait-in-prefill"})...)
 	require.Equal(t, 0, code, out)
-	assert.Contains(t, out, "(--router-wait-in-prefill)")
-	assert.Contains(t, out, "FlowControlWaitPriced")
+	assert.Equal(t, def, out, "the flag restates the default")
+	off, code := runCmd(t, slices.Concat(args, []string{"--router-wait-in-prefill=false"})...)
+	require.Equal(t, 0, code, off)
+	assert.NotContains(t, off, "FlowControlWaitPriced")
+	assert.Contains(t, off, "prefill flow-control onset", "off, the rate answer stops at the onset")
+	gate, code := runCmd(t, slices.Concat(args, []string{"--price-router-wait"})...)
+	require.Equal(t, 0, code, gate)
+	assert.NotContains(t, gate, "(--router-wait-in-prefill)", "the gate stage alone")
 	err := run(context.Background(), slices.Concat(args, []string{"--router-wait-in-prefill", "--price-router-wait"}), io.Discard, io.Discard)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "set one")
 	out, code = runCmd(t, q32TTFT("slo-to-rate", "--ttft", "22.71s@p95", "--assume-prompt-cv", "0.0577", "--flow-control", "off", "--router-wait-in-prefill")...)
 	require.Equal(t, 0, code, out)
 	assert.Contains(t, out, "--router-wait-in-prefill not applied: flow control is not on")
+	out, code = runCmd(t, q32TTFT("slo-to-rate", "--ttft", "22.71s@p95", "--assume-prompt-cv", "0.0577", "--flow-control", "off")...)
+	require.Equal(t, 0, code, out)
+	assert.NotContains(t, out, "--router-wait-in-prefill", "the default is not named where it does not take")
+}
+
+// The default is pinned: --router-wait-in-prefill is on (issue #287, the
+// router v1.0.0 staircase), and --price-router-wait stays off.
+func TestTTFT_RouterWaitInPrefillIsTheDefault(t *testing.T) {
+	assert.True(t, whatif.DefaultRouterWaitInPrefill, "on by default since #287")
+	assert.False(t, whatif.DefaultPriceRouterWait, "the gate stage stays opt-in")
+	var bf backtestFlags
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	bf.registerAssume(fs)
+	require.NoError(t, fs.Parse(nil))
+	bf.parsed(fs)
+	assert.True(t, bf.routerWaitInPrefill, "backtest's flag")
+	require.NoError(t, fs.Parse([]string{"--price-router-wait"}))
+	bf.parsed(fs)
+	assert.False(t, bf.routerWaitInPrefill, "backtest's flag gives way to --price-router-wait")
+	req, err := bf.request()
+	require.NoError(t, err)
+	require.NotNil(t, req.Assume)
+	assert.Equal(t, whatifapi.RouterWaitGateStage, req.Assume.RouterWait)
 }
 
 // The planner API and the CLI read one fleet: on the KV-pull recording with

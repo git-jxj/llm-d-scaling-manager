@@ -362,6 +362,11 @@ assert_eq "$rc" "0" "return code"
 assert_contains "$out" "[WARNING]"
 assert_contains "$out" "serves DisaggregatedSet but not DisaggregatedSetRoleScaler"
 assert_contains "$out" "KEDA cannot scale DisaggregatedSet roles"
+# The same words as scaletarget.RoleScalerUnservedMessage and its fix: in
+# passive mode the roles are not observed, and the role writer is the way out.
+assert_contains "$out" "In passive mode this means the roles are not observed at all"
+assert_contains "$out" "for a passive model it reads them and writes nothing"
+assert_contains "$out" "either turn on the role writer for the Static roles"
 assert_contains "$out" "v0.10.0 or later"
 assert_contains "$out" "kubectl apply --server-side --force-conflicts -f lws/crds"
 assert_contains "$out" "--version 0.10.0"
