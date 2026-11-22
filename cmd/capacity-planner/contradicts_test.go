@@ -333,8 +333,11 @@ func TestReport_DecodeAtTheErrorBound(t *testing.T) {
 // The 0.6B goldens' range the planner says and sizes at is the lowest and
 // the highest of the decode knees that read high in
 // testdata/decode-validation.golden and past its bound (OUT): a knee read
-// within the bound (a pinned-B line since the floor's intercept, #318) is
-// not a knee that read high.
+// within the bound is not a knee that read high. The pinned-B lines of e1,
+// e1-tuned and the staircase B phases price no knee in the planner (the
+// floor's intercept is off in its replay, issue
+// llm-d-incubation/llm-d-scaling-manager#318), so the OUT knees are 43.0%,
+// 67.9% and 99.1%.
 func TestDecodeKneeGoldensMatchTheTable(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("testdata", "decode-validation.golden"))
 	require.NoError(t, err)

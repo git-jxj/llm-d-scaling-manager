@@ -16,8 +16,9 @@ import (
 // (issue llm-d-incubation/llm-d-scaling-manager#225). A pinned-B line on the
 // default intercept (itl.DefaultBaselineSec) is refused as PinnedDefaultB:
 // its slope was fitted against a B no engine was seen to have. On a real P/D
-// window that is every cycle with no full fit and no floor read below the
-// band in the last 30 minutes (saturation.SwitchITLBaselineFromFloor).
+// window that is every cycle with no full fit: the planner's replay does not
+// take B from the floor below the band on its own, as the controller does
+// (saturation.SwitchITLBaselineFromFloor, off in learnreplay.PlannerSwitches).
 // --assume-itl-b states B, and the slope is fitted again through it on
 // the same readings (itl.Refit), so the line still runs through what the
 // replicas read and only its extrapolation moves. Every figure on it is

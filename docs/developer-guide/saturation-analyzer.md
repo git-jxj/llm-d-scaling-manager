@@ -1254,6 +1254,14 @@ turns it off; `itl_baseline_floor.go`) the admission sets
 - **Ends.** A learned B ends it; the one-sided rule is set against the pinned
   fit as against the default. With the switch on, `itl-fit` logs
   `pinnedAtFloor`, `floor` and `floorK`; off, the line is as it was.
+- **The planner.** The capacity planner's replay turns it off
+  (`learnreplay.PlannerSwitches`, the regression of #318): on, it priced 14
+  backtest TPOT steps on seven recordings that it had refused as
+  `PinnedDefaultB`, more than 20 % under what was measured (ttft-three-pods
+  at 0.33-0.46 of measured), with no flag saying B was not measured.
+  `--assume-itl-b floor` still prices such a line through the floor's B,
+  flagged `AssumedITLB`. `TestPlannerSwitches_TheFloorBIsOffInThePlanner`
+  holds it off.
 
 `TestGoldens_ITLBaselineFromFloorReplicas` holds what it moves. On e1 the
 floor pins 9.3-12.3 ms, and decode asks for one replica fewer on 18 of 762

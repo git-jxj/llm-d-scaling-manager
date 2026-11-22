@@ -12,13 +12,17 @@ import (
 )
 
 // The planner's switches are on in StateAt's replay unless the caller sets
-// one, but for the held floor B, which is off, and every one is a switch its
-// package accepts.
+// one, but for the floor's B and the held floor B, which are off, and every
+// one is a switch its package accepts.
 func TestPlannerSwitches_StateAtTurnsThemOn(t *testing.T) {
 	got := withPlannerSwitches(nil)
 	require.Equal(t, PlannerSwitches(), got)
+	off := map[string]bool{saturation.SwitchITLBaselineFromFloor: true, saturation.SwitchITLFloorBaselineHeld: true}
 	for name, on := range got[PackageSaturation] {
-		assert.Equal(t, name != saturation.SwitchITLFloorBaselineHeld, on, name)
+		assert.Equal(t, !off[name], on, name)
+	}
+	for name := range off {
+		assert.Contains(t, got[PackageSaturation], name, "the planner sets it off, whatever the constructor says")
 	}
 	a := saturation.NewSaturationAnalyzer(capacity.NewStore())
 	require.NoError(t, a.SetSwitchesForReplay(got[PackageSaturation]))
