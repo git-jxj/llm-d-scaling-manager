@@ -148,6 +148,10 @@ func TestSelfCheck_JudgeAtTheEdges(t *testing.T) {
 		"5 steps not judged":      {fig(5, 5, 1), nil, SelfCheckNotRun, "ttft-scored", ""},
 		"overloaded in half":      {over(5, 10), nil, SelfCheckInconsistent, "ttft-overloaded", "Do not trust prefill sizing"},
 		"overloaded under half":   {over(4, 10), nil, SelfCheckNotRun, "ttft-scored", ""},
+		"p90 low in half":         {with(fig(12, 12, 1), func(f *SelfCheckFigure) { f.Statistic, f.p90Steps, f.p90Low = statisticMean, 8, 4 }), nil, SelfCheckInconsistent, "ttft-p90-low", "Do not trust prefill sizing"},
+		"p90 low under half":      {with(fig(12, 12, 1), func(f *SelfCheckFigure) { f.Statistic, f.p90Steps, f.p90Low = statisticMean, 8, 3 }), nil, SelfCheckOK, "", ""},
+		"p90 low in 5 of 5":       {with(fig(12, 12, 1), func(f *SelfCheckFigure) { f.Statistic, f.p90Steps, f.p90Low = statisticMean, 5, 5 }), nil, SelfCheckOK, "", ""},
+		"tpot p90 low in half":    {fig(12, 12, 1), with(fig(12, 12, 1), func(f *SelfCheckFigure) { f.Statistic, f.p90Steps, f.p90Low = statisticMean, 6, 3 }), SelfCheckInconsistent, "tpot-p90-low", "Do not trust decode sizing"},
 		"tpot only, ttft holds":   {fig(12, 12, 1), fig(12, 2, 2), SelfCheckInconsistent, "tpot-within", "Do not trust decode sizing and the TPOT figures from this recording; prefill sizing and the TTFT figures held."},
 		"tpot loose, ttft broken": {fig(12, 0, 3), fig(12, 7, 1), SelfCheckInconsistent, "ttft-bias", "prefill sizing and the TTFT figures from this recording; decode sizing and the TPOT figures (loosely) held."},
 	} {
@@ -157,6 +161,10 @@ func TestSelfCheck_JudgeAtTheEdges(t *testing.T) {
 			require.Equal(t, c.status, sc.Status, "%s: %s", sc.Line, sc.Why)
 			if c.failed != "" {
 				assert.True(t, slices.ContainsFunc(sc.Checks, func(r SelfCheckRule) bool { return r.Name == c.failed && !r.Passed }), "%+v", sc.Checks)
+			}
+			if f := c.ttft; f != nil && f.Steps >= selfCheckMinSteps && f.Bias != nil {
+				judged := slices.ContainsFunc(sc.Checks, func(r SelfCheckRule) bool { return r.Name == "ttft-p90-low" })
+				assert.Equal(t, f.p90Steps >= selfCheckMinSteps, judged, "the p90-low rule is judged with 6 or more p90 steps: %+v", sc.Checks)
 			}
 			if c.trust == "" {
 				assert.Empty(t, sc.Trust)
@@ -237,4 +245,40 @@ func TestSelfCheck_OverHTTPIsBounded(t *testing.T) {
 	require.NotNil(t, in.SelfCheck)
 	assert.Equal(t, SelfCheckNotRun, in.SelfCheck.Status)
 	assert.Contains(t, in.SelfCheck.Why, "time budget")
+}
+
+// A figure is judged at its mean only where the mean was scored in
+// selfCheckMinSteps or more steps; else at the first percentile scored in
+// as many, else at the one scored in the most. Only beside a mean does it
+// keep the p90's scored and low steps, for the p90-low rule.
+func TestSelfCheckFigure_TheMeanNeedsItsSteps(t *testing.T) {
+	score := func(stat string, steps, low int) BacktestScore {
+		return BacktestScore{Statistic: stat, All: BacktestStats{Steps: steps, Low: low, Bias: ptr(1.0)}}
+	}
+	for name, c := range map[string]struct {
+		mean, p50, p90 int
+		want           string
+	}{
+		"the mean in 6":           {6, 9, 9, statisticMean},
+		"the mean in 5, p90 in 7": {5, 7, 7, statP90},
+		"p50 in 6, p90 in 5":      {5, 6, 5, "p50"},
+		"none in 6, the most":     {3, 5, 4, "p50"},
+		"none in 6, a tie":        {4, 4, 4, statisticMean},
+		"no mean":                 {0, 2, 3, statP90},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := selfCheckFigure([]BacktestScore{score(statisticMean, c.mean, 0), score("p50", c.p50, 0), score(statP90, c.p90, 2), score("p95", 20, 0)}, 20)
+			require.NotNil(t, f)
+			assert.Equal(t, c.want, f.Statistic)
+			if c.want != statisticMean {
+				assert.Zero(t, f.p90Steps, "only a figure judged at its mean carries the p90's steps")
+			} else {
+				assert.Equal(t, c.p90, f.p90Steps)
+				assert.Equal(t, 2, f.p90Low)
+			}
+		})
+	}
+	none := selfCheckFigure([]BacktestScore{score(statisticMean, 0, 0), score(statP90, 0, 0)}, 3)
+	require.NotNil(t, none, "the p90's, for its refusals")
+	assert.Equal(t, statP90, none.Statistic)
 }

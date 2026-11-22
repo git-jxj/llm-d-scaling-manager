@@ -385,7 +385,9 @@ func TestAtReplicas_GrowthIsAWhatIf(t *testing.T) {
 // p90 whatever the SLO says (#299): with TTFT judged at p95 and TPOT at p99
 // while the tables print p50/p90 and p90, every cell is at p95 and p99, to
 // the bit what a table asked for those statistics prints, and the legend
-// names them; a TPOT target on the mean puts the mean in the cell.
+// names them; a TPOT target on the mean puts the mean in the cell. On this
+// staircase every p99 TPOT is refused as host-bound (#291), so the TPOT half
+// is the mean standing in, and this test exercises no p99 TPOT cell.
 func TestAtReplicas_CellAtTheSLOStatistics(t *testing.T) {
 	q := stairQuery(2, 3, 20)
 	q.TTFTPercentiles = []float64{0.5, 0.9}
@@ -405,6 +407,11 @@ func TestAtReplicas_CellAtTheSLOStatistics(t *testing.T) {
 		assert.Equal(t, wantRows[i].TTFT[0].Figure, c.TTFT.Figure, row.Label)
 		if c.TPOT.Statistic == whatifapi.ReportStatisticName(0) {
 			assert.Nil(t, wantRows[i].TPOTPercentile.Value, "%s: the mean stands in only where the p99 is refused", row.Label)
+			// On the staircase the p99 TPOT is refused as host-bound
+			// (#291), so the cell's TPOT is the mean standing in.
+			if c.TTFT.Value != nil && c.TPOT.Value != nil {
+				valued++
+			}
 			continue
 		}
 		assert.Equal(t, "p99", c.TPOT.Statistic, row.Label)

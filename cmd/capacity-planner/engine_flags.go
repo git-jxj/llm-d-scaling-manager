@@ -77,7 +77,10 @@ const (
 const batchCapSourceDefault = "default"
 
 // hostBoundITL is the per-token latency with an empty cache under which an
-// engine's TPOT tail is host jitter (hostBoundTPOTTail).
+// engine's TPOT tail is host jitter (scheduling, sampling, detokenizing),
+// not the fill: on a sub-1B model the line's intercept and its floor read
+// 1.5 to 2.5 ms. It flags a percentile (hostBoundTPOTTail) and, where R_q
+// was read off coarse buckets, refuses it (hostBoundRefusal).
 const hostBoundITL = 0.005
 
 // shapeFitRatio is how far apart, as a ratio, the KV per request asked and

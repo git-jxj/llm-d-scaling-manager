@@ -22,11 +22,11 @@ capacity            req/s     out tok/s   bound by
   fleet knee        49.97     9993        prefill
   operating (0.85)  42.48     8494        0.85 x fleet knee (scaleUpThreshold)
   max at SLO        36.60     7319        TTFT p90, end to end
-SLO vs load        r/s    TTFT p50/90 ms  TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee      24.99  150.0/619.6     3.07/4.87         0.85 s
-  80% of knee      39.98  407.0/1553.9    5.21/8.26         1.60 s
-  100% of knee     49.97  saturated       11.16/23.62       saturated
-  load seen (40%)  20.00  118.4/538.9     3.07/4.87         0.82 s
+SLO vs load        r/s    TTFT p50/90 ms  TPOT mean/p90 ms            e2e mean (sum)
+  50% of knee      24.99  150.0/619.6     3.07/TPOT bucket too wide   0.85 s
+  80% of knee      39.98  407.0/1553.9    5.21/TPOT bucket too wide   1.60 s
+  100% of knee     49.97  saturated       11.16/TPOT bucket too wide  saturated
+  load seen (40%)  20.00  118.4/538.9     3.07/TPOT bucket too wide   0.82 s
 checks
   2 prefill + 3 decode  holds: 20.00 r/s within 0.85 x the fleet knee 49.97 r/s = 42.48 r/s; TTFT p90 538.9 ms meets 2000.0 ms; TPOT mean 3.1 ms meets 30.0 ms
   2 prefill + 2 decode  holds: 20.00 r/s within 0.85 x the fleet knee 36.98 r/s = 31.44 r/s; TTFT p90 674.2 ms meets 2000.0 ms; TPOT mean 3.4 ms meets 30.0 ms

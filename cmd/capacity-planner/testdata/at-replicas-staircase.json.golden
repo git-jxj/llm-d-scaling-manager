@@ -275,18 +275,14 @@
           },
           "tpotPercentile": {
             "statistic": "p90",
-            "value": 0.004999917963493543,
-            "unit": "s",
-            "band": {
-              "lo": 0.004872742612921775,
-              "hi": 0.005035912842411187
-            },
-            "floor": 0.004872742612921775,
-            "flags": [
-              "BelowFittedBand",
-              "CoarseTPOTBucket",
-              "HostBoundTPOTTail"
-            ]
+            "refused": {
+              "reason": "TPOTBucketTooWide",
+              "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the router's TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
+              "flags": [
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
+              ]
+            }
           },
           "e2eMeanSum": {
             "value": 0.8679493112275836,
@@ -394,18 +390,14 @@
           },
           "tpotPercentile": {
             "statistic": "p90",
-            "value": 0.010798266509783123,
-            "unit": "s",
-            "band": {
-              "lo": 0.007423150526527075,
-              "hi": 0.011071723409494498
-            },
-            "floor": 0.004872742612921775,
-            "flags": [
-              "BelowFittedBand",
-              "CoarseTPOTBucket",
-              "HostBoundTPOTTail"
-            ]
+            "refused": {
+              "reason": "TPOTBucketTooWide",
+              "detail": "the decode step is host-bound (the line's intercept and floor at most 3.07 ms, under 5 ms) and the router's TPOT histogram's q bucket is coarse: its tail is host jitter the line does not model, and the bucket grid would set the percentile; pass --assume-tpot-ratio for a flagged answer, or ask for the mean",
+              "flags": [
+                "CoarseTPOTBucket",
+                "HostBoundTPOTTail"
+              ]
+            }
           },
           "e2eMeanSum": {
             "value": 2.0739272891258693,

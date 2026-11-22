@@ -324,7 +324,11 @@ kill %1
   `MeanBoundedTPOTPercentile`; p90 and p99 in one wide bucket read the same.
   The ratio is the median window's plus a margin; from 6 windows or fewer, in
   all or in one fill band, it is the worst window, and the CLI says so.
-  Finer router TPOT buckets give a firmer figure.
+  Finer router TPOT buckets give a firmer figure. On a decode variant whose
+  step is host-bound (its measured intercept and floor under 5 ms, as a
+  sub-1B model's), a ratio read off coarse buckets is refused,
+  `TPOTBucketTooWide`: the tail there is host jitter the line does not
+  model. Ask for the mean, or type an assumed ratio.
 - **Flags and inputs.** Every figure carries the flags it rests on. The
   **Flags** drawer lists each once, in words, with what clears it. The
   **Inputs** drawer shows each term with its source, the terms the source
@@ -571,10 +575,10 @@ It replays the recording once and answers, for each shape and load:
   `load`, or `IL/OL[/hit]` in tokens, `k` for 1024), one column per load (`--load`,
   repeatable: `80%` of that shape's fleet knee, `5r/s`, `seen`, or
   `seen x1.5`). A cell
-  such as `617/3.2 @18.49 ok` is the TTFT and TPOT at the statistics the
-  SLO judges (here TTFT p90 617 ms and TPOT mean 3.2 ms; with no target,
-  TTFT p90 and the `--tpot-percentile`) at 18.49 r/s, and both targets are
-  met there. The mark is `ok`
+  such as `617/3.2m @18.49 ok` is the TTFT and TPOT at the statistics the
+  SLO judges (here TTFT p90 617 ms and, its p90 refused as host-bound,
+  TPOT mean 3.2 ms, marked `m`; with no target, TTFT p90 and the
+  `--tpot-percentile`) at 18.49 r/s, and both targets are met there. The mark is `ok`
   met, `MISS` missed, `MISS*` missed because the rate is past the prefill
   flow-control onset (the router queues) though the figure is within, `SAT`
   saturated, `?` not judged. A TPOT ending in `m` is the mean, where the
@@ -655,10 +659,10 @@ load seen       per cycle (1-minute rates): mean 31.59, p95 41.70, peak 43.24 r/
 SLO             TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)
 cell = TTFT p90 ms / TPOT mean ms @ the rate priced, r/s; - refused (the shape's table says why)
 mark = the SLO (TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
-summary                     50%                80%                 5r/s              seen            seen x1.2
-  measured                  617/3.2 @18.49 ok  1944/6.8 @29.59 ok  388/3.1 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
-  1k/1k EXTRAPOLATED        133/3.1 @17.78 ok  152/5.6 @28.45 ok   125/3.1 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
-  16k/200/0.3 EXTRAPOLATED  667/3.2 @9.08 ok   1015/6.8 @14.53 ok  567/3.1 @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+summary                     50%                 80%                  5r/s               seen            seen x1.2
+  measured                  617/3.2m @18.49 ok  1944/6.8m @29.59 ok  388/3.1m @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  1k/1k EXTRAPOLATED        133/3.1m @17.78 ok  152/5.6m @28.45 ok   125/3.1m @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
+  16k/200/0.3 EXTRAPOLATED  667/3.2m @9.08 ok   1015/6.8m @14.53 ok  567/3.1m @5.00 ok  -/- @41.70 SAT  -/- @50.04 SAT
 verdicts
   measured                  UNDER-PROVISIONED: at the p95 load of 41.7 r/s, 1.1x the fleet knee of 37.0 r/s, the fleet saturates; needs 3 prefill + 3 decode (has 2 + 2), 6 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 3 pods).
                             x1.2 (50.0 r/s): UNDER-PROVISIONED: 1.4x the fleet knee (37.0 r/s); needs 4 prefill + 4 decode (has 2 + 2), 7 decode if the decode knee reads 99% high (prefill f 1.5 assumed at 4 pods).
