@@ -206,6 +206,10 @@ type ReportResponse struct {
 	ExitCode     int      `json:"exitCode"`
 	// SelfCheck is the planner checked on the source the report reads.
 	SelfCheck *SelfCheck `json:"selfCheck,omitempty"`
+	// TTFTModel is the experimental TTFT model the tables' TTFT is priced
+	// with, as fitted on the source; absent unless asked
+	// (InputsRequest.TTFTModel, at-replicas --experimental-ttft=v2).
+	TTFTModel *TTFTModelInfo `json:"ttftModel,omitempty"`
 }
 
 // ReportShape is the fleet's answer at one request shape.
@@ -619,6 +623,11 @@ func (s *Server) report(ctx context.Context, req ReportRequest) (*ReportResponse
 		return nil, err
 	}
 	out.SchemaVersion = SchemaVersion
+	if e.ttftModel != nil {
+		e.ttftModel.applyToReport(out, q)
+		info := e.ttftModel.info
+		out.TTFTModel = &info
+	}
 	// The source's self-check was read before this report stated anything.
 	out.SelfCheck = e.doc.SelfCheck.RanWithout(&Stated{Assume: q.Assume, ArrivalCV2: q.ArrivalCV2})
 	out.JudgeTrust()

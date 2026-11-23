@@ -15,7 +15,7 @@ const FLAG_WORDS = {
   AssumedVP: ["V_P, the prefill token rate, is the value you typed, not a learned one.", "learn V_P: run at a load that keeps a prefill pod busy for a minute"],
   VPLowerBound: ["V_P comes from a lower bound (the peak under a queue): the limits under-promise.", "a window where a prefill pod is busy without a queue"],
   ExperimentalTTFT: ["Priced with the experimental TTFT model (experimentalTTFT, --experimental-ttft): processor sharing by engine config, router hop from window means, prefill speed raised to the served work. For demonstration, not validated, so every figure on it is outside the validated region.", "the default model: leave experimentalTTFT off"],
-  RankMixtureTTFT: ["Priced with the experimental rank-mixture TTFT model (backtest --experimental-ttft=v2): limited processor sharing per prefill rank, mixed over the ranks' measured shares, a fitted KV-deferral wait and a cost per prompt token. Not validated, so every figure reads outside the validated region.", "a validated run of the model"],
+  RankMixtureTTFT: ["Priced with the experimental rank-mixture TTFT model (--experimental-ttft=v2): limited processor sharing per prefill rank, mixed over the ranks' measured shares, a fitted KV-deferral wait and a cost per prompt token. Not validated, so every figure reads outside the validated region.", "a validated run of the model"],
   RankMixtureAbstained: ["The experimental rank-mixture model was asked for and abstained: one of its identifiability checks failed, so this TTFT is the planner's own.", "a fit window that identifies the model: 12 h or more, prompts that spread, each rank's own rate and max-num-seqs recorded"],
   LimitedPSHeavyTraffic: ["A prefill rank's utilization is above 0.9, where the limited processor sharing approximation is not taken to hold.", "fewer requests a rank, or more ranks"],
   RelaxationLong: ["The busiest prefill rank takes more than a tenth of the step to settle, so the step's rate is not one it ran at steadily.", "a longer step, or a lighter load"],
@@ -1373,7 +1373,8 @@ function pts(curve) {
   return curve.map(c => {
     const f = c.figure, y = val(f);
     const b = f.band || f.sensitivity;
-    return {x: c.rate, y, lo: b && b.lo != null ? b.lo : null, hi: b && b.hi != null ? b.hi : null, why: y == null ? why(f) : ""};
+    return {x: c.rate, y, lo: b && b.lo != null ? b.lo : null, hi: b && b.hi != null ? b.hi : null, why: y == null ? why(f) : "",
+      extrapolated: !!f.extrapolated};
   });
 }
 
@@ -1396,7 +1397,12 @@ function pinDot(rate, target, curRate, curTarget) {
 function renderTTFT() {
   const p = state.plan, t = p.ttft, k = state.k;
   const m = t.markers, knee = lowerKnee(m);
-  const series = [{cls: "c-mix", name: `${shapeOf(p)} (the limits are read here)`, pts: pts(t.line.curve), band: true}];
+  // Priced by the experimental TTFT model, the mix line is solid up to the
+  // highest load measured and dashed beyond it.
+  const mix = measuredSplit(pts(t.line.curve));
+  const label = t.model && t.model.priced ? t.model.label + ", " : "";
+  const series = [{cls: "c-mix", name: `${label}${shapeOf(p)} (the limits are read here)`, pts: mix.measured, band: true}];
+  if (mix.beyond.length) series.push({cls: "c-mix", extra: " extrap", pts: mix.beyond, band: true, name: `extrapolated (${t.model.beyond})`});
   const dots = [];
   const buckets = t.perBucket || [];
   // The lines follow the plan's edges, up to 8: past five the colours
@@ -1439,7 +1445,8 @@ function renderTTFT() {
   const rate = p.limits.chosen.rate;
   const xmax = Math.max(knee != null ? knee * 1.2 : 10, rate * 1.1, pinXmax());
   el("ttfttitle").textContent = `TTFT ${t.statistic} against the request rate`;
-  el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : "One line for the mix; its point B is the prefill limit.";
+  el("ttftcap").textContent = (buckets.length ? BUCKET_NOTE : "One line for the mix; its point B is the prefill limit.") +
+    (t.model ? " " + ttftModelNote(t.model) : "");
   chart(el("ttftchart"), {W: 640, H: 340, xmax, ymax, series, target: t.line.target, belowFloor, floor: belowFloor ? floor : null,
     rate, dots, markers, knee, onset, pinTarget, clip: "clip-ttft"});
   el("ttftlegend").innerHTML = legend(series, onset != null);
