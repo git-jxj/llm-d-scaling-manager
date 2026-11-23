@@ -654,6 +654,11 @@ const (
 	KVTransferNIXL = "nixl"
 )
 
+// KVTransferKinds are the kinds of KVTransferRate, sorted.
+func KVTransferKinds() []string {
+	return []string{KVTransferNIXL, KVTransferOffloadLoad, KVTransferTierRead}
+}
+
 // KVTransferRate is one kind of KV transfer on a pod
 // (ReplicaMetrics.KVTransferRates): ByteRate bytes a second, taking
 // SecondsRate seconds of transfer a second.
