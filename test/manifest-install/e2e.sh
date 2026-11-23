@@ -232,6 +232,23 @@ kubectl apply -n "$MODEL_NS" -f scaling-manager-grants.yaml -l scaling-manager.l
 [ "$(can patch disaggregatedsets.disaggregatedset.x-k8s.io)" = yes ] || fail grants "the controller may not patch disaggregatedsets after its grant"
 pass "grants: patch on pods and on disaggregatedsets in $MODEL_NS only after each labelled grant is applied there"
 
+# --- 6c. the suggested ScaledObjects, reviewed and applied -------------------
+
+PROBE=plan-probe-decode
+printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: %s\n  namespace: %s\nspec:\n  replicas: 1\n  selector:\n    matchLabels: {app: %s}\n  template:\n    metadata:\n      labels: {app: %s, llm-d.ai/role: decode}\n    spec:\n      containers:\n      - name: vllm\n        image: registry.k8s.io/pause:3.10\n        args: ["--model", "e2e/plan-probe-model"]\n' \
+    "$PROBE" "$MODEL_NS" "$PROBE" "$PROBE" > plan-probe.yaml
+kubectl apply -f plan-probe.yaml > "$LOGS/plan-probe.log" 2>&1 || { cat "$LOGS/plan-probe.log"; fail plan "applying the probe model server"; }
+plan_of() { kubectl get configmap scaling-manager-scaledobjects-plan -n "$NS" -o "jsonpath={.data.${MODEL_NS//./\\.}}" 2>/dev/null; }
+plan_has_probe() { plan_of | grep -q "name: $PROBE"; }
+wait_for 150 "the plan suggests a ScaledObject for $PROBE" plan_has_probe || fail plan "the plan for $MODEL_NS: $(plan_of | head -5)"
+plan_of | grep -q "modelID: e2e/plan-probe-model" || fail plan "the suggested ScaledObject does not carry the model id"
+plan_of | yq 'select(.metadata.name == "'"$PROBE"'")' > so-probe.yaml
+kubectl apply -n "$MODEL_NS" -f so-probe.yaml > "$LOGS/plan-apply.log" 2>&1 || { cat "$LOGS/plan-apply.log"; fail plan "applying the suggested ScaledObject"; }
+so_ready() { [ "$(kubectl get scaledobject "$PROBE" -n "$MODEL_NS" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" = True ]; }
+wait_for 180 "the suggested ScaledObject is Ready" so_ready || fail plan "ScaledObject $PROBE: $(kubectl get scaledobject "$PROBE" -n "$MODEL_NS" -o jsonpath='{.status.conditions}')"
+kubectl delete -f so-probe.yaml -f plan-probe.yaml --ignore-not-found > /dev/null
+pass "the plan suggests a ScaledObject for a model server (model id from --model); applied as reviewed, KEDA wires it Ready over mutual TLS"
+
 # --- 7. negative control: a namespace that did not opt in --------------------
 
 kubectl create namespace "$OUTSIDE_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null

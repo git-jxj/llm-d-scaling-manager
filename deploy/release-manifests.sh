@@ -308,7 +308,8 @@ release_source() { sed "s/__NAMESPACE__/$CLUSTER_NS/g" "$ROOT/config/release/$1.
             ["--namespace-opt-in=label", "--keda-namespace=keda", "--self-check-interval=1m", "--restart-on-settings-change=true", "--external-scaler-tls-secrets=opaque", "--wait-for-settings=true"]'
     echo '---'
     release_source scaler-tls-opaque-secret
-    for f in scaler-tls-opaque-role scaler-tls-opaque-rolebinding keda-copy-secret keda-copy-role keda-copy-rolebinding keda-auth-clustertriggerauthentication \
+    for f in scaledobjects-plan-configmap scaledobjects-plan-role scaledobjects-plan-rolebinding \
+        scaler-tls-opaque-role scaler-tls-opaque-rolebinding keda-copy-secret keda-copy-role keda-copy-rolebinding keda-auth-clustertriggerauthentication \
         self-check-clusterrole self-check-clusterrolebinding self-check-role self-check-rolebinding; do
         echo '---'
         release_source "$f"

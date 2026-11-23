@@ -79,6 +79,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/preflight"
 	prometheusutil "github.com/llm-d-incubation/llm-d-scaling-manager/internal/prometheus"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/registry"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/scaleplan"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/scaler"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/scalertls"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
@@ -1191,6 +1192,17 @@ func main() {
 		if err := mgr.Add(&managedns.Reporter{Admission: nsAdmission, Sink: controllerStatus,
 			Registry: registry.Default, Log: ctrl.Log.WithName("managed-namespaces")}); err != nil {
 			setupLog.Error(err, "unable to add the managed-namespace reporter to the manager")
+			os.Exit(1)
+		}
+		// The suggested ScaledObjects for the managed namespaces, which a
+		// person reviews and applies.
+		if err := mgr.Add(&scaleplan.Writer{Client: mgr.GetClient(), Namespace: config.SystemNamespace(),
+			Instance: config.SystemNamespace(), Log: ctrl.Log.WithName("scaledobjects-plan"),
+			Managed: func(ctx context.Context) ([]string, error) {
+				managed, _, err := nsAdmission.Report(ctx)
+				return managed, err
+			}}); err != nil {
+			setupLog.Error(err, "unable to add the ScaledObject plan writer to the manager")
 			os.Exit(1)
 		}
 		setupLog.Info("Managing namespaces by label", "label", config.NamespaceOptInLabel+"=true",

@@ -103,6 +103,11 @@ check() {
     [ -z "$n" ] || say "an object outside $NS and KEDA's namespace: $n"
     grep -nE '__[A-Z_]+__' "$f" >/dev/null && say "$M holds a placeholder nothing fills: $(grep -oE '__[A-Z_]+__' "$f" | sort -u | tr '\n' ' ')"
 
+    # The plan ConfigMap: there, so the controller needs no create, and with
+    # no data, so a re-apply keeps the plan the controller wrote.
+    n="$(q '[.[] | select(.kind == "ConfigMap" and .metadata.name == "scaling-manager-scaledobjects-plan" and .metadata.namespace == $ns and (has("data") | not))] | length')"
+    [ "$n" = 1 ] || say "the plan ConfigMap scaling-manager-scaledobjects-plan is not in $NS with no data"
+
     # The grants and the monitoring file: applied with kubectl apply -n, so
     # nothing names a namespace; selected by a label each; found by the
     # uninstall's instance selector.
@@ -209,6 +214,8 @@ mutate placeholder-left "placeholder" \
 mutate unlabelled "missing part-of" \
     'del(select(.kind == "ClusterTriggerAuthentication") | .metadata.labels["app.kubernetes.io/instance"])'
 
+mutate plan-with-data "plan ConfigMap" \
+    '(select(.kind == "ConfigMap" and .metadata.name == "scaling-manager-scaledobjects-plan") | .data) = {"team-a": ""}'
 mutate grant-namespaced "does not move" \
     '(select(.kind == "Role" and .metadata.labels["scaling-manager.llmd.ai/grant"] == "pod-writer") | .metadata.namespace) = "team-a"' scaling-manager-grants.yaml
 mutate grant-unlabelled "per grant label" \
