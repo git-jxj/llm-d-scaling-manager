@@ -1046,7 +1046,9 @@ function quickCheckNote() {
 // prefillShown is prefill's limit as the page shows it (prefillAtLeast): a
 // lower bound under the busiest load the fleet carried reads as that load.
 function prefillShown(m) {
-  return prefillAtLeast(m && m.prefillKnee, state.exec && state.exec.report && state.exec.report.load);
+  const r = state.exec && state.exec.report, p = state.plan;
+  const n = p && p.scenario && p.scenario.fleet ? p.scenario.fleet.prefill : null;
+  return prefillAtLeast(m && m.prefillKnee, r && r.load, n, r && r.fleet ? r.fleet.prefill : null);
 }
 
 // prefillWords is that limit in words: "at least X (lower bound)", or
@@ -1345,15 +1347,19 @@ function renderLimits() {
 
   const binding = f.binding || [];
   const held = (L.prefill.flags || []).includes("HeldByDecodeAdmission");
+  // A prefill limit known only as a lower bound, or not priced for want of
+  // a prefill speed, is never said to bind: nothing measured shows it first.
+  const prefillLB = kneeLowerBound(p.ttft.markers.prefillKnee) || kneeLowerBound(L.prefill) ||
+    !!(L.prefill && L.prefill.refused && L.prefill.refused.reason === "NoPrefillCapacity");
   const rows = [
-    {name: "Prefill", what: "TTFT", fig: L.prefill, cls: "c-pre", binds: binding.includes("prefill")},
-    {name: "Decode", what: "TPOT", fig: L.decode, cls: "c-dec", binds: binding.includes("decode")},
+    {name: "Prefill", what: "TTFT", fig: L.prefill, cls: "c-pre", chip: limitChip("prefill", L.prefill, binding, prefillLB)},
+    {name: "Decode", what: "TPOT", fig: L.decode, cls: "c-dec", chip: limitChip("decode", L.decode, binding, prefillLB)},
   ].filter(r => r.fig);
   el("limits").innerHTML = rows.map(r => {
     // Prefill seen only as a lower bound says so, as its bar does.
     const ps = prefillShown(p.ttft.markers);
     const parts = [`<b>${r.name}</b> (${r.what}) <b>${esc(barWords(r, ps))}</b>`];
-    if (r.binds) parts.push('<span class="binds">binds</span>');
+    if (r.chip) parts.push(`<span class="${r.chip === "binds" ? "binds" : "hint"}">${esc(r.chip)}</span>`);
     if (r.fig.boundBy) parts.push("bound by " + esc(plainVerdict(r.fig.boundBy.join(", then ")).replace("operating-point cap", "the safe load")));
     if (r.fig.refused) parts.push(esc(plainReasonWord(r.fig.refused)));
     if (r.fig.uncapped != null) parts.push(`${r.what} alone would allow ${fmtRate(r.fig.uncapped)}`);

@@ -77,6 +77,20 @@ try {
   check("a lower bound under the load is raised to it", S({value: 20, flags: ["VPLowerBound"]}, 41.7) === JSON.stringify({value: 41.7, lb: true, raised: true}));
   check("a lower bound over the load stands", S({value: 50, flags: ["VPLowerBound"]}, 41.7) === JSON.stringify({value: 50, lb: true, raised: false}));
   check("a measured limit is never raised", S({value: 20}, 41.7) === JSON.stringify({value: 20, lb: false, raised: false}));
+  const lbKnee = {value: 20, flags: ["VPLowerBound"]};
+  check("fewer prefill replicas than carried the load are not raised to it",
+    JSON.stringify(ctx.prefillAtLeast(lbKnee, {rate: {value: 41.7}}, 1, 2)) === JSON.stringify({value: 20, lb: true, raised: false}) &&
+    ctx.prefillAtLeast(lbKnee, {rate: {value: 41.7}}, 2, 2).raised && ctx.prefillAtLeast(lbKnee, {rate: {value: 41.7}}, 3, 2).raised);
+  check("the panel raises only the fleet that carried the load",
+    !ctx.prefillAtLeastOf({ttft: {markers: {prefillKnee: lbKnee}}, scenario: {fleet: {prefill: 1, decode: 6}}}, {load: {rate: {value: 41.7}}, fleet: {prefill: 2}}).raised &&
+    ctx.prefillAtLeastOf({ttft: {markers: {prefillKnee: lbKnee}}, scenario: {fleet: {prefill: 2, decode: 6}}}, {load: {rate: {value: 41.7}}, fleet: {prefill: 2}}).raised);
+  // A limit bar says binds only where the limit binding was measured.
+  const C = ctx.limitChip;
+  check("a lower-bound prefill limit never binds", C("prefill", {value: 26.7, flags: ["VPLowerBound"]}, ["prefill"], true) === "limit not measured" &&
+    C("prefill", {refused: {reason: "NoPrefillCapacity"}}, ["prefill"], true) === "limit not measured");
+  check("decode binds only where it binds, measured", C("decode", {value: 30}, ["prefill"], true) === "" &&
+    C("decode", {value: 30}, ["decode"], true) === "binds" && C("decode", {refused: {reason: "NoDecodeLine"}}, ["decode"], false) === "");
+  check("a measured prefill limit that binds says so", C("prefill", {value: 26.7}, ["prefill"], false) === "binds" && C("prefill", {value: 26.7}, ["decode"], false) === "");
   check("a ratio under 1 keeps two decimals", ctx.execTimes1(0.98) === "0.98x" && ctx.execTimes1(1.6) === "1.6x");
   check("prefill's line carries the page actions", (line("Prefill").actions || []).map(a => a.act).join() === "usevp,busier" && line("Prefill").actions[0].vp === 18000);
   check("a lower-bound prefill is never called the constraint", line("Verdict").text.startsWith("Prefill's limit is not measured yet: the pods carried the busiest load without queuing, so it is at least that. Decode carries 0.96x the busiest load.") &&

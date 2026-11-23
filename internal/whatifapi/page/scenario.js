@@ -1167,13 +1167,33 @@ function execBusiest(load) {
 // served it, so prefill's limit is at least it, as the planner floors a
 // lower-bound V_P at what the pods served (prefill.floorAtServed); the knee
 // from V_P can sit under it because V_P is a sustained per-pod run, priced
-// at the mix's prompt.
-function prefillAtLeast(pk, load) {
+// at the mix's prompt. The load says nothing of fewer prefill replicas than
+// carried it: with n, the plan's prefill replicas, under carriedBy, the
+// report fleet's, the knee stands as priced.
+function prefillAtLeast(pk, load, n, carriedBy) {
   const v = figValue(pk);
   const lb = !!pk && (pk.flags || []).some(x => x === "VPLowerBound" || x === "KneeAtServedWork");
   const c = load && load.rate ? load.rate.value : null;
-  if (v != null && lb && c != null && c > v) return {value: c, lb, raised: true};
+  const fewer = n != null && carriedBy != null && n < carriedBy;
+  if (v != null && lb && !fewer && c != null && c > v) return {value: c, lb, raised: true};
   return {value: v, lb, raised: false};
+}
+
+// prefillAtLeastOf is prefillAtLeast for a plan and the report beside it.
+function prefillAtLeastOf(plan, report) {
+  const m = plan && plan.ttft && plan.ttft.markers;
+  const n = plan && plan.scenario && plan.scenario.fleet ? plan.scenario.fleet.prefill : null;
+  const carriedBy = report && report.fleet ? report.fleet.prefill : null;
+  return prefillAtLeast(m && m.prefillKnee, report && report.load, n, carriedBy);
+}
+
+// limitChip is the chip a role's limit bar carries: "binds" where the
+// fleet's limit is that role's and the role's limit was measured; "limit
+// not measured" on a prefill limit known only as a lower bound (prefillLB),
+// which nothing shows binds first; "" otherwise.
+function limitChip(role, fig, binding, prefillLB) {
+  if (role === "prefill" && prefillLB) return "limit not measured";
+  return (binding || []).includes(role) && figValue(fig) != null ? "binds" : "";
 }
 
 // execView is the panel: {lines: [{label, text, badge, small, actions, more}],
@@ -1203,7 +1223,7 @@ function execView(o) {
   const dl = L && L.decode ? figValue(L.decode) : null;
   const ref = refusalView(plan);
   const pk = m && m.prefillKnee ? m.prefillKnee : null;
-  const ps = prefillAtLeast(pk, report && report.load);
+  const ps = prefillAtLeastOf(plan, report);
   const pkv = ps.value, pkLB = ps.lb;
   const shape = report && (report.shapes || [])[0];
 
