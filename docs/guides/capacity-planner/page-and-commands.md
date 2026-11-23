@@ -527,8 +527,11 @@ cases, and no fleet is sized:
   operating point: at the shape priced, the fleet priced,
   or a smaller one, served more than 1.25x the fleet knee for 3 minutes
   without a break (over the band's top where that sets the decode knee;
-  never on a prefill knee read off a lower bound of V_P). The summary says
-  how far and for how long; the knee reads low for that window.
+  never on a prefill knee read off a lower bound of V_P). A gap in the
+  recording, two cycles more than two cycle times apart, is a break, and
+  the 3 minutes are clock time. A recording with no per-cycle clock is
+  counted at its mean cycle time, and the summary says so. The summary
+  says how far and for how long; the knee reads low for that window.
 
 Only an UNDER is withheld: neither case shows the fleet holding.
 

@@ -6,6 +6,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
@@ -1494,7 +1495,14 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 const (
 	contradictShare = 1.25
 	contradictSpan  = 180.0 // seconds
+	// contradictGapCycles is how many cycle times apart two consecutive
+	// cycles may sit and still count as one run (#358).
+	contradictGapCycles = 2.0
 )
+
+// untimedRunWords says how a run was measured where the recording holds no
+// per-cycle clock: a gap in it cannot be seen.
+const untimedRunWords = "counted at the mean cycle time: the recording holds no per-cycle clock"
 
 // contradictsWords opens the verdict's summary when the window contradicts
 // the model, and phasesWords when the load and the shape priced are of
@@ -1594,7 +1602,12 @@ func (r *reporter) phasesDiffer(binds string) string {
 // that ratio, as its own knee is that much higher. The share is
 // contradictShare, over the band's top where that sets the decode knee:
 // such a knee stops at the highest fill the line was fitted to, short of a
-// full replica. Cycles are counted at the mean cycle time.
+// full replica. Where the recording holds every cycle's clock
+// (learnreplay.State.CycleTimes), a run breaks where two consecutive cycles
+// sit more than contradictGapCycles cycle times apart (a controller restart,
+// a capture stopped and resumed), and its length is clock time: first cycle
+// to last, plus one cycle. Else cycles are counted at the mean cycle time,
+// and the words say so (#358).
 func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 	sec := cycleSeconds(r.st)
 	il, ol := r.pv.shape.AvgInputTokens, r.pv.shape.AvgOutputTokens
@@ -1654,8 +1667,14 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 	checkPrefill := hasPrefill && np > 0
 	within := func(x, most int) bool { return x >= 1 && x <= most }
 	over := share * base.knee
-	run, best := 0, 0
-	var runPeak, bestPeak float64
+	times := r.st.CycleTimes
+	timed := len(times) == n && !slices.ContainsFunc(times, time.Time.IsZero)
+	step := sec
+	if g := whatifapi.WindowGapsOf(times); timed && g != nil {
+		step = g.CycleSeconds
+	}
+	run, best, start := 0, 0, 0
+	var runPeak, bestPeak, span float64
 	for i := range n {
 		c, ok := shapeAt[i+1]
 		atShape := ok && c.InputTokens > 0 && c.OutputTokens > 0 &&
@@ -1676,13 +1695,22 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 			run, runPeak = 0, 0
 			continue
 		}
+		if timed && run > 0 && times[i].Sub(times[i-1]).Seconds() > contradictGapCycles*step {
+			run, runPeak = 0, 0
+		}
+		if run == 0 {
+			start = i
+		}
 		run++
 		runPeak = max(runPeak, x)
-		if run > best {
-			best, bestPeak = run, runPeak
+		s := float64(run) * sec
+		if timed {
+			s = times[i].Sub(times[start]).Seconds() + step
+		}
+		if s > span {
+			span, best, bestPeak = s, run, runPeak
 		}
 	}
-	span := float64(best) * sec
 	if span < contradictSpan {
 		return ""
 	}
@@ -1690,9 +1718,13 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 	if checkPrefill {
 		fleet = fleetText(np, nd)
 	}
-	return fmt.Sprintf("%s or fewer served above %.2fx the fleet knee of %s at the shape priced for %s without a break (%d cycles), up to %s (%.1fx); "+
+	untimed := ""
+	if !timed {
+		untimed = ", " + untimedRunWords
+	}
+	return fmt.Sprintf("%s or fewer served above %.2fx the fleet knee of %s at the shape priced for %s without a break (%d cycles%s), up to %s (%.1fx); "+
 		"the knee reads low for this window, so no verdict is priced on it", fleet, share, rateWords(base.knee),
-		minutesWords(span), best, rateWords(bestPeak), bestPeak/base.knee)
+		minutesWords(span), best, untimed, rateWords(bestPeak), bestPeak/base.knee)
 }
 
 // minutesWords is seconds as whole minutes, at least one.
