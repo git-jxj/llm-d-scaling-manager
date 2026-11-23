@@ -1299,7 +1299,7 @@ function renderAtTarget() {
 // fleet's limit stops at the cap, not there.
 function aboveCap(p, rate) {
   const cap = val(p.ttft.markers.operatingCap);
-  return rate != null && cap != null && rate > cap ? ` (above the cap ${fmtRate(cap)})` : "";
+  return rate != null && cap != null && rate > cap ? (Math.abs(p.limits.chosen.rate - cap) < 1e-6 ? ` (above your chosen rate, ${fmtRate(cap)})` : ` (above the safe load ${fmtRate(cap)})`) : "";
 }
 
 // bindsWithoutHeadroom is the role whose limit the fleet's figure without
@@ -1562,7 +1562,7 @@ function renderTTFT() {
   const scored = state.bt ? btVerdictCard(state.bt, t.statistic, state.k.tpotStat)[0] : null;
   el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : !t.model ? "" :
     scored && scored.chip.startsWith(`TTFT ${t.statistic} `) ? `${t.model.label}: held-out ${scored.chip} (Check the planner).` :
-    ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) + (t.statistic !== "mean" ? ` TTFT ${t.statistic} is scored in Check the planner.` : "");
+    ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) + (t.statistic !== "mean" ? ` The full check, at TTFT ${t.statistic}, is in Check the planner.` : "");
   chart(el("ttftchart"), {W: 640, H: 340, xmax, ymax, series, target: t.line.target, belowFloor, floor: belowFloor ? floor : null,
     rate, dots, markers, knee, kneeLB: pkLB && knee === ps.value, onset, pinTarget, clip: "clip-ttft", ytitle: `TTFT ${t.statistic}`});
   el("ttftlegend").innerHTML = legend(series, onset != null);

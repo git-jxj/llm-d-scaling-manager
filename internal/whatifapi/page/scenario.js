@@ -346,7 +346,7 @@ function ttftModelNote(m) {
   if (!m.priced) return `${m.label}: not used here (${m.notPriced}); the planner's own TTFT is drawn.`;
   const parts = [m.label];
   // The evidence is the held-out score of the mean TTFT: it says so.
-  if (m.evidence) parts.push("TTFT mean " + m.evidence);
+  if (m.evidence) parts.push("quick check, TTFT mean " + m.evidence);
   if (m.measuredUpTo != null) parts.push(`dashed: ${m.beyond} (${Number(m.measuredUpTo.toPrecision(3))} r/s)`);
   if (m.rightEnd) parts.push(m.rightEnd);
   return parts.join(" · ") + ".";
