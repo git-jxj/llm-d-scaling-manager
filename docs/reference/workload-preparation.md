@@ -676,9 +676,11 @@ the replica. The directory must be:
   before `make engine-cache` (`chgrp 0`, `chmod 2775`,
   `chcon -t container_file_t`, below).
 
-You also need rights to create PersistentVolumes, which are cluster-scoped and
-which a namespace tenant lacks (`storage-admin` on OpenShift). Ask the cluster
-admin to run `make engine-cache`, or to create the volume.
+The caller needs `get`, `create`, and `patch` access to cluster-scoped
+PersistentVolumes (`storage-admin` on OpenShift). Ask the cluster admin to run
+`make engine-cache` if your role lacks that access. After recreating the namespace
+in the same trust domain, rerun with the same cache path to reuse its retained
+volume and cached files.
 
 **Without a node directory.** The caches only need a read-write path that
 outlives the pod; a shared `ReadWriteMany` claim the namespace already has
@@ -1386,7 +1388,7 @@ Nothing cleans the cache. The bytecode alone grows about 150 MB per image per
 node, and an old image's key stays after the image is gone: delete
 `<dir>/engine-cache/pycache/<key>` on the nodes when you retire an image.
 
-The rest is the same: rights to create PersistentVolumes (the claim's
+The rest is the same: the PersistentVolume permissions above (the claim's
 `ENGINE_CACHE_CAPACITY`, 200Gi unless set, is what a storage quota charges), and
 Pod Security `baseline` (the preparer mounts the claim, not a hostPath). On
 OpenShift (by analysis, not yet run there) `restricted-v2` runs the preparer and
