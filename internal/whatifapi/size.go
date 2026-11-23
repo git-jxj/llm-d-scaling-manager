@@ -341,6 +341,7 @@ func (z *sizer) priced(ctx context.Context, cache map[FleetCounts]sizeEval, n Fl
 	if err != nil {
 		return sizeEval{}, err
 	}
+	fl = z.e.ttftModel.fleet(fl, k)
 	tpot := 0.0
 	if z.sc.TPOT != nil {
 		tpot = z.sc.TPOT.Target

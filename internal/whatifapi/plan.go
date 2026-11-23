@@ -281,6 +281,7 @@ func (p *planner) priceLimits(ctx context.Context, k Knobs, fl Fleet) (*limitEnt
 		if err != nil {
 			return nil, err
 		}
+		more = p.e.ttftModel.fleet(more, kk)
 		d, pr, f := more.PlainLimits(sc.TTFT.Target, tpot, sc.Headroom)
 		le.plusOne[i] = [3]whatif.Result{d, pr, f}
 	}
@@ -374,6 +375,11 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	}
 
 	out.Limits = p.limitsOf(rate, rateSource, ls)
+	// A limit the experimental TTFT model set past the highest load the
+	// source served is an extrapolation.
+	out.Limits.Prefill = markExtrapolatedRate(fl, out.Limits.Prefill)
+	out.Limits.Fleet.Figure = markExtrapolatedRate(fl, out.Limits.Fleet.Figure)
+	out.Limits.Fleet.WithoutHeadroom = markExtrapolatedRate(fl, out.Limits.Fleet.WithoutHeadroom)
 	validatePlan(out, k, fl.Class(), cs, rate)
 	out.Marginal = p.marginal(le, ls.Fleet)
 	if sc.Views.AllTrafficPerBucket {

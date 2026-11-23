@@ -232,6 +232,9 @@ type mixtureFleet struct {
 	knee       float64
 	kneeOK     bool
 	lowerBound bool
+	// endAtLeast says the curve's end is a prefill knee that is only a
+	// lower bound: a limit it sets is "at least" that rate.
+	endAtLeast bool
 	floor      float64
 }
 
@@ -247,6 +250,7 @@ func (mm *mainMixture) fleet(inner Fleet, k Knobs) Fleet {
 	pv, pok := valueOf(pk)
 	dv, dok := valueOf(dk)
 	f.knee, f.kneeOK = curveCap(pv, pok, f.lowerBound, dv, dok, mm.top/f.scale)
+	f.endAtLeast = pok && f.lowerBound && (!dok || max(pv, mm.top/f.scale) <= dv)
 	// The floor: the TTFT with no queue, at a rate whose utilization is
 	// negligible.
 	if v, ok := f.price(1e-6); ok {
@@ -352,6 +356,18 @@ func markExtrapolated(fl Fleet, rate float64, f Figure) Figure {
 	return f
 }
 
+// markExtrapolatedRate is markExtrapolated for a rate: f's own value is
+// the rate.
+func markExtrapolatedRate(fl Fleet, f Figure) Figure {
+	if f.Value == nil || !slices.Contains(f.Flags, string(whatif.RankMixtureTTFT)) {
+		return f
+	}
+	if x, ok := fl.(*mixtureFleet); ok && x.mm.top > 0 && *f.Value*x.scale > x.mm.top*(1+1e-9) {
+		f.Extrapolated = true
+	}
+	return f
+}
+
 // view is the model at the fleet at k, for a plan's TTFT view.
 func (mm *mainMixture) view(fl Fleet, k Knobs) *TTFTModelView {
 	if mm == nil {
@@ -449,4 +465,134 @@ func ApplyTTFTModel(res *Resolved, out *ReportResponse, q ReportQuery) *TTFTMode
 	mm.applyToReport(out, q)
 	info := mm.info
 	return &info
+}
+
+// The model's limits. Where the model prices a fleet's TTFT it also sets
+// the prefill role's limit: the highest rate whose TTFT holds the target,
+// read off the model's own curve (rateAtTarget), and the fleet's: the
+// lowest of headroom times the curve's end (curveCap), that rate and
+// decode's limit, as the planner composes its own. The curve's end is a
+// knee the fleet is known to reach, not one it is known to stop at, where
+// the prefill knee is only a lower bound or refused: a limit it sets is
+// then "at least" (flagged VPLowerBound), and one past the highest load
+// served is Extrapolated on the wire.
+
+// rateAtTarget is the highest rate up to the curve's end whose TTFT the
+// model prices at or under target, and whether the curve's end set it.
+// ok is false where even the lowest rate misses it, or nothing is priced.
+func (f *mixtureFleet) rateAtTarget(target float64) (rate float64, atEnd, ok bool) {
+	if !f.kneeOK || !(target > 0) {
+		return 0, false, false
+	}
+	meets := func(r float64) bool {
+		v, ok := f.price(r)
+		return ok && v <= target
+	}
+	if meets(f.knee) {
+		return f.knee, true, true
+	}
+	lo, hi := 0.0, f.knee
+	if !meets(lo + 1e-6*hi) {
+		return 0, false, false
+	}
+	for range 40 {
+		mid := (lo + hi) / 2
+		if meets(mid) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return lo, false, true
+}
+
+// prefillLimit is the prefill role's limit at target, as an answer, or a
+// refusal where the model meets the target at no rate.
+func (f *mixtureFleet) prefillLimit(target float64) whatif.Result {
+	r, atEnd, ok := f.rateAtTarget(target)
+	if !ok {
+		return whatif.Unanswerable{Reason: whatif.TargetBelowFloor, Flags: []whatif.Flag{whatif.RankMixtureTTFT},
+			Detail: fmt.Sprintf("the experimental TTFT model prices a TTFT over %.3g s at every rate", target)}
+	}
+	a := whatif.Answer{Value: r, Flags: f.limitFlags(atEnd)}
+	a.Basis.BoundBy = []whatif.Bound{whatif.Bound("TTFT, " + string(whatif.QueueRankMixture))}
+	if atEnd {
+		a.Basis.BoundBy = []whatif.Bound{whatif.Bound("the highest rate the experimental TTFT model prices")}
+	}
+	return a
+}
+
+// limitFlags is a model limit's flags: RankMixtureTTFT, and VPLowerBound
+// where the curve's end set it and is a prefill knee that is only a lower
+// bound (endAtLeast).
+func (f *mixtureFleet) limitFlags(atEnd bool) []whatif.Flag {
+	if atEnd && f.endAtLeast {
+		return []whatif.Flag{whatif.RankMixtureTTFT, whatif.VPLowerBound}
+	}
+	return []whatif.Flag{whatif.RankMixtureTTFT}
+}
+
+// fleetLimit is the fleet's limit at headroom: the lowest of headroom
+// times the curve's end, the prefill limit and decode's.
+func (f *mixtureFleet) fleetLimit(headroom float64, decode, prefill whatif.Result) whatif.Result {
+	if u, ok := decode.(whatif.Unanswerable); ok {
+		return u
+	}
+	p, ok := prefill.(whatif.Answer)
+	if !ok {
+		return prefill
+	}
+	type bound struct {
+		rate  float64
+		by    []whatif.Bound
+		flags []whatif.Flag
+	}
+	bounds := []bound{{headroom * f.knee, []whatif.Bound{whatif.BoundOperatingPoint}, f.limitFlags(true)}, {p.Value, p.Basis.BoundBy, p.Flags}}
+	if d, ok := decode.(whatif.Answer); ok {
+		bounds = append(bounds, bound{d.Value, d.Basis.BoundBy, d.Flags})
+	}
+	lowest := bounds[0].rate
+	for _, b := range bounds[1:] {
+		lowest = min(lowest, b.rate)
+	}
+	a := whatif.Answer{Value: lowest}
+	for _, b := range bounds {
+		if b.rate != lowest {
+			continue
+		}
+		a.Basis.BoundBy = append(a.Basis.BoundBy, b.by...)
+		for _, fl := range b.flags {
+			if !slices.Contains(a.Flags, fl) {
+				a.Flags = append(a.Flags, fl)
+			}
+		}
+	}
+	if !slices.Contains(a.Flags, whatif.RankMixtureTTFT) {
+		a.Flags = append(a.Flags, whatif.RankMixtureTTFT)
+	}
+	return a
+}
+
+// Limits is the planner's decode limit, and the model's prefill and fleet
+// limits.
+func (f *mixtureFleet) Limits(ttftSeconds, tpotSeconds, headroom float64) LimitSet {
+	ls := f.Fleet.Limits(ttftSeconds, tpotSeconds, headroom)
+	if !f.kneeOK {
+		return ls
+	}
+	d1, _, _ := f.Fleet.PlainLimits(ttftSeconds, tpotSeconds, 1)
+	ls.Prefill = f.prefillLimit(ttftSeconds)
+	ls.Fleet = f.fleetLimit(headroom, ls.Decode, ls.Prefill)
+	ls.WithoutHeadroom = f.fleetLimit(1, d1, ls.Prefill)
+	return ls
+}
+
+// PlainLimits is Limits with no span: the model's limits have none.
+func (f *mixtureFleet) PlainLimits(ttftSeconds, tpotSeconds, headroom float64) (decode, prefill, fleet whatif.Result) {
+	decode, prefill, fleet = f.Fleet.PlainLimits(ttftSeconds, tpotSeconds, headroom)
+	if !f.kneeOK {
+		return decode, prefill, fleet
+	}
+	prefill = f.prefillLimit(ttftSeconds)
+	return decode, prefill, f.fleetLimit(headroom, decode, prefill)
 }

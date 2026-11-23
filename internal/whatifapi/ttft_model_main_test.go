@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -216,4 +217,96 @@ func TestCurveCap(t *testing.T) {
 		assert.Equal(t, c.ok, ok, c.name)
 		assert.InDelta(t, c.want, got, 1e-12, c.name)
 	}
+}
+
+// v2SizeOf sizes the entry's fleet for rate with the policy's TTFT target.
+func v2SizeOf(t *testing.T, s *Server, id string, rate float64) SizeResponse {
+	t.Helper()
+	body, err := s.size(context.Background(), SizeRequest{InputsID: id, Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(rate)}}},
+		SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}}})
+	require.NoError(t, err)
+	var out SizeResponse
+	require.NoError(t, json.Unmarshal(body, &out))
+	return out
+}
+
+// Where the planner refuses prefill, so that no fleet is sized, the
+// experimental model sizes one: its prefill limit is the rate whose TTFT
+// meets the target, and the fleet's the lowest of that, headroom times the
+// curve's end and decode's. The same rate grown by a quarter and by half is
+// sized too, never on fewer replicas. Each limit the model set is flagged
+// RankMixtureTTFT, and the plan the answer carries reads the same.
+func TestMainView_ExperimentalModelSizesWhereThePlannerRefuses(t *testing.T) {
+	s0, e0 := mainEntry(t, false)
+	base := v2SizeOf(t, s0, e0.id, 4)
+	assert.Nil(t, base.Answer, "the planner sizes no fleet without V_P")
+
+	s, e := mainEntry(t, true)
+	var prev *SizeAnswer
+	for _, x := range []float64{1, 1.25, 1.5} {
+		out := v2SizeOf(t, s, e.id, 4*x)
+		require.NotNil(t, out.Answer, "sized at %g r/s: %+v", 4*x, out.Unmet)
+		a := out.Answer
+		require.NotNil(t, a.Limit.Value)
+		assert.GreaterOrEqual(t, *a.Limit.Value, 4*x*(1-reachTolerance))
+		assert.Contains(t, a.Limit.Flags, string(whatif.RankMixtureTTFT))
+		top := *e.ttftModel.info.MeasuredUpTo * float64(a.Fleet.Prefill) / float64(e.ttftModel.prefill)
+		assert.Equal(t, *a.Limit.Value > top, a.Limit.Extrapolated, "a limit past the load served at %d prefill is extrapolated", a.Fleet.Prefill)
+		require.NotNil(t, a.Plan.Limits.Prefill.Value)
+		assert.Contains(t, a.Plan.Limits.Prefill.Flags, string(whatif.RankMixtureTTFT))
+		if prev != nil {
+			assert.GreaterOrEqual(t, a.Fleet.Prefill+a.Fleet.Decode, prev.Fleet.Prefill+prev.Fleet.Decode)
+		}
+		prev = a
+	}
+}
+
+// The model's prefill limit is where its curve meets the target: the TTFT
+// just under it meets the target, and just over it does not.
+func TestMixtureFleet_PrefillLimitIsWhereTheCurveMeetsTheTarget(t *testing.T) {
+	_, e := mainEntry(t, true)
+	k := Knobs{Prefill: 1, Decode: 2, TTFTPercentile: 0.9}
+	fl, ok := e.ttftModel.fleet(stubFleetFor(t, e, 1), k).(*mixtureFleet)
+	require.True(t, ok)
+	lo, _ := fl.price(1)
+	hi, okHi := fl.price(fl.knee * 0.8)
+	require.True(t, okHi)
+	target := (lo + hi) / 2
+	r, atEnd, ok := fl.rateAtTarget(target)
+	require.True(t, ok)
+	assert.False(t, atEnd)
+	// The draws are fixed but finite: the curve is monotone to within a
+	// percent or so, not exactly.
+	at, _ := fl.price(r)
+	assert.LessOrEqual(t, at, target)
+	assert.InEpsilon(t, target, at, 0.02)
+	assert.Less(t, r, fl.knee*0.8, "under the rate whose TTFT is over the target")
+	_, atEnd, ok = fl.rateAtTarget(1e6)
+	assert.True(t, ok)
+	assert.True(t, atEnd, "a target the whole curve meets is met at its end")
+	_, _, ok = fl.rateAtTarget(lo / 10)
+	assert.False(t, ok, "a target under the floor is met nowhere")
+}
+
+// A limit the curve's end sets is "at least" (VPLowerBound) only where that
+// end is a prefill knee known as a lower bound; decode's knee, or a priced
+// prefill knee, is no lower bound.
+func TestMixtureFleet_AtLeastOnlyOnALowerBoundPrefillKnee(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		f    mixtureFleet
+		want bool
+	}{
+		{"decode's knee ends the curve", mixtureFleet{lowerBound: true, endAtLeast: false}, false},
+		{"a lower-bound prefill knee ends it", mixtureFleet{lowerBound: true, endAtLeast: true}, true},
+	} {
+		got := slices.Contains(c.f.limitFlags(true), whatif.VPLowerBound)
+		assert.Equal(t, c.want, got, c.name)
+		assert.NotContains(t, c.f.limitFlags(false), whatif.VPLowerBound, "%s: a limit the target set is no bound", c.name)
+	}
+	_, e := mainEntry(t, true)
+	fl, ok := e.ttftModel.fleet(stubFleetFor(t, e, 1), Knobs{Prefill: 1, Decode: 2, TTFTPercentile: 0.9}).(*mixtureFleet)
+	require.True(t, ok)
+	assert.True(t, fl.lowerBound, "the stub refuses the prefill knee")
+	assert.False(t, fl.endAtLeast, "the curve ends at decode's knee there")
 }
