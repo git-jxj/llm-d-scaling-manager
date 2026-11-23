@@ -59,7 +59,7 @@ identity by accident.
 <!-- guide:tools.setup start -->
 ```bash
 # Once per machine. The release's tools image, by the digest the release prints. Each person uses their own kubeconfig.
-TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:77be49dde69c86010fabbaac341ab71eceba26ee8f2b0c8fb0cd530669457cc2
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:v0.12.4
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }

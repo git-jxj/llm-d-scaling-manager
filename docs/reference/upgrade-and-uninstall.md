@@ -129,6 +129,27 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
+### Upgrading from v0.12.3
+
+[Upgrade](#upgrade) as for any release. Nothing in the controller changes: its
+RBAC, settings and alerts are as in v0.12.3, and `make workload-patch` need not
+be run again. The changes are in the capacity planner and the recording tools:
+
+- **Two experimental models, off by default.** `capacity-planner backtest`
+  takes `--experimental-ttft=v2` and `--experimental-tpot=v2`. Without the
+  flags every answer is byte for byte as in v0.12.3. With them, every figure the
+  models price is flagged and reads OUTSIDE VALIDATED REGION
+  ([the experimental models](../guides/capacity-planner/page-and-commands.md)).
+- **`capacity-planner serve` takes the same flags**, so a planner served to
+  people (for example in a cluster) uses the models for every backtest without
+  anyone switching them on. Add them to the StatefulSet's `args`
+  ([run it in a cluster](../guides/capacity-planner/in-cluster.md)).
+- **Recordings.** `capture` also saves the speculative-decoding acceptance per
+  draft position. A recording made with v0.12.4 tools loads in a v0.12.4
+  planner; record with v0.12.4 tools for this planner.
+- **Hiding names.** The export accepts recordings made with v0.12.3's capture,
+  which it refused before.
+
 ### Upgrading from v0.12.2 to v0.12.3
 
 [Upgrade](#upgrade) as for any release, then read each part below that
