@@ -179,6 +179,26 @@ type RankMixture struct {
 	// chunked prefill, 1 without); 0 is not known, and each rank is priced
 	// as plain processor sharing.
 	Slots int
+	// Law is the service law: ServiceLine (S0 + x/V) or ServiceAttention,
+	// which adds B x (c + x/2) for the attention of x computed tokens over
+	// c cached ones (rank_mixture_nl.go).
+	Law ServiceLaw
+	// B is ServiceAttention's seconds per computed token per token of
+	// context; 0 under ServiceLine.
+	B float64
+	// Parts is Z's decomposition where it was measured part by part
+	// (FitRankMixtureNL): A0 and Beta are then their sums and Spread 1.
+	Parts *ZParts
+}
+
+// service is the prefill service time of x computed tokens on a prompt of l
+// tokens.
+func (m RankMixture) service(x, l float64) float64 {
+	s := m.S0 + x/m.V
+	if m.Law == ServiceAttention {
+		s += m.B * x * attentionContext(x, l)
+	}
+	return s
 }
 
 // MaxRelaxationShare is the largest relaxation time, as a share of the step
@@ -357,7 +377,15 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 		lam := rate * p
 		var es, es2 float64
 		for j := range s {
-			s[j] = m.S0 + hx.ppf(rng.Float64())/m.V
+			if m.Law == ServiceAttention {
+				// The request's own prompt sets its context, drawn from
+				// the prompt histogram apart from its computed tokens
+				// (the histograms are marginals).
+				x := hx.ppf(rng.Float64())
+				s[j] = m.service(x, hl.ppf(rng.Float64()))
+			} else {
+				s[j] = m.S0 + hx.ppf(rng.Float64())/m.V
+			}
 			es += s[j]
 			es2 += s[j] * s[j]
 		}
@@ -537,6 +565,9 @@ func (m RankMixture) Price(rate float64, computed, prompt map[float64]float64, q
 
 // Assumed is the model's parameters in words, for an answer's assumed line.
 func (m RankMixture) Assumed() string {
+	if m.Parts != nil {
+		return m.assumedNL()
+	}
 	busiest := 0.0
 	if len(m.Shares) > 0 {
 		busiest = m.Shares[0] * float64(len(m.Shares))

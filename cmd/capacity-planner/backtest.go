@@ -51,6 +51,9 @@ type backtestFlags struct {
 	// rankMixtureTTFT is --experimental-ttft=v2 (experimental_ttft_v2.go),
 	// backtest's only.
 	experimentalTTFT, rankMixtureTTFT bool
+	// rankMixtureNL is --experimental-ttft=v2nl: the rank mixture's
+	// non-linear variant (whatif.QueueRankMixtureNL).
+	rankMixtureNL bool
 	// experimentalTPOT is --experimental-tpot (experimental_tpot.go),
 	// backtest's only.
 	experimentalTPOT string
@@ -68,7 +71,9 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's, on by default: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0); =false for router v0.11.0")
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0); set, it turns the default --router-wait-in-prefill off")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
-	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTV2Usage)
+	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nl: &f.rankMixtureNL}, experimentalTTFTFlag,
+		experimentalTTFTV2Usage+"; =v2nl prices with its non-linear variant (attention service law, non-queue part measured part by part, "+
+			"flagged the same)")
 }
 
 // parsed records the flags given, once fs is parsed, and lets the default
@@ -191,6 +196,9 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 		return nil
 	}
 	req.TTFTModel, req.PrefillSlots = string(whatif.QueueRankMixture), prefillSlotsOf(fit)
+	if f.rankMixtureNL {
+		req.TTFTModel = string(whatif.QueueRankMixtureNL)
+	}
 	if err := withRankMixture(testPath, test); err != nil {
 		return err
 	}

@@ -22,6 +22,11 @@ import (
 // experimentalTTFTV2 is the flag's value that asks for the rank mixture.
 const experimentalTTFTV2 = "v2"
 
+// experimentalTTFTV2NL is the flag's value that asks for the rank mixture's
+// non-linear variant (whatif.QueueRankMixtureNL): the attention service law
+// and the non-queue part measured part by part. Backtest only.
+const experimentalTTFTV2NL = "v2nl"
+
 // experimentalTTFTV2Usage is backtest's and predict's help for the flag: the
 // switches' (experimentalTTFTUsage), and =v2.
 const experimentalTTFTV2Usage = experimentalTTFTUsage + ". On backtest, =v2 instead prices TTFT with an experimental model: limited " +
@@ -33,11 +38,15 @@ const experimentalTTFTV2Usage = experimentalTTFTUsage + ". On backtest, =v2 inst
 // false neither.
 type experimentalTTFTValue struct {
 	switches, v2 *bool
+	// nl, where set, takes =v2nl: v2 and nl both true.
+	nl *bool
 }
 
 // String is the value.
 func (v experimentalTTFTValue) String() string {
 	switch {
+	case v.v2 != nil && *v.v2 && v.nl != nil && *v.nl:
+		return experimentalTTFTV2NL
 	case v.v2 != nil && *v.v2:
 		return experimentalTTFTV2
 	case v.switches != nil && *v.switches:
@@ -48,12 +57,20 @@ func (v experimentalTTFTValue) String() string {
 
 // Set reads one value.
 func (v experimentalTTFTValue) Set(s string) error {
+	if v.nl != nil {
+		*v.nl = s == experimentalTTFTV2NL
+	}
 	switch s {
 	case "true", "v1":
 		*v.switches, *v.v2 = true, false
 	case "false":
 		*v.switches, *v.v2 = false, false
 	case experimentalTTFTV2:
+		*v.switches, *v.v2 = false, true
+	case experimentalTTFTV2NL:
+		if v.nl == nil {
+			return fmt.Errorf("--%s=%s is backtest's only", experimentalTTFTFlag, experimentalTTFTV2NL)
+		}
 		*v.switches, *v.v2 = false, true
 	default:
 		return fmt.Errorf("want --%s, --%s=false or --%s=%s", experimentalTTFTFlag, experimentalTTFTFlag, experimentalTTFTFlag, experimentalTTFTV2)

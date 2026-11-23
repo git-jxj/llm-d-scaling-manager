@@ -248,6 +248,37 @@ time, TTFT and prompt from a LeaderWorkerSet group's engines
 (`GroupEngines`). In an older recording, a row's ranks share its rate evenly,
 and the answer says so.
 
+### The non-linear variant (`--experimental-ttft=v2nl`)
+
+`backtest --experimental-ttft=v2nl` prices with the same queue and two changed
+parts. It is off by default, and its figures carry the same flags. The answer's
+`rankMixture.model` reads `rank-mixture-nl`.
+
+- **Prefill service.** `S(x, c) = s0 + x/V + b x (c + x/2)`, where `c` is the
+  prompt's cached tokens ahead of the `x` computed ones. The added term is the
+  attention of each computed token over the tokens before it, the cost that
+  grows with a long cached prefix. `s0`, `1/V` and `b` are fitted as the line
+  is, all held at 0 or above. The prompt and computed-token histograms are
+  drawn apart, so `c` is the drawn prompt less the drawn computed tokens.
+- **Non-queue part.** `Z` is measured part by part, not calibrated. Each part
+  is its own line in the prompt, with an intercept and slope held at 0 or
+  above: the engine's pre-queue overhead, the decode engine's first token and
+  the router's remainder. `a0` is the sum of the intercepts, so it is never
+  negative, and `s` is 1. `rankMixture.zParts` names each part.
+- **Fit hygiene.** The KV-deferral lines and the parts are fitted only on
+  steps whose busiest rank sits under `rho` 0.9 (`cleanSteps`). Past it, the
+  queue and the front end's time belong to the overload.
+
+Nothing is fitted to the router, so the fit window must price itself. The
+variant abstains where:
+- the fit window's median ratio of priced to measured mean (`fitMean`) is
+  outside 0.8 to 1.25;
+- its median p90 ratio (`fitP90`) is outside 0.9 to 1.25;
+- the computed prompts do not spread (one prompt length);
+- or, as for v2, the ranks' own rates or `--max-num-seqs` are not read.
+
+On the public recordings it abstains, mostly on those checks.
+
 ## Experimental: the per-request TPOT distribution
 
 `capacity-planner backtest --experimental-tpot=v2` prices the TPOT percentiles

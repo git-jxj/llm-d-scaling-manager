@@ -89,6 +89,16 @@ type RankMixtureReport struct {
 	// engine's max-num-seqs (1 without chunked prefill), 0 not known.
 	Queue string `json:"queue"`
 	Slots int    `json:"slots"`
+	// Law is the prefill service law, B its attention coefficient (seconds
+	// a computed token a token of context), ZParts Z measured by part,
+	// CleanSteps the fit steps the KV and Z fits read and FitMean the fit
+	// window's median mean ratio: the non-linear variant's
+	// (whatif.QueueRankMixtureNL) only.
+	Law        string             `json:"law,omitempty"`
+	B          float64            `json:"b,omitempty"`
+	ZParts     *RankMixtureZParts `json:"zParts,omitempty"`
+	CleanSteps int                `json:"cleanSteps,omitempty"`
+	FitMean    float64            `json:"fitMean,omitempty"`
 }
 
 // RankMixtureKV is the fitted KV-deferral wait.
@@ -197,9 +207,27 @@ func fitRankMixture(fit *inputsEntry, fitIdx []int, step time.Duration, slots in
 
 // fitRankMixtureSteps is fitRankMixture, and the steps it fitted on.
 func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slots int) (*rankMixtureQ, []whatif.MixtureStep, error) {
+	steps, even, backlog, err := mixtureFitSteps(fit, fitIdx, step, whatif.QueueRankMixture)
+	if err != nil {
+		return nil, nil, err
+	}
+	m, diag, err := whatif.FitRankMixture(steps, whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
+		SpreadFloor: whatif.MinSpread})
+	if err != nil {
+		return nil, nil, InputErrorf("the experimental TTFT model %s did not fit: %v", whatif.QueueRankMixture, err)
+	}
+	return reportOf(m, diag, slots, even, backlog), steps, nil
+}
+
+// mixtureFitSteps is the fit window's steps as model fits them: one per step
+// anchor, each with the router's measured mean and p90, the stationary ones
+// only; even is the most ranks a row split evenly, backlog the steps left
+// out as not stationary.
+func mixtureFitSteps(fit *inputsEntry, fitIdx []int, step time.Duration, model whatif.QueueModel) (
+	steps []whatif.MixtureStep, even, backlog int, err error) {
 	if len(fit.mixture) != len(fit.series) {
-		return nil, nil, InputErrorf("the experimental TTFT model %s needs the recording's per-rank series, which this source did not give",
-			whatif.QueueRankMixture)
+		return nil, 0, 0, InputErrorf("the experimental TTFT model %s needs the recording's per-rank series, which this source did not give",
+			model)
 	}
 	idx := slices.Clone(fitIdx)
 	slices.SortStableFunc(idx, func(a, b int) int { return fit.series[a].At.Compare(fit.series[b].At) })
@@ -212,8 +240,7 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 		}
 		anchors[k] = i
 	}
-	var steps []whatif.MixtureStep
-	even, noRouter, noRanks, backlog := 0, 0, 0, 0
+	noRouter, noRanks := 0, 0
 	for _, k := range order {
 		a := anchors[k]
 		if a >= len(fit.latency) {
@@ -245,15 +272,15 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 		even = max(even, cycles[len(cycles)-1].EvenWithinRows)
 	}
 	if len(steps) == 0 {
-		return nil, nil, InputErrorf("the experimental TTFT model %s fits against the router's measured TTFT mean and p90 and the prefill "+
+		return nil, 0, 0, InputErrorf("the experimental TTFT model %s fits against the router's measured TTFT mean and p90 and the prefill "+
 			"ranks' own rates on stationary steps: of the fit window's %d steps, %d read no router TTFT, %d no prefill rank's rate "+
-			"and %d were not stationary", whatif.QueueRankMixture, len(order), noRouter, noRanks, backlog)
+			"and %d were not stationary", model, len(order), noRouter, noRanks, backlog)
 	}
-	m, diag, err := whatif.FitRankMixture(steps, whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
-		SpreadFloor: whatif.MinSpread})
-	if err != nil {
-		return nil, nil, InputErrorf("the experimental TTFT model %s did not fit: %v", whatif.QueueRankMixture, err)
-	}
+	return steps, even, backlog, nil
+}
+
+// reportOf is the fitted model m as the backtest reports it.
+func reportOf(m whatif.RankMixture, diag whatif.RankMixtureFit, slots, even, backlog int) *rankMixtureQ {
 	r := RankMixtureReport{Model: string(whatif.QueueRankMixture), Experimental: true, Assumed: m.Assumed(), S0: m.S0, V: m.V, ServiceProportional: m.ServiceProportional,
 		Shares: m.Shares, ShareCV: diag.ShareCV, EvenWithinRows: even, A0: m.A0, Beta: m.Beta, BetaOverhead: m.BetaOverhead,
 		BetaDecode: m.BetaDecode, BetaRemainder: m.BetaRemainder, BetaUnidentified: m.BetaUnidentified, Spread: m.Spread, FoldSpread: diag.FoldSpread,
@@ -268,7 +295,7 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 	if m.KV.Known {
 		r.KV = &RankMixtureKV{P0: m.KV.P0, P1: m.KV.P1, M0: m.KV.M0, M1: m.KV.M1, RhoLo: m.KV.RhoLo, RhoHi: m.KV.RhoHi}
 	}
-	return &rankMixtureQ{m: m, report: r}, steps, nil
+	return &rankMixtureQ{m: m, report: r}
 }
 
 // abstainedMixture is the model abstaining for why.
@@ -328,10 +355,14 @@ func (q *backtestQuestion) mixturePriced(out BacktestStep) bool {
 func (rq *rankMixtureQ) assumedLines() []string {
 	if rq.report.Abstained != "" {
 		return []string{fmt.Sprintf("experimental TTFT model %s abstained (%s): every TTFT is the planner's own, flagged %s",
-			whatif.QueueRankMixture, rq.report.Abstained, whatif.RankMixtureAbstained)}
+			rq.report.Model, rq.report.Abstained, whatif.RankMixtureAbstained)}
 	}
 	out := []string{rq.report.Assumed + "; spread fitted on the fit window's self-check folds so that their median p90 ratio is 1 " +
 		"(p95 is not fitted); every TTFT is flagged " + string(whatif.RankMixtureTTFT) + " and is OUTSIDE VALIDATED REGION"}
+	if rq.report.Model == string(whatif.QueueRankMixtureNL) {
+		out[0] = rq.report.Assumed + fmt.Sprintf("; nothing calibrated to the router (the fit window prices its own mean at %.3g of "+
+			"measured); every TTFT is flagged %s and is OUTSIDE VALIDATED REGION", rq.report.FitMean, whatif.RankMixtureTTFT)
+	}
 	if len(rq.report.BetaUnidentified) > 0 {
 		out = append(out, fmt.Sprintf("the fit window's prompts did not spread: the prompt term's %s slope is 0, its cost held in a0 at the "+
 			"prompts read", strings.Join(rq.report.BetaUnidentified, ", ")))

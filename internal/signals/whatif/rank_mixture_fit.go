@@ -212,12 +212,21 @@ const (
 // probability p = P(q>0.3) exp(0.3/m); each is then a line in the ranks'
 // mean utilization rate/n (S0 + xbar/V). FITTED, not derived.
 func FitKVDeferral(steps []MixtureStep, s0, v float64, ranks int) (KVDeferral, error) {
+	if ranks == 0 {
+		return fitKVDeferralAt(nil, nil)
+	}
+	return fitKVDeferralAt(steps, func(st MixtureStep) float64 { return st.Rate / float64(ranks) * (s0 + st.xbar()/v) })
+}
+
+// fitKVDeferralAt is FitKVDeferral with each step's mean utilization read by
+// rhoOf.
+func fitKVDeferralAt(steps []MixtureStep, rhoOf func(MixtureStep) float64) (KVDeferral, error) {
 	var rhos, ps, ms []float64
 	for _, st := range steps {
 		total, ok1 := st.Queue[math.Inf(1)]
 		lo, ok2 := st.Queue[kvEdgeLo]
 		hi, ok3 := st.Queue[kvEdgeHi]
-		if !ok1 || !ok2 || !ok3 || !(total > 0) || ranks == 0 {
+		if !ok1 || !ok2 || !ok3 || !(total > 0) {
 			continue
 		}
 		p3, p1 := 1-lo/total, 1-hi/total
@@ -225,7 +234,7 @@ func FitKVDeferral(steps []MixtureStep, s0, v float64, ranks int) (KVDeferral, e
 			continue
 		}
 		m := (kvEdgeHi - kvEdgeLo) / math.Log(p3/p1)
-		rhos = append(rhos, st.Rate/float64(ranks)*(s0+st.xbar()/v))
+		rhos = append(rhos, rhoOf(st))
 		ps = append(ps, min(p3*math.Exp(kvEdgeLo/m), 1))
 		ms = append(ms, m)
 	}

@@ -995,8 +995,21 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 			}
 		}
 		q.assumed = append(q.assumed, q.mixture.assumedLines()...)
+	case string(whatif.QueueRankMixtureNL):
+		switch {
+		case len(test.mixture) != len(test.series):
+			q.mixture = abstainedMixtureNL("the test source did not give the per-rank series")
+		default:
+			fitted, ferr := fitRankMixtureNL(fit, fitIdx, q.step, req.PrefillSlots)
+			if ferr != nil {
+				q.mixture = abstainedMixtureNL(ferr.Error())
+			} else {
+				q.mixture = fitted.identifiedNL()
+			}
+		}
+		q.assumed = append(q.assumed, q.mixture.assumedLines()...)
 	default:
-		return nil, InputErrorf("ttftModel %q, want %q or none", req.TTFTModel, whatif.QueueRankMixture)
+		return nil, InputErrorf("ttftModel %q, want %q, %q or none", req.TTFTModel, whatif.QueueRankMixture, whatif.QueueRankMixtureNL)
 	}
 	switch req.TPOTModel {
 	case "":
