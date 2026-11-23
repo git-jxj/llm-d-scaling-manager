@@ -325,6 +325,32 @@ function sameCurve(a, b) {
   return a.every((q, i) => near(q.x, b[i].x) && near(q.y, b[i].y));
 }
 
+// measuredSplit splits points ({x, y, extrapolated}) where the experimental
+// TTFT model's extrapolation starts: measured is drawn solid, up to and with
+// the last point at or under the highest load measured; beyond dashed, from
+// that point on, so that the two meet. With no point extrapolated beyond is
+// empty; with every point extrapolated measured is empty.
+function measuredSplit(points) {
+  const i = points.findIndex(q => q.extrapolated);
+  if (i < 0) return {measured: points, beyond: []};
+  return {measured: points.slice(0, i), beyond: points.slice(Math.max(i - 1, 0))};
+}
+
+// ttftModelNote is what the TTFT figure says of the experimental model at
+// the plan's fleet (ttft.model), one short line; empty without one. It
+// names the model, its evidence from the source where there is some, and
+// what the dashed part is; or, where the model did not price, why the
+// planner's own TTFT stands.
+function ttftModelNote(m) {
+  if (!m) return "";
+  if (!m.priced) return `${m.label}: not used here (${m.notPriced}); the planner's own TTFT is drawn.`;
+  const parts = [m.label];
+  if (m.evidence) parts.push(m.evidence);
+  if (m.measuredUpTo != null) parts.push(`dashed: ${m.beyond} (${Number(m.measuredUpTo.toPrecision(3))} r/s)`);
+  if (m.rightEnd) parts.push(m.rightEnd);
+  return parts.join(" · ") + ".";
+}
+
 // figValue is a figure's value, or null where it is refused or absent.
 function figValue(f) {
   return f && !f.refused && typeof f.value === "number" ? f.value : null;

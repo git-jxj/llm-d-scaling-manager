@@ -135,7 +135,7 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	res, err := s.resolved(ctx, &f, st, data, info)
 	var serr error
 	if err == nil {
-		serr = s.experimentalSeries(data, res)
+		serr = s.experimentalSeries(data, res, req.TTFTModel != "")
 	}
 	// The series, and the experimental models' after it, are the last
 	// passes: a file changed under them is refused, and nothing is kept
@@ -158,9 +158,11 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 // experimental model (--experimental-ttft=v2, --experimental-tpot=v2), the
 // cycles that model reads and the engines' flags it takes, in a pass of
 // their own over data: the CLI's backtest reads the same (rankMixture,
-// tpotDistribution). Neither changes the inputs' content id.
-func (s *servedSources) experimentalSeries(data *recordingSource, res *whatifapi.Resolved) error {
-	if s.rankMixture {
+// tpotDistribution). Neither changes the inputs' content id. ttftModel
+// says the request asked for the experimental TTFT model
+// (whatifapi.InputsRequest.TTFTModel), which reads the same series.
+func (s *servedSources) experimentalSeries(data *recordingSource, res *whatifapi.Resolved, ttftModel bool) error {
+	if s.rankMixture || ttftModel {
 		if err := rankMixtureFrom(data.open, res); err != nil {
 			return err
 		}

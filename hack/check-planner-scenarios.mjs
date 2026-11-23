@@ -17,7 +17,8 @@ vm.runInContext(fs.readFileSync(file, "utf8"), ctx, {filename: file});
 const S = name => vm.runInContext(name, ctx);
 const {esc, linkProblem, checkScenario, readScenarioFile, parseStore, visibleScenarios, putScenario, dropScenario, freeName,
   cleanName, delta, fleetDelta, scenarioTitle, sourceProblem, linkAtLoadStart, linkAtLoadEnd, beginOpen, importPlan, sameCurve, figDelta,
-  compareRows, parseEdges, linkedEdges, edgesBoxProblem, beyondContext, contextNote, bucketSeries, retryDelay} = ctx;
+  compareRows, parseEdges, linkedEdges, edgesBoxProblem, beyondContext, contextNote, bucketSeries, retryDelay, measuredSplit,
+  ttftModelNote} = ctx;
 const MAX_NAME = S("MAX_NAME"), MAX_SCENARIOS = S("MAX_SCENARIOS"), MAX_LINK = S("MAX_LINK");
 
 let passed = 0;
@@ -705,6 +706,41 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
     check(`${source}: asks for a rate`, n.includes("Type your request rate."), n);
   }
 }
+
+// measuredSplit: the experimental TTFT model's curve is solid up to the
+// highest load measured and dashed beyond it, the dashed part starting at
+// the last measured point so that the two meet, and no point lost.
+{
+  const q = (x, e) => ({x, y: x / 10, extrapolated: e});
+  const curve = [q(1, false), q(2, false), q(3, true), q(4, true)];
+  const s = measuredSplit(curve);
+  check("measuredSplit: solid up to the last measured point", s.measured.map(p => p.x).join() === "1,2", JSON.stringify(s.measured));
+  check("measuredSplit: dashed from the last measured point on", s.beyond.map(p => p.x).join() === "2,3,4", JSON.stringify(s.beyond));
+  check("measuredSplit: every extrapolated point is dashed", curve.filter(p => p.extrapolated).every(p => s.beyond.includes(p)));
+  check("measuredSplit: no extrapolated point is solid", s.measured.every(p => !p.extrapolated));
+  const none = measuredSplit([q(1, false), q(2, false)]);
+  check("measuredSplit: nothing extrapolated, nothing dashed", none.beyond.length === 0 && none.measured.length === 2);
+  const all = measuredSplit([q(1, true), q(2, true)]);
+  check("measuredSplit: all extrapolated, all dashed", all.measured.length === 0 && all.beyond.length === 2);
+  check("measuredSplit: an empty curve", measuredSplit([]).measured.length === 0 && measuredSplit([]).beyond.length === 0);
+}
+
+// ttftModelNote: the label, the evidence and the dashed part in one line;
+// the reason the planner's TTFT stands where the model did not price.
+{
+  const m = {label: "Experimental TTFT model", priced: true, evidence: "held-out steps: 9 of 12 within 20%", measuredUpTo: 4.5678,
+    beyond: "beyond the highest load measured", rightEnd: "the curve's right end is an estimate from the fitted prefill service rate"};
+  const n = ttftModelNote(m);
+  check("ttftModelNote: names the model", n.startsWith("Experimental TTFT model"), n);
+  check("ttftModelNote: the evidence", n.includes("held-out steps: 9 of 12 within 20%"), n);
+  check("ttftModelNote: what is dashed, and from where", n.includes("dashed: beyond the highest load measured (4.57 r/s)"), n);
+  check("ttftModelNote: the right end", n.includes("right end is an estimate"), n);
+  const bare = ttftModelNote({label: "Experimental TTFT model", priced: true});
+  check("ttftModelNote: no evidence, no claim", bare === "Experimental TTFT model.", bare);
+  const not = ttftModelNote({label: "Experimental TTFT model", priced: false, notPriced: "the model abstained: x"});
+  check("ttftModelNote: not priced says why", not.includes("not used here (the model abstained: x)") && not.includes("planner's own"), not);
+  check("ttftModelNote: no model, no note", ttftModelNote(undefined) === "" && ttftModelNote(null) === "");
+}
 } catch (e) {
   failures.push("a case threw, and the cases after it did not run: " + e.message);
 }
@@ -716,7 +752,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 339;
+const EXPECTED_CASES = 353;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);
