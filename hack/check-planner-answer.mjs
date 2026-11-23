@@ -148,6 +148,8 @@ try {
   // Exports: a field a spreadsheet would run is not a formula.
   check("a CSV field is quoted where it must be", csvField("a,b") === "\"a,b\"" && csvField("say \"x\"") === "\"say \"\"x\"\"\"");
   check("a CSV field is never a formula", csvField("=1+1") === "'=1+1" && csvField("-1.5") === "-1.5");
+  check("a CSV field opening with a tab or a carriage return is never a formula",
+    csvField("\t=1+1") === "'\t=1+1" && csvField("\r=1+1") === "\"'\r=1+1\"");
   check("the curves export a row a rate", curvesCSV({ttft: {statistic: "p90", line: {curve: [{rate: 1, figure: {value: 0.5}}, {rate: 2, figure: {refused: {reason: "Saturated"}}}]}},
     tpot: {statistic: "mean", curve: [{rate: 1, figure: {value: 0.01}}, {rate: 2, figure: {value: 0.02}}]}}).split("\n")[2] === "2,,Saturated,0.02,");
 

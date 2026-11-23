@@ -1371,11 +1371,12 @@ function noticeText(flags, banner) {
 // ---- Exports ----
 
 // csvField is one CSV field: quoted, its quotes doubled, where it holds a
-// comma, a quote or a line break; a leading =, +, - or @ is prefixed with a
-// quote so that a spreadsheet does not read the field as a formula.
+// comma, a quote or a line break; a leading =, +, -, @, tab or carriage
+// return is prefixed with a quote so that a spreadsheet does not read the
+// field as a formula.
 function csvField(v) {
   let s = v == null ? "" : String(v);
-  if (/^[=+@]/.test(s) || (/^-/.test(s) && !/^-[0-9.]+$/.test(s))) s = "'" + s;
+  if (/^[=+@\t\r]/.test(s) || (/^-/.test(s) && !/^-[0-9.]+$/.test(s))) s = "'" + s;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
