@@ -2328,7 +2328,10 @@ function showView(name, focus) {
     el("tab-" + v).tabIndex = on ? 0 : -1;
   }
   if (focus) el("tab-" + name).focus();
-  if (name === "check" && !state.bt && state.inputs && state.inputs.fleet.prefill && !el("btrun").disabled) runBacktest();
+  // The panel's own check of the last half, still running, lands here too:
+  // a second one would ask the server the same question twice.
+  const execCheck = state.exec && state.exec.btPending;
+  if (name === "check" && !state.bt && !execCheck && state.inputs && state.inputs.fleet.prefill && !el("btrun").disabled) runBacktest();
 }
 
 // wireTabs makes the tab list work by click and by arrow keys, Home and End.
@@ -2394,9 +2397,13 @@ async function copyExecImage() {
     return out;
   };
   const rows = v.lines.map(l => ({l, text: wrap(l.text, W - 2 * pad - labelW)}));
-  const H = Math.min(400, pad * 2 + 40 + rows.reduce((n, r) => n + r.text.length * lineH + 8, 0) + lineH);
-  c.width = W;
-  c.height = H;
+  // Every line is drawn: a panel taller than 400 px is scaled down to fit,
+  // never cut, so the image stays at most 1440 x 400.
+  const H = pad * 2 + 40 + rows.reduce((n, r) => n + r.text.length * lineH + 8, 0) + lineH;
+  const s = Math.min(1, 400 / H);
+  c.width = Math.round(W * s);
+  c.height = Math.round(H * s);
+  g.scale(s, s);
   const css = getComputedStyle(document.documentElement);
   g.fillStyle = css.getPropertyValue("--surface-1").trim() || "#fff";
   g.fillRect(0, 0, W, H);
@@ -2405,7 +2412,6 @@ async function copyExecImage() {
   g.fillText("Capacity planner: " + el("execsrc").textContent, pad, pad + 8);
   let y = pad + 44;
   for (const r of rows) {
-    if (y > H - lineH) break;
     g.font = "600 15px system-ui, sans-serif";
     g.fillStyle = css.getPropertyValue("--text-primary").trim() || "#000";
     g.fillText(r.l.label, pad, y);
