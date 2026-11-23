@@ -1210,9 +1210,14 @@ function execView(o) {
   const worst = pu && pu.worstPod && pu.worstPod.value != null ? pu.worstPod.value : null;
   if (pkv != null && dl != null) {
     const prefillFirst = pkv < dl;
-    lines.push({label: "Verdict", badge: worst != null ? EXEC_BADGES.measured : EXEC_BADGES.estimate,
-      text: (prefillFirst ? "Prefill binds first" : "Decode binds first") +
-        (prefillFirst && worst != null ? ` (busiest prefill pod ${Math.round(100 * worst)}% busy at the busiest load)` : "") +
+    // The pods' utilization is the model's, at the speed it priced: past 100%
+    // at a lower-bound speed it says the real speed is higher, since the
+    // pods served the load.
+    const busyWords = worst == null ? "" : worst > 1 ?
+      " (at the lower-bound speed the busiest pod would be past 100% busy, yet the pods served the load: their real speed is higher)" :
+      ` (the busiest prefill pod about ${Math.round(100 * worst)}% busy at the busiest load)`;
+    lines.push({label: "Verdict", badge: EXEC_BADGES.estimate,
+      text: (prefillFirst ? "Prefill binds first" : "Decode binds first") + (prefillFirst ? busyWords : "") +
         (prefillFirst && pkLB ? "; its limit is not measured yet." : ".")});
   }
   // TTFT against its target: at the busiest load and at its floor, the one
