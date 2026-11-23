@@ -174,7 +174,7 @@ func LoadFitCycles(fit *Resolved, req BacktestRequest) (*CycleSet, error) {
 type loadSplit struct {
 	report BacktestLoadSplit
 	// outside is the steps of the test's source with a cycle and no test
-	// cycle: under the floor, or read by the fit (fitRead).
+	// cycle: under the floor, with no rate read, or read by the fit (fitRead).
 	outside, fitRead map[time.Time]bool
 	// rates is the test's step rates (stepRates), testRate its floor.
 	rates    map[time.Time]float64
@@ -243,9 +243,13 @@ func (ls *loadSplit) excluded(out *BacktestStep, start time.Time) {
 	if ls.fitRead[start] || ls.outside[start] {
 		out.Rate = ls.rates[start]
 	}
+	_, known := ls.rates[start]
 	switch {
 	case ls.fitRead[start]:
 		out.Excluded, out.Detail = ExcludedLoad, "the fit read a cycle of this step: a backtest scores what the planner did not see"
+	case ls.outside[start] && !known:
+		out.Excluded, out.Detail = ExcludedLoad, fmt.Sprintf("no cycle of it read an arrival rate to class it by against the test's floor of %.4g r/s (testAbove %s)",
+			ls.testRate, ls.report.TestAbove)
 	case ls.outside[start]:
 		out.Excluded, out.Detail = ExcludedLoad, fmt.Sprintf("its rate is under the test's floor of %.4g r/s (testAbove %s)", ls.testRate, ls.report.TestAbove)
 	}

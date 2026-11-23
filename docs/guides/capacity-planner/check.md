@@ -40,7 +40,7 @@ Each bound is a rate (`12.5`, requests per second) or a percentile of the
 steps' rates (`p50`); idle steps are left out of the percentile. The fit is
 read from its steps alone, as if the recording held nothing else, and every
 other check still applies: warm-up, replicas changing, bursts near the knee.
-Steps between the two bounds are reported as `outside the test's load`.
+Steps under the test's bound are reported as `outside the test's load`.
 
 With `--fit` and `--test`, `--fit-below` reads the fit's steps and
 `--test-above` the test's, and the two recordings may cover the same hours:

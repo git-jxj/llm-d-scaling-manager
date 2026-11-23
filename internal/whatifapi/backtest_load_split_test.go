@@ -196,3 +196,27 @@ func TestBacktest_NoLoadSplitAnswersAsBefore(t *testing.T) {
 		"the exclusion counts gained a key")
 	assert.NotContains(t, out.Excluded, "outside the test's load")
 }
+
+// A step the split leaves out says why: read by the fit, under the test's
+// floor with its rate, or with no rate read at all, which is not a rate
+// under the floor.
+func TestLoadSplit_ExcludedSaysWhy(t *testing.T) {
+	at := func(m int) time.Time { return btT0.Add(time.Duration(m) * time.Minute) }
+	ls := &loadSplit{report: BacktestLoadSplit{TestAbove: "p75"}, testRate: 10,
+		outside: map[time.Time]bool{at(0): true, at(5): true, at(10): true}, fitRead: map[time.Time]bool{at(10): true},
+		rates: map[time.Time]float64{at(0): 4, at(10): 12}}
+	var under, unread, read BacktestStep
+	ls.excluded(&under, at(0))
+	ls.excluded(&unread, at(5))
+	ls.excluded(&read, at(10))
+	assert.Equal(t, ExcludedLoad, under.Excluded)
+	assert.Contains(t, under.Detail, "under the test's floor of 10")
+	assert.Equal(t, 4.0, under.Rate)
+	assert.Equal(t, ExcludedLoad, unread.Excluded)
+	assert.Contains(t, unread.Detail, "no cycle of it read an arrival rate")
+	assert.NotContains(t, unread.Detail, "under the test's floor")
+	assert.Contains(t, read.Detail, "the fit read a cycle")
+	var in BacktestStep
+	ls.excluded(&in, at(15))
+	assert.Empty(t, in.Excluded, "a step the split keeps is not marked")
+}
