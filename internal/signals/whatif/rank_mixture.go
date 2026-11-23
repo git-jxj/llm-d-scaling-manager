@@ -376,11 +376,23 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 	}
 	shares := m.sharesAt(rate)
 	per := max(n/len(shares), 50)
+	if m.Parts != nil {
+		per = max(per, minStratifiedDraws)
+	}
 	rng := rand.New(rand.NewPCG(mixtureSeed, uint64(len(shares))))
 	out := RankMixtureDraws{QP: make([]float64, 0, per*len(shares)), L: make([]float64, 0, per*len(shares)),
 		W: make([]float64, 0, per*len(shares))}
 	s := make([]float64, per)
 	var rhoSum float64
+	// The pooled moments (serviceMoments): the ranks draw from one law, so
+	// their mean service and its cs^2 are read once, from a sample large
+	// enough not to move each rank's utilization; v2 reads them from each
+	// rank's own draws.
+	pooledES, pooledCS2, pooled := 0.0, 0.0, false
+	if m.Parts != nil {
+		pooledES, pooledCS2 = m.serviceMoments(hx, hl)
+		pooled = pooledES > 0
+	}
 	for i, p := range shares {
 		lam := rate * p
 		var es, es2 float64
@@ -390,6 +402,10 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 				// the prompt histogram apart from its computed tokens
 				// (the histograms are marginals).
 				x := hx.ppf(rng.Float64())
+				if m.Parts != nil {
+					// Stratified in the computed tokens (stratifiedDraws).
+					x = hx.ppf((float64(j) + rng.Float64()) / float64(per))
+				}
 				s[j] = m.service(x, hl.ppf(rng.Float64()))
 			} else {
 				s[j] = m.S0 + hx.ppf(rng.Float64())/m.V
@@ -399,6 +415,9 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 		}
 		es /= float64(per)
 		cs2 := max(es2/float64(per)/(es*es)-1, 0)
+		if pooled {
+			es, cs2 = pooledES, pooledCS2
+		}
 		rho := lam * es
 		out.Checks.Rho = append(out.Checks.Rho, rho)
 		rhoSum += rho

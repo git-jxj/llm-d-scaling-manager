@@ -144,6 +144,54 @@ func (m RankMixture) sharesAt(rate float64) []float64 {
 	return out
 }
 
+// Pooled service moments. Each rank's mean service and its cs^2 set its
+// utilization, and the sojourn near the knee is steep in it. Read from the
+// rank's own few hundred draws (v2), a heavy-tailed computed-token law (a few
+// requests compute their whole prompt) moves the busiest rank's mean service
+// by about 11 % (sd) from draw set to draw set on the client day, and the
+// convex sojourn turns that noise into an over-read: it was the whole gap
+// between the planner's fit and the offline harness's on the same steps
+// (in-sample mean ratio 1.12 against 1.05). The variant reads them once per
+// priced rate from momentDraws requests, about 0.6 % (sd).
+
+// momentDraws is the sample serviceMoments reads the moments from.
+const momentDraws = 1 << 16
+
+// Stratified draws. The computed-token law's top buckets hold about 1e-4 of
+// the requests and a large share of the service's second moment; a rank's
+// few hundred independent draws catch them or not by chance, which moved the
+// fit window's in-sample mean ratio by 7 % between two draw sets. The
+// variant draws a rank's computed tokens one per stratum of the cumulative
+// share ((j + u)/n), at least minStratifiedDraws a rank, and its moments on a
+// fixed grid of momentDraws strata.
+
+// minStratifiedDraws is the fewest draws a rank takes under the variant.
+const minStratifiedDraws = 4096
+
+// momentSeed fixes that sample.
+const momentSeed = 0x5eed + 7
+
+// serviceMoments is the service's mean and cs^2 over momentDraws requests
+// drawn from the computed-token and prompt histograms.
+func (m RankMixture) serviceMoments(hx, hl cumHist) (es, cs2 float64) {
+	rng := rand.New(rand.NewPCG(momentSeed, momentDraws))
+	var s1, s2 float64
+	for i := range momentDraws {
+		x := hx.ppf((float64(i) + 0.5) / momentDraws)
+		v := m.S0 + x/m.V
+		if m.Law == ServiceAttention {
+			v = m.service(x, hl.ppf(rng.Float64()))
+		}
+		s1 += v
+		s2 += v * v
+	}
+	es = s1 / momentDraws
+	if !(es > 0) {
+		return 0, 0
+	}
+	return es, max(s2/momentDraws/(es*es)-1, 0)
+}
+
 // MaxCleanRho is the rank utilization from which a fit-window step is left
 // out of the KV-deferral and Z fits of FitRankMixtureNL.
 const MaxCleanRho = 0.9
