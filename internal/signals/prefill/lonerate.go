@@ -17,17 +17,24 @@ import (
 //
 // That speed is V_P where the engine is compute-bound with one request: then
 // batching more requests into a step adds no speed, and a busy pod serves at
-// about the lone rate. On the public Qwen3-32B and 0.6B recordings the lone
-// rate read 0.92 to 1.07 of the busy-minute V_P at the same prompt, and put
-// the prefill knee at 0.87 to 1.03 of the measured knee on the four
-// staircases whose knee is prefill-bound (release-tools/lightload). Where a
+// about the lone rate. In the offline study on the public Qwen3-32B and 0.6B
+// recordings (issue #406) the lone rate read 0.92 to 1.07 of the busy-minute
+// V_P at the same prompt, and put the prefill knee at 0.87 to 1.03 of the
+// measured knee on the four staircases whose knee is prefill-bound. That
+// study counted 15-second cycles, where the planner keeps one sample a
+// minute, so its 10 readings were about 3 of MinLoneMinutes. Through the
+// planner the switch moves no Qwen3-32B staircase knee: one of them,
+// replayed whole, never holds MinLoneMinutes lone minutes at the prompt
+// priced. Where a
 // busy step batches short prompts into a step the lone request leaves
 // mostly empty, batching does add speed, and the lone rate reads under V_P.
 // The served peak tells the two apart: a pod seen to compute more than
 // LoneServedTolerance over the lone rate was not compute-bound alone, and the
 // lone rate is then only a lower bound.
 //
-// The rule, fixed before the switch was run against a recording:
+// The rule, fixed before the switch was run against a recording, except that
+// the served peak was first read over the samples kept only, and is now kept
+// since the key's first cycle:
 //
 //   - A minute counts when its row's occupancy per engine is under
 //     LoneMaxOccupancy, its prefill time and computed tokens a request were
