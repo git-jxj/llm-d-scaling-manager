@@ -249,14 +249,43 @@ exports `lmcache:*` on the engine's own `/metrics`.
 | `vllm:kv_offload_tiering_read_bytes_total` | vLLM 0.28.0+ | `OffloadingConnector` with a tiering spec | needed for TTFT on cached fleets | no secondary-tier read volume |
 | `vllm:kv_offload_tiering_read_time_total` | vLLM 0.28.0+ | `OffloadingConnector` with a tiering spec | needed for TTFT on cached fleets | a disk or peer hit's read into the CPU tier left out of its load time |
 | `vllm:kv_offload_config_info` | vLLM 0.33.0+ | `OffloadingConnector` | diagnostic | offload sizes from the engine arguments only |
+| `vllm:kv_offload_tiering_promotion_latency_seconds_sum` | vLLM, recent builds | `OffloadingConnector` with a tiering spec | needed for TTFT on cached fleets | a peer-tier hit's load time unseen: the read time above stays empty for that tier |
+| `vllm:kv_offload_tiering_promotion_latency_seconds_count` | vLLM, recent builds | as above | needed for TTFT on cached fleets | as above |
+| `vllm:kv_offload_tiering_promotion_latency_seconds_bucket` | vLLM, recent builds | as above | diagnostic | no spread of the peer-tier load time |
+| `vllm:kv_offload_lookup_sync_delay_seconds_bucket` | vLLM, recent builds | `OffloadingConnector` | diagnostic | where the wait for cached KV goes, unseen |
+| `vllm:kv_offload_lookup_sync_delay_seconds_sum` | vLLM, recent builds | `OffloadingConnector` | diagnostic | as above |
+| `vllm:kv_offload_lookup_sync_delay_seconds_count` | vLLM, recent builds | `OffloadingConnector` | diagnostic | as above |
+| `vllm:kv_offload_lookup_async_delay_seconds_bucket` | vLLM, recent builds | `OffloadingConnector` | diagnostic | as above |
+| `vllm:kv_offload_lookup_async_delay_seconds_sum` | vLLM, recent builds | `OffloadingConnector` | diagnostic | as above |
+| `vllm:kv_offload_lookup_async_delay_seconds_count` | vLLM, recent builds | `OffloadingConnector` | diagnostic | as above |
+| `vllm:kv_offload_tiering_lookup_sync_delay_seconds_bucket` | vLLM, recent builds | `OffloadingConnector` with a tiering spec | diagnostic | as above |
+| `vllm:kv_offload_tiering_lookup_sync_delay_seconds_sum` | vLLM, recent builds | as above | diagnostic | as above |
+| `vllm:kv_offload_tiering_lookup_sync_delay_seconds_count` | vLLM, recent builds | as above | diagnostic | as above |
+| `vllm:kv_offload_tiering_lookup_async_delay_seconds_bucket` | vLLM, recent builds | as above | diagnostic | as above |
+| `vllm:kv_offload_tiering_lookup_async_delay_seconds_sum` | vLLM, recent builds | as above | diagnostic | as above |
+| `vllm:kv_offload_tiering_lookup_async_delay_seconds_count` | vLLM, recent builds | as above | diagnostic | as above |
+| `vllm:kv_offload_load_size_bucket` | vLLM, recent builds | `OffloadingConnector` | diagnostic | no spread of the size of each load |
+| `vllm:kv_block_lifetime_seconds_bucket` | vLLM | `--kv-cache-metrics` | diagnostic | how long a cached prefix lives in the GPU cache, unseen |
+| `vllm:kv_block_lifetime_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_lifetime_seconds_count` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_idle_before_evict_seconds_bucket` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_idle_before_evict_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_idle_before_evict_seconds_count` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_reuse_gap_seconds_bucket` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_reuse_gap_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_reuse_gap_seconds_count` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:hisparse_` | vLLM, builds with a decode host cache; every series whose name starts so, checked and saved as one | the host cache on | diagnostic | decode host-cache traffic unseen |
 | `vllm:nixl_bytes_transferred_sum` | vLLM 0.11.1+ | `NixlConnector` | needed for TTFT on cached fleets | no P/D transfer volume, so no time per byte |
 | `vllm:nixl_bytes_transferred_count` | vLLM 0.11.1+ | `NixlConnector` | needed for TTFT on cached fleets | as above |
 | `vllm:nixl_xfer_time_seconds_bucket` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | no P/D transfer-time spread |
 | `vllm:nixl_post_time_seconds_sum` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | none |
 | `vllm:nixl_post_time_seconds_count` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | none |
 | `vllm:nixl_num_failed_transfers_total` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | failed transfers unseen |
+| `vllm:nixl_num_kv_expired_reqs_total` | vLLM, recent builds | `NixlConnector` | diagnostic | KV that expired before decode pulled it, unseen |
+| `vllm:nixl_num_failed_notifications_total` | vLLM, recent builds | `NixlConnector` | diagnostic | lost transfer notifications unseen |
 | `vllm:spec_decode_num_accepted_tokens_per_pos_total` | vLLM, v1 engine | speculative decoding (`--speculative-config`: MTP, EAGLE) | diagnostic | the TPOT spread assumes the acceptance at each draft position from the mean accepted tokens a step |
 | `vllm:spec_decode_num_drafts_total` | vLLM, v1 engine | speculative decoding | diagnostic | as above |
+| `vllm:spec_decode_num_draft_tokens_total` | vLLM, v1 engine | speculative decoding | diagnostic | the draft length from the engine arguments only |
 | `lmcache_mp_lookup_requested_tokens_total` | LMCache 0.5.6+ multi-process server (checked to 0.5.8rc3) | the server's `--prometheus-port` scraped | needed for TTFT on cached fleets | no LMCache hit rate |
 | `lmcache_mp_lookup_hit_tokens_total` | LMCache 0.5.6+ multi-process server | the server's `--prometheus-port` scraped | needed for TTFT on cached fleets | no LMCache hit rate |
 | `lmcache_mp_lookup_hit_l1_tokens_total` | LMCache 0.5.6+ multi-process server | the server's `--prometheus-port` scraped | needed for TTFT on cached fleets | no split of L1 (memory) and L2 (storage) hits |
@@ -277,6 +306,16 @@ exports `lmcache:*` on the engine's own `/metrics`.
 | `llm_d_epp_prefix_best_predicted_cached_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
 | `llm_d_epp_prefix_best_available_cached_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
 | `llm_d_epp_prefix_prompt_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
+| `llm_d_epp_prefix_best_predicted_cached_tokens_count` | llm-d router | as above | diagnostic | how much cache affinity the routing gives up under load, unseen |
+| `llm_d_epp_prefix_best_available_cached_tokens_count` | llm-d router | as above | diagnostic | as above |
+| `llm_d_epp_prefix_prompt_tokens_count` | llm-d router | as above | diagnostic | as above |
+| `llm_d_epp_prefix_predicted_cached_tokens_bucket` | llm-d router | as above | diagnostic | no spread of the predicted cached tokens |
+| `llm_d_epp_prefix_best_available_cached_tokens_bucket` | llm-d router | as above | diagnostic | no spread of the best cached tokens on offer |
+| `llm_d_epp_prefix_cache_affinity_filter_decisions_total` | llm-d router | a prefix-cache affinity filter | diagnostic | how often the filter kept or dropped cache affinity, unseen |
+| `llm_d_epp_prefix_indexer_size` | llm-d router | a prefix indexer; may read empty with other plugins | diagnostic | none |
+| `llm_d_epp_prefix_indexer_hit_ratio_bucket` | llm-d router | as above | diagnostic | none |
+| `llm_d_epp_prefix_indexer_hit_ratio_sum` | llm-d router | as above | diagnostic | none |
+| `llm_d_epp_prefix_indexer_hit_ratio_count` | llm-d router | as above | diagnostic | none |
 | `sglang:cached_tokens_total` | SGLang; `cache_source` label 0.5.9+ | `--enable-metrics` | required today | no prefix-cache hit rate |
 | `sglang:prompt_tokens_total` | SGLang | `--enable-metrics` | required today | no prefix-cache hit rate |
 | `sglang:prefill_effective_tokens_total` | SGLang 0.5.18+; `mode` = `device_hit`, `host_hit`, `storage_hit`, `input` | `--enable-metrics`; host and storage hits need `--enable-hierarchical-cache` | needed for TTFT on cached fleets | no hit rate per tier |
@@ -286,7 +325,9 @@ exports `lmcache:*` on the engine's own `/metrics`.
 
 The versions are where each name first appears in the upstream source; each
 was checked against vLLM v0.34.0, SGLang v0.5.23, LMCache v0.5.8rc3 and llm-d
-router v1.0.0.
+router v1.0.0. Rows that give no version ("recent builds", "llm-d router")
+were added later and are not tied to a first release: an engine or router
+that lacks one saves an empty answer.
 
 ## TTFT outside the engines
 
@@ -315,8 +356,15 @@ each one and prints whether it was present, like the series above.
 | `vllm:e2e_request_latency_seconds_count` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | as above |
 | `vllm:request_render_duration_seconds_sum` | vLLM 0.34.0+; `request_type` | on by default | diagnostic: TTFT outside the engines | chat-template and tokenization time read as queue or prefill |
 | `vllm:request_render_duration_seconds_count` | vLLM 0.34.0+ | on by default | diagnostic: TTFT outside the engines | as above |
-| `http_request_duration_seconds_sum` | vLLM's API server (prometheus-fastapi-instrumentator); `handler`, `method` | on by default; the export saves every handler, the capture checks `handler="/v1/chat/completions"` | diagnostic: TTFT outside the engines | the engine's HTTP front end, before the scheduler, unseen |
+| `http_request_duration_seconds_sum` | vLLM's API server (prometheus-fastapi-instrumentator); `handler`, `method` | on by default; every handler is saved and checked, by `handler` | diagnostic: TTFT outside the engines | the engine's HTTP front end, before the scheduler, unseen |
 | `http_request_duration_seconds_count` | vLLM's API server | as above | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_scheduler_e2e_duration_seconds_bucket` | llm-d router | on by default | diagnostic: TTFT outside the engines | no spread of the router's scheduling time |
+| `llm_d_epp_scheduler_e2e_duration_seconds_sum` | llm-d router | on by default | diagnostic: TTFT outside the engines | the router's scheduling time unseen |
+| `llm_d_epp_scheduler_e2e_duration_seconds_count` | llm-d router | on by default | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_response_processing_duration_seconds_sum` | llm-d router | on by default | diagnostic: TTFT outside the engines | the router's time on the return path unseen |
+| `llm_d_epp_response_processing_duration_seconds_count` | llm-d router | on by default | diagnostic: TTFT outside the engines | as above |
+| `llm_d_epp_flow_control_request_queue_duration_seconds_sum` | llm-d router; `outcome` | flow control on | diagnostic: TTFT outside the engines | the mean wait in the router's queue, read from its buckets only |
+| `llm_d_epp_flow_control_request_queue_duration_seconds_count` | llm-d router | flow control on | diagnostic: TTFT outside the engines | as above |
 
 ### Optional: tracing and access logs
 
@@ -324,6 +372,67 @@ Traces, and the gateway's (Envoy's) access-log fields such as upstream
 service time, are logs, not metrics: neither path collects them. If you
 keep them, a sample from the same window helps place the remainder these
 series leave; send it beside the export.
+
+## Prefill capacity, load and health
+
+Collect these to read prefill capacity at light load, without waiting for
+queues to form, and to see what the fleet did during the window: how
+requests ended, what the router saw, restarts. The planner does not price
+them yet. The capture checks each one and prints whether it was present,
+like the series above.
+
+The tiers:
+
+- **needed for prefill capacity**: the tokens each engine step takes, and
+  the spread of per-request prefill time.
+- **diagnostic**: explains an answer; not priced.
+
+DCGM series carry the exporter's namespace in `namespace`, and the GPU's
+Pod in `exported_namespace` and `exported_pod`. The capture selects them by
+`exported_namespace`; the manual export by `DCGM_SELECTOR`, which you can
+set to select by `exported_pod` instead.
+
+| Series | Source and version | Produced with | Tier | Without it |
+| --- | --- | --- | --- | --- |
+| `vllm:iteration_tokens_total_bucket` | vLLM, all supported | on by default | needed for prefill capacity | prefill capacity read only from minutes with a queue |
+| `vllm:iteration_tokens_total_sum` | vLLM, all supported | on by default | needed for prefill capacity | as above |
+| `vllm:iteration_tokens_total_count` | vLLM, all supported | on by default | needed for prefill capacity | as above |
+| `vllm:request_prefill_time_seconds_bucket` | vLLM, all supported | on by default | needed for prefill capacity | the mean prefill time only, not its spread |
+| `vllm:estimated_flops_per_gpu_total` | vLLM, recent builds | `--enable-mfu-metrics` | diagnostic | spare prefill compute not read |
+| `vllm:estimated_read_bytes_per_gpu_total` | vLLM, recent builds | `--enable-mfu-metrics` | diagnostic | as above |
+| `vllm:estimated_write_bytes_per_gpu_total` | vLLM, recent builds | `--enable-mfu-metrics` | diagnostic | as above |
+| `DCGM_FI_DEV_GPU_UTIL` | NVIDIA DCGM exporter | the exporter's Kubernetes Pod mapping | diagnostic | how busy the GPUs are at light load, unseen |
+| `DCGM_FI_PROF_SM_ACTIVE` | NVIDIA DCGM exporter | profiling fields enabled | diagnostic | as above |
+| `DCGM_FI_PROF_PIPE_TENSOR_ACTIVE` | NVIDIA DCGM exporter | profiling fields enabled | diagnostic | as above |
+| `DCGM_FI_PROF_DRAM_ACTIVE` | NVIDIA DCGM exporter | profiling fields enabled | diagnostic | as above |
+| `DCGM_FI_DEV_POWER_USAGE` | NVIDIA DCGM exporter | on by default | diagnostic | as above |
+| `DCGM_FI_DEV_SM_CLOCK` | NVIDIA DCGM exporter | on by default | diagnostic | as above |
+| `vllm:request_time_per_output_token_seconds_sum` | vLLM, all supported | on by default | diagnostic | the engine's mean per-token latency read from its buckets only |
+| `vllm:request_time_per_output_token_seconds_count` | vLLM, all supported | on by default | diagnostic | as above |
+| `vllm:request_decode_time_seconds_bucket` | vLLM, all supported | on by default | diagnostic | no decode time per request |
+| `vllm:request_decode_time_seconds_sum` | vLLM, all supported | on by default | diagnostic | as above |
+| `vllm:request_decode_time_seconds_count` | vLLM, all supported | on by default | diagnostic | as above |
+| `vllm:request_success_total` | vLLM, all supported; `finished_reason` | on by default | diagnostic | how requests ended, unseen |
+| `llm_d_epp_info` | llm-d router | on by default | diagnostic | the router build that ran, unrecorded |
+| `llm_d_epp_ready_endpoints` | llm-d router | on by default | diagnostic | the pods the router could pick, unseen |
+| `llm_d_epp_inflight_requests` | llm-d router | on by default | diagnostic | the load the router saw, unseen |
+| `llm_d_epp_inflight_tokens` | llm-d router | on by default | diagnostic | as above |
+| `llm_d_epp_request_total` | llm-d router | on by default | diagnostic | requests and errors at the router, unseen |
+| `llm_d_epp_request_error_total` | llm-d router | on by default | diagnostic | as above |
+| `llm_d_epp_request_input_tokens_bucket` | llm-d router | on by default | diagnostic | request sizes at the router, unseen |
+| `llm_d_epp_request_input_tokens_sum` | llm-d router | on by default | diagnostic | as above |
+| `llm_d_epp_request_input_tokens_count` | llm-d router | on by default | diagnostic | as above |
+| `llm_d_epp_request_output_tokens_bucket` | llm-d router | on by default | diagnostic | as above |
+| `llm_d_epp_request_output_tokens_sum` | llm-d router | on by default | diagnostic | as above |
+| `llm_d_epp_request_output_tokens_count` | llm-d router | on by default | diagnostic | as above |
+| `llm_d_epp_flow_control_dispatch_cycle_duration_seconds_bucket` | llm-d router | flow control on | diagnostic | router admission detail unseen |
+| `llm_d_epp_flow_control_dispatch_cycle_duration_seconds_sum` | llm-d router | flow control on | diagnostic | as above |
+| `llm_d_epp_flow_control_dispatch_cycle_duration_seconds_count` | llm-d router | flow control on | diagnostic | as above |
+| `llm_d_epp_flow_control_detector_saturation` | llm-d router | flow control on | diagnostic | as above |
+| `llm_d_epp_flow_control_capacity_utilization_requests` | llm-d router | flow control on | diagnostic | as above |
+| `llm_d_epp_flow_control_capacity_utilization_bytes` | llm-d router | flow control on | diagnostic | as above |
+| `kube_pod_container_status_restarts_total` | kube-state-metrics; `container` | on by default | diagnostic | restarts in the window unseen |
+| `kube_pod_container_status_last_terminated_reason` | kube-state-metrics; `reason` | on by default | diagnostic | out-of-memory kills unseen |
 
 ## Counts
 
