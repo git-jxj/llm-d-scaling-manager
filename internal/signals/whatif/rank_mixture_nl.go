@@ -119,21 +119,21 @@ type RankMixtureNLFit struct {
 	FitMean, FitP90 float64
 }
 
-// solveSmall is the least-squares solution of X c = y over the columns in
+// solveSmall is the least-squares solution of rows c = y over the columns in
 // cols (normal equations, Gaussian elimination); ok is false where they are
 // singular.
-func solveSmall(X [][]float64, y []float64, cols []int) ([]float64, bool) {
+func solveSmall(rows [][]float64, y []float64, cols []int) ([]float64, bool) {
 	k := len(cols)
 	a := make([][]float64, k)
 	for i := range a {
 		a[i] = make([]float64, k+1)
 	}
-	for r := range X {
+	for r := range rows {
 		for i, ci := range cols {
 			for j, cj := range cols {
-				a[i][j] += X[r][ci] * X[r][cj]
+				a[i][j] += rows[r][ci] * rows[r][cj]
 			}
-			a[i][k] += X[r][ci] * y[r]
+			a[i][k] += rows[r][ci] * y[r]
 		}
 	}
 	for p := range k {
@@ -164,33 +164,33 @@ func solveSmall(X [][]float64, y []float64, cols []int) ([]float64, bool) {
 	return out, true
 }
 
-// nnls is the non-negative least-squares solution of X c = y for a few
+// nnls is the non-negative least-squares solution of rows c = y for a few
 // columns, by trying every subset of free columns (the rest held at 0) and
 // keeping the feasible one of least squared error. The columns are scaled to
 // their mean magnitude first. ok is false with no row.
-func nnls(X [][]float64, y []float64) ([]float64, bool) {
-	if len(X) == 0 || len(X) != len(y) {
+func nnls(rows [][]float64, y []float64) ([]float64, bool) {
+	if len(rows) == 0 || len(rows) != len(y) {
 		return nil, false
 	}
-	n := len(X[0])
+	n := len(rows[0])
 	scale := make([]float64, n)
-	for _, row := range X {
+	for _, row := range rows {
 		for j, v := range row {
 			scale[j] += math.Abs(v)
 		}
 	}
-	Xs := make([][]float64, len(X))
-	for i, row := range X {
-		Xs[i] = make([]float64, n)
+	scaled := make([][]float64, len(rows))
+	for i, row := range rows {
+		scaled[i] = make([]float64, n)
 		for j, v := range row {
 			if scale[j] > 0 {
-				Xs[i][j] = v / (scale[j] / float64(len(X)))
+				scaled[i][j] = v / (scale[j] / float64(len(rows)))
 			}
 		}
 	}
 	sse := func(c []float64) float64 {
 		var e float64
-		for i, row := range Xs {
+		for i, row := range scaled {
 			p := 0.0
 			for j, v := range row {
 				p += v * c[j]
@@ -208,7 +208,7 @@ func nnls(X [][]float64, y []float64) ([]float64, bool) {
 				cols = append(cols, j)
 			}
 		}
-		sol, ok := solveSmall(Xs, y, cols)
+		sol, ok := solveSmall(scaled, y, cols)
 		if !ok || slices.ContainsFunc(sol, func(v float64) bool { return v < 0 || !Finite(v) }) {
 			continue
 		}
@@ -222,7 +222,7 @@ func nnls(X [][]float64, y []float64) ([]float64, bool) {
 	}
 	for j := range best {
 		if scale[j] > 0 {
-			best[j] /= scale[j] / float64(len(X))
+			best[j] /= scale[j] / float64(len(rows))
 		}
 	}
 	return best, true
