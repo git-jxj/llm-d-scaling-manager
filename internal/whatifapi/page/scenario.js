@@ -1161,7 +1161,22 @@ function execBusiest(load) {
     small: load.peak != null ? `peak ${roundRate(load.peak)} r/s` : ""};
 }
 
-// execView is the panel: {lines: [{label, text, badge, small, actions}],
+// prefillAtLeast is prefill's limit as the page shows it, {value, lb,
+// raised}: the plan's knee, but a lower bound under the busiest load the
+// fleet carried (load, the report's) is raised to that load. The fleet
+// served it, so prefill's limit is at least it, as the planner floors a
+// lower-bound V_P at what the pods served (prefill.floorAtServed); the knee
+// from V_P can sit under it because V_P is a sustained per-pod run, priced
+// at the mix's prompt.
+function prefillAtLeast(pk, load) {
+  const v = figValue(pk);
+  const lb = !!pk && (pk.flags || []).some(x => x === "VPLowerBound" || x === "KneeAtServedWork");
+  const c = load && load.rate ? load.rate.value : null;
+  if (v != null && lb && c != null && c > v) return {value: c, lb, raised: true};
+  return {value: v, lb, raised: false};
+}
+
+// execView is the panel: {lines: [{label, text, badge, small, actions, more}],
 // slo, trust}. It leads with what is known, each role's capacity against one
 // busiest load, and never heads a line "not known": a limit seen only as a
 // lower bound reads "at least". The headroom is read off the plan on screen,
@@ -1188,16 +1203,19 @@ function execView(o) {
   const dl = L && L.decode ? figValue(L.decode) : null;
   const ref = refusalView(plan);
   const pk = m && m.prefillKnee ? m.prefillKnee : null;
-  const pkv = figValue(pk);
-  const pkLB = !!pk && (pk.flags || []).some(x => x === "VPLowerBound" || x === "KneeAtServedWork");
+  const ps = prefillAtLeast(pk, report && report.load);
+  const pkv = ps.value, pkLB = ps.lb;
   const shape = report && (report.shapes || [])[0];
 
   // The verdict: the constraint, in plain words, with the right size folded
   // in where it was judged.
   if (pkv != null && dl != null) {
+    // A prefill limit seen only as a lower bound is never called the
+    // constraint: nothing measured says it binds first.
     const prefillFirst = pkv < dl;
-    let text = prefillFirst ? (pkLB ? "Prefill is the constraint. It carried the busiest load without queuing; its true limit is higher than this day shows." :
-      "Prefill is the constraint: it reaches its limit before decode does.") : "Decode is the constraint: it reaches its limit before prefill does.";
+    const room = !seen ? "" : dl >= seen ? ` Decode has ${execTimes1(dl / seen)} headroom.` : ` Decode carries ${execTimes1(dl / seen)} the busiest load.`;
+    let text = pkLB ? "Prefill's limit is not measured yet: the pods carried the busiest load without queuing, so it is at least that." + room :
+      prefillFirst ? "Prefill is the constraint: it reaches its limit before decode does." : "Decode is the constraint: it reaches its limit before prefill does.";
     const v = shape && shape.verdict;
     if (v && v.verdict && v.verdict !== "NOT JUDGED") text += " " + execVerdict(f, v);
     else if (v && v.scope === "decode only") text += " " + execVerdict(f, v);
@@ -1212,11 +1230,12 @@ function execView(o) {
       text: `${nd} replicas carry ${roundRate(dl)} r/s at the TPOT target` + (seen ? `, ${execTimes1(dl / seen)} the busiest load.` : ".")});
   }
   if (f.prefill && (pkv != null || ref)) {
-    const share = pkv != null && seen ? `, ${execTimes1(pkv / seen)} the busiest load` : "";
-    const text = ref && pkv != null && pkLB ? `Speed not yet observed: at least ${roundRate(pkv)} r/s (a lower bound${share}). The pods never queued` +
-        (ref.vp != null ? `, so each handles at least ${Math.round(ref.vp).toLocaleString("en-US")} tokens/s` : "") + "; their limit is not measured." :
+    const share = pkv != null && seen ? `${execTimes1(pkv / seen)} the busiest load` : "";
+    const why = ps.raised ? [share, "carried it without queuing"].filter(x => x).join("; ") : ["a lower bound", share].filter(x => x).join(", ");
+    const text = ref && pkv != null && pkLB ? `Not measured yet: at least ${roundRate(pkv)} r/s (${why}).` +
+        (ref.vp != null ? ` Each pod computed at least ${Math.round(ref.vp).toLocaleString("en-US")} tokens/s.` : "") :
       ref ? "Speed not yet observed: the source learned no prefill speed per pod." :
-      `${np} replicas carry ${pkLB ? "at least " : ""}${roundRate(pkv)} r/s before latency takes off${share}.`;
+      `${np} replicas carry ${pkLB ? "at least " : ""}${roundRate(pkv)} r/s before latency takes off${share ? ", " + share : ""}.`;
     const actions = ref ? (ref.vp != null ? [{act: "usevp", vp: ref.vp, label: `Use ${Math.round(ref.vp).toLocaleString("en-US")} tokens/s as the limit (conservative)`}] : [])
       .concat([{act: "busier", label: "Load a busier window"}]) : [];
     lines.push({label: "Prefill", badge: "", text, actions});
@@ -1241,9 +1260,15 @@ function execView(o) {
       }
     }
   }
-  if (meas || pred) {
-    lines.push({label: "TTFT / TPOT", badge: meas ? EXEC_BADGES.measured : "",
-      text: [meas ? meas.text : "", pred].filter(x => x).join(" "), small: meas ? meas.note : ""});
+  // One line on the panel: what users saw at the SLO's statistics, and the
+  // target sentence; the prediction and the bucket ranges in the row's drawer.
+  const target = pred.includes(" target is below this model's floor") ? pred.slice(pred.indexOf(" The ") + 1) : "";
+  const predOnly = target ? pred.slice(0, pred.indexOf(" The ")) : pred;
+  const short = meas ? execSawShort(inputs.measured, k) : "";
+  if (short || pred) {
+    lines.push({label: "TTFT / TPOT", badge: short ? EXEC_BADGES.measured : "",
+      text: [short, short ? target : pred].filter(x => x).join(" "),
+      more: short ? [meas.text, predOnly, meas.note].filter(x => x) : []});
   }
 
   // Growth: the fleet the load grown by a quarter and by a half needs. The
@@ -1268,16 +1293,31 @@ function execView(o) {
     const lean = r == null ? "" : r < 0.97 ? `, reads ${Math.round((1 - r) * 100)}% low` : r > 1.03 ? `, reads ${Math.round((r - 1) * 100)}% high` : "";
     const fleet = held.prefill != null ? `${held.prefill} prefill + ${held.decode} decode` : "the fleet it ran";
     const range = held.rateFrom != null ? ` Tested range: ${fleet} at ${roundRate(held.rateFrom)}-${roundRate(held.rateTo)} r/s; outside that is an extrapolation.` : "";
-    const other = k.ttftStat !== st ? ` TTFT ${k.ttftStat} is scored in Check the planner.` : "";
+    // The server's quick check is not the page's: its folds refit at 50%
+    // and 75% of the window and score their own steps. Each is named.
+    const other = k.ttftStat !== st ? ` The full check, at TTFT ${k.ttftStat}, is in Check the planner.` : "";
     lines.push({label: "Accuracy", badge: EXEC_BADGES.checked,
-      text: `On held-out steps of your traffic: TTFT ${st} within 20% in ${n} of ${held.steps} five-minute steps${lean}.${other}${range}`});
-    trust = `Checked on your traffic: TTFT ${st} ${n}/${held.steps} within 20%`;
+      text: `Quick check on held-out steps of your traffic: TTFT ${st} within 20% in ${n} of ${held.steps} five-minute steps${lean}.${other}${range}`});
+    trust = `Quick check on your traffic: TTFT ${st} ${n}/${held.steps} within 20%`;
   } else if (o.btPending) {
     lines.push({label: "Accuracy", text: "Checking the planner on your held-out hours...", badge: EXEC_BADGES.checked});
   } else if (inputs.selfCheck && inputs.selfCheck.line) {
     lines.push({label: "Accuracy", text: inputs.selfCheck.line, badge: EXEC_BADGES.checked});
   }
   return {lines, slo: execSLO(k), trust, note: "Rows are estimates unless marked."};
+}
+
+// execSawShort is what users saw in one sentence, at the SLO's statistics:
+// "Users saw TTFT p90 5.03 s, TPOT mean 16.5 ms (busiest hour)." A figure
+// the histogram cannot place reads as its bucket; "" with neither.
+function execSawShort(mh, k) {
+  const one = (list, st) => {
+    const s = (list || []).find(x => x.statistic === st);
+    return !s ? null : s.value != null ? execTimes(s.value) : s.bucket ? `${execTimes(s.bucket.lo)}-${execTimes(s.bucket.hi)}` : null;
+  };
+  const t = one(mh.ttft, k.ttftStat), p = one(mh.tpot, k.tpotStat);
+  const parts = [t ? `TTFT ${k.ttftStat} ${t}` : "", p ? `TPOT ${k.tpotStat} ${p}` : ""].filter(x => x);
+  return parts.length ? `Users saw ${parts.join(", ")} (busiest hour).` : "";
 }
 
 // execTimes1 is a ratio to the busiest load: two decimals under 1, so 0.98

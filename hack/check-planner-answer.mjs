@@ -69,22 +69,31 @@ try {
     v.lines.map(l => l.label).join());
   const line = name => v.lines.find(l => l.label === name) || {text: ""};
   check("decode leads with what it carries", /^6 replicas carry 40 r\/s at the TPOT target, [0-9.]+x the busiest load\.$/.test(line("Decode").text), line("Decode").text);
-  check("prefill says at least, never not known", line("Prefill").text.startsWith("Speed not yet observed: at least 20 r/s (a lower bound") && !/not known/i.test(line("Prefill").text), line("Prefill").text);
-  check("a ratio under 1 keeps two decimals", /, 0\.\d\dx the busiest load/.test(line("Prefill").text), line("Prefill").text);
+  // The busiest load (41.7 r/s) was carried without queuing: prefill's
+  // lower bound (20 r/s) is never shown under it.
+  check("prefill is never shown under the load it carried", line("Prefill").text.startsWith("Not measured yet: at least 41.7 r/s (1.0x the busiest load; carried it without queuing). Each pod computed at least 18,000 tokens/s.") &&
+    !/not known/i.test(line("Prefill").text), line("Prefill").text);
+  const S = (pk, rate) => JSON.stringify(ctx.prefillAtLeast(pk, {rate: {value: rate}}));
+  check("a lower bound under the load is raised to it", S({value: 20, flags: ["VPLowerBound"]}, 41.7) === JSON.stringify({value: 41.7, lb: true, raised: true}));
+  check("a lower bound over the load stands", S({value: 50, flags: ["VPLowerBound"]}, 41.7) === JSON.stringify({value: 50, lb: true, raised: false}));
+  check("a measured limit is never raised", S({value: 20}, 41.7) === JSON.stringify({value: 20, lb: false, raised: false}));
+  check("a ratio under 1 keeps two decimals", ctx.execTimes1(0.98) === "0.98x" && ctx.execTimes1(1.6) === "1.6x");
   check("prefill's line carries the page actions", (line("Prefill").actions || []).map(a => a.act).join() === "usevp,busier" && line("Prefill").actions[0].vp === 18000);
-  check("the verdict names the constraint plainly", line("Verdict").text.startsWith("Prefill is the constraint. It carried the busiest load without queuing; its true limit is higher than this day shows."), line("Verdict").text);
+  check("a lower-bound prefill is never called the constraint", line("Verdict").text.startsWith("Prefill's limit is not measured yet: the pods carried the busiest load without queuing, so it is at least that. Decode carries 0.96x the busiest load.") &&
+    !/constraint/.test(line("Verdict").text), line("Verdict").text);
   const tt = line("TTFT / TPOT");
-  check("users saw comes first, measured", tt.text.startsWith("Users saw (measured, busiest hour 13:00-14:00 UTC, 24 r/s): TTFT mean 3.6 s, p90 3 s-5 s (one histogram bucket); TPOT mean 16 ms, p90 10 ms-20 ms (one histogram bucket), p95 10 ms-20 ms (one histogram bucket)."), tt.text);
+  check("one line: users saw, at the SLO's statistics, then the target", tt.text === "Users saw TTFT p90 3 s-5 s, TPOT mean 16 ms (busiest hour). The 1 s target is below this model's floor (4.08 s) at any load: set a realistic target under SLO.", tt.text);
+  const more = (tt.more || []).join(" | ");
+  check("the drawer holds the hour, its buckets and the prediction", more.includes("Users saw (measured, busiest hour 13:00-14:00 UTC, 24 r/s): TTFT mean 3.6 s, p90 3 s-5 s (one histogram bucket)") && more.includes("Predicted at "), more);
   check("the measured row is badged measured", tt.badge === EXEC_BADGES.measured);
-  check("a percentile not given says why, once", tt.small.includes("TTFT p95: above the top bucket") && tt.small.includes("TPOT p90/p95: the router's 10 ms-20 ms bucket cannot resolve them"), tt.small);
-  check("the prediction past the tested range says extrapolated", /Predicted at [0-9.]+ r\/s \(above the tested 20 r\/s, extrapolated\): TTFT p90 about [0-9.]+ s; at the top of the tested range, 20 r\/s, about [0-9.]+ s\./.test(tt.text), tt.text);
-  check("a target under the floor is said neutrally", tt.text.endsWith("The 1 s target is below this model's floor (4.08 s) at any load: set a realistic target under SLO."), tt.text);
+  check("a percentile not given says why, once", more.includes("TTFT p95: above the top bucket") && more.includes("TPOT p90/p95: the router's 10 ms-20 ms bucket cannot resolve them"), more);
+  check("the prediction past the tested range says extrapolated", /Predicted at [0-9.]+ r\/s \(above the tested 20 r\/s, extrapolated\): TTFT p90 about [0-9.]+ s; at the top of the tested range, 20 r\/s, about [0-9.]+ s\./.test(more), more);
   check("no line heads not known or not judged", v.lines.every(l => !/^(not known|not judged)/i.test(l.text)), v.lines.map(l => l.text.slice(0, 30)).join(" | "));
   check("the fleet today is measured", v.lines[0].badge === EXEC_BADGES.measured);
   check("estimates carry no badge, and a note says so", v.lines.filter(l => !l.badge).map(l => l.label).join() === "Verdict,Decode,Prefill,+25% / +50% traffic" && v.note === "Rows are estimates unless marked.",
     v.lines.map(l => l.label + ":" + l.badge).join(","));
   check("the accuracy is checked on your data", line("Accuracy").badge === EXEC_BADGES.checked);
-  check("the held-out mean says where the SLO's percentile is scored", line("Accuracy").text.includes("TTFT p90 is scored in Check the planner"), line("Accuracy").text);
+  check("the quick check says where the SLO's percentile is scored", line("Accuracy").text.includes("The full check, at TTFT p90, is in Check the planner."), line("Accuracy").text);
   check("the SLO used says a default is the page's", v.slo.includes("the page's default: set yours"), v.slo);
   check("growth not sized yet says pending", /^Pending/.test(line("+25% / +50% traffic").text));
   const grown = execView({inputs, plan: refusedPlan, report, k, growth: [{x: 1.25, rate: 25, need: "6 prefill + 12 decode"}, {x: 1.5, rate: 30, need: "at least 14 decode (prefill not sized)"}]});
@@ -98,8 +107,9 @@ try {
   check("the accuracy gives the range tested", /Tested range: .* r\/s; outside that is an extrapolation\./.test(acc.text), acc.text);
   check("the trust chip quotes the check, its statistic named", /^Checked on your traffic: TTFT p90 \d+\/\d+ within 20%$/.test(checked.trust), checked.trust);
   // Without the page's check, the server's held-out mean.
-  check("the held-out check at load is the accuracy", line("Accuracy").text.startsWith("On held-out steps of your traffic: TTFT mean within 20% in 130 of 144"), line("Accuracy").text);
-  check("and the trust chip, naming its statistic", v.trust === "Checked on your traffic: TTFT mean 130/144 within 20%", v.trust);
+  // The server's quick check is named apart from the page's full check.
+  check("the quick check at load is the accuracy, named as such", line("Accuracy").text.startsWith("Quick check on held-out steps of your traffic: TTFT mean within 20% in 130 of 144"), line("Accuracy").text);
+  check("and the trust chip, naming the quick check and its statistic", v.trust === "Quick check on your traffic: TTFT mean 130/144 within 20%", v.trust);
   const held = v;
   const pending = execView({inputs, plan: refusedPlan, k, reportPending: true, btPending: true});
   check("a panel still asking says so", pending.lines.some(l => /^Checking/.test(l.text)));

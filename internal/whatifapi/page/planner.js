@@ -1034,9 +1034,30 @@ async function plan() {
   }
 }
 
+// quickCheckNote says how the answer panel's quick check differs from this
+// one, where the server ran it: "" otherwise.
+function quickCheckNote() {
+  const h = state.inputs && state.inputs.ttftModel && state.inputs.ttftModel.heldOut;
+  if (!h || !(h.steps > 0)) return "";
+  return `Before this check ran, the answer panel quoted the server's quick check: TTFT ${h.statistic || "mean"} within 20% in ${h.within || 0} of ${h.steps} steps. ` +
+    "It is a different check: two held-out folds, refit at 50% and 75% of the window, each scoring its own steps; this one fits once on the split above.";
+}
+
+// prefillShown is prefill's limit as the page shows it (prefillAtLeast): a
+// lower bound under the busiest load the fleet carried reads as that load.
+function prefillShown(m) {
+  return prefillAtLeast(m && m.prefillKnee, state.exec && state.exec.report && state.exec.report.load);
+}
+
+// prefillWords is that limit in words: "at least X (lower bound)", or
+// "at least X (carried without queuing)" where raised to the load carried.
+function prefillWords(s) {
+  return `at least ${fmtRate(s.value)} (${s.raised ? "carried without queuing" : "lower bound"})`;
+}
+
 // lowerKnee is the lower of the plan's knees, or null.
 function lowerKnee(m) {
-  const ks = [val(m.prefillKnee), val(m.decodeKnee)].filter(v => v != null);
+  const ks = [prefillShown(m).value, val(m.decodeKnee)].filter(v => v != null);
   return ks.length ? Math.min(...ks) : null;
 }
 
@@ -1330,8 +1351,8 @@ function renderLimits() {
   ].filter(r => r.fig);
   el("limits").innerHTML = rows.map(r => {
     // Prefill seen only as a lower bound says so, as its bar does.
-    const pk = r.name === "Prefill" && val(r.fig) == null ? val(p.ttft.markers.prefillKnee) : null;
-    const parts = [`<b>${r.name}</b> (${r.what}) <b>${pk != null ? `at least ${esc(fmtRate(pk))} (lower bound)` : figText(r.fig, fmtRate)}</b>`];
+    const ps = prefillShown(p.ttft.markers);
+    const parts = [`<b>${r.name}</b> (${r.what}) <b>${esc(barWords(r, ps))}</b>`];
     if (r.binds) parts.push('<span class="binds">binds</span>');
     if (r.fig.boundBy) parts.push("bound by " + esc(plainVerdict(r.fig.boundBy.join(", then ")).replace("operating-point cap", "the safe load")));
     if (r.fig.refused) parts.push(esc(plainReasonWord(r.fig.refused)));
@@ -1378,19 +1399,12 @@ function drawBars(rows, fleet, rate) {
     if (v != null && opCap != null && v > opCap) {
       s += `<rect class="${r.cls}" x="${L}" y="${y + 5}" width="${Math.max(2, X(opCap) - L).toFixed(1)}" height="10" rx="4"/>` +
         `<rect class="${r.cls} beyondcap" x="${X(opCap).toFixed(1)}" y="${y + 5}" width="${Math.max(0, X(v) - X(opCap)).toFixed(1)}" height="10" rx="4"/>`;
-      s += `<text class="lblp" x="${labelX}" y="${y + 14}">${fmtRate(v)} (past the cap ${fmtRate(opCap)})</text>`;
+      s += `<text class="lblp" x="${labelX}" y="${y + 14}">${esc(barWords(r))}</text>`;
     } else if (v != null) {
       s += `<rect class="${r.cls}" x="${L}" y="${y + 5}" width="${Math.max(2, X(v) - L).toFixed(1)}" height="10" rx="4"/>`;
       s += `<text class="lblp" x="${labelX}" y="${y + 14}">${fmtRate(v)}${capped ? " (without headroom " + fmtRate(val(fleet.withoutHeadroom)) + ")" : ""}</text>`;
     } else {
-      // A refused bar says what is known: prefill's lower bound, or the
-      // TTFT target under the floor.
-      const pkf = state.plan && state.plan.ttft.markers.prefillKnee, pk = val(pkf);
-      const fl = state.plan && val(state.plan.ttft.line.floor), tg = state.plan && state.plan.ttft.line.target;
-      const words = r.name === "Prefill" && pk != null ? `at least ${fmtRate(pk)} (lower bound)` :
-        r.name === "Fleet" && fl != null && fl > tg ? "the TTFT target is below the floor at any rate" :
-        r.name === "Fleet" && pk != null ? `prefill's limit not measured; at least ${fmtRate(pk)}` : (r.fig.refused ? plainReasonWord(r.fig.refused) : "");
-      s += `<text class="lbl" x="${L + 6}" y="${y + 14}">${esc(words)}</text>`;
+      s += `<text class="lbl" x="${L + 6}" y="${y + 14}">${esc(barWords(r))}</text>`;
     }
     if (capped) {
       const u = X(val(fleet.withoutHeadroom));
@@ -1406,7 +1420,26 @@ function drawBars(rows, fleet, rate) {
   const svg = el("bars");
   svg.setAttribute("viewBox", `0 -10 ${W} ${H + 10}`);
   svg.innerHTML = s;
-  el("barsdesc").textContent = all.map(r => `${r.name} limit ${figPlain(r.fig, fmtRate)}`).join("; ") + `; you chose ${fmtRate(rate)}.`;
+  // The screen-reader text says what the bars say.
+  el("barsdesc").textContent = all.map(r => `${r.name} limit ${barWords(r)}`).join("; ") + `; you chose ${fmtRate(rate)}.`;
+}
+
+// barWords is what a limit's bar says: its figure (with the rate chosen
+// where the limit passes the safe load), else what is known: prefill's
+// lower bound, or the TTFT target under the floor.
+function barWords(r, ps) {
+  const p = state.plan, v = val(r.fig);
+  const opCap = p ? val(p.ttft.markers.operatingCap) : null;
+  if (v != null) {
+    if (opCap == null || v <= opCap) return fmtRate(v);
+    const chosen = p.limits.chosen.rate;
+    return `${fmtRate(v)} (` + (Math.abs(chosen - opCap) < 1e-6 ? `your chosen rate: ${fmtRate(opCap)})` : `past the safe load ${fmtRate(opCap)})`);
+  }
+  const pk = ps || prefillShown(p && p.ttft.markers);
+  const fl = p && val(p.ttft.line.floor), tg = p && p.ttft.line.target;
+  return r.name === "Prefill" && pk.value != null ? prefillWords(pk) :
+    r.name === "Fleet" && fl != null && fl > tg ? "the TTFT target is below the floor at any rate" :
+    r.name === "Fleet" && pk.value != null ? `prefill's limit not measured; ${prefillWords(pk)}` : figPlain(r.fig, fmtRate);
 }
 
 // ticks are about n round values from 0 to max.
@@ -1512,8 +1545,8 @@ function renderTTFT() {
   if (A != null) dots.push({x: t.line.atRate.rate, y: A, cls: "c-mix", label: `${fmtSec(A)} at ${fmtRate(t.line.atRate.rate)}`, below: true, side: aSide});
   if (B != null) dots.push({x: B, y: t.line.target, cls: "c-mix", filled: true, label: `${fmtRate(B)} meets it${aboveCap(p, B)}`, side: aSide === "left" ? "right" : "left"});
   const markers = [];
-  const pkLB = kneeLowerBound(m.prefillKnee);
-  if (val(m.prefillKnee) != null) markers.push({x: val(m.prefillKnee), label: pkLB ? "prefill limit at least" : "prefill limit", after: pkLB ? " r/s (lower bound)" : ""});
+  const pkLB = kneeLowerBound(m.prefillKnee), ps = prefillShown(m);
+  if (ps.value != null) markers.push({x: ps.value, label: pkLB ? "prefill limit at least" : "prefill limit", after: pkLB ? (ps.raised ? " r/s (carried)" : " r/s (lower bound)") : ""});
   if (val(m.decodeKnee) != null) markers.push({x: val(m.decodeKnee), label: "decode limit"});
   if (val(m.operatingCap) != null) markers.push({x: val(m.operatingCap), label: "safe load"});
   let onset = null;
@@ -1531,7 +1564,7 @@ function renderTTFT() {
     scored && scored.chip.startsWith(`TTFT ${t.statistic} `) ? `${t.model.label}: held-out ${scored.chip} (Check the planner).` :
     ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) + (t.statistic !== "mean" ? ` TTFT ${t.statistic} is scored in Check the planner.` : "");
   chart(el("ttftchart"), {W: 640, H: 340, xmax, ymax, series, target: t.line.target, belowFloor, floor: belowFloor ? floor : null,
-    rate, dots, markers, knee, kneeLB: pkLB && knee === val(m.prefillKnee), onset, pinTarget, clip: "clip-ttft", ytitle: `TTFT ${t.statistic}`});
+    rate, dots, markers, knee, kneeLB: pkLB && knee === ps.value, onset, pinTarget, clip: "clip-ttft", ytitle: `TTFT ${t.statistic}`});
   el("ttftlegend").innerHTML = legend(series, onset != null);
   el("ttftpoints").innerHTML =
     `<div>Open circle, the TTFT at your rate: <b>${figText(t.line.atRate.figure, fmtSec)}${dagger(t.line.atRate.figure)}</b> ${flagChips(t.line.atRate.figure)}</div>` +
@@ -1575,7 +1608,7 @@ function renderTPOT() {
   if (cap != null) markers.push({x: cap, label: "safe load"});
   el("tpottitle").textContent = `TPOT ${t.statistic} against the request rate`;
   chart(el("tpotchart"), {W: 460, H: 340, xmax, ymax, series, target: t.target, belowFloor, floor: belowFloor ? floor : null,
-    rate, dots, markers, knee: lk, kneeLB: kneeLowerBound(p.ttft.markers.prefillKnee) && lk === val(p.ttft.markers.prefillKnee),
+    rate, dots, markers, knee: lk, kneeLB: kneeLowerBound(p.ttft.markers.prefillKnee) && lk === prefillShown(p.ttft.markers).value,
     pinTarget, clip: "clip-tpot", ytitle: `TPOT ${t.statistic}`});
   el("tpotlegend").innerHTML = legend(series, false);
   const u = t.atTarget.rate.uncapped;
@@ -2236,6 +2269,13 @@ async function startExecutive() {
   }
   if (!mine()) return;
   x.reportPending = false;
+  // Prefill's bound may rise to the load the report judged at: the bars and
+  // the charts show it as the panel does.
+  if (x.report) {
+    renderLimits();
+    renderTTFT();
+    renderTPOT();
+  }
   renderExec();
   if (x.btPending) {
     try {
@@ -2278,6 +2318,14 @@ function renderExec() {
     dl.appendChild(dt);
     const dd = textNode("dd", l.text);
     if (l.small) dd.appendChild(textNode("span", " " + l.small, "hint"));
+    // A row's detail sits in its drawer, closed.
+    if (l.more && l.more.length) {
+      const d = document.createElement("details");
+      d.className = "execmore";
+      d.appendChild(textNode("summary", "Details"));
+      for (const m of l.more) d.appendChild(textNode("div", m, "hint"));
+      dd.appendChild(d);
+    }
     // A line's actions are page actions, never a CLI flag.
     for (const a of l.actions || []) {
       const b = textNode("button", a.label, "execact");
@@ -2600,7 +2648,7 @@ function renderBacktest() {
   const steps = () => { el("btsteps").innerHTML = btStepTable(bt, el("btfailing").checked); };
   el("btfailing").onchange = steps;
   steps();
-  el("btnotes").innerHTML = bt.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(bt.banner)}</li>`;
+  el("btnotes").innerHTML = bt.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(bt.banner)}</li>` + esc(quickCheckNote()).replace(/^(.+)$/, "<li>$1</li>");
   exportsRow(el("btexports"), "check", [["CSV", "text/csv", () => btStepsCSV(bt)], ["JSON", "application/json", () => JSON.stringify(bt, null, 2) + "\n"]]);
   // The panel, the header chip and the TTFT caption quote this check from now on.
   renderExec();
