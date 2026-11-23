@@ -131,7 +131,84 @@ changed, and there is no compatibility path. Reinstall.
 
 ### Upgrading from v0.12.2
 
-[Upgrade](#upgrade) as for any release. Nothing to change first.
+[Upgrade](#upgrade) as for any release, then read each part below that
+applies to you. The controller's RBAC and the alerts are unchanged, and
+`make workload-patch` need not be run again.
+
+#### Decode replica counts can move
+
+Three changes reprice decode capacity, with no change in load. No setting
+turns them off.
+
+- **KV above the context.** A decode request is priced at the KV it is
+  measured to hold, even where that is more than its prompt and output. A
+  model that keeps extra KV per request, such as one with a sparse-attention
+  indexer or a speculative draft model, may get more decode replicas. A
+  request is never priced at less KV than v0.12.2 priced it from the same
+  reading. SGLang is unchanged. Look for `residentKVBound=above-context` on
+  the `derived-mu` log line at `--v=3`.
+- **The ITL intercept from the low-load floor.** Where a variant's replicas
+  never spread far enough in KV fill for a full ITL fit (the usual case on a
+  P/D decode fleet), the intercept B is read from the latency they showed at
+  low load, instead of a 6 ms default. Where that B is above 6 ms, decode
+  capacity per replica usually goes up and the fleet may ask for fewer decode
+  replicas; below 6 ms, more. At `--v=2` the `itl-fit` line shows
+  `pinnedAtFloor`, `floor` and `floorK`, and
+  [`llmsm_itl_line_intercept`](prometheus.md#llmsm_itl_line_intercept) the B.
+- **The floor's B is held.** It is kept after its readings are 30 minutes
+  old, up to 7 days, until a newer low-load stretch or a full fit replaces it,
+  readings under it end it, or a rollout, a change of request shape or of the
+  engine arguments does. With `LEARNED_STATE_SNAPSHOT` on it is kept across a
+  restart. At `--v=2` the `itl-fit` line shows `floorBHeld` and `floorBAge`.
+
+With `slo.tpot` set and the `slo` analyzer listed, the TPOT bound on decode
+packing now applies to these variants too; before, it reported
+`default-intercept` and bounded nothing. To hold a count, set
+`minReplicaCount` on the decode ScaledObject. Before and after the upgrade,
+compare decode replicas and TPOT:
+
+```promql
+max by (exported_namespace, variant_name) (llmsm_desired_replicas)
+max by (exported_namespace, model_name) (llmsm_slo_observed_seconds{objective="tpot"})
+```
+
+#### DisaggregatedSet roles on LeaderWorkerSet v0.10.0
+
+LeaderWorkerSet v0.10.0 writes no status on a DisaggregatedSet. The scaling
+manager read such a set as rolling out for ever, so no utilization-share
+transfer could take GPUs from its roles. It now reads each role's groups from
+its child LeaderWorkerSets. The preflight's `lws.disaggregatedset` check now
+also warns when the LeaderWorkerSet controller is older than v0.10.0 behind
+newer CRDs ([preflight](preflight.md)). Nothing to do.
+
+#### A re-run of `smt admin-setup` adds an EPP ServiceMonitor
+
+Where nothing scrapes the EPP yet, on a cluster with the Prometheus Operator,
+`smt admin-setup` and `smt install --scope cluster` add ServiceMonitor
+`scaling-manager-epp-metrics`, and the ServiceAccount, token Secret and
+`/metrics` ClusterRoleBinding it scrapes as, as `make setup-prereqs` does.
+`--no-epp-monitor` skips it. A re-run without `--modelserver-port` keeps the
+PodMonitor's live port ([tools install](tools-install.md)).
+
+#### Capacity planner
+
+- **On router v0.11.0, turn the router's wait off.** `--router-wait-in-prefill`
+  is now on by default (the API's `assume.routerWait` defaults to
+  `inPrefill`). On router v0.11.0 pass `--router-wait-in-prefill=false`
+  (`assume.routerWait: none`): there the gate collapses on its TTL and the
+  default's TTFT reads short
+  ([accuracy](../guides/capacity-planner/accuracy.md)).
+- **Record with v0.12.3 tools.** `capacity-planner capture` and the record
+  guide's export now collect the cache-tier, offloading and KV-transfer
+  series ([metrics](../guides/capacity-planner/metrics.md#cache-tiers-offloading-and-kv-transfer)).
+  A recording made with older tools lacks them. Read recordings with the
+  v0.12.3 planner: one that carries the held B above does not load in an
+  older planner.
+- **New exit codes and verdicts.** `at-replicas` and `day-plan` exit 4 when
+  a verdict rests on figures the self-check found inconsistent (exit 3 still
+  takes precedence). A verdict on a knee the window does not support, or past
+  a prefill knee that is only a lower bound, is NOT JUDGED, not
+  UNDER-PROVISIONED. A script that reads the verdict should expect both.
 
 #### A TPOT target that bounds nothing is now visible
 
