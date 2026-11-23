@@ -114,6 +114,8 @@ func (p *fakeProm) Query(_ context.Context, q string) ([]Sample, error) {
 			return nil, p.reachErr
 		}
 		return []Sample{{Value: 1}}, nil
+	case q == doubleScrapeQuery:
+		return p.doubles, nil
 	case strings.HasPrefix(q, "count by"):
 		if p.countErr != nil {
 			return nil, p.countErr
@@ -125,8 +127,6 @@ func (p *fakeProm) Query(_ context.Context, q string) ([]Sample, error) {
 			}
 		}
 		return out, nil
-	case strings.HasPrefix(q, "max by (namespace, pod)"):
-		return p.doubles, nil
 	case strings.HasPrefix(q, "group by (__name__)"):
 		var out []Sample
 		for _, n := range p.epp {

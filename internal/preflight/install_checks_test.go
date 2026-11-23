@@ -51,6 +51,14 @@ func TestConflicts(t *testing.T) {
 			f.scope = ScopeCluster
 			f.add(namespace("team-y", map[string]string{"scaling-manager.llmd.ai/managed": "true"}), managerRoleBinding("team-y", "theirs", "team-y"))
 		}, Fail, "opted in here and managed by the scaling manager in team-y"},
+		// A namespace read that fails still fails the check, so a conflict is
+		// never hidden, but says it could not read the label rather than
+		// claiming it.
+		{"cluster scope, theirs in a namespace that cannot be read", func(f *fixture) {
+			f.scope = ScopeCluster
+			f.add(managerRoleBinding("team-y", "theirs", "team-y"))
+			f.kubeReact = append(f.kubeReact, forbidden("get", "namespaces"))
+		}, Fail, "may be opted in here: its labels could not be read"},
 		{"bindings forbidden", func(f *fixture) {
 			f.kubeReact = append(f.kubeReact, forbidden("list", "rolebindings"))
 		}, Unknown, "needs list on rolebindings"},

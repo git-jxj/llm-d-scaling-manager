@@ -27,6 +27,13 @@ const (
 	statusSettingsSource  = "settingsSource"
 )
 
+// doubleScrapeQuery returns each model-server pod scraped by more than one
+// job: the inner group is one series per (pod, job), the outer count the
+// jobs per pod. Counting series per job instead would pass a pod two jobs
+// scrape, and fail a pod with several series under one job (an engine or
+// model_name label per data-parallel rank or LoRA adapter).
+const doubleScrapeQuery = `count by (namespace, pod) (group by (namespace, pod, job) (vllm:num_requests_running)) > 1`
+
 // eppQueueSizeNames are the EPP flow-control queue metrics this release
 // reads, the current name first (constants.EPPFlowControlQueueSize and its
 // deprecated alias).
@@ -87,12 +94,22 @@ func checkConflicts(ctx context.Context, s *state) ([]Result, string) {
 	}
 	for _, mns := range sortedKeys(inNS) {
 		others := strings.Join(inNS[mns], ", ")
-		switch {
-		case s.env.Scope == ScopeNamespace && managed[mns]:
-			fails = append(fails, fmt.Sprintf("namespace %s is also managed by the scaling manager in %s", mns, others))
-		case s.env.Scope == ScopeCluster && optedIn(ctx, s, mns):
+		if s.env.Scope == ScopeNamespace {
+			if managed[mns] {
+				fails = append(fails, fmt.Sprintf("namespace %s is also managed by the scaling manager in %s", mns, others))
+			}
+			continue
+		}
+		if s.env.Scope != ScopeCluster {
+			continue
+		}
+		switch in, err := optedIn(ctx, s, mns); {
+		case err != nil:
+			fails = append(fails, fmt.Sprintf("namespace %s is managed by the scaling manager in %s, and may be opted in here: "+
+				"its labels could not be read (%s)", mns, others, firstLine(err.Error())))
+		case in:
 			fails = append(fails, fmt.Sprintf("namespace %s is opted in here and managed by the scaling manager in %s", mns, others))
-		case s.env.Scope == ScopeCluster:
+		default:
 			warns = append(warns, fmt.Sprintf("the scaling manager in %s manages %s: do not opt %s in here", others, mns, mns))
 		}
 	}
@@ -108,13 +125,14 @@ func checkConflicts(ctx context.Context, s *state) ([]Result, string) {
 }
 
 // optedIn reports whether namespace carries the opt-in label; a read that
-// fails counts as opted in, so a conflict is never hidden by it.
-func optedIn(ctx context.Context, s *state, namespace string) bool {
+// fails counts as opted in, so a conflict is never hidden by it; err says
+// why, so the report does not claim a label nobody read.
+func optedIn(ctx context.Context, s *state, namespace string) (bool, error) {
 	n, err := s.env.Kube.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 	if err != nil {
-		return true
+		return true, fmt.Errorf("reading namespace %s: %w", namespace, err)
 	}
-	return n.Labels[config.NamespaceOptInLabel] == "true"
+	return n.Labels[config.NamespaceOptInLabel] == "true", nil
 }
 
 type rbacSubject struct{ kind, name, namespace string }
@@ -167,7 +185,7 @@ func checkScrape(ctx context.Context, s *state) ([]Result, string) {
 	if !s.promUsable {
 		return nil, "Prometheus is not reachable from here"
 	}
-	samples, err := s.prom.Query(ctx, `max by (namespace, pod) (count by (namespace, pod, job) (vllm:num_requests_running)) > 1`)
+	samples, err := s.prom.Query(ctx, doubleScrapeQuery)
 	if err != nil {
 		return []Result{{Status: Unknown, Detail: "the double-scrape query failed: " + firstLine(err.Error())}}, ""
 	}
