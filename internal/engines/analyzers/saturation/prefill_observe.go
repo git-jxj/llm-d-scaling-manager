@@ -408,7 +408,12 @@ func (c *cycle) observePrefill() {
 			VPOccupancyPlateau: a.prefillVPOccupancyPlateau, VPLoneRate: a.prefillVPLoneRate, ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
 		})
 		a.stashPrefillEstimate(c.input.Namespace, c.input.ModelID, variant, est, now)
-		c.logger.V(perReplicaLogLevel).Info("prefill-capacity-observed",
+		logger := c.logger
+		if a.prefillVPLoneRate {
+			// Only with the switch on, so the line is unchanged off.
+			logger = logger.WithValues("vpLone", est.VPLone, "vpLoneMinutes", est.VPLoneMinutes, "vpLoneIsVP", est.VPLoneIsVP)
+		}
+		logger.V(perReplicaLogLevel).Info("prefill-capacity-observed",
 			"modelID", c.input.ModelID, "namespace", c.input.Namespace, "variant", variant, "key", key,
 			"engine", string(engine), "pods", len(rows[variant]),
 			"vp", est.VP, "vpSource", string(est.VPSource), "vpLowerBound", est.VPLowerBound,
@@ -417,7 +422,6 @@ func (c *cycle) observePrefill() {
 			"vpServedPeak", est.VPServedPeak, "vpFlooredAtServed", est.VPFlooredAtServed,
 			"vpPlateau", est.VPPlateau, "vpPlateauFlat", est.VPPlateauFlat,
 			"vpPlateauMinutes", est.VPPlateauMinutes, "vpPlateauSpan", est.VPPlateauSpan,
-			"vpLone", est.VPLone, "vpLoneMinutes", est.VPLoneMinutes, "vpLoneIsVP", est.VPLoneIsVP,
 			"slopeBound", est.SlopeBound, "vpAboveSlopeBound", est.VPAboveSlopeBound,
 			"a", est.A, "aIntercept", est.AIntercept, "aOverhead", est.AOverhead,
 			"aOverheadKnown", est.AOverheadKnown, "aRefused", string(est.ARefused), "aSamples", est.ASamples,
