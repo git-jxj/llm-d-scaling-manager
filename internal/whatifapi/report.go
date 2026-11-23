@@ -782,7 +782,7 @@ func CheckLoadStatistic(s string) error {
 // ParseReportShape reads a shape: "measured", or "IL/OL[/hit]", lengths in
 // tokens with an optional k (1024 tokens), and hit a rate in [0, 1).
 func ParseReportShape(s string) (ReportShapeAsk, error) {
-	if s == "measured" {
+	if s == shapeMeasured {
 		return ReportShapeAsk{Measured: true, Label: s}, nil
 	}
 	if s == ShapeLoad {

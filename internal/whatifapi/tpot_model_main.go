@@ -198,7 +198,7 @@ func (mt *mainTPOT) notPricedAt(k Knobs) string {
 	case !mt.priced():
 		return "the model abstained: " + mt.info.Abstained
 	case k.TPOTPercentile != 0.9 && k.TPOTPercentile != 0.95:
-		return fmt.Sprintf("the model prices p90 and p95, not %s", statisticName(k.TPOTPercentile))
+		return "the model prices p90 and p95, not " + statisticName(k.TPOTPercentile)
 	case k.Decode <= 0:
 		return "the fleet has no decode replica"
 	case k.OutputTokens != 0:
@@ -305,7 +305,7 @@ func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
 	k := Knobs{Decode: out.Fleet.Decode}
 	for i := range out.Shapes {
 		sh := &out.Shapes[i]
-		if sh.Label != "measured" {
+		if sh.Label != shapeMeasured {
 			continue
 		}
 		moved := false

@@ -39,12 +39,15 @@ func tpotEntry(t *testing.T, model bool, slots int) (*Server, *inputsEntry) {
 	return s, e
 }
 
+// tpotTarget is the TPOT target the plans of tpotEntry are asked at.
+const tpotTarget = 0.02
+
 // tpotPlan is the plan of the entry at two prefill and two decode replicas
-// with a TPOT target of target at statistic.
-func tpotPlan(t *testing.T, s *Server, id, statistic string, target float64, mix *Mix) (PlanResponse, []byte) {
+// with a TPOT target of tpotTarget at statistic.
+func tpotPlan(t *testing.T, s *Server, id, statistic string, mix *Mix) (PlanResponse, []byte) {
 	t.Helper()
 	req := PlanRequest{InputsID: id, Fleet: &FleetKnob{Prefill: intp(2), Decode: intp(2)},
-		SLO: &SLORequest{TPOT: &Objective{Statistic: statistic, Target: f64(target)}}}
+		SLO: &SLORequest{TPOT: &Objective{Statistic: statistic, Target: f64(tpotTarget)}}}
 	if mix != nil {
 		req.Traffic = &Traffic{Mix: mix}
 	}
@@ -61,9 +64,9 @@ func tpotPlan(t *testing.T, s *Server, id, statistic string, target float64, mix
 // the ratio. Without the model the same fleet's percentile is refused
 // throughout, and the plan names no part of the model.
 func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
-	const target = 0.02
+	const target = tpotTarget
 	s0, e0 := tpotEntry(t, false, 64)
-	base, baseBody := tpotPlan(t, s0, e0.id, "p90", target, nil)
+	base, baseBody := tpotPlan(t, s0, e0.id, "p90", nil)
 	for _, p := range base.TPOT.Curve {
 		require.NotNil(t, p.Figure.Refused, "the default refuses the p90 at %g r/s", p.Rate)
 	}
@@ -98,7 +101,7 @@ func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
 	assert.Greater(t, mt.ratio(0.9), 1.0)
 	assert.Greater(t, mt.ratio(0.95), mt.ratio(0.9))
 
-	out, body := tpotPlan(t, s, e.id, "p90", target, nil)
+	out, body := tpotPlan(t, s, e.id, "p90", nil)
 	assert.Empty(t, apitest.CheckFigures(body), "%s", body)
 	priced, beyond := 0, 0
 	for _, p := range out.TPOT.Curve {
@@ -144,15 +147,15 @@ func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
 // stay the planner's, the view saying why.
 func TestMainViewTPOT_PricesP90AndP95Only(t *testing.T) {
 	s, e := tpotEntry(t, true, 64)
-	p95, _ := tpotPlan(t, s, e.id, "p95", 0.02, nil)
+	p95, _ := tpotPlan(t, s, e.id, "p95", nil)
 	require.True(t, p95.TPOT.Model.Priced)
 	p := p95.TPOT.Curve[3]
 	assert.InEpsilon(t, e.tpotModel.ratio(0.95)*(0.005+p.Rate/1000), *p.Figure.Value, 1e-9)
 
 	s0, e0 := tpotEntry(t, false, 64)
 	for _, st := range []string{"p50", "p99", "mean"} {
-		base, _ := tpotPlan(t, s0, e0.id, st, 0.02, nil)
-		got, _ := tpotPlan(t, s, e.id, st, 0.02, nil)
+		base, _ := tpotPlan(t, s0, e0.id, st, nil)
+		got, _ := tpotPlan(t, s, e.id, st, nil)
 		require.NotNil(t, got.TPOT.Model, st)
 		assert.False(t, got.TPOT.Model.Priced, st)
 		assert.Contains(t, got.TPOT.Model.NotPriced, "p90 and p95", st)
@@ -167,7 +170,7 @@ func TestMainViewTPOT_PricesP90AndP95Only(t *testing.T) {
 // for byte, with the view saying why.
 func TestMainViewTPOT_DefaultStandsWhereTheModelDoesNotPrice(t *testing.T) {
 	s, e := tpotEntry(t, true, 64)
-	stated, _ := tpotPlan(t, s, e.id, "p90", 0.02, &Mix{OutputTokens: 500})
+	stated, _ := tpotPlan(t, s, e.id, "p90", &Mix{OutputTokens: 500})
 	assert.False(t, stated.TPOT.Model.Priced)
 	assert.Contains(t, stated.TPOT.Model.NotPriced, "output lengths")
 	for _, p := range stated.TPOT.Curve {
@@ -182,13 +185,13 @@ func TestMainViewTPOT_DefaultStandsWhereTheModelDoesNotPrice(t *testing.T) {
 	assert.Equal(t, "assumed", assumed.TPOT.Ratio.Source)
 
 	s0, e0 := tpotEntry(t, false, 64)
-	base, _ := tpotPlan(t, s0, e0.id, "p90", 0.02, nil)
+	base, _ := tpotPlan(t, s0, e0.id, "p90", nil)
 	want, err := json.Marshal(base.TPOT)
 	require.NoError(t, err)
 	for name, slots := range map[string]int{"max-num-seqs": 0, "would wait for one of its": 4} {
 		sa, ea := tpotEntry(t, true, slots)
 		require.Contains(t, ea.tpotModel.info.Abstained, name)
-		got, _ := tpotPlan(t, sa, ea.id, "p90", 0.02, nil)
+		got, _ := tpotPlan(t, sa, ea.id, "p90", nil)
 		require.NotNil(t, got.TPOT.Model)
 		assert.False(t, got.TPOT.Model.Priced)
 		assert.Contains(t, got.TPOT.Model.NotPriced, "abstained")
@@ -331,8 +334,9 @@ func TestMainViewTPOT_SelfCheckPricesWithTheModel(t *testing.T) {
 	e, _ := tdEntries(t, 1920)
 	e.engine = EngineSlots{DecodeSlots: 64, SpecTokens: 3}
 	e.doc.Source.Cycle = len(e.series)
-	var folds []FoldFit
-	for _, c := range SelfCheckCycles(len(e.series)) {
+	cycles := SelfCheckCycles(len(e.series))
+	folds := make([]FoldFit, 0, len(cycles))
+	for _, c := range cycles {
 		folds = append(folds, FoldFit{Cycle: c, At: e.series[c-1].At, Pricer: e.pricer})
 	}
 	off := selfCheckEntry(t.Context(), e, folds, SelfCheckInfo{PlannerVersion: "vtest"})
