@@ -231,6 +231,10 @@ type limitEntry struct {
 	// plusOne is the fleet's plain limits with one more prefill replica, then
 	// one more decode replica: decode, prefill and fleet each.
 	plusOne [2][3]whatif.Result
+	// plusOneExtrapolated says each step's fleet limit is one the
+	// experimental TTFT model set past the highest load served
+	// (markExtrapolatedRate).
+	plusOneExtrapolated [2]bool
 	// buckets is each bucket line's rate at its target, with the view asked.
 	buckets map[string]whatif.Result
 }
@@ -284,6 +288,7 @@ func (p *planner) priceLimits(ctx context.Context, k Knobs, fl Fleet) (*limitEnt
 		more = p.e.ttftModel.fleet(more, kk)
 		d, pr, f := more.PlainLimits(sc.TTFT.Target, tpot, sc.Headroom)
 		le.plusOne[i] = [3]whatif.Result{d, pr, f}
+		le.plusOneExtrapolated[i] = markExtrapolatedRate(more, figureOf(f, unitRate, false)).Extrapolated
 	}
 	if sc.Views.AllTrafficPerBucket {
 		le.buckets = map[string]whatif.Result{}
@@ -501,6 +506,7 @@ func (p *planner) marginal(le *limitEntry, fleet whatif.Result) Marginal {
 	} {
 		decode, prefill, limit := le.plusOne[i][0], le.plusOne[i][1], le.plusOne[i][2]
 		s := MarginalStep{Fleet: step.count, Limit: p.note(step.path, figureOf(limit, unitRate, false)), Binding: binding(prefill, decode)}
+		s.Limit.Extrapolated = le.plusOneExtrapolated[i]
 		now, nowOK := valueOf(fleet)
 		then, thenOK := valueOf(limit)
 		switch {

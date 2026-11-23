@@ -299,6 +299,9 @@ type sizer struct {
 // refused, and then the fleet's too), the prefill role's, and the fleet's.
 type sizeEval struct {
 	decode, prefill, fleet whatif.Result
+	// extrapolated says the fleet limit is one the experimental TTFT model
+	// set past the highest load served (markExtrapolatedRate).
+	extrapolated bool
 }
 
 // at prices the fleet of n, once per search, stopping with ctx's error once
@@ -353,6 +356,7 @@ func (z *sizer) priced(ctx context.Context, cache map[FleetCounts]sizeEval, n Fl
 	} else {
 		v.decode, v.prefill, v.fleet = fl.PlainLimits(z.sc.TTFT.Target, tpot, z.sc.Headroom)
 	}
+	v.extrapolated = markExtrapolatedRate(fl, figureOf(v.fleet, unitRate, false)).Extrapolated
 	cache[n] = v
 	return v, nil
 }
@@ -378,6 +382,7 @@ func (z *sizer) step(ctx context.Context, n FleetCounts) (*SizeStep, error) {
 		return nil, err
 	}
 	st := &SizeStep{Fleet: n, Limit: figureOf(v.fleet, unitRate, false), Binding: binding(v.prefill, v.decode)}
+	st.Limit.Extrapolated = v.extrapolated
 	x, ok := valueOf(v.fleet)
 	if a, isAnswer := v.fleet.(whatif.Answer); isAnswer && z.low && a.Sensitivity != nil {
 		if a.Sensitivity.Refused != "" {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -250,7 +251,7 @@ func (mm *mainMixture) fleet(inner Fleet, k Knobs) Fleet {
 	pv, pok := valueOf(pk)
 	dv, dok := valueOf(dk)
 	f.knee, f.kneeOK = curveCap(pv, pok, f.lowerBound, dv, dok, mm.top/f.scale)
-	f.endAtLeast = pok && f.lowerBound && (!dok || max(pv, mm.top/f.scale) <= dv)
+	f.endAtLeast = endAtLeast(pv, pok, f.lowerBound, dv, dok, mm.top/f.scale)
 	// The floor: the TTFT with no queue, at a rate whose utilization is
 	// negligible.
 	if v, ok := f.price(1e-6); ok {
@@ -287,6 +288,14 @@ func curveCap(pv float64, pok, lowerBound bool, dv float64, dok bool, served flo
 		return dv, true
 	}
 	return 0, false
+}
+
+// endAtLeast says the curve's end (curveCap of the same arguments) is a
+// prefill knee that is only a lower bound, raised or not to served: not
+// decode's knee, and not a refused prefill knee, which leaves decode's. On a
+// tie with decode's knee the end is decode's: the fleet stops there.
+func endAtLeast(pv float64, pok, lowerBound bool, dv float64, dok bool, served float64) bool {
+	return pok && lowerBound && (!dok || max(pv, served) < dv)
 }
 
 // curveEnd is the highest rate the model prices: the curve is drawn up to
@@ -491,8 +500,10 @@ func (f *mixtureFleet) rateAtTarget(target float64) (rate float64, atEnd, ok boo
 	if meets(f.knee) {
 		return f.knee, true, true
 	}
-	lo, hi := 0.0, f.knee
-	if !meets(lo + 1e-6*hi) {
+	// The search starts at a rate that meets the target, so that it never
+	// answers 0 r/s where the curve is not monotone.
+	lo, hi := 1e-6*f.knee, f.knee
+	if !meets(lo) {
 		return 0, false, false
 	}
 	for range 40 {
@@ -549,7 +560,12 @@ func (f *mixtureFleet) fleetLimit(headroom float64, decode, prefill whatif.Resul
 	}
 	bounds := []bound{{headroom * f.knee, []whatif.Bound{whatif.BoundOperatingPoint}, f.limitFlags(true)}, {p.Value, p.Basis.BoundBy, p.Flags}}
 	if d, ok := decode.(whatif.Answer); ok {
-		bounds = append(bounds, bound{d.Value, d.Basis.BoundBy, d.Flags})
+		// Named as the planner's fleet limit names decode's bound.
+		by := make([]string, len(d.Basis.BoundBy))
+		for i, b := range d.Basis.BoundBy {
+			by[i] = string(b)
+		}
+		bounds = append(bounds, bound{d.Value, []whatif.Bound{whatif.Bound("decode " + strings.Join(by, ", "))}, d.Flags})
 	}
 	lowest := bounds[0].rate
 	for _, b := range bounds[1:] {
