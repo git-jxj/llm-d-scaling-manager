@@ -193,6 +193,7 @@
         "vpSource": "assumed",
         "wholePromptTokens": 1000.3515324833388,
         "promptHitRate": 0,
+        "vpLearned": 22389.5,
         "fixedLatencySeconds": 0.009,
         "fixedLatencySource": "assumed",
         "imbalance": 1.5,

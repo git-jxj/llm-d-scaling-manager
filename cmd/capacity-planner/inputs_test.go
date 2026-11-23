@@ -201,9 +201,14 @@ func TestPromptCV_TheNoteQuotesTheTableAtItsOwnCV(t *testing.T) {
 
 // A fleet refused before pricing still says what the flags stated, in its
 // assumed row, its flags and its note: none of it may read as dropped, nor quote
-// the row of the cv the flag replaced. Run 4 refuses V_P with no flag for it.
+// the row of the cv the flag replaced. The staircase's b-on phase refuses a
+// (too few low-load minutes) with no flag for it. (Run 4 refused V_P here
+// before the planner took a never-queued pod's served peak as a lower bound,
+// prefill-vp-served-unqueued: it now prices its knee and refuses its TTFT
+// later, in the price.)
 func TestInputs_ARefusedFleetKeepsTheStatedInputs(t *testing.T) {
-	args := []string{"replicas-to-slo", "--recording", shortRun, "--assume-prompt-cv", "1", "-o", "json"}
+	refusedRun := stair("ttft-staircase-b-on")
+	args := []string{"replicas-to-slo", "--recording", refusedRun, "--assume-prompt-cv", "1", "-o", "json"}
 	out, code := runCmd(t, args...)
 	require.Equal(t, 3, code, out)
 	w := decodeOutput(t, out)
@@ -211,7 +216,7 @@ func TestInputs_ARefusedFleetKeepsTheStatedInputs(t *testing.T) {
 	assert.Contains(t, out, "prompt cv 1 (--assume-prompt-cv)")
 	assert.Contains(t, out, string(whatif.AssumedPromptSpread))
 
-	out, code = runCmd(t, "replicas-to-slo", "--recording", shortRun, "--arrival-cv2", "4", "-o", "json")
+	out, code = runCmd(t, "replicas-to-slo", "--recording", refusedRun, "--arrival-cv2", "4", "-o", "json")
 	require.Equal(t, 3, code, out)
 	w = decodeOutput(t, out)
 	assert.Contains(t, w.Note, "the P2 recordings never checked it at a stated Ca^2")

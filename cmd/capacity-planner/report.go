@@ -421,7 +421,7 @@ func (r *reporter) fleet(np, nd int, ttftQ, tpotQ float64) (*servedFleet, error)
 	kn := whatifapi.Knobs{Prefill: np, Decode: nd, TTFTPercentile: ttftQ, TPOTPercentile: tpotQ,
 		Assume: assume, Headroom: r.headroom, ArrivalCV2: r.q.ArrivalCV2}
 	if !r.sh.Measured {
-		kn.PromptTokens, kn.OutputTokens, kn.PrefixHit = r.sh.IL, r.sh.OL, r.sh.Hit
+		kn.PromptTokens, kn.OutputTokens, kn.PrefixHit, kn.PrefixHitRead = r.sh.IL, r.sh.OL, r.sh.Hit, r.sh.Load
 	}
 	sf, err := r.s.fleetAtImbalance(kn, r.fixedF)
 	if err != nil {
@@ -666,6 +666,10 @@ type sloAt struct {
 	// ttftMissed and tpotMissed say which target was missed; onset that the
 	// TTFT miss is the flow-control onset's, its figure within the target.
 	ttftMissed, tpotMissed, onset bool
+	// ttftUpper says the TTFT is over its target but only an upper bound,
+	// priced from a lower bound of V_P (whatifapi.TTFTUpperBound): the true
+	// TTFT may be lower, so the miss is not known (#369).
+	ttftUpper bool
 	// unknown is the first target not judged, and its figure.
 	unknown    string
 	unknownFig whatif.Result
@@ -702,6 +706,10 @@ func (r *reporter) sloAtRate(sf *servedFleet, rate float64, words bool) sloAt {
 		onset := false
 		if v, ok := t.(whatif.TTFT); ok && !met && v.Seconds <= r.ttft.Seconds && v.HasFlag(whatif.AboveFlowControlOnset) {
 			onset = true
+		}
+		if !met && known && !onset && upperBoundTTFT(t) {
+			// Over the target, but at most: the miss is not known (#369).
+			known, s.ttftUpper = false, true
 		}
 		s.ttftMissed = fold("TTFT "+whatifapi.ReportStatisticName(r.ttft.Percentile), t, r.ttft.Seconds, met, known, onset)
 		s.onset = onset
@@ -848,18 +856,37 @@ func tpotMeets(r whatif.Result, target float64) (met, known bool) {
 	return false, false
 }
 
-// judged is one target's check in words, with its numbers.
+// judged is one target's check in words, with its numbers. A TTFT that is
+// an upper bound reads "at most": met, it is met; over the target, the miss
+// is not known (#369).
 func (r *reporter) judged(label string, fig whatif.Result, target float64, met, known, onset bool) string {
+	atMost := ""
+	if upperBoundTTFT(fig) {
+		atMost = "at most "
+	}
 	switch {
+	case !known && atMost != "":
+		return fmt.Sprintf("%s is at most %s, over %s, but not judged: %s", label, secondsText(fig), msText(target), upperBoundTTFTWords)
 	case !known:
 		return fmt.Sprintf("%s not judged (%s)", label, reasonOf(fig))
 	case onset:
-		return fmt.Sprintf("%s %s is within %s but misses: the rate is above the prefill flow-control onset, where the router queues",
-			label, secondsText(fig), msText(target))
+		return fmt.Sprintf("%s %s%s is within %s but misses: the rate is above the prefill flow-control onset, where the router queues",
+			label, atMost, secondsText(fig), msText(target))
 	case met:
-		return fmt.Sprintf("%s %s meets %s", label, secondsText(fig), msText(target))
+		return fmt.Sprintf("%s %s%s meets %s", label, atMost, secondsText(fig), msText(target))
 	}
 	return fmt.Sprintf("%s %s misses %s", label, secondsText(fig), msText(target))
+}
+
+// upperBoundTTFTWords says why a TTFT over its target that is an upper
+// bound is not judged a miss.
+const upperBoundTTFTWords = "it is priced from a lower bound of V_P, and the true TTFT may be lower, so the miss is not known"
+
+// upperBoundTTFT says r is a TTFT priced as an upper bound
+// (whatifapi.TTFTUpperBound).
+func upperBoundTTFT(r whatif.Result) bool {
+	v, ok := r.(whatif.TTFT)
+	return ok && whatifapi.TTFTUpperBound(v.Flags)
 }
 
 // secondsText is a latency figure in ms, or its refusal's reason.
@@ -888,7 +915,22 @@ func reasonOf(r whatif.Result) string {
 	if !ok {
 		return ""
 	}
+	if servedOnlyRefusal(string(u.Reason), slices.Contains(u.Flags, whatif.VPLowerBound)) {
+		return servedOnlyWords
+	}
 	return plainReason(string(u.Reason))
+}
+
+// servedOnlyWords stands for a TTFT refused on a V_P that is only the rate a
+// prefill pod was seen to compute (whatif.Prefill.VPServedOnly): a speed was
+// read, as a lower bound, and the TTFT is not priced from it.
+const servedOnlyWords = "TTFT not priced (V_P a lower bound)"
+
+// servedOnlyRefusal reports whether a refusal of reason, flagged
+// whatif.VPLowerBound or not, is a TTFT refused on a V_P known only as the
+// rate a pod computed: NoPrefillCapacity carries that flag there alone.
+func servedOnlyRefusal(reason string, lowerBound bool) bool {
+	return reason == string(whatif.NoPrefillCapacity) && lowerBound
 }
 
 // plainReasons are the reasons a report's text names, in words.
@@ -943,6 +985,7 @@ func (r *reporter) capacity(c *whatifapi.ReportLimits, base *servedFleet, ev fle
 	if a, ok := ev.prefillKnee.(whatif.Answer); ok && slices.Contains(a.Flags, whatif.VPLowerBound) {
 		c.PrefillKnee.LowerBound = true
 	}
+	plateauValidation(&c.PrefillKnee, whatif.FigurePrefillKnee, ev.prefillKnee)
 	c.DecodeKnee = r.rate(ev.decodeKnee, ol, decodeBinds(ev.decodeKnee))
 	r.kneeV = decodeKneeValidation(r.pv.class(), ev.decodeKnee)
 	if c.DecodeKnee.Value != nil {
@@ -967,6 +1010,23 @@ func (r *reporter) capacity(c *whatifapi.ReportLimits, base *servedFleet, ev fle
 	maxRate, binds := r.maxAtSLO(base, ev)
 	r.results = append(r.results, maxRate)
 	c.MaxAtSLO = r.rate(maxRate, ol, binds)
+	// A TTFT priced from a lower bound of V_P is at most its figure, so the
+	// rate that holds the targets is at least the one priced, and a TTFT
+	// floor over the target at most that floor: whether the target is
+	// reachable is not known (#369).
+	switch v := maxRate.(type) {
+	case whatif.Answer:
+		c.MaxAtSLO.LowerBound = whatifapi.TTFTUpperBound(v.Flags)
+	case whatif.Unanswerable:
+		if v.Reason == whatif.TargetBelowFloor && whatifapi.TTFTUpperBound(v.Flags) && c.MaxAtSLO.Refused != nil {
+			c.MaxAtSLO.Refused.Detail += "; the floor is priced from a lower bound of V_P, so it is at most this, and the target may be reachable"
+		}
+	}
+	if ev.binds == rolePrefill {
+		plateauValidation(&c.FleetKnee, whatif.FigurePrefillKnee, ev.prefillKnee)
+		plateauValidation(&c.Operating, whatif.FigureOperatingCap, ev.prefillKnee)
+	}
+	plateauValidation(&c.MaxAtSLO, whatif.FigureRateAtTTFT, maxRate)
 }
 
 // rate is a rate row: the figure, the output tokens it carries, what binds.
@@ -985,11 +1045,21 @@ func prefillBinds(sf *servedFleet) string {
 		return ""
 	}
 	p := sf.pf.fleet.Prefill
+	if k, ok := sf.PrefillKnee().(whatif.Answer); ok && k.HasFlag(kneeAtServedWork) {
+		return servedWorkWords(k.Value, p.PromptTokens)
+	}
 	margin := ""
 	if p.VPMargin > 0 {
 		margin = fmt.Sprintf(" x (1 - %.2f margin)", p.VPMargin)
 	}
 	return fmt.Sprintf("prefill compute: N_p %d x V_P%s / (f %.3f x %s tokens)", p.Replicas, margin, sf.pf.in.Imbalance, num(round(p.PromptTokens)))
+}
+
+// servedWorkWords says a prefill knee is the work the prefill pods sustained
+// (kneeAtServedWork): knee x the prompt priced, over that prompt.
+func servedWorkWords(knee, prompt float64) string {
+	return fmt.Sprintf("prefill work served: the %s computed tokens/s the prefill pods sustained over 2 min / %s tokens",
+		num(round(knee*prompt)), num(round(prompt)))
 }
 
 // decodeBinds says what sets the decode knee.
@@ -1210,6 +1280,8 @@ func (r *reporter) table(ctx context.Context, ev fleetEval) ([]whatifapi.ReportR
 		// (evaluate), not at every row.
 		ttftMean, _ := mean.TTFTPoint(row.Rate)
 		row.E2EMeanSum = whatifapi.FigureOf(e2eSum(ttftMean, tm, r.pv.shape.AvgOutputTokens), unitSeconds, true)
+		// A sum of an upper bound is one too (#369).
+		row.E2EMeanSum.UpperBound = row.E2EMeanSum.Value != nil && upperBoundTTFT(ttftMean)
 		row.Cell = r.cell(slo, cellTTFT, row, ev)
 		rows = append(rows, row)
 	}
@@ -1276,6 +1348,8 @@ func (r *reporter) cell(slo, ttft *servedFleet, row whatifapi.ReportRow, ev flee
 		c.Mark = whatifapi.CellOnset
 	case s.known:
 		c.Mark = whatifapi.CellMissed
+	case s.ttftUpper:
+		c.Mark = whatifapi.CellUpperBound
 	default:
 		c.Mark = whatifapi.CellUnknown
 	}
@@ -1351,6 +1425,14 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		return v, nil
 	case base.pastLowerBound:
 		r.lowerBoundVerdict(base, lead, &v)
+		return v, nil
+	case !base.known && upperBoundTTFT(base.slo.unknownFig):
+		// The TTFT priced is over its target but only an upper bound (#369).
+		v.Verdict = whatifapi.VerdictNotJudged
+		v.Reason += ". " + upperBoundTTFTWords
+		at, _ := valueOf(base.slo.unknownFig)
+		v.Summary = fmt.Sprintf("%s: %s%s is at most %s against a %s target: %s; --assume-vp states a V_P to price it.", v.Verdict, lead,
+			base.slo.unknown, secondsWords(at), secondsWords(r.ttft.Seconds), upperBoundTTFTWords)
 		return v, nil
 	case !base.known:
 		v.Verdict = whatifapi.VerdictNotJudged

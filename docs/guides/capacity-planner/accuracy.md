@@ -200,6 +200,8 @@ These always read `OUTSIDE VALIDATED REGION`:
 - A rate the operating-point cap set. Read the knee's label instead.
 - A knee with flow control on or not known. Read the onset's label instead.
 - Any figure priced with a flag that types a term in.
+- Any prefill or TTFT figure priced with `--experimental-ttft`
+  (`ExperimentalTTFT`) or from the occupancy plateau (`VPFromPlateau`).
 - p99, and any statistic but the mean, p90 and p95.
 - Any model but Qwen3-32B, any tensor parallelism but 2, and any Pod count
   but 2 prefill and 2 decode.

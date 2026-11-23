@@ -149,6 +149,8 @@ func RegisterQueueingModelQueries(sourceRegistry *source.SourceRegistry) {
 	// What the TTFT model learns from (ttft_inputs.go): recorded, and three
 	// of them read every cycle in a namespace with a TTFT target.
 	registerTTFTInputQueries(registry)
+	registerCacheTierQueries(registry)
+	registerKVTransferQueries(registry)
 }
 
 // registerSGLangQueueingModelQueries registers the SGLang variants of the

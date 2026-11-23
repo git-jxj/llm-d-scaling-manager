@@ -78,7 +78,15 @@ type promptSample struct {
 	cycle             int
 	at                time.Time
 	computed, request float64
-	buckets           map[float64]float64
+	// wholeComputed and whole are the computed and the whole prompt tokens
+	// a second of the counted rows that also read a whole prompt over the
+	// computed rate's minute (domain.ReplicaMetrics.AvgInputTokensRecent):
+	// one reading of the same requests, for ComputedHit.
+	wholeComputed, whole float64
+	buckets              map[float64]float64
+	// tiers is the cached tokens by tier and the KV transfers of the
+	// counted rows that read them, for TierLoad (tier_load.go).
+	tiers tierSample
 }
 
 // PromptWindow is a prefill variant's latest PromptWindowCycles cycles with
@@ -104,6 +112,11 @@ func (w *PromptWindow) Note(rows []domain.ReplicaMetrics, cycle int, at time.Tim
 			s.computed += rm.PrefillComputedTokenRate
 			s.request += r
 			counted = append(counted, rm)
+			if il := rm.AvgInputTokensRecent; Finite(il) && il > 0 {
+				s.wholeComputed += rm.PrefillComputedTokenRate
+				s.whole += r * il
+			}
+			s.tiers.noteTiers(rm, r)
 		}
 	}
 	if !(s.computed > 0) {
@@ -138,6 +151,28 @@ func (w *PromptWindow) Prompt() (tokens float64, from, to, cycles int) {
 		requests += s.request
 	}
 	return computed / requests, w.samples[0].cycle, w.samples[len(w.samples)-1].cycle, len(w.samples)
+}
+
+// ComputedHit is the share of the whole prompt the prefill engines did not
+// compute over the window, 1 - computed tokens / whole prompt tokens, read
+// from the rows that carry both over the same minute: the hit from every
+// tier (the GPU prefix cache, an offload tier, a KV connector), where
+// vllm:prefix_cache_hits counts the GPU's alone. Held to [0, 1); false with
+// no whole prompt read (a recording made before the collector read the
+// one-minute prompt).
+func (w *PromptWindow) ComputedHit() (float64, bool) {
+	if w == nil {
+		return 0, false
+	}
+	var computed, whole float64
+	for _, s := range w.samples {
+		computed += s.wholeComputed
+		whole += s.whole
+	}
+	if !(whole > 0) || !(computed > 0) {
+		return 0, false
+	}
+	return min(max(1-computed/whole, 0), math.Nextafter(1, 0)), true
 }
 
 // Spread is the prompt spread over the window: the histograms summed, as the

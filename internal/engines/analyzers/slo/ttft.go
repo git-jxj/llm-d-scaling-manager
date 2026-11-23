@@ -127,6 +127,34 @@ const SwitchTTFTLowLoadDecodeTTFT = "slo-ttft-low-load-decode-ttft"
 // (llm-d-incubation/llm-d-scaling-manager#281).
 const SwitchTTFTHopUnqueued = "slo-ttft-hop-unqueued"
 
+// SwitchTTFTDecodeSpeculatingHeld is the replay switch for a decode engine
+// that speculates (MTP or a draft model), whose rows D's fit never reads:
+// their AvgITL is a step, not a token. On, such a row, quiet by every other
+// gate, is read for the held D where no row that does not speculate is
+// (prefill.DecodeTermCycle.SpeculatingHeld): the decode engine's own measured
+// TTFT, the KV pull, the wait for it and its first steps, from its TTFT
+// histogram, with no step time in it. Its ITL is the point the assumed slope
+// climbs from, read per accepted token where the line is (the planner's,
+// saturation.SwitchITLPerToken), and the slope per second of the step. Off,
+// as before, a fleet whose every decode row speculates has no D, and the old
+// sum T_xfer + ITL(k) stands for it: on a P/D recording with MTP on every
+// decode pod, a fraction of the decode engine's measured TTFT. Planner-only:
+// off from the constructor; the capacity planner's replay turns it on
+// (learnreplay.PlannerSwitches). The slo analyzer's line is per step, so it
+// reads the ITL as it is.
+const SwitchTTFTDecodeSpeculatingHeld = "slo-ttft-decode-speculating-held"
+
+// SwitchTTFTHopWindowMeans is the replay switch for how the router hop R of
+// the decode term is read (prefill.DecodeTermCycle.HopWindowMeans, where the
+// rule is): on, a router window is admitted on its means, the rate and prompt
+// held steady between its halves rather than cycle by cycle, with no cycle
+// held by the router and no prefill row queued, and R is the median of at
+// least prefill.MinHopMeanWindows windows, flagged. Off, as before: on a
+// production P/D fleet no window passed the per-cycle gates, and the router's
+// remainder past both engines was priced at the assumed 20 ms. Planner-only:
+// off from the constructor, so the controller never runs it.
+const SwitchTTFTHopWindowMeans = "slo-ttft-hop-window-means"
+
 // SwitchTTFTDecodeGateCharge is the replay switch for
 // whatif.TTFTFleet.ChargeDecodeGate: on, the published rate is charged the
 // share of time the decode flow-control gate is closed below its onset, in
@@ -178,6 +206,88 @@ const SwitchTTFTPromptSupport = "slo-ttft-prompt-support"
 // (learnreplay.PrefillState.PrefixAttention). No committed recording has a
 // prefix hit, so on or off it moves no golden.
 const SwitchTTFTPrefixAttention = "slo-ttft-prefix-attention"
+
+// SwitchTTFTComputedHit is the replay switch for the hit a whole prompt is
+// netted by in the capacity planner. On: a whole prompt priced for the
+// prefill pods (--assume-input-tokens, --shape load, a stated shape with no
+// hit, a backtest or day-plan step) is netted by the prefill variant's
+// computed-token hit, 1 - computed tokens / whole prompt tokens over the
+// prefill rows' one-minute rates (whatif.PromptWindow.ComputedHit), where it
+// or the hit it replaces is above whatif.MaterialPrefixHitMove.
+// vllm:prefix_cache_hits counts the GPU prefix cache alone, so a hit from an
+// offload tier or a KV connector reads as computed there, and the prefill
+// work as more than the engines' own computed-token counter shows; V_P is
+// read from that counter. A hit stated by the question still governs. Off,
+// as before. Planner-only: off from the constructor; the analyzer prices no
+// stated prompt.
+const SwitchTTFTComputedHit = "slo-ttft-computed-hit"
+
+// SwitchTTFTTierLoad is the replay switch for a cached prompt token from a
+// tier outside the GPU in the capacity planner. vllm:prefix_cache_hits counts
+// the GPU prefix cache alone; a hit from a host, disk or peer tier is loaded
+// into the GPU first, and the price took it as free. On, where the prefill
+// rows read the cached tokens by tier (domain.ReplicaMetrics
+// .CachedTokenRateBySource) and the KV transfers (KVTransferRates):
+//
+//   - a request's TTFT carries the load of its cached tokens from outside
+//     the GPU (whatif.Prefill.TierLoadSeconds): the tokens each tier served
+//     times the bytes a token moved over the bandwidth the transfer read,
+//     whatif.PromptWindow.TierLoad, with no overlap with the request's own
+//     prefill (the OffloadingConnector loads before the request is
+//     scheduled), so an upper bound where a connector overlaps it;
+//   - with SwitchTTFTPrefixAttention on, the attention span's cached
+//     context is the whole prompt less the computed one, every tier's hits
+//     counted, not the GPU's hit rate (whatif.Prefill.CachedContextRead).
+//
+// A tier serving whatif.MinTierShare of the prompt or more with no transfer
+// reading, or no split by tier where the computed-token hit is material,
+// leaves the load out and flags it: no bandwidth is assumed. Off, as
+// before. Planner-only: off from the constructor; the analyzer prices no
+// tier.
+const SwitchTTFTTierLoad = "slo-ttft-tier-load"
+
+// SwitchTTFTTierKVWait is the replay switch for what a request pays for its
+// cached KV, with SwitchTTFTTierLoad on: on, the engine's measured wait for
+// it (whatif.TierLoad.WaitPerRequest, the queue time on prefill rows with no
+// request waiting for capacity), where it is above the transfer's own
+// seconds; off, the transfer's seconds, as SwitchTTFTTierLoad prices them.
+// A loaded request is scheduled at a step boundary after its load, so it
+// waits longer than the transfer runs: the prefill queue time is a step
+// boundary or more past the load counter's seconds, and follows the deferred
+// requests by Little's law. Planner-only: off from the constructor; the
+// analyzer prices no tier.
+const SwitchTTFTTierKVWait = "slo-ttft-tier-kv-wait"
+
+// SwitchTTFTPSByEngine is the replay switch for how the planner prices the
+// prefill queue: on, where the prefill engine's arguments say it shares its
+// steps (chunked prefill with --max-num-seqs above 1; a step budget, where
+// read, at least the mean computed prompt measured), it is processor sharing
+// whatever the prompt's spread or the prompt priced (whatif.QueueProcessorSharing), falling back to the larger of that and
+// first come where the busiest pod likely holds more prompts than its
+// max_num_seqs times its data-parallel ranks. Off, as before: past
+// whatif.MaxPSPromptCV the price is the larger of the two. An engine that
+// runs several prompts a rank in chunked steps shares its steps: its prefill
+// time rises with load as processor sharing predicts and its capacity queue
+// stays near empty, while a first-come price puts a queue's wait on every
+// request. Planner-only: off from the constructor; the analyzer prices no
+// fleet with it.
+const SwitchTTFTPSByEngine = "slo-ttft-ps-by-engine"
+
+// SwitchTTFTCachedTokenCost is the replay switch for the cost of a cached
+// prompt token in the capacity planner. On: a request's own latency on a
+// prefill pod carries phi x cached / V_P beside its computed prompt, the
+// cached tokens being the whole prompt less the computed one, over every
+// tier (the prefill variant's computed-token hit,
+// whatif.PromptWindow.ComputedHit). phi, in [0, 1], is one figure per
+// fleet, fitted on the source's own steps (whatifapi.FitCachedTokenCost): a
+// token loaded from a host tier or a peer is not computed, but it is not
+// free either. The load is priced in the request's own latency only, never
+// in the pod's work: V_P is read from busy pods whose loads overlapped their
+// compute, so it already holds what the loads take of the pod. Where phi is
+// not fitted (too few steps, a V_P not learned under a queue, no material
+// cached share) it is 0, and nothing moves. Off, as before. Planner-only:
+// off from the constructor; the analyzer fits no phi.
+const SwitchTTFTCachedTokenCost = "slo-ttft-cached-token-cost"
 
 // SwitchTTFTMeasuredTransfer is the replay switch for the KV transfer term:
 // on, the pricing reads AvgKVTransferTime from the decode rows that carry one
@@ -501,9 +611,11 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 	if len(decodes) == 1 && a.ttftDecodeTerm {
 		est := a.noteDecodeTerm(decodeKey, accelerator, engineArgs, prefill.DecodeTermCycle{
 			Now: now, Prefill: prefillRows, Decode: decodeRows, PromptTokens: modelPrompt, Router: router,
-			Settled:     &prefill.Settle{View: a.settleView(), Model: utils.GetNamespacedKey(input.Namespace, input.ModelID)},
-			RouterHeld:  input.SchedulerQueue != nil && input.SchedulerQueue.QueueSize > 0,
-			HopUnqueued: a.ttftHopUnqueued,
+			Settled:         &prefill.Settle{View: a.settleView(), Model: utils.GetNamespacedKey(input.Namespace, input.ModelID)},
+			RouterHeld:      input.SchedulerQueue != nil && input.SchedulerQueue.QueueSize > 0,
+			HopUnqueued:     a.ttftHopUnqueued,
+			SpeculatingHeld: a.ttftDecodeSpeculatingHeld,
+			HopWindowMeans:  a.ttftHopWindowMeans,
 		})
 		t := whatif.TermFromEstimate(est)
 		term = &t

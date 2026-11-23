@@ -40,6 +40,23 @@ import (
 // the max over unqueued minutes too adds windows, so its noise is that of
 // source 2 over more runs: still within a one-minute rate's spread.
 //
+// With Cycle.VPWindowBest the peak under a queue (2) is the best the key read
+// since its first cycle, not only over the samples kept (Retention): a replay
+// of a recording reads its whole window, so a fleet that queued at its
+// evening peak keeps that V_P through the quiet hours after it, flagged with
+// when it was read (Estimate.VPLearnedAt). It stays a lower bound, and is
+// floored at the served peak as any lower bound is.
+//
+// With Cycle.VPServedUnqueued, where none of the three has a reading, the
+// served peak itself is V_P (SourceServedPeak), a lower bound for the same
+// reason (NeverQueued): a fleet whose pods never held a capacity queue for
+// PeakRun minutes in a row in Retention gets V_P as at least what its pods
+// computed, not no V_P at all.
+// With Cycle.VPOccupancyPlateau, a V_P refused here for want of a queue, or
+// a lower bound under it, is read from the plateau of the served rate
+// against the prefill occupancy (plateau.go): V_P where the curve flattened
+// in the window, a lower bound where it did not.
+//
 // Otherwise NoPrefillCapacity. SGLang always refuses: it publishes no
 // computed-token series.
 //
@@ -92,7 +109,11 @@ func (est *Estimate) capacity(ks *keyState, c Cycle, sglang bool) {
 		}
 		return
 	}
-	if pk, ok := peakUnderQueue(ks); ok {
+	pk, ok := peakUnderQueue(ks)
+	if c.VPWindowBest {
+		pk, ok = ks.windowBestQueued(pk, ok, c.Now, est)
+	}
+	if ok {
 		est.VP, est.VPSource, est.VPLowerBound, est.VPSamples = pk.rate, SourcePeakUnderQueue, true, PeakRun
 		est.VPPromptTokens, est.VPWholePromptTokens, est.VPPromptHitRate = pk.prompt, pk.whole, pk.hit
 		est.floorAtServed(ks, c.VPFloorServed)
@@ -103,7 +124,38 @@ func (est *Estimate) capacity(ks *keyState, c Cycle, sglang bool) {
 		est.floorAtServed(ks, c.VPFloorServed)
 		return
 	}
+	if pk, ok := servedPeak(ks); ok && c.VPServedUnqueued {
+		est.VP, est.VPSource, est.VPLowerBound, est.VPSamples = pk.rate, SourceServedPeak, true, PeakRun
+		est.VPLowerBoundReason, est.VPServedPeak = NeverQueued, pk.rate
+		est.VPPromptTokens, est.VPWholePromptTokens, est.VPPromptHitRate = pk.prompt, pk.whole, pk.hit
+		return
+	}
 	est.VPRefused = NoPrefillCapacity
+}
+
+// windowBestQueued is the peak under a queue to take with
+// Cycle.VPWindowBest at now: the key's best since its first cycle
+// (keyState.bestQueued), where its run ended before the samples kept
+// (Retention) and it is higher than the peak in those samples, or where
+// those hold none; else the current peak, as without the switch. It notes
+// the current peak first. A peak taken from before the samples kept sets
+// est.VPLearnedAt, the last minute of its run, so the caller can say how
+// old it is. Only Retention ages a peak out here: a run the samples kept
+// still hold, but no longer read as the best (a later cycle in the same
+// minute replaced one of its samples), is not taken from the memory. It is
+// a lower bound as the current one is: a rate sustained under a queue, at
+// the prompts of its run, which the what-if model rescales to the prompt
+// asked (VPPromptTokens).
+func (ks *keyState) windowBestQueued(cur busy, ok bool, now time.Time, est *Estimate) (busy, bool) {
+	if ok && (!ks.bestQueuedOK || cur.rate >= ks.bestQueued.rate) {
+		ks.bestQueued, ks.bestQueuedOK = cur, true
+		return cur, true
+	}
+	if !ks.bestQueuedOK || !ks.bestQueued.at.Before(now.Add(-Retention)) {
+		return cur, ok
+	}
+	est.VPLearnedAt = ks.bestQueued.at
+	return ks.bestQueued, true
 }
 
 // floorAtServed raises a lower-bound V_P to the served peak (servedPeak)
@@ -119,8 +171,9 @@ func (est *Estimate) capacity(ks *keyState, c Cycle, sglang bool) {
 // and the floored V_P takes the served run's prompt, whole prompt and hit
 // rate with it.
 // Only a lower bound is floored: busy minutes of a single-rank pod are V_P
-// itself, and no source at all stays refused, as a peak with no queue
-// cannot tell capacity from the offered load.
+// itself, and no source at all stays refused here, as a peak with no queue
+// cannot tell capacity from the offered load (Cycle.VPServedUnqueued takes
+// it as a lower bound and no more).
 func (est *Estimate) floorAtServed(ks *keyState, on bool) {
 	pk, ok := servedPeak(ks)
 	if !ok {
@@ -145,6 +198,8 @@ type busy struct {
 	prompt    float64
 	whole     float64
 	hit       float64
+	// at is the last minute of a peak's run (peakRun); unset otherwise.
+	at time.Time
 }
 
 // busyMedian is the busy reading over every replica's busy minutes no older
@@ -242,7 +297,7 @@ func peakRun(ks *keyState, queued bool) (busy, bool) {
 			}
 			sustained := slices.Min(run[len(run)-PeakRun:])
 			if sustained > best.rate {
-				best = busy{rate: sustained, prompt: meanPrompt(prompts[len(prompts)-PeakRun:])}
+				best = busy{rate: sustained, prompt: meanPrompt(prompts[len(prompts)-PeakRun:]), at: s.at}
 				best.whole, best.hit = meanWhole(minutes[len(minutes)-PeakRun:])
 				found = true
 			}

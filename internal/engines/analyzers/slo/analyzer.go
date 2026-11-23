@@ -179,6 +179,21 @@ type Analyzer struct {
 	// ttftPrefixAttention is SwitchTTFTPrefixAttention (ttft.go): off from
 	// the constructor, planner-only; the analyzer holds it for the name.
 	ttftPrefixAttention bool
+	// ttftComputedHit is SwitchTTFTComputedHit (ttft.go): off from the
+	// constructor, planner-only; the analyzer holds it for the name.
+	ttftComputedHit bool
+	// ttftTierLoad is SwitchTTFTTierLoad (ttft.go): off from the
+	// constructor, planner-only; the analyzer holds it for the name.
+	ttftTierLoad bool
+	// ttftTierKVWait is SwitchTTFTTierKVWait (ttft.go): off from the
+	// constructor, planner-only; the analyzer holds it for the name.
+	ttftTierKVWait bool
+	// ttftPSByEngine is SwitchTTFTPSByEngine (ttft.go): off from the
+	// constructor, planner-only; the analyzer holds it for the name.
+	ttftPSByEngine bool
+	// ttftCachedTokenCost is SwitchTTFTCachedTokenCost (ttft.go): off from
+	// the constructor, planner-only; the analyzer holds it for the name.
+	ttftCachedTokenCost bool
 	// ttftQuietTransfer is SwitchTTFTQuietTransfer (ttft.go): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	ttftQuietTransfer bool
@@ -206,6 +221,12 @@ type Analyzer struct {
 	// ttftHopUnqueued is SwitchTTFTHopUnqueued (ttft.go): off from the
 	// constructor; only a replay turns it on.
 	ttftHopUnqueued bool
+	// ttftDecodeSpeculatingHeld is SwitchTTFTDecodeSpeculatingHeld (ttft.go):
+	// off from the constructor, planner-only; only a replay turns it on.
+	ttftDecodeSpeculatingHeld bool
+	// ttftHopWindowMeans is SwitchTTFTHopWindowMeans (ttft.go): off from the
+	// constructor, planner-only; only a replay turns it on.
+	ttftHopWindowMeans bool
 	// ttftSizesPrefill is SwitchTTFTSizesPrefill (ttft_prefill_ask.go): off
 	// from the constructor; only a replay turns it on.
 	ttftSizesPrefill bool

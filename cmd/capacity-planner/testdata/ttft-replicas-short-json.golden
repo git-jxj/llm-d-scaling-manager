@@ -114,6 +114,7 @@
         "vpSource": "assumed",
         "wholePromptTokens": 10920.73884349273,
         "promptHitRate": 0,
+        "vpLearned": 11338.380000000001,
         "fixedLatencySeconds": 0.014432285034633677,
         "fixedLatencySource": "learned",
         "imbalance": 1,

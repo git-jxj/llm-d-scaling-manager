@@ -310,6 +310,14 @@ type shapeSample struct {
 //     the fill a low-fill fleet has.
 //   - saturation.SwitchPrefillVPFloorServed: a lower-bound V_P raised to the
 //     highest computed-token rate a pod was seen to sustain.
+//   - saturation.SwitchPrefillVPServedUnqueued: where no source has a
+//     reading, that served rate as a lower-bound V_P (prefill.NeverQueued),
+//     not NoPrefillCapacity. The planner prices only the prefill knee from
+//     it, as at least its rate, raised to the computed-token work the
+//     fleet's prefill pods sustained (servedKneeFloor), and refuses every
+//     TTFT priced from it: no figure is priced where none was, so none can
+//     read under what was measured (issue
+//     llm-d-incubation/llm-d-scaling-manager#369).
 //   - saturation.SwitchPlannerCapAtStepBudget: the batch cap per rank held
 //     to the batch the step token budget runs, ceil(budget / (1 + k)) with k
 //     speculative tokens (issue llm-d-incubation/llm-d-scaling-manager#302).
@@ -321,6 +329,23 @@ type shapeSample struct {
 //     windows whose prefill pods held no queue. The planner reads its own
 //     decode term windows (state_ttft.go), so it reads the switch from here
 //     even where the recording has no slo analyzer to set it on.
+//   - slo.SwitchTTFTDecodeSpeculatingHeld: on a decode fleet that
+//     speculates (MTP), whose every row D's fit refuses, the decode
+//     engine's measured TTFT of a quiet speculating row is held for D, its
+//     ITL read per accepted token, in place of T_xfer + ITL. It only adds a
+//     held D where the term was omitted, so every TTFT figure it moves
+//     rises. No committed recording has a decode row that speculates: on the
+//     cross-validation's 66 public runs no figure moved. On a P/D recording
+//     with MTP on every decode pod, the held figure, fitted on the first half,
+//     read the decode engine's measured TTFT of the second within 20% on
+//     most five-minute steps, where the old sum read a few percent of it.
+//
+// slo.SwitchTTFTHopWindowMeans, planner-only, reads the router hop on its
+// windows' means: the median of at least prefill.MinHopMeanWindows windows,
+// held at their median prompt (prefill.DecodeTermCycle.HopWindowMeans). It is
+// not listed: on the public cross-validation it moved four TTFT figures of
+// the Qwen3-32B staircase's C phases from at or above 0.80 of measured to
+// just under it (0.798 to 0.799). It goes on once no public figure newly reads under what was measured.
 //
 // saturation.SwitchITLHoldSteadySlope is planner-only too but not listed:
 // the line it holds is right at a given fill, and the planner then reads
@@ -373,6 +398,26 @@ type shapeSample struct {
 // spread of the service time that no term prices. It stays off until one
 // does (docs/proposals/slo-capacity-planner-ttft.md).
 //
+// saturation.SwitchPrefillVPOccupancyPlateau is planner-only and not listed
+// (issue llm-d-incubation/llm-d-scaling-manager#368): it reads V_P without a
+// queue, from the plateau of the served computed tokens against the prefill
+// occupancy. On the public recordings its level reads 0.96 to 1.08 of the
+// V_P learned from a queue, and with it on no backtest figure moves under
+// what was measured. But where V_P was refused it mostly gives a lower bound
+// whose fleets still lack a (NoFixedLatency), and the only TTFT figures it
+// newly prices, on the 0.6B staircase warm-ups at a 75% split, read 1.5 to
+// 1500 times what was measured: they sit just under a knee priced from the
+// lower bound. One warm-up's self-check falls from weak to inconsistent with
+// it. It stays off until TTFT under a lower-bound knee is priced.
+//
+// saturation.SwitchPrefillVPWindowBest is planner-only and not listed: it
+// keeps the peak under a queue read anywhere in the recording, not only in
+// the last 6 hours, flagged with its age (VPFromEarlierInWindow). No public
+// figure moves with it, but on a production P/D fleet whose prefill pods
+// queued only at its busiest hours it prices the rest of the day's TTFT from
+// that lower bound, and the TTFT read many times what was measured. It is
+// on only with --experimental-ttft.
+//
 // saturation.SwitchMoEBusiestRank is not listed either: it reads a
 // data-parallel MoE engine's line at its busiest rank (issue
 // llm-d-incubation/llm-d-scaling-manager#312), and its only evidence is
@@ -415,19 +460,21 @@ type shapeSample struct {
 //     was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
-		saturation.SwitchPrefillALowLoadPerRank: true,
-		saturation.SwitchPrefillAEngineTiming:   true,
-		saturation.SwitchPrefillQueueByCapacity: true,
-		saturation.SwitchPrefillFBusyMinutes:    true,
-		saturation.SwitchPrefillALowLoadByRate:  true,
-		saturation.SwitchPrefillAMedianOverhead: true,
-		saturation.SwitchITLAdaptiveBandFloor:   true,
-		saturation.SwitchPrefillVPFloorServed:   true,
-		saturation.SwitchPlannerCapAtStepBudget: true,
-		saturation.SwitchITLBaselineFromFloor:   false,
-		saturation.SwitchITLFloorBaselineHeld:   false,
+		saturation.SwitchPrefillALowLoadPerRank:  true,
+		saturation.SwitchPrefillAEngineTiming:    true,
+		saturation.SwitchPrefillQueueByCapacity:  true,
+		saturation.SwitchPrefillFBusyMinutes:     true,
+		saturation.SwitchPrefillALowLoadByRate:   true,
+		saturation.SwitchPrefillAMedianOverhead:  true,
+		saturation.SwitchITLAdaptiveBandFloor:    true,
+		saturation.SwitchPrefillVPFloorServed:    true,
+		saturation.SwitchPrefillVPServedUnqueued: true,
+		saturation.SwitchPlannerCapAtStepBudget:  true,
+		saturation.SwitchITLBaselineFromFloor:    false,
+		saturation.SwitchITLFloorBaselineHeld:    false,
 	}, PackageSLO: {
-		slo.SwitchTTFTHopUnqueued: true,
+		slo.SwitchTTFTHopUnqueued:           true,
+		slo.SwitchTTFTDecodeSpeculatingHeld: true,
 	}}
 }
 
@@ -534,12 +581,25 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		series   = map[string][]CycleShape{}
 	)
 	ttft.promptSupport = opts.Switches[PackageSLO][slo.SwitchTTFTPromptSupport]
+	ttft.hopWindowMeans = opts.Switches[PackageSLO][slo.SwitchTTFTHopWindowMeans]
 	// Read once: the switches are set before the replay starts.
 	lineAtFloor := opts.Switches[PackageSaturation][saturation.SwitchITLLineAtFloor]
 	censored := opts.Switches[PackageSaturation][saturation.SwitchTPOTRatioCensored]
 	residence := opts.Switches[PackageSaturation][saturation.SwitchDecodeResidencePull]
 	burst := opts.Switches[PackageSaturation][saturation.SwitchDecodeBurstFill]
 	ttft.prefixAttention = opts.Switches[PackageSLO][slo.SwitchTTFTPrefixAttention]
+	ttft.computedHit = opts.Switches[PackageSLO][slo.SwitchTTFTComputedHit]
+	ttft.tierLoad = opts.Switches[PackageSLO][slo.SwitchTTFTTierLoad]
+	ttft.tierKVWait = opts.Switches[PackageSLO][slo.SwitchTTFTTierKVWait]
+	ttft.psByEngine = opts.Switches[PackageSLO][slo.SwitchTTFTPSByEngine]
+	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
+	ttft.vpAtServed = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPAtServedWork]
+	ttft.cachedTokenCost = opts.Switches[PackageSLO][slo.SwitchTTFTCachedTokenCost]
+	ttft.specHeld = opts.Switches[PackageSLO][slo.SwitchTTFTDecodeSpeculatingHeld]
+	// SwitchITLPerToken is on from the saturation analyzer's constructor: a
+	// replay that does not name it fits the line per accepted token.
+	perToken, named := opts.Switches[PackageSaturation][saturation.SwitchITLPerToken]
+	ttft.itlPerToken = perToken || !named
 	opts.stop = func(r *replayer, ev learnrec.RawEvent) bool {
 		if ev.Kind != saturation.KindAnalyze {
 			return false
@@ -609,6 +669,9 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 					v.Resident = residentOf(resident[v.Variant], v.Shape)
 				}
 			}
+			// The window's first cycle, for the age of a V_P read before the
+			// samples kept (PrefillState.WindowFrom); set again below.
+			s.FirstAt = firstAt
 			r.fillTTFT(s, in, ttft)
 			batch.fit(s)
 			// The replay applied the cycle's Analyze before asking: its

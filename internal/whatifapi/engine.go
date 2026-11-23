@@ -75,6 +75,16 @@ type Knobs struct {
 	// PrefixHit is a stated prefix-cache hit rate in [0, 1), nil the
 	// observed one (flagged AssumedShape).
 	PrefixHit *float64
+	// PrefixHitRead says PrefixHit was read from the source (the load's
+	// cycles, ReportShapeAsk.Load), not stated: a computed-token hit replaces
+	// it where the replay turned slo.SwitchTTFTComputedHit on, and a stated
+	// one governs.
+	PrefixHitRead bool
+	// CachedTokenCost is phi, the cost of a cached prompt token, priced in
+	// place of the one the pricer fitted (CachedTokenCost); nil is the
+	// pricer's own. It moves a figure only where the replay turned
+	// slo.SwitchTTFTCachedTokenCost on and the prompt has a cached share.
+	CachedTokenCost *float64
 	// TTFTPercentile and TPOTPercentile are q in (0, 1); 0 is the mean.
 	TTFTPercentile, TPOTPercentile float64
 	Assume                         Assume

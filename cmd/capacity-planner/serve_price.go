@@ -71,7 +71,7 @@ func apiError(err error) error {
 func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest) (*whatifapi.Resolved, error) {
 	f := answerFlags{question: "serve", cycle: "last", model: req.Model, variant: req.DecodeVariant, prefillVariant: req.PrefillVariant,
 		serveSelfCheck: req.SelfCheck != nil && *req.SelfCheck,
-		seed:           whatif.DefaultResampling().Seed, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
+		seed:           whatif.DefaultResampling().Seed, vpPlateau: req.PrefillVPPlateau, experimentalTTFT: req.ExperimentalTTFT, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
 		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {
@@ -125,7 +125,7 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		info.From, info.To = &o.from, &o.to
 	}
 	info.Cycle, info.TotalCycles, info.FirstAt, info.LastAt = st.Cycle, st.Cycles, st.FirstAt, st.At
-	res, err := s.resolved(&f, st, data, info)
+	res, err := s.resolved(ctx, &f, st, data, info)
 	// The series is the last pass: a file changed under it is refused, and
 	// nothing is kept under the content id its first pass summed.
 	if cerr := data.unchanged(); cerr != nil {
@@ -314,7 +314,7 @@ func hidePath(err error, path, name string) error {
 // resolved reads the fleet from st as the CLI would at the recorded counts,
 // and names the inputs by content: the recording's bytes, the cycle, the model
 // and the variants.
-func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *recordingSource, info whatifapi.SourceInfo) (*whatifapi.Resolved, error) {
+func (s *servedSources) resolved(ctx context.Context, f *answerFlags, st *learnreplay.State, data *recordingSource, info whatifapi.SourceInfo) (*whatifapi.Resolved, error) {
 	variants, err := f.decodeVariants(st)
 	if err != nil {
 		return nil, apiError(err)
@@ -357,7 +357,8 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *re
 		return nil, whatifapi.InputErrorf("%s; the planner reads a replica as its engine rows, so it prices nothing from this recording; %s", why, engineRowsFix)
 	}
 	pricer := &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
-		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
+		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter,
+		experimentalTTFT: f.experimentalTTFT}
 	res := &whatifapi.Resolved{
 		Inputs:  inputsDoc(f, st, &variants[0], ps, fleets[0], info),
 		Content: content,
@@ -370,6 +371,17 @@ func (s *servedSources) resolved(f *answerFlags, st *learnreplay.State, data *re
 		res.Folds, res.PlannerVersion = f.foldFits(variants[0].state.Variant, f.prefillVariant), selfCheckVersion()
 		res.Content += "\x00self-check"
 	}
+	if f.vpPlateau {
+		// Another replay, so other inputs: never the id of the default's.
+		res.Inputs.PrefillVPPlateau = true
+		res.Content += "\x00" + vpPlateauFlag
+	}
+	if f.experimentalTTFT {
+		// Another replay, so other inputs: never the id of the default's.
+		res.Inputs.ExperimentalTTFT = true
+		res.Content += "\x00" + experimentalTTFTFlag
+	}
+	f.fitCachedCosts(ctx, ps, res, pricer)
 	res.Bytes = heapEstimate(sizeOf(pricer) + sizeOf(series) + sizeOf(latency) + sizeOf(res.Inputs))
 	return res, nil
 }
@@ -386,6 +398,13 @@ type servedState struct {
 	imbalanceAcrossCounts bool
 	// loadAwareRouter is --load-aware-router on at-replicas.
 	loadAwareRouter bool
+	// cachedCost is phi as fitted on the source (fitCachedCosts), nil
+	// where none was.
+	cachedCost *whatifapi.CachedTokenCost
+	// experimentalTTFT is --experimental-ttft (the request's
+	// experimentalTTFT): every fleet read is priced and flagged as the
+	// experimental TTFT model's.
+	experimentalTTFT bool
 }
 
 // seconds is x seconds as a duration, to the nanosecond.
@@ -413,13 +432,20 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 	f := answerFlags{fixedImbalance: fixedF, question: rateQuestion, cycle: "last", variant: s.decodeVariant, prefillVariant: s.prefillVariant, hint: s.hint, hintSet: true,
 		seed: whatif.DefaultResampling().Seed, set: map[string]bool{"ttft": true, "headroom": true}, warn: io.Discard,
 		decode: k.Decode, prefill: k.Prefill, headroom: k.Headroom, priceRouterWait: whatif.DefaultPriceRouterWait,
-		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: s.imbalanceAcrossCounts, loadAwareRouter: s.loadAwareRouter}
+		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: s.imbalanceAcrossCounts, loadAwareRouter: s.loadAwareRouter,
+		experimentalTTFT: s.experimentalTTFT}
 	set := func(name string) { f.set[name] = true }
 	if k.PromptTokens > 0 {
 		f.inputTokens = k.PromptTokens
 		set("assume-input-tokens")
 	}
-	f.prefixHit = k.PrefixHit
+	f.prefixHit, f.prefixHitRead = k.PrefixHit, k.PrefixHitRead
+	if s.cachedCost != nil {
+		f.cachedCost, f.cachedPhi = s.cachedCost, s.cachedCost.Phi
+	}
+	if k.CachedTokenCost != nil {
+		f.cachedPhi, f.cachedPhiSet = *k.CachedTokenCost, true
+	}
 	if k.OutputTokens > 0 {
 		f.outputTokens = k.OutputTokens
 		set("assume-output-tokens")

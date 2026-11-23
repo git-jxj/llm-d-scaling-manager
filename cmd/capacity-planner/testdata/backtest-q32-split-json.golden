@@ -3,11 +3,11 @@
   "whatifSchema": "schema-v3",
   "backtestId": "sha256:8796c929aec8874cf1be7f35cc9a60b67f210b24dce81a4337695fb6ea8d179d",
   "banner": "The planner's figures are a model, not a bound: this check measures how far off they are on this fleet.",
-  "verdict": "Over the 1 h 13 min the planner did not see: mean TTFT: within 20% of measured in 6 of the 12 five-minute steps scored (a figure, and enough measured requests); it leans high (median ratio 1.21). For 1 more it gave no figure, calling the fleet overloaded; the fleet measured mean 11.6 s there. p90 TTFT: within 20% in 0 of 5, median ratio 1.35. p90 TTFT not scored in 2: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it. mean TPOT: within 20% of measured in 13 of the 13 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 0.99). p90 TPOT not scored in 8: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it. None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.",
+  "verdict": "Over the 1 h 13 min the planner did not see: mean TTFT: within 20% of measured in 6 of the 12 five-minute steps scored (a figure, and enough measured requests); it leans high (median ratio 1.21). For 1 more it gave no figure, calling the fleet overloaded; the fleet measured mean 11.6 s there. p90 TTFT: within 20% in 0 of 5, median ratio 1.35. p90 TTFT not scored in 2: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it or within 20% of its edge; in the measured histogram bucket itself in 1, 200 ms to 400 ms (2.0x wide): consistent at the bucket's resolution, not within 20%, and outside it, within 20% of its edge, in 1. mean TPOT: within 20% of measured in 13 of the 13 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 0.99). p90 TPOT not scored in 8: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it or within 20% of its edge; in the measured histogram bucket itself in 8, 10 ms to 20 ms (2.0x wide): consistent at the bucket's resolution, not within 20%. None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.",
   "verdictLines": [
     "Over the 1 h 13 min the planner did not see:",
-    "mean TTFT: within 20% of measured in 6 of the 12 five-minute steps scored (a figure, and enough measured requests); it leans high (median ratio 1.21). For 1 more it gave no figure, calling the fleet overloaded; the fleet measured mean 11.6 s there. p90 TTFT: within 20% in 0 of 5, median ratio 1.35. p90 TTFT not scored in 2: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it.",
-    "mean TPOT: within 20% of measured in 13 of the 13 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 0.99). p90 TPOT not scored in 8: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it.",
+    "mean TTFT: within 20% of measured in 6 of the 12 five-minute steps scored (a figure, and enough measured requests); it leans high (median ratio 1.21). For 1 more it gave no figure, calling the fleet overloaded; the fleet measured mean 11.6 s there. p90 TTFT: within 20% in 0 of 5, median ratio 1.35. p90 TTFT not scored in 2: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it or within 20% of its edge; in the measured histogram bucket itself in 1, 200 ms to 400 ms (2.0x wide): consistent at the bucket's resolution, not within 20%, and outside it, within 20% of its edge, in 1.",
+    "mean TPOT: within 20% of measured in 13 of the 13 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 0.99). p90 TPOT not scored in 8: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it or within 20% of its edge; in the measured histogram bucket itself in 8, 10 ms to 20 ms (2.0x wide): consistent at the bucket's resolution, not within 20%.",
     "None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet."
   ],
   "excluded": "Judged 13 of 16 five-minute steps; not judged: 1 warm-up, 2 a burst near the knee in its window.",
@@ -129,7 +129,8 @@
             "lo": 0.1,
             "hi": 0.2
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -256,7 +257,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -283,7 +285,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -309,7 +312,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         }
       ],
       "relaxationSeconds": 0.013578893275379091
@@ -400,7 +404,8 @@
             "lo": 0.1,
             "hi": 0.2
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -528,7 +533,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -555,7 +561,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -581,7 +588,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         }
       ],
       "relaxationSeconds": 0.014744352970994726
@@ -672,7 +680,8 @@
             "lo": 0.2,
             "hi": 0.4
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -710,7 +719,8 @@
             "lo": 0.2,
             "hi": 0.4
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -793,7 +803,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -820,7 +831,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -932,7 +944,8 @@
             "lo": 0.2,
             "hi": 0.4
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -1054,7 +1067,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -1081,7 +1095,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -1193,7 +1208,8 @@
             "lo": 0.2,
             "hi": 0.4
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -1315,7 +1331,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -1342,7 +1359,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -1454,7 +1472,8 @@
             "lo": 0.4,
             "hi": 0.6
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -1575,7 +1594,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -1602,7 +1622,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -1714,7 +1735,8 @@
             "lo": 0.4,
             "hi": 0.6
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -1836,7 +1858,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -1863,7 +1886,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -1975,7 +1999,8 @@
             "lo": 0.4,
             "hi": 0.6
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -2097,7 +2122,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -2124,7 +2150,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -2234,7 +2261,8 @@
             "lo": 0.4,
             "hi": 0.6
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -2348,7 +2376,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -2594,7 +2623,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -2840,7 +2870,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -3097,7 +3128,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -3124,7 +3156,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -3150,7 +3183,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         }
       ],
       "relaxationSeconds": 6.775004411053932
@@ -3278,7 +3312,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -3305,7 +3340,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -3331,7 +3367,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         }
       ]
     },
@@ -3548,7 +3585,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -3575,7 +3613,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p95",
@@ -3601,7 +3640,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         }
       ],
       "relaxationSeconds": 1.0412882272400326,
@@ -3806,7 +3846,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -4052,7 +4093,8 @@
             "lo": 0.01,
             "hi": 0.02
           },
-          "unscored": "unresolvable"
+          "unscored": "unresolvable",
+          "sameBucket": true
         },
         {
           "statistic": "p90",
@@ -4164,6 +4206,12 @@
         "refused": {
           "Saturated": 1
         },
+        "sameBucket": 8,
+        "sameBucketBand": {
+          "lo": 0.1,
+          "hi": 0.6
+        },
+        "sameBucketWidth": 1.4999999999999998,
         "pastKnee": {
           "lo": 10,
           "hi": 15
@@ -4195,6 +4243,12 @@
         "refused": {
           "Saturated": 1
         },
+        "sameBucket": 1,
+        "sameBucketBand": {
+          "lo": 0.2,
+          "hi": 0.4
+        },
+        "sameBucketWidth": 2,
         "pastKnee": {
           "lo": 15,
           "hi": 20
@@ -4276,6 +4330,12 @@
           "unresolvable": 13
         },
         "refused": {},
+        "sameBucket": 13,
+        "sameBucketBand": {
+          "lo": 0.01,
+          "hi": 0.02
+        },
+        "sameBucketWidth": 2,
         "outside": {}
       },
       {
@@ -4295,6 +4355,12 @@
           "unresolvable": 8
         },
         "refused": {},
+        "sameBucket": 8,
+        "sameBucketBand": {
+          "lo": 0.01,
+          "hi": 0.02
+        },
+        "sameBucketWidth": 2,
         "outside": {}
       },
       {
@@ -4314,6 +4380,12 @@
           "unresolvable": 2
         },
         "refused": {},
+        "sameBucket": 2,
+        "sameBucketBand": {
+          "lo": 0.01,
+          "hi": 0.02
+        },
+        "sameBucketWidth": 2,
         "outside": {}
       }
     ],
@@ -4362,6 +4434,12 @@
               "unresolvable": 12
             },
             "refused": {},
+            "sameBucket": 8,
+            "sameBucketBand": {
+              "lo": 0.1,
+              "hi": 0.6
+            },
+            "sameBucketWidth": 1.4999999999999998,
             "outside": {}
           },
           {
@@ -4386,6 +4464,12 @@
               "unresolvable": 2
             },
             "refused": {},
+            "sameBucket": 1,
+            "sameBucketBand": {
+              "lo": 0.2,
+              "hi": 0.4
+            },
+            "sameBucketWidth": 2,
             "outside": {
               "prompt cv": 5
             }
@@ -4456,6 +4540,12 @@
               "unresolvable": 13
             },
             "refused": {},
+            "sameBucket": 13,
+            "sameBucketBand": {
+              "lo": 0.01,
+              "hi": 0.02
+            },
+            "sameBucketWidth": 2,
             "outside": {}
           },
           {
@@ -4475,6 +4565,12 @@
               "unresolvable": 8
             },
             "refused": {},
+            "sameBucket": 8,
+            "sameBucketBand": {
+              "lo": 0.01,
+              "hi": 0.02
+            },
+            "sameBucketWidth": 2,
             "outside": {}
           },
           {
@@ -4494,6 +4590,12 @@
               "unresolvable": 2
             },
             "refused": {},
+            "sameBucket": 2,
+            "sameBucketBand": {
+              "lo": 0.01,
+              "hi": 0.02
+            },
+            "sameBucketWidth": 2,
             "outside": {}
           }
         ]

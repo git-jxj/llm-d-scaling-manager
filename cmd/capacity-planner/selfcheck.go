@@ -33,13 +33,18 @@ func (f *answerFlags) selfCheckOn() bool {
 	return defaultSelfCheck && !f.noSelfCheck
 }
 
+// testReplaySwitches is the replay switches every answer reads its states
+// with, beside the planner's own (learnreplay.PlannerSwitches): nil but in a
+// test that turns a planner-only switch on through the CLI's whole path.
+var testReplaySwitches map[string]map[string]bool
+
 // readStates reads the state at the answer's cycle and, when the answer
 // self-checks, the states at the folds' cuts, in one replay.
 func (f *answerFlags) readStates(ctx context.Context, src learnreplay.Source, q learnreplay.StateQuery) (*learnreplay.State, error) {
 	if !f.selfCheckOn() {
-		return learnreplay.StateFrom(ctx, src, learnreplay.Options{}, q)
+		return learnreplay.StateFrom(ctx, src, f.replayOptions(), q)
 	}
-	st, folds, err := learnreplay.StatesFrom(ctx, src, learnreplay.Options{}, q, whatifapi.SelfCheckCycles)
+	st, folds, err := learnreplay.StatesFrom(ctx, src, f.replayOptions(), q, whatifapi.SelfCheckCycles)
 	f.folds = folds
 	return st, err
 }
@@ -49,7 +54,8 @@ func (f *answerFlags) foldFits(decodeVariant, prefillVariant string) []whatifapi
 	out := make([]whatifapi.FoldFit, 0, len(f.folds))
 	for c, st := range f.folds {
 		out = append(out, whatifapi.FoldFit{Cycle: c, At: st.At, Pricer: &servedState{st: st, decodeVariant: decodeVariant,
-			prefillVariant: prefillVariant, hint: f.hintSource(), imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter}})
+			prefillVariant: prefillVariant, hint: f.hintSource(), imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter,
+			experimentalTTFT: f.experimentalTTFT}})
 	}
 	return out
 }
@@ -63,7 +69,7 @@ func (f *answerFlags) checkRecording(ctx context.Context, st *learnreplay.State,
 	t0 := time.Now()
 	ss := &servedSources{warn: io.Discard}
 	info := whatifapi.SourceInfo{Kind: whatifapi.SourceRecording, Cycle: st.Cycle, TotalCycles: st.Cycles, FirstAt: st.FirstAt, LastAt: st.At}
-	res, err := ss.resolved(f, st, src, info)
+	res, err := ss.resolved(ctx, f, st, src, info)
 	if err != nil {
 		f.checked = &whatifapi.SelfCheck{Status: whatifapi.SelfCheckNotRun, Why: err.Error(), Line: "Self-check not run: " + err.Error() + ".",
 			Folds: []whatifapi.SelfCheckFold{}, Checks: []whatifapi.SelfCheckRule{}}
@@ -134,6 +140,14 @@ func (f *answerFlags) stated() (*whatifapi.Stated, error) {
 	}
 	if f.set["load-aware-router"] && f.loadAwareRouter != whatif.DefaultPlannerLoadAwareRouter {
 		st.Replayed, st.Outside = append(st.Replayed, "--load-aware-router="+strconv.FormatBool(f.loadAwareRouter)), true
+	}
+	// The folds are read in the answer's own replay (readStates), so they
+	// learn V_P from the plateau too.
+	if f.vpPlateau {
+		st.Replayed, st.Outside = append(st.Replayed, "--"+vpPlateauFlag), true
+	}
+	if f.experimentalTTFT {
+		st.Replayed, st.Outside = append(st.Replayed, "--"+experimentalTTFTFlag), true
 	}
 	return st, nil
 }

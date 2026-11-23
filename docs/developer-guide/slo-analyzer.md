@@ -102,6 +102,121 @@ or the whole prompt by more than `MaxVPShapeRatio` with a hit rate above 0.1
 on either side. A state that recorded no whole prompt raises nothing new. No
 committed recording has a prefix hit, so no golden moves.
 
+`ComputedHit` (`slo-ttft-computed-hit`, planner-only, off from the
+constructor) nets a whole prompt the planner prices for the prefill pods
+(`--assume-input-tokens`, `--shape load`, a stated shape with no hit, a
+backtest or day-plan step) by the prefill pods' computed-token hit,
+`1 − computed tokens / whole prompt tokens`
+(`whatif.PromptWindow.ComputedHit`). It reads `PrefillComputedTokenRate`
+and the one-minute prompt `AvgInputTokensRecent` from the same rows and
+minute. `vllm:prefix_cache_hits` counts only the GPU prefix cache, so a hit
+from an offload tier or a KV connector reads there as computed. The planner
+then priced more prefill work per request than the engines' own counter
+showed, and V_P is read from that counter. Details:
+
+- The planner reads the switch through `learnreplay.PrefillState.ComputedHit`
+  (`pricedFleet.netByComputedHit`).
+- A hit the question states (`--prefix-hit`, an `IL/OL/hit` shape) still
+  governs. One the load's cycles filled in (`whatifapi.Knobs.PrefixHitRead`)
+  does not.
+- It applies only where the computed-token hit or the hit it replaces is
+  above `MaterialPrefixHitMove`. No committed recording has a hit, so it
+  moves no golden.
+- The hit rate printed beside the prompt stays the prefix-cache one, which is
+  what V_P's is compared with.
+- The measured shape is unchanged: its prompt is already the computed one.
+
+`TierKVWait` (`slo-ttft-tier-kv-wait`, planner-only, off from the constructor)
+prices the tier load, with `slo-ttft-tier-load` on, at the engine's measured
+wait for the KV instead of the transfer's seconds, where the wait is longer
+(`whatif.TierLoad.WaitPerRequest`: the mean `AvgQueueTime`, request-weighted,
+over the prefill rows with no request waiting for capacity). A loaded request
+is scheduled at a step boundary after its load, so it waits past the
+transfer. The wait is the one at the traffic read: it rises with load, and
+is held as read at the rate asked. The knee does not move.
+
+`TierLoad` (`slo-ttft-tier-load`, planner-only, off from the constructor)
+prices a cached prompt token that came from outside the GPU. A hit in the GPU
+prefix cache costs only the attention over it. A hit from a host, disk or
+peer tier is loaded into the GPU first, and with vLLM's `OffloadingConnector`
+the request waits for that load before its prefill is scheduled. Off, the
+price took that load as free.
+
+- **What it reads.** The prefill rows' cached tokens by tier
+  (`domain.ReplicaMetrics.CachedTokenRateBySource`, from
+  `vllm:prompt_tokens_cached_by_source`) and their KV transfers
+  (`KVTransferRates`: bytes and seconds a second of the offload load into the
+  GPU, of a tiering spec's reads from its secondary tiers, and of NIXL), each
+  recorded only (`registration/cache_tiers.go`, `kv_transfers.go`).
+- **The term** (`whatif.PromptWindow.TierLoad`, `pricedFleet.tierLoad`). Each
+  transfer kind's seconds per token is the bytes it moved per cached token
+  over the bandwidth it ran at. The load per request is a request's tokens of
+  each tier times the seconds per token of the kinds that moved them: the
+  offload load for host, disk and peer tokens, the tier read beside it for
+  disk and peer tokens, NIXL for peer tokens on a pod with no offload load. At
+  the question it scales with the whole prompt asked, the tiers' shares held
+  as read, and a stated hit caps their share. It is a request's own latency,
+  added to `a` (`whatif.Prefill.TierLoadSeconds`, `TTFTParts.TierLoad`), not
+  the queue's work: the prefill knee does not move.
+- **Overlap.** Priced with none. The `OffloadingConnector` loads before the
+  request is scheduled, so none is expected there. A connector that loads
+  layer by layer overlaps part of it, and the term is then an upper bound;
+  the switch-off figure is the lower one.
+- **Where `a` was read.** `a` from engine prefill timing subtracts the
+  engine's queue time, which holds a request's wait for its KV load: all of
+  the load is added. `a` from low-load minutes holds the load at the traffic
+  it was read at: only the question's excess over the traffic read is added.
+  A stated `a` (`--assume-a`) adds nothing.
+- **No bandwidth is guessed.** A tier serving `whatif.MinTierShare` (1%) of
+  the prompt or more with no transfer that prices it leaves the term out,
+  flagged `TierLoadUnmeasured`. A recording with no split by tier, where the
+  computed-token hit is above `MaterialPrefixHitMove`, is flagged
+  `TierSplitUnread`.
+- **The attention span (issue #311).** With `slo-ttft-prefix-attention` on
+  too, the span's cached context is the whole prompt less the computed one,
+  every tier's hits counted (`whatif.Prefill.CachedContextRead`): the
+  question's from the computed-token hit of the same rows and minutes, V_P's
+  from `VPWholePromptTokens − VPPromptTokens`. The prefix-cache hit rate sees
+  the GPU's hits alone.
+- No committed recording reads the cached tokens by tier, so the switch moves
+  no golden.
+
+`CachedTokenCost` (`slo-ttft-cached-token-cost`, planner-only, off from the
+constructor) prices the load of a cached prompt token. A token served from a
+host tier or a peer is not computed, but its KV is loaded before the
+request's prefill can use it. With the switch on, a request's own latency
+carries `phi × cached / V_P` beside its computed prompt:
+
+- `cached` is the whole prompt less the computed one over every tier: the
+  whole prompt asked times the computed-token hit, or at the measured
+  prompt, computed × hit / (1 − hit) (`pricedFleet.priceCachedLoad`).
+- The load is added to `a` (`whatif.Prefill.FixedLatency`): it is in the
+  request's own latency only, never in the pod's work, so no knee moves.
+  V_P is read from busy pods whose loads overlapped their compute.
+- `phi` is one figure per fleet, in [0, 1], fitted on the source's own
+  steps up to the cycle read (`whatifapi.FitCachedTokenCost`): each step a
+  backtest judges, its mean TTFT scored and below the knee, is priced at
+  phi 0 and at phi 1; its implied phi is the measured mean less the first
+  price over the second less the first (the price is linear in phi), and
+  phi is the median, held to [0, 1]. A step read high for another reason
+  pulls phi to 0, never under it. phi on each half of the steps is reported
+  beside it.
+- phi is 0, with the reason, where V_P was not learned under a queue (busy
+  minutes or the peak under a queue; not the back-pressure bound, a served
+  peak, or V_P raised to the served peak), the computed-token hit is under
+  `MinCachedTokenCostShare` (0.1), or fewer than `MinCachedTokenCostSteps`
+  (12) steps qualify. A self-check's folds fit their own phi on the steps
+  before their cut. An answer that reads no steps (the one-shot commands,
+  at-replicas with the self-check off) names phi as not fitted.
+- phi is net of what the learned terms already hold. `a` is read at the
+  shape its minutes ran at: its low-load fit, or its overhead outside the
+  prefill and the queue, takes in the load at that cached share. phi is the
+  load the learned terms do not hold; on a fleet whose cached share does not
+  move it can fit near 0. In the synthetic recording of
+  `TestCachedTokenCost_SyntheticRecording` (cost 0.8 injected as queue
+  time) it fits 0.40, and the mean TTFT reads as measured with it, 0.55 of
+  it without.
+
 One more switch sets an input, not a `TTFTFleet` field:
 `slo-ttft-imbalance-across-counts` (off, `whatif.DefaultImbalanceAcrossCounts`;
 the capacity planner's `--imbalance-across-counts` is on by default,
@@ -149,6 +264,22 @@ windows while both climb. The capacity planner's replay turns it on
 (`learnreplay.PlannerSwitches`) and reads it for its own decode term windows.
 That holds on a recording with no slo analyzer too
 (llm-d-incubation/llm-d-scaling-manager#281).
+
+`slo-ttft-hop-window-means` (off, planner-only) reads the hop R on each
+router window's means (`prefill.DecodeTermCycle.HopWindowMeans`). The
+per-cycle gates hold every cycle of a window to the rate ratio and the prompt
+drift. On a production fleet, one-minute noise alone breaks them in every
+window, so R is never learned and the assumed 20 ms stands. With the switch
+on:
+
+- A window is admitted when its earlier and later halves agree: their mean
+  rates within the rate ratio and their mean prompts within the drift. A ramp
+  still fails; noise around a level does not.
+- The held gate and the prefill-queue gate stay, whatever
+  `slo-ttft-hop-unqueued` says.
+- R is the median of at least `prefill.MinHopMeanWindows` admitted windows,
+  held at their median prompt, with no prompt line. The planner names its
+  source `measured, window means`.
 
 `slo-ttft-low-load-decode-ttft` (off) sets the decode engine's measured TTFT,
 which prices the decode side when no decode line does

@@ -37,6 +37,7 @@ func PrefillFromEstimate(est prefill.Estimate) (Prefill, *Unanswerable) {
 	}
 	p := Prefill{
 		VP: est.VP, VPLowerBound: est.VPLowerBound, VPAboveSlopeBound: est.VPAboveSlopeBound,
+		VPServedOnly: est.VPSource == prefill.SourceServedPeak, VPFromPlateau: est.VPSource == prefill.SourceOccupancyPlateau,
 		FixedLatency: est.A, VPPromptTokens: est.VPPromptTokens, VPMargin: DefaultVPMargin,
 		VPWholePromptTokens: est.VPWholePromptTokens, VPPromptHitRate: est.VPPromptHitRate,
 	}

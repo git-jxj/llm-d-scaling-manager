@@ -47,6 +47,13 @@ type answerFlags struct {
 	noSelfCheck, serveSelfCheck bool
 	folds                       map[int]*learnreplay.State
 	checked                     *whatifapi.SelfCheck
+	// cachedCost is phi as fitted on the source (fitCachedCosts), nil where
+	// none was; cachedPhi is the phi priced, and cachedPhiSet says it was
+	// stated by the fit's own pass (whatifapi.Knobs.CachedTokenCost), not
+	// fitted.
+	cachedCost   *whatifapi.CachedTokenCost
+	cachedPhi    float64
+	cachedPhiSet bool
 	// regularOnly refuses a --recording that is no regular file rather than
 	// read it whole: the server's (openRecording).
 	regularOnly bool
@@ -78,6 +85,9 @@ type answerFlags struct {
 	// prefixHit is a stated prefix-cache hit rate, nil the measured one (a
 	// report shape, at-replicas --shape).
 	prefixHit *float64
+	// prefixHitRead says prefixHit was read from the source (the load
+	// cycles, --shape load), not stated (whatifapi.Knobs.PrefixHitRead).
+	prefixHitRead bool
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
 	// assumeTransferBase is --assume-transfer-base, a TTFT flag (ttft.go,
@@ -111,6 +121,12 @@ type answerFlags struct {
 	// falls to 1 at the pooled prefill knee (whatif.Prefill.LoadAwareRouter);
 	// off by default (whatif.DefaultPlannerLoadAwareRouter).
 	loadAwareRouter bool
+	// vpPlateau is --prefill-vp-plateau: the replay reads V_P from the
+	// occupancy plateau (replayOptions); off by default.
+	vpPlateau bool
+	// experimentalTTFT is --experimental-ttft: the replay turns the TTFT
+	// model's off-by-default switches on (replayOptions); off by default.
+	experimentalTTFT bool
 	// fixedImbalance, above zero, is f at every prefill count above one,
 	// assumed: the report's sensitivity to f (fSensitivity). No flag sets
 	// it.
@@ -170,6 +186,8 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.chargeDecodeGate, "charge-decode-gate", whatif.DefaultChargeDecodeGate, "experimental, unvalidated, slo-to-rate only: charge the time the decode flow-control gate is closed below its onset to the rate answer")
 	fs.StringVar(&f.inputBucket, "input-bucket", "", "not supported: per-bucket answers are the planner's M1")
 	fs.BoolVar(&f.loadAwareRouter, "load-aware-router", whatif.DefaultPlannerLoadAwareRouter, "state that the router scores each pod's queue (llm-d's EPP queue scorer): f is held to the load it was learned at, then falls to 1 at full load, so the prefill knee is the pooled one less the margin and f prices only the latency below it; off by default, because no recording says what the router scores")
+	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
+	fs.BoolVar(&f.experimentalTTFT, experimentalTTFTFlag, false, experimentalTTFTUsage)
 	fs.BoolVar(&f.imbalanceAcrossCounts, "imbalance-across-counts", whatif.DefaultPlannerImbalanceAcrossCounts, fmt.Sprintf("at a prefill count P1 has not learned, price f off a curve fitted to the counts it learned; with none learned, and with =false, max(%g, f) (flagged AssumedImbalance either way)", whatif.ImbalanceFloor))
 	f.window.registerWindow(fs)
 	fs.Lookup("prometheus").Usage = "answer from a window of this Prometheus (base URL), captured and generated in memory, in place of --recording"
@@ -454,6 +472,9 @@ type pricedVariant struct {
 	assumedIL, assumedOL bool
 	// assumedHit says the prefix-hit rate was stated.
 	assumedHit bool
+	// hitRead says that hit was read from the source, not stated
+	// (answerFlags.prefixHitRead).
+	hitRead bool
 	// kvSource says where the decode KV per request came from (residentKV).
 	kvSource string
 	// bandFloor is the ITL band floor the replay adapted to the fleet's fill
@@ -608,7 +629,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		// length is asked: as the prompt's cv (prefillShape).
 		hit := vs.Shape.PrefixHitRate
 		if f.prefixHit != nil {
-			hit, pv.assumedHit = *f.prefixHit, true
+			hit, pv.assumedHit, pv.hitRead = *f.prefixHit, true, f.prefixHitRead
 		}
 		pv.shape = shape.New(il, ol, hit).WithOutputDispersion(vs.Shape.OutputDispersion)
 		replicas := vs.Replicas

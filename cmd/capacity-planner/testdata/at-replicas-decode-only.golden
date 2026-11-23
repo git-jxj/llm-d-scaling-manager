@@ -16,22 +16,22 @@ shape measured: IL 1000 OL 602, prefix hit 0.00 (measured, cycles 64-83)
   SHAPE/LOAD MISMATCH: the load is priced at a shape more than 20% off the traffic that made it; --shape load prices it at its own
 utilization at the load judged
   decode        KV fill 0.540 (band top 0.7), slots 51 of 64, wait p 0.119
-  prefill       utilization pooled no prefill speed learned, worst pod no prefill speed learned
+  prefill       utilization pooled no fixed prefill latency learned, worst pod no fixed prefill latency learned
   verdict       NOT JUDGED: the load and the shape priced are of different traffic: the load's cycles ran at IL 1000 OL 500, the shape priced is IL 1000 OL 602, so the knee is of other traffic and no verdict is priced on it; --shape load prices the load at its own shape.
 capacity            req/s     out tok/s   bound by
-  prefill knee      no prefill speed learned            P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
+  prefill knee      no fixed prefill latency learned            P1 refused a: NoPromptSpread; pass --assume-a for a flagged answer
   decode knee       30.88     18589       decode batch cap at fill 0.680
                     OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
   fleet knee        30.88     18589       decode (prefill not priced)
   operating (0.85)  26.25     15801       0.85 x fleet knee (scaleUpThreshold)
-  max at SLO        no prefill speed learned            no fleet rate: the prefill side is not priced, and decode alone does not bound the fleet (slo-to-rate gives none either): P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
-SLO vs load        r/s    TTFT p50/90 ms            TPOT mean/p90 ms                e2e mean (sum)
-  50% of knee      15.44  no prefill speed learned  2.50/TPOT bucket too wide       no prefill speed learned
-  80% of knee      24.70  no prefill speed learned  2.99/TPOT bucket too wide       no prefill speed learned
-  100% of knee     30.88  no prefill speed learned  saturated/TPOT bucket too wide  no prefill speed learned
-  load seen (87%)  26.90  no prefill speed learned  3.14/TPOT bucket too wide       no prefill speed learned
+  max at SLO        no fixed prefill latency learned            no fleet rate: the prefill side is not priced, and decode alone does not bound the fleet (slo-to-rate gives none either): P1 refused a: NoPromptSpread; pass --assume-a for a flagged answer
+SLO vs load        r/s    TTFT p50/90 ms                    TPOT mean/p90 ms                e2e mean (sum)
+  50% of knee      15.44  no fixed prefill latency learned  2.50/TPOT bucket too wide       no fixed prefill latency learned
+  80% of knee      24.70  no fixed prefill latency learned  2.99/TPOT bucket too wide       no fixed prefill latency learned
+  100% of knee     30.88  no fixed prefill latency learned  saturated/TPOT bucket too wide  no fixed prefill latency learned
+  load seen (87%)  26.90  no fixed prefill latency learned  3.14/TPOT bucket too wide       no fixed prefill latency learned
 checks
-  1 prefill + 1 decode  does not hold: 26.90 r/s is above 0.85 x the fleet knee 30.88 r/s = 26.25 r/s; prefill not priced (no prefill speed learned); TPOT mean 3.1 ms meets 5.0 ms
+  1 prefill + 1 decode  does not hold: 26.90 r/s is above 0.85 x the fleet knee 30.88 r/s = 26.25 r/s; prefill not priced (no fixed prefill latency learned); TPOT mean 3.1 ms meets 5.0 ms
 flags: DecodeOnly; BatchBeyondFit; ExtrapolatedFill; CoarseTPOTBucket; EngineTPOTHistogram; ShapeLoadMismatch
 
 not validated:

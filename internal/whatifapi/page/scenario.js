@@ -530,9 +530,12 @@ function reportRequest(o) {
 
 // REPORT_MARKS are a summary cell's marks: its class, and the word that says
 // it without colour. A rate past a prefill knee priced from a lower bound of
-// V_P is not judged, never saturated: the true knee may be higher.
+// V_P is not judged, never saturated: the true knee may be higher. A TTFT
+// over its target priced from that lower bound is at most its figure, so its
+// miss is not known either.
 const REPORT_MARKS = {met: ["met", "ok"], missed: ["missed", "MISS"], "missed at onset": ["missed", "MISS at onset"], saturated: ["saturated", "SAT"],
-  "past a lower-bound knee": ["unknown", "past a lower-bound knee"], unknown: ["unknown", "?"], "no target": ["notarget", "no SLO"]};
+  "past a lower-bound knee": ["unknown", "past a lower-bound knee"], "at most, over target": ["unknown", "at most, over target: not known"],
+  unknown: ["unknown", "?"], "no target": ["notarget", "no SLO"]};
 
 // REFUSAL_WORDS are the refusals a report shows most, in words.
 const REFUSAL_WORDS = {
@@ -575,6 +578,8 @@ const REPORT_FLAG_WORDS = {
   HeldLine: "a decode line held from earlier",
   DecodeOnly: "decode only: prefill is not priced",
   VPLowerBound: "the prefill speed is a lower bound",
+  VPFromPlateau: "the prefill speed is from the occupancy plateau (experimental)",
+  ExperimentalTTFT: "priced with the experimental TTFT model (not validated)",
 };
 
 // flagSummary is a shape's flags as short phrases, and the rest counted:
@@ -600,10 +605,11 @@ function roundRate(r) {
 }
 
 // msText is a latency figure in words: "637 ms", or its refusal, short. A
-// TPOT (tpot true) read at the decode line's floor is marked as at most that.
+// TPOT (tpot true) read at the decode line's floor is marked as at most that,
+// and so is a TTFT priced from a lower bound of V_P (upperBound).
 function msText(f, tpot) {
   // A figure read at the band's bottom is the line's floor: the latency is at most it.
-  if (f && f.value != null) return (tpot && isFloor(f) ? "≤" : "") + roundMs(f.value) + " ms";
+  if (f && f.value != null) return ((tpot && isFloor(f)) || f.upperBound ? "≤" : "") + roundMs(f.value) + " ms";
   const reason = f && f.refused ? f.refused.reason : "";
   return reason === "Saturated" ? "saturated" : reason === "AboveDecodeOnset" ? "router-queued" : "-";
 }

@@ -30,6 +30,15 @@ type InputsRequest struct {
 	// inputs (SelfCheck); absent, the server's default (on, unless the
 	// server was started with --no-self-check).
 	SelfCheck *bool `json:"selfCheck,omitempty"`
+	// PrefillVPPlateau reads V_P from the occupancy plateau where no
+	// prefill pod queued (the CLI's --prefill-vp-plateau): experimental and
+	// off by default. Every figure priced from it is flagged VPFromPlateau.
+	PrefillVPPlateau bool `json:"prefillVPPlateau,omitempty"`
+	// ExperimentalTTFT prices TTFT with the TTFT model's switches that are
+	// off by default (the CLI's --experimental-ttft): for demonstration,
+	// not validated. Every prefill and TTFT figure is flagged
+	// ExperimentalTTFT.
+	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
 }
 
 // The source kinds.
@@ -67,9 +76,19 @@ type InputsResponse struct {
 	Terms         []Term     `json:"terms"`
 	// Assumed is every input the source did not give, in words.
 	Assumed []string `json:"assumed"`
+	// CachedTokenCost is phi, the cost of a cached prompt token, as fitted
+	// on the source; absent where slo.SwitchTTFTCachedTokenCost is off or
+	// there is no prefill variant.
+	CachedTokenCost *CachedTokenCost `json:"cachedTokenCost,omitempty"`
 	// SelfCheck is the planner checked on this source: the folds of it
 	// fitted on earlier cycles predicting later ones. Absent when not asked.
 	SelfCheck *SelfCheck `json:"selfCheck,omitempty"`
+	// PrefillVPPlateau says the source was read with V_P from the occupancy
+	// plateau (InputsRequest.PrefillVPPlateau); absent otherwise.
+	PrefillVPPlateau bool `json:"prefillVPPlateau,omitempty"`
+	// ExperimentalTTFT says the source was read with the experimental TTFT
+	// model (InputsRequest.ExperimentalTTFT); absent otherwise.
+	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
 }
 
 // SourceInfo is what the inputs were read from. Prometheus is the URL's
@@ -230,6 +249,12 @@ type Figure struct {
 	// plan reads (the points A and B, the knees and the limits), not on a
 	// curve's points.
 	Validation *Validation `json:"validation,omitempty"`
+	// UpperBound says the figure, a latency, is priced from a prefill speed
+	// (V_P) known only as a lower bound (flag VPLowerBound): a faster prefill
+	// only lowers it, so the true figure is at most Value. A target it meets
+	// is met; one it misses is not known to be missed (issue
+	// llm-d-incubation/llm-d-scaling-manager#369).
+	UpperBound bool `json:"upperBound,omitempty"`
 }
 
 // Band is a bootstrap band, Lo to Hi.

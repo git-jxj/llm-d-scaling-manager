@@ -655,6 +655,33 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// committed recording has a prefix hit, so it moves no golden. Its unit
 	// tests hold it (heldBy).
 	slo.SwitchTTFTPrefixAttention: nil,
+	// A whole prompt netted by the prefill pods' computed-token hit in the
+	// planner, planner-only: the analyzer prices no stated prompt, and the
+	// planner nets by it only where a hit is above
+	// whatif.MaterialPrefixHitMove, which no committed recording has, so it
+	// moves no golden. Its unit tests hold it (heldBy).
+	slo.SwitchTTFTComputedHit: nil,
+	// A cached token's load from a tier outside the GPU, and the attention
+	// span over every tier's cached context, in the planner, planner-only:
+	// the analyzer prices no tier, and the planner prices it only where the
+	// prefill rows read the cached tokens by tier, which no committed
+	// recording does, so it moves no golden. Its unit tests hold it
+	// (heldBy).
+	slo.SwitchTTFTTierLoad: nil,
+	// The tier load priced at the engine's measured wait for the KV, with
+	// the tier load on, planner-only: no committed recording reads the
+	// cached tokens by tier, so it moves no golden. Its unit tests hold it.
+	slo.SwitchTTFTTierKVWait: nil,
+	// The prefill queue priced as processor sharing by the engine's flags,
+	// planner-only: no committed recording states --max-num-batched-tokens,
+	// so it moves no golden. Its unit tests hold it.
+	slo.SwitchTTFTPSByEngine: nil,
+	// A cached prompt token's cost, fitted on the source's steps and priced
+	// in a request's own latency, planner-only: the analyzer fits none, and
+	// the planner fits phi only where the prefill variant's computed-token
+	// hit is above whatif.MaterialPrefixHitMove, which no committed
+	// recording has, so it moves no golden. Its unit tests hold it (heldBy).
+	slo.SwitchTTFTCachedTokenCost: nil,
 
 	// Learner PR 5c, on main after 5b (602054e98): the replicaStartSeconds
 	// seed is the prior (SwitchStartReadsSeed), and the first starts blend
@@ -1266,10 +1293,37 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// golden moves. Its unit tests hold it.
 	saturation.SwitchDecodeBurstFill:      nil,
 	saturation.SwitchPrefillVPFloorServed: nil,
+	// The planner's V_P on a fleet that never queued (served peak as a
+	// lower bound). Planner-only, off; the controller's replays never run
+	// it, so no learner golden moves. Its unit tests hold it.
+	saturation.SwitchPrefillVPServedUnqueued: nil,
+	// The planner's peak under a queue over the whole window. Planner-only,
+	// off; the controller's replays never run it. Its unit tests hold it.
+	saturation.SwitchPrefillVPWindowBest: nil,
+	// The planner's V_P for a TTFT raised with a knee floored at the served
+	// work. Planner-only, off; read by the planner's pricing, not the replay,
+	// so no learner golden moves. Its unit tests hold it.
+	saturation.SwitchPrefillVPAtServedWork: nil,
+	// llm-d-incubation/llm-d-scaling-manager#368: V_P from the occupancy
+	// plateau. Planner-only, off from the constructor, so every golden
+	// replay runs it off and off alone from all on moves nothing. Its unit
+	// tests hold it (heldBy).
+	saturation.SwitchPrefillVPOccupancyPlateau: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
 	slo.SwitchTTFTHopUnqueued: nil,
+	// A speculating decode row (MTP) held for the decode term's D, planner-
+	// only and off from the constructor (the planner turns it on): every
+	// golden replay runs it off, and no committed recording has a decode row
+	// that speculates, so off alone from all on moves nothing. Its unit tests
+	// hold it (heldBy).
+	slo.SwitchTTFTDecodeSpeculatingHeld: nil,
+	// The router hop read on its windows' means (prefill.DecodeTermCycle.
+	// HopWindowMeans): planner-only, off from the constructor, so every
+	// golden replay runs it off and off alone from all on moves nothing. Its
+	// unit tests hold it (heldBy).
+	slo.SwitchTTFTHopWindowMeans: nil,
 	// llm-d-incubation/llm-d-scaling-manager#309: the planner's ITL batch
 	// term past the roofline. No analyzer reads it, so no golden replay
 	// moves; its unit tests hold it (heldBy).
@@ -1679,6 +1733,53 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestCapacity_NoQueueStaysRefused"},
 		{"../saturation", "TestPrefillVPFloorServed_ThroughAnalyze"},
 	},
+	saturation.SwitchPrefillVPServedUnqueued: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestCapacity_NoQueueTakesTheServedPeakAsALowerBound"},
+		{"../../../signals/prefill", "TestCapacity_TheUnqueuedPeakIsSustained"},
+		{"../../../signals/prefill", "TestCapacity_AQueuedSourceWinsOverTheUnqueuedPeak"},
+		{"../saturation", "TestPrefillVPServedUnqueued_ThroughAnalyze"},
+		{".", "TestServedWork_TheBusiestStretch"},
+		{".", "TestServedWork_BrokenStretchesAreNoReading"},
+	},
+	saturation.SwitchPrefillVPAtServedWork: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{".", "TestStateAt_TheVPAtServedWorkSwitchReachesThePrefillState"},
+		{".", "TestServedWork_WindowPeaksKeepTheForgotten"},
+		{".", "TestServedWork_TheStateReadsTheWindowWithTheSwitch"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_VPAtServedWorkPricesTheTTFTAtTheFlooredKnee"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_VPAtServedWorkLeavesOtherFleets"},
+	},
+	slo.SwitchTTFTPSByEngine: {
+		{"../slo", "TestTTFT_ThePSByEngineOffFromTheConstructor"},
+		{".", "TestStateAt_ThePSByEngineSwitchReachesThePrefillState"},
+		{"../../../signals/whatif", "TestPS_ByEngineClearsTheSpread"},
+		{"../../../signals/whatif", "TestPS_ByEngineFallsBackPastTheSlots"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_PSByEngineReadsTheFlags"},
+	},
+	slo.SwitchTTFTTierKVWait: {
+		{"../slo", "TestTTFT_TheTierKVWaitOffFromTheConstructor"},
+		{".", "TestStateAt_TheTierKVWaitSwitchReachesThePrefillState"},
+		{"../../../signals/whatif", "TestPromptWindow_TierWait"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierKVWaitPricesTheMeasuredWait"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierKVWaitBelowTheTransferIsTheTransfer"},
+	},
+	saturation.SwitchPrefillVPWindowBest: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestCapacity_TheWindowKeepsAnOldQueuedPeak"},
+		{"../../../signals/prefill", "TestCapacity_ANewerHigherPeakWins"},
+		{"../../../signals/prefill", "TestCapacity_TheMemoryIsOnlyForAgedPeaks"},
+	},
+	saturation.SwitchPrefillVPOccupancyPlateau: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestPlateau_AFlatCurveIsVP"},
+		{"../../../signals/prefill", "TestPlateau_ARisingCurveIsALowerBound"},
+		{"../../../signals/prefill", "TestPlateau_UnderOneRequestInPrefillIsNoPlateau"},
+		{"../../../signals/prefill", "TestPlateau_AQueueLearnedVPWins"},
+		{"../../../signals/prefill", "TestPlateau_RaisesALowerBoundUnderIt"},
+		{"../../../signals/prefill", "TestPlateau_ARisingPlateauIsFlooredAtTheServedPeak"},
+		{"../saturation", "TestPrefillVPOccupancyPlateau_ThroughAnalyze"},
+	},
 	// The first holds it off from the constructor; the others run it on and
 	// off and assert both, in the window, through Analyze and in the
 	// planner's own windows.
@@ -1688,6 +1789,33 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestHop_AQueuedPrefillWindowIsNoReading"},
 		{"../../../signals/prefill", "TestHop_ADeferredWaitIsNotAQueue"},
 		{".", "TestTerm_TheHopUnqueuedSwitch"},
+	},
+	// The first holds it off from the constructor; the others run it on and
+	// off and assert both, in the window, in the term and in the planner's
+	// own windows.
+	slo.SwitchTTFTDecodeSpeculatingHeld: {
+		{"../slo", "TestTTFT_TheDecodeSpeculatingHeldOffFromTheConstructor"},
+		{"../../../signals/prefill", "TestHeld_ASpeculatingRowIsHeldWithTheSwitch"},
+		{"../../../signals/prefill", "TestHeld_ARowThatDoesNotSpeculateComesFirst"},
+		{"../../../signals/prefill", "TestHeld_ASpeculatingRowKeepsTheOtherGates"},
+		{"../../../signals/prefill", "TestHeld_ASpeculatingDAndTheHopCountDecodeOnce"},
+		{"../../../signals/whatif", "TestTermFromEstimate_ASpeculatingRow"},
+		{"../../../signals/whatif", "TestTerm_ASpeculatingRowPricesTheMeasuredTTFT"},
+		{".", "TestTerm_TheDecodeSpeculatingHeldSwitch"},
+		{".", "TestPlannerSwitches_TheDecodeSpeculatingHeldIsOn"},
+	},
+	// The first holds it off from the constructor; the window tests run it
+	// on and off on a noisy fleet, a ramp, the held and queued gates and the
+	// fit; the last runs it through the planner's own windows.
+	slo.SwitchTTFTHopWindowMeans: {
+		{"../slo", "TestTTFT_TheHopWindowMeansOffFromTheConstructor"},
+		{"../../../signals/prefill", "TestHop_WindowMeansRecoverRUnderPerCycleNoise"},
+		{"../../../signals/prefill", "TestHop_WindowMeansKeepARampOut"},
+		{"../../../signals/prefill", "TestHop_WindowMeansKeepTheHeldAndQueuedGates"},
+		{"../../../signals/prefill", "TestHop_WindowMeansFitIsAMedian"},
+		{"../../../signals/prefill", "TestHop_WindowMeansAgreeOnASteadyFleet"},
+		{".", "TestTerm_TheHopWindowMeansSwitch"},
+		{".", "TestStateAt_TheHopWindowMeansSwitchReachesTheTerm"},
 	},
 	saturation.SwitchPrefillALowLoadByRate: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
@@ -2023,6 +2151,36 @@ var heldBy = map[string][]heldTest{
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionPricesThePrefillVariantsHit"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionAStatedHitGovernsThePrefill"},
 		{"../../../../cmd/capacity-planner", "TestTTFT_PrefixAttentionMovesTheTransferByTheDecodeHit"},
+	},
+	slo.SwitchTTFTCachedTokenCost: {
+		{"../slo", "TestTTFT_TheCachedTokenCostOffFromTheConstructor"},
+		{".", "TestStateAt_TheCachedTokenCostSwitchReachesThePrefillState"},
+		{"../../../whatifapi", "TestFitCachedTokenCost_RecoversAKnownCost"},
+		{"../../../whatifapi", "TestFitCachedTokenCost_TooFewSteps"},
+		{"../../../whatifapi", "TestFitCachedTokenCost_SkipsStepsPastTheKnee"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_CachedTokenCostAddsTheLoad"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_CachedTokenCostNeedsACachedShare"},
+		{"../../../../cmd/capacity-planner", "TestCachedTokenCost_SyntheticRecording"},
+	},
+	slo.SwitchTTFTComputedHit: {
+		{"../slo", "TestTTFT_TheComputedHitOffFromTheConstructor"},
+		{".", "TestStateAt_TheComputedHitSwitchReachesThePrefillState"},
+		{"../../../signals/whatif", "TestPromptWindow_ComputedHit"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitNetsTheWholePrompt"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitAStatedHitGoverns"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitNeedsAMaterialHit"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_ComputedHitTheLoadShapeMatchesTheMeasured"},
+	},
+	slo.SwitchTTFTTierLoad: {
+		{"../slo", "TestTTFT_TheTierLoadOffFromTheConstructor"},
+		{".", "TestStateAt_TheTierLoadSwitchReachesThePrefillState"},
+		{"../../../signals/whatif", "TestPromptWindow_TierLoad"},
+		{"../../../signals/whatif", "TestTTFT_TierLoadIsOwnLatency"},
+		{"../../../signals/whatif", "TestShapedVP_CachedContextSpan"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierLoadMatchesTheInjectedLoad"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierLoadUnmeasuredIsFlagged"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierLoadLowLoadAHoldsTheMeasuredLoad"},
+		{"../../../../cmd/capacity-planner", "TestTTFT_TierLoadAttentionSpanFromTheComputedHit"},
 	},
 	// Issue ev-shindin/llm-scaling-manager#275's lift: an aggregated figure sizes once the GPS check has
 	// agreed. Both run the switch on and fail with it off: the first checks

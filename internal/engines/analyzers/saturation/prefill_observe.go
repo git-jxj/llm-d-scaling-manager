@@ -118,6 +118,54 @@ const SwitchPrefillFBusyMinutes = "prefill-f-busy-minutes"
 // SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillVPFloorServed = "prefill-vp-floor-served"
 
+// SwitchPrefillVPServedUnqueued is the replay switch for V_P on a fleet that
+// never queued (prefill.Cycle.VPServedUnqueued). On, where no source has a
+// reading (no busy minutes, no PeakRun queued minutes in a row, no
+// back-pressure bound), V_P is the highest computed-token rate a pod
+// sustained, a lower bound (prefill.NeverQueued), not NoPrefillCapacity: a
+// pod never computes faster than V_P. The planner then prices the prefill
+// knee as at least the rate that V_P gives and refuses every TTFT priced from
+// it (whatif.Prefill.VPServedOnly; issue
+// llm-d-incubation/llm-d-scaling-manager#369). Off, NoPrefillCapacity, as
+// before this switch. Planner-only, as SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillVPServedUnqueued = "prefill-vp-served-unqueued"
+
+// SwitchPrefillVPWindowBest is the replay switch for the peak under a queue
+// read over the whole window (prefill.Cycle.VPWindowBest). On, V_P's peak
+// under a queue is the best the key read since its first cycle, kept past
+// prefill.Retention, so a recording whose prefill pods queued only at its
+// busiest hours keeps that lower bound after them, flagged with its age; the
+// served peak floors it as any lower bound (SwitchPrefillVPFloorServed). Off,
+// the samples kept, as the controller reads them. Planner-only, as
+// SwitchPrefillALowLoadPerRank is: the controller prices the fleet it runs
+// now, so a reading hours old should age out there.
+const SwitchPrefillVPWindowBest = "prefill-vp-window-best"
+
+// SwitchPrefillVPAtServedWork is the replay switch for the V_P a TTFT is
+// priced from where the prefill knee rests on a lower bound of it. On, where
+// the knee that lower bound gives is under the rate the prefill pods'
+// sustained computed-token work serves (the planner's servedKneeFloor), V_P
+// is raised by the same ratio for the TTFT too, so the TTFT and the knee are
+// read off one V_P: the pods computed that work, so they compute at least
+// that fast. Off, as #280 and the served floor left it: only the knee is
+// raised, and a TTFT priced from the lower V_P reads the prefill pods past
+// their capacity at rates they served, so the TTFT just under the floored
+// knee reads many times what such a fleet measures. Planner-only, as
+// SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillVPAtServedWork = "prefill-vp-at-served-work"
+
+// SwitchPrefillVPOccupancyPlateau is the replay switch for V_P read without
+// a queue (prefill.Cycle.VPOccupancyPlateau, prefill/plateau.go). On, a V_P
+// refused for want of a queue, or a lower bound under it, is read from the
+// plateau of a pod's served computed tokens against its requests in prefill
+// per engine (Little's law): V_P where the curve flattened in the window, a
+// lower bound where it was still rising. A V_P from busy minutes of a
+// single-rank pod, and a lower bound at or above the plateau, stand. Off,
+// the sources that need a queue only, as before this switch (issue
+// llm-d-incubation/llm-d-scaling-manager#368). Planner-only, as
+// SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillVPOccupancyPlateau = "prefill-vp-occupancy-plateau"
+
 // SwitchPrefillALowLoadByRate is the replay switch for which minutes the fit
 // of a reads as low load (prefill.Cycle.ALowLoadByRate). On, a quiet minute
 // (no queue) is low load when its request rate times its prompt cluster's
@@ -344,8 +392,8 @@ func (c *cycle) observePrefill() {
 			Bound: bounds[variant], Settle: view, ALineOnly: !a.prefillAQuadratic,
 			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming,
 			QueueByCapacity: a.prefillQueueByCapacity, FBusyMinutes: a.prefillFBusyMinutes,
-			VPFloorServed:  a.prefillVPFloorServed,
-			ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
+			VPFloorServed: a.prefillVPFloorServed, VPServedUnqueued: a.prefillVPServedUnqueued, VPWindowBest: a.prefillVPWindowBest,
+			VPOccupancyPlateau: a.prefillVPOccupancyPlateau, ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
 		})
 		a.stashPrefillEstimate(c.input.Namespace, c.input.ModelID, variant, est, now)
 		c.logger.V(perReplicaLogLevel).Info("prefill-capacity-observed",
@@ -355,6 +403,8 @@ func (c *cycle) observePrefill() {
 			"vpLowerBoundReason", string(est.VPLowerBoundReason),
 			"vpRefused", string(est.VPRefused), "vpSamples", est.VPSamples,
 			"vpServedPeak", est.VPServedPeak, "vpFlooredAtServed", est.VPFlooredAtServed,
+			"vpPlateau", est.VPPlateau, "vpPlateauFlat", est.VPPlateauFlat,
+			"vpPlateauMinutes", est.VPPlateauMinutes, "vpPlateauSpan", est.VPPlateauSpan,
 			"slopeBound", est.SlopeBound, "vpAboveSlopeBound", est.VPAboveSlopeBound,
 			"a", est.A, "aIntercept", est.AIntercept, "aOverhead", est.AOverhead,
 			"aOverheadKnown", est.AOverheadKnown, "aRefused", string(est.ARefused), "aSamples", est.ASamples,

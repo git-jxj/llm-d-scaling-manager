@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -103,7 +104,8 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 		return err
 	}
 	s := &servedState{st: st, decodeVariant: variants[0].state.Variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
-		imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter}
+		imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter, cachedCost: f.cachedCost,
+		experimentalTTFT: f.experimentalTTFT}
 	rep, err := buildReport(ctx, st, s, q)
 	if err != nil {
 		if whatifapi.IsInputError(err) {
@@ -261,13 +263,16 @@ func figureValue(f whatifapi.Figure) (float64, string, error) {
 	switch {
 	case f.Value != nil:
 		return *f.Value, "", nil
+	case f.Refused != nil && servedOnlyRefusal(f.Refused.Reason, slices.Contains(f.Refused.Flags, string(whatif.VPLowerBound))):
+		return 0, servedOnlyWords, nil
 	case f.Refused != nil:
 		return 0, plainReason(f.Refused.Reason), nil
 	}
 	return 0, "", errNoFigure
 }
 
-// figText prints a figure in format, scaled, or what stands in its place.
+// figText prints a figure in format, scaled, or what stands in its place;
+// "<=" before a figure that is an upper bound (whatifapi.Figure.UpperBound).
 func figText(f whatifapi.Figure, format string, scale float64) string {
 	v, words, err := figureValue(f)
 	switch {
@@ -276,7 +281,16 @@ func figText(f whatifapi.Figure, format string, scale float64) string {
 	case words != "":
 		return words
 	}
-	return fmt.Sprintf(format, scale*v)
+	return atMostText(f) + fmt.Sprintf(format, scale*v)
+}
+
+// atMostText is "<=" before a figure that is an upper bound, priced from a
+// lower bound of V_P (#369), "" otherwise.
+func atMostText(f whatifapi.Figure) string {
+	if f.UpperBound {
+		return "<="
+	}
+	return ""
 }
 
 // windowText is the window a report was read from.
@@ -292,7 +306,7 @@ func windowText(s whatifapi.ReportSource) string {
 // color.
 var cellMarks = map[string]string{
 	whatifapi.CellMet: "ok", whatifapi.CellMissed: "MISS", whatifapi.CellOnset: "MISS*", whatifapi.CellSaturated: "SAT",
-	whatifapi.CellPastLowerBound: "LB", whatifapi.CellUnknown: "?", whatifapi.CellNoTarget: "",
+	whatifapi.CellPastLowerBound: "LB", whatifapi.CellUpperBound: "UB", whatifapi.CellUnknown: "?", whatifapi.CellNoTarget: "",
 }
 
 // shapeName is a shape's name in the summary and its section.
@@ -406,7 +420,7 @@ func summaryText(r *whatifapi.ReportResponse) string {
 	head = append(head, r.Loads...)
 	cells := make([][]string, 1, 1+len(r.Shapes))
 	cells[0] = head
-	lowerBound := false
+	lowerBound, upperBound := false, false
 	for _, s := range r.Shapes {
 		row := []string{"  " + shapeName(s)}
 		for _, l := range r.Loads {
@@ -428,6 +442,7 @@ func summaryText(r *whatifapi.ReportResponse) string {
 			}
 			text := fmt.Sprintf("%s/%s @%.2f", cellText(c.TTFT.Figure, "%.0f"), tp, s.Table[i].Rate)
 			lowerBound = lowerBound || c.Mark == whatifapi.CellPastLowerBound
+			upperBound = upperBound || c.TTFT.UpperBound
 			if m := cellMarks[c.Mark]; m != "" {
 				text += " " + m
 			}
@@ -439,13 +454,17 @@ func summaryText(r *whatifapi.ReportResponse) string {
 	if tpot != whatifapi.ReportStatisticName(0) {
 		legend += fmt.Sprintf("; m the TPOT mean, where the %s is refused", tpot)
 	}
-	return legend + "\nmark = " + markLegend(r.SLO, lowerBound) + "\n" + columns(cells)
+	if upperBound {
+		legend += "; <= at most: a TTFT priced from a lower bound of V_P is an upper bound"
+	}
+	return legend + "\nmark = " + markLegend(r.SLO, lowerBound, upperBound) + "\n" + columns(cells)
 }
 
 // markLegend says what a cell's mark judges: the SLO's own statistics, which
 // need not be the ones the cell prints.
-// lowerBound adds the LB mark where a cell carries it.
-func markLegend(s whatifapi.ReportSLO, lowerBound bool) string {
+// lowerBound adds the LB mark where a cell carries it, and upperBound the UB
+// mark where a cell's TTFT is an upper bound.
+func markLegend(s whatifapi.ReportSLO, lowerBound, upperBound bool) string {
 	lb := ""
 	if lowerBound {
 		lb = ", LB at or past a prefill knee priced from a lower bound of V_P (the knee is at least that rate), so not judged saturated"
@@ -453,8 +472,12 @@ func markLegend(s whatifapi.ReportSLO, lowerBound bool) string {
 	if s.TTFT == nil && s.TPOT == nil {
 		return "SAT saturated" + lb + " (no SLO target to judge)"
 	}
+	ub := ""
+	if upperBound && s.TTFT != nil {
+		ub = ", UB a TTFT over its target that is only an upper bound (V_P a lower bound), so the miss is not known"
+	}
 	return fmt.Sprintf("the SLO (%s) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset "+
-		"(the router queues) though the figure is within, SAT saturated%s, ? not judged", sloText(s), lb)
+		"(the router queues) though the figure is within, SAT saturated%s%s, ? not judged", sloText(s), lb, ub)
 }
 
 // shapeText is one shape's detail.
@@ -725,11 +748,11 @@ func columns(cells [][]string) string {
 	return b.String()
 }
 
-// cellText is a summary cell's figure in ms; a refusal is "-", its reason is
-// in the shape's table.
+// cellText is a summary cell's figure in ms, "<=" before an upper bound; a
+// refusal is "-", its reason is in the shape's table.
 func cellText(f whatifapi.Figure, format string) string {
 	if f.Value == nil {
 		return "-"
 	}
-	return fmt.Sprintf(format, 1000**f.Value)
+	return atMostText(f) + fmt.Sprintf(format, 1000**f.Value)
 }

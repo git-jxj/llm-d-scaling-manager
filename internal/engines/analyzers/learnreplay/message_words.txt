@@ -1,5 +1,6 @@
 -
 --
+--assume-vp
 --data-parallel-size
 --engine-image
 --force
@@ -171,6 +172,7 @@ ErrImagePull
 Error
 Events
 Every
+ExperimentalTTFT
 External
 ExtrapolatedFill
 FMA
@@ -287,6 +289,7 @@ Name
 NarrowPromptClusters
 NegativePromptSlope
 NegativeSlopeFit
+NeverQueued
 NewEngine
 NewTypeInventoryWithUsage
 No
@@ -364,6 +367,7 @@ PROMETHEUS_SERVER_NAME
 PROMETHEUS_TLS_INSECURE_SKIP_VERIFY
 PROMETHEUS_TOKEN_PATH
 PROPSEED
+PSSlotsExceeded
 Passive
 PastLowerBoundKnee
 Pending
@@ -495,6 +499,7 @@ VAs
 VLLM_ALL2ALL_BACKEND
 VLLM_USE_V1
 VPAboveSlopeBound
+VPFromPlateau
 VPLowerBound
 VPScaledToPrompt
 VPShapeMoved
@@ -911,6 +916,7 @@ container
 container-config
 contains
 contamination-heterogeneity
+context
 context_length
 continues
 contradicted
@@ -1073,6 +1079,7 @@ discarded
 discarding
 discover
 discovery
+disk
 distinctPods
 do
 docs/developer-guide/testing.md
@@ -1210,6 +1217,7 @@ exit
 expect
 expected
 expects
+experimental
 expert_parallel
 expert_parallel_size
 export
@@ -1219,6 +1227,7 @@ extension_point
 external
 externalClusterQuotas
 externalNamespaceQuotas
+external_unspecified
 f
 fAtPods
 fPods
@@ -1270,6 +1279,7 @@ fitting
 fix
 fixed
 flag
+flagged
 flags
 flappingWindow
 flavor
@@ -2087,6 +2097,7 @@ newest
 newestGroup
 next
 nil
+nixl
 nixl_ep
 no
 no-capacity
@@ -2174,11 +2185,13 @@ observed
 observed/historical/derived
 observedGPS
 occupancy
+occupancy-plateau
 occupancy-unknown
 of
 off
 offered
 offers
+offload_load
 often
 ok
 ok|
@@ -2266,6 +2279,7 @@ owning
 p
 p1
 p10-p90
+p2p
 packing
 page_size
 panic
@@ -2399,7 +2413,11 @@ prefill-queue-by-capacity
 prefill-required
 prefill-spare
 prefill-throughput-bound-reading
+prefill-vp-at-served-work
 prefill-vp-floor-served
+prefill-vp-occupancy-plateau
+prefill-vp-served-unqueued
+prefill-vp-window-best
 prefillBoundHeld
 prefillBounds
 prefillDemandAfter
@@ -2444,6 +2462,7 @@ priors
 probe
 processing
 processor
+processor-sharing
 processorSharing
 produced
 product
@@ -2835,6 +2854,7 @@ series
 seriesPresent
 serve
 served
+served-peak
 served-siblings
 servedBound
 server
@@ -2939,9 +2959,13 @@ slo-model
 slo-tpot
 slo-transient
 slo-ttft
+slo-ttft-cached-token-cost
+slo-ttft-computed-hit
 slo-ttft-decode-gate-charge
+slo-ttft-decode-speculating-held
 slo-ttft-decode-term
 slo-ttft-hop-unqueued
+slo-ttft-hop-window-means
 slo-ttft-imbalance-across-counts
 slo-ttft-joint
 slo-ttft-joint-inputs
@@ -2952,10 +2976,13 @@ slo-ttft-prefix-attention
 slo-ttft-price
 slo-ttft-processor-sharing
 slo-ttft-prompt-support
+slo-ttft-ps-by-engine
 slo-ttft-ps-onsets
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
 slo-ttft-sizes-prefill
+slo-ttft-tier-kv-wait
+slo-ttft-tier-load
 slo-ttft-variant
 slo-variant
 slo.Analyze
@@ -3188,6 +3215,7 @@ tier
 tier-1
 tier-2
 tierHeld
+tier_read
 tiers
 tile
 time
@@ -3404,6 +3432,10 @@ vpAboveSlopeBound
 vpFlooredAtServed
 vpLowerBound
 vpLowerBoundReason
+vpPlateau
+vpPlateauFlat
+vpPlateauMinutes
+vpPlateauSpan
 vpPromptTokens
 vpRefused
 vpSamples

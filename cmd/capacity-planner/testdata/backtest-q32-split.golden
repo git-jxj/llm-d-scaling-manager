@@ -1,6 +1,6 @@
 Over the 1 h 13 min the planner did not see:
-mean TTFT: within 20% of measured in 6 of the 12 five-minute steps scored (a figure, and enough measured requests); it leans high (median ratio 1.21). For 1 more it gave no figure, calling the fleet overloaded; the fleet measured mean 11.6 s there. p90 TTFT: within 20% in 0 of 5, median ratio 1.35. p90 TTFT not scored in 2: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it.
-mean TPOT: within 20% of measured in 13 of the 13 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 0.99). p90 TPOT not scored in 8: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it.
+mean TTFT: within 20% of measured in 6 of the 12 five-minute steps scored (a figure, and enough measured requests); it leans high (median ratio 1.21). For 1 more it gave no figure, calling the fleet overloaded; the fleet measured mean 11.6 s there. p90 TTFT: within 20% in 0 of 5, median ratio 1.35. p90 TTFT not scored in 2: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it or within 20% of its edge; in the measured histogram bucket itself in 1, 200 ms to 400 ms (2.0x wide): consistent at the bucket's resolution, not within 20%, and outside it, within 20% of its edge, in 1.
+mean TPOT: within 20% of measured in 13 of the 13 five-minute steps scored (a figure, and enough measured requests); no overall lean (median ratio 0.99). p90 TPOT not scored in 8: the measured p90 fell in a histogram bucket wider than 20% of its lower edge, too wide to place it, with the prediction inside it or within 20% of its edge; in the measured histogram bucket itself in 8, 10 ms to 20 ms (2.0x wide): consistent at the bucket's resolution, not within 20%.
 None of these figures falls within the conditions our own accuracy benchmarks cover (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.
 Judged 13 of 16 five-minute steps; not judged: 1 warm-up, 2 a burst near the knee in its window.
 
@@ -32,13 +32,13 @@ score over the steps with a figure
             steps  median  within     read    typical     worst-10%  under upper 
                     ratio     20% >20% low       miss          miss        bound 
 TTFT mean      12    1.21     50%        0      1.21x         1.27x          92% 1 refused Saturated
-TTFT p50        0       -       -        0          -             -            - 1 refused Saturated, 12 unresolvable
-TTFT p90        5    1.35      0%        0      1.35x         1.83x         100% 1 refused Saturated, 5 fewRequests, 2 unresolvable
+TTFT p50        0       -       -        0          -             -            - 1 refused Saturated, 12 unresolvable (8 in the measured bucket)
+TTFT p90        5    1.35      0%        0      1.35x         1.83x         100% 1 refused Saturated, 5 fewRequests, 2 unresolvable (1 in the measured bucket)
 TTFT p95        1    2.20      0%        0      2.20x         2.20x         100% 1 refused Saturated, 11 fewRequests
 TPOT mean      13    0.99    100%        0      1.01x         1.02x            - 
-TPOT p50        0       -       -        0          -             -            - 13 unresolvable
-TPOT p90        0       -       -        0          -             -            - 5 fewRequests, 8 unresolvable
-TPOT p95        0       -       -        0          -             -            - 11 fewRequests, 2 unresolvable
+TPOT p50        0       -       -        0          -             -            - 13 unresolvable (13 in the measured bucket)
+TPOT p90        0       -       -        0          -             -            - 5 fewRequests, 8 unresolvable (8 in the measured bucket)
+TPOT p95        0       -       -        0          -             -            - 11 fewRequests, 2 unresolvable (2 in the measured bucket)
 
 by load (the step's rate over the load the planner thinks the fleet can carry): steps, median ratio, within 20%
 below 0.8 of the knee     TTFT (12 steps): mean 12 1.21 50% p90 5 1.35 0%  TPOT (13 steps): mean 13 0.99 100% p90 0 - -

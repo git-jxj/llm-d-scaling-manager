@@ -101,10 +101,13 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchITLRestartUnderName, SwitchITLIdleOnEvidence and
 // SwitchITLForgetReachesTheLine, SwitchITLOneSidedAtCap, SwitchTTFTPrice,
 // SwitchTTFTMeasuredSpread, SwitchTTFTMeasuredTransfer,
-// SwitchTTFTPrefixAttention, SwitchTTFTProcessorSharing,
+// SwitchTTFTPrefixAttention, SwitchTTFTComputedHit, SwitchTTFTTierLoad,
+// SwitchTTFTTierKVWait, SwitchTTFTPSByEngine, SwitchTTFTCachedTokenCost,
+// SwitchTTFTProcessorSharing,
 // SwitchTTFTRouterWait, SwitchTTFTPSOnsets,
 // SwitchTTFTDecodeGateCharge, SwitchTTFTImbalanceAcrossCounts,
-// SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTHopUnqueued, SwitchTTFTJointInputs,
+// SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTHopUnqueued, SwitchTTFTHopWindowMeans,
+// SwitchTTFTDecodeSpeculatingHeld, SwitchTTFTJointInputs,
 // SwitchTTFTPromptSupport and SwitchKVPerRequestOutputDispersion; a name it
 // does not know is an error, and sets nothing. Never called on a production
 // path; a test holds that.
@@ -174,6 +177,21 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		SwitchTTFTQuietTransfer:    &a.ttftQuietTransfer,
 		// A prefix hit's cost in the planner, planner-only (ttft.go).
 		SwitchTTFTPrefixAttention: &a.ttftPrefixAttention,
+		// A stated prompt netted by the computed-token hit, planner-only
+		// (ttft.go).
+		SwitchTTFTComputedHit: &a.ttftComputedHit,
+		// A cached token's load from a tier outside the GPU, and the
+		// attention over every tier's cached context, planner-only
+		// (ttft.go).
+		SwitchTTFTTierLoad: &a.ttftTierLoad,
+		// The engine's measured wait for a cached KV in place of the
+		// transfer's seconds, planner-only (ttft.go).
+		SwitchTTFTTierKVWait: &a.ttftTierKVWait,
+		// The prefill queue priced as processor sharing where the engine
+		// shares its steps, planner-only (ttft.go).
+		SwitchTTFTPSByEngine: &a.ttftPSByEngine,
+		// A cached prompt token's fitted cost, planner-only (ttft.go).
+		SwitchTTFTCachedTokenCost: &a.ttftCachedTokenCost,
 		// The decode term of a TTFT on a decode line (ttft.go).
 		SwitchTTFTDecodeTerm: &a.ttftDecodeTerm,
 		// The prefill pod and the KV pull as processor-sharing stages
@@ -196,6 +214,12 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		// The router hop read off windows whose prefill pods held no queue,
 		// off by default (ttft.go, llm-d-incubation/llm-d-scaling-manager#281).
 		SwitchTTFTHopUnqueued: &a.ttftHopUnqueued,
+		// A speculating decode row held for D, planner-only, off by default
+		// (ttft.go).
+		SwitchTTFTDecodeSpeculatingHeld: &a.ttftDecodeSpeculatingHeld,
+		// The router hop read on its windows' means, planner-only, off by
+		// default (ttft.go).
+		SwitchTTFTHopWindowMeans: &a.ttftHopWindowMeans,
 		// A prefill variant sized on TTFT, the joint a₀ where P1 refused a,
 		// off by default (ttft_prefill_ask.go,
 		// llm-d-incubation/llm-d-scaling-manager#131).

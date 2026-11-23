@@ -528,6 +528,14 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 		QueueMin:               data.queueMin,
 		QueueMinKnown:          data.queueMinKnown,
 		TPOTBuckets:            sortedBuckets[domain.LatencyBucket](data.tpotBuckets),
+		// The cache tiers, as read (domain.ReplicaMetrics, "Recorded for the
+		// cache tiers").
+		ExternalPrefixCacheHitTokenRate:        data.externalHitRate,
+		ExternalPrefixCacheHitTokenRateKnown:   data.externalHitRateKnown,
+		ExternalPrefixCacheQueryTokenRate:      data.externalQueryRate,
+		ExternalPrefixCacheQueryTokenRateKnown: data.externalQueryRateKnown,
+		CachedTokenRateBySource:                sortedSources(data.cachedBySource),
+		KVTransferRates:                        sortedTransfers(data.kvTransfers),
 		Metadata: &domain.ReplicaMetricsMetadata{
 			CollectedAt:     collectedAt,
 			Age:             freshnessAge,

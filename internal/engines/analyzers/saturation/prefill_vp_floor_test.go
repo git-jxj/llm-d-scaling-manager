@@ -59,3 +59,25 @@ func TestPrefillVPFloorServed_ThroughAnalyze(t *testing.T) {
 	assert.Equal(t, 4000.0, off.VP)
 	assert.False(t, off.VPFlooredAtServed)
 }
+
+// SwitchPrefillVPServedUnqueued through Analyze: the pod computes 16000
+// tok/s and never queues. On, V_P is that served peak, a lower bound
+// (NeverQueued); off, it stays refused.
+func TestPrefillVPServedUnqueued_ThroughAnalyze(t *testing.T) {
+	run := func(on bool) prefill.Estimate {
+		h := newObserveHarness(t, &capacity.EngineParams{Engine: inferenceengine.EngineVLLM})
+		require.NoError(t, h.a.SetSwitchesForReplay(map[string]bool{SwitchPrefillVPServedUnqueued: on}))
+		var est prefill.Estimate
+		for range 6 {
+			est = h.onePrefillCycle(16000, 0)
+		}
+		return est
+	}
+	on, off := run(true), run(false)
+	require.Empty(t, on.VPRefused, "%+v", on)
+	assert.Equal(t, prefill.SourceServedPeak, on.VPSource)
+	assert.Equal(t, 16000.0, on.VP)
+	assert.True(t, on.VPLowerBound)
+	assert.Equal(t, prefill.NeverQueued, on.VPLowerBoundReason)
+	assert.Equal(t, prefill.NoPrefillCapacity, off.VPRefused)
+}

@@ -77,6 +77,15 @@ const (
 	// of the line, or the curve's 1/(b + c*I) at V_P's prompt length,
 	// prefill.Estimate.SlopeBound): one of the two readings is wrong.
 	VPAboveSlopeBound Flag = "VPAboveSlopeBound"
+	// VPFromPlateau is a V_P read from the occupancy plateau
+	// (prefill.SourceOccupancyPlateau), with no queue: experimental, the
+	// planner's opt-in --prefill-vp-plateau, never validated against a
+	// client. A plateau that is only a lower bound carries VPLowerBound too.
+	VPFromPlateau Flag = "VPFromPlateau"
+	// ExperimentalTTFT is a figure priced with the planner's opt-in
+	// --experimental-ttft: the TTFT model's switches that are off by
+	// default, on for one answer. For demonstration, never validated.
+	ExperimentalTTFT Flag = "ExperimentalTTFT"
 	// AssumedImbalance is f supplied by the caller rather than learned.
 	AssumedImbalance Flag = "AssumedImbalance"
 	// AssumedPromptSpread is a prompt coefficient of variation the caller
@@ -185,6 +194,11 @@ const (
 	// longest prompt clears (Prefill.BeyondProcessorSharing): the figure is
 	// the larger of processor sharing's and the first-come queue's.
 	SpreadBeyondProcessorSharing Flag = "SpreadBeyondProcessorSharing"
+	// PSSlotsExceeded is a TTFT priced with QueueProcessorSharing at a rate
+	// where the busiest pod likely holds more prompts than it runs at once
+	// (QueueChoice.Slots, MaxPSOverSlots): the figure is the larger of processor
+	// sharing's and the first-come queue's.
+	PSSlotsExceeded Flag = "PSSlotsExceeded"
 )
 
 // The bounds a TTFT rate or a prefill knee can be set by.
@@ -326,7 +340,8 @@ type TTFTParts struct {
 	KVPullUtilization float64
 	// OwnPrefill is a + E[I_eff]/V_P, plus the part of decode's term that
 	// goes with the prompt: T_xfer on the old sum, the per-token parts of D
-	// and R with a DecodeTerm. It follows the prompt's quantile.
+	// and R with a DecodeTerm. It follows the prompt's quantile. It holds
+	// TierLoad too.
 	OwnPrefill float64
 	// DecodeWait is W_decode, the admission chain's mean wait.
 	DecodeWait float64
@@ -348,6 +363,11 @@ type TTFTParts struct {
 	// (ttft_gate.go). Both are 0 unless TTFTFleet.PriceRouterWait prices the
 	// gate, past the prefill onset (FlowControlWaitPriced).
 	RouterWait, BurstWait float64
+	// TierLoad is the load of a request's cached KV from a tier outside the
+	// GPU (Prefill.TierLoadSeconds), a part of OwnPrefill; 0 with none, and
+	// then left out of a freeze's JSON, which writes these parts as they
+	// are, so its output does not move with the switch off.
+	TierLoad float64 `json:",omitempty"`
 }
 
 // Onsets are the rates, in requests per second over the fleet, at which EPP

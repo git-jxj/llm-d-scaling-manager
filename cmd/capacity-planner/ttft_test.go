@@ -903,7 +903,9 @@ func TestTTFT_VariantFlagsReachTheTTFT(t *testing.T) {
 }
 
 // The refusal for no V_P through the command, on the text path too: a TTFT
-// row that says so, the input named, no figure.
+// row that says so, the input named, no figure. Run 4's prefill pod never
+// queued, so its V_P is only the rate it computed (prefill-vp-served-unqueued):
+// the knee is priced from it as a lower bound, and no TTFT.
 func TestTTFT_NoVPOnTheTextPath(t *testing.T) {
 	text, code := runCmd(t, "replicas-to-slo", "--recording", shortRun, "--ttft-percentile", "90")
 	require.Equal(t, 3, code, text)
@@ -916,7 +918,8 @@ func TestTTFT_NoVPOnTheTextPath(t *testing.T) {
 	assert.Contains(t, row, "refused: NoPrefillCapacity")
 	assert.Contains(t, row, "pass --assume-vp for a flagged answer")
 	assert.NotContains(t, row, " ms")
-	assert.NotContains(t, text, "prefill knee")
+	assert.Contains(t, row, "is only the rate a prefill pod was seen to compute")
+	assert.Contains(t, text, string(whatif.VPLowerBound))
 
 	text, code = runCmd(t, "slo-to-rate", "--recording", shortRun, "--ttft", "1s")
 	require.Equal(t, 3, code, text)

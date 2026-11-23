@@ -17,6 +17,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -416,7 +417,10 @@ func frozenRatioOf(st *learnreplay.State, q float64) frozenRatio {
 func gateOf(st *learnreplay.State) frozenGate {
 	g := frozenGate{SLOListed: st.Policy != nil && st.Policy.SLOAnalyzerListed()}
 	for _, ps := range st.Prefill {
-		g.VP = g.VP || ps.EstimateRead && ps.Estimate.VP > 0 && ps.Estimate.VPRefused == ""
+		// S2 runs with saturation.SwitchPrefillVPServedUnqueued off: a V_P
+		// that is only the served peak is the planner's, never S2's.
+		g.VP = g.VP || ps.EstimateRead && ps.Estimate.VP > 0 && ps.Estimate.VPRefused == "" &&
+			ps.Estimate.VPSource != prefill.SourceServedPeak
 		g.A = g.A || ps.EstimateRead && ps.Estimate.ARefused == ""
 	}
 	f := answerFlags{question: "freeze", cycle: "last", imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}

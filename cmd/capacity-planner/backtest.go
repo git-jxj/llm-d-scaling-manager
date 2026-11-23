@@ -43,6 +43,12 @@ type backtestFlags struct {
 	flowControl                          string
 	routerWaitInPrefill, priceRouterWait bool
 	set                                  map[string]bool
+	// vpPlateau is --prefill-vp-plateau, as answerFlags' (vp_plateau.go):
+	// both sides are read with V_P from the occupancy plateau.
+	vpPlateau bool
+	// experimentalTTFT is --experimental-ttft, as answerFlags'
+	// (experimental_ttft.go): both sides are read with its switches on.
+	experimentalTTFT bool
 }
 
 // registerAssume registers the stated-input flags backtest and predict take.
@@ -56,6 +62,8 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.StringVar(&f.flowControl, "flow-control", "", "the router's flow control, on or off, in place of its inference from the fit's queue series (flagged as stated)")
 	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's, on by default: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0); =false for router v0.11.0")
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0); set, it turns the default --router-wait-in-prefill off")
+	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
+	fs.BoolVar(&f.experimentalTTFT, experimentalTTFTFlag, false, experimentalTTFTUsage)
 }
 
 // parsed records the flags given, once fs is parsed, and lets the default
@@ -242,7 +250,7 @@ func (f *backtestFlags) assume() (whatifapi.Assume, error) {
 var resolveBacktest = func(ctx context.Context, f *backtestFlags, path string, cycle int, warn io.Writer) (*whatifapi.Resolved, error) {
 	src := &servedSources{warn: warn, recordings: filepath.Dir(path)}
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant,
-		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(path), Cycle: cycle}}
+		PrefillVPPlateau: f.vpPlateau, ExperimentalTTFT: f.experimentalTTFT, Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(path), Cycle: cycle}}
 	res, err := src.Resolve(ctx, in)
 	if err != nil && whatifapi.IsInputError(err) {
 		return nil, usageError{err}
@@ -373,14 +381,18 @@ func btMs(x *float64) string {
 }
 
 // pointText is a step's statistic, predicted/measured, with * where the
-// prediction is inside the validated region and "over" where it gave no
-// figure, calling the fleet overloaded.
+// prediction is inside the validated region, "overloaded" where it gave no
+// figure, calling the fleet overloaded, and "<=" before a prediction that is
+// an upper bound (whatifapi.Figure.UpperBound).
 func pointText(ps []whatifapi.BacktestPoint, stat string) string {
 	for _, p := range ps {
 		if p.Statistic != stat {
 			continue
 		}
 		pred := btMs(p.Predicted.Value)
+		if p.Predicted.UpperBound {
+			pred = "<=" + pred
+		}
 		if r := p.Predicted.Refused; r != nil {
 			pred = "no figure"
 			if r.Reason == string(whatif.Saturated) {
@@ -465,7 +477,11 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 		fmt.Fprintf(&b, "TTFT target: %s %s\n", t.Statistic, fmtSeconds(*t.Target))
 	}
 	b.WriteString("\neach step: predicted/measured (* inside the conditions our accuracy benchmarks cover; " +
-		"~ measured in a histogram bucket too wide to place it, scored only where the prediction falls outside it)\n")
+		"~ measured in a histogram bucket too wide to place it, scored only where the prediction falls outside it")
+	if anyUpperBound(bt.Steps) {
+		b.WriteString("; <= an upper bound, priced from a lower bound of V_P: scored only where the fleet measured more than 20% over it")
+	}
+	b.WriteString(")\n")
 	const layout = "%-16s %7s %5s  %-19s %-19s %-17s %-17s %s\n"
 	fmt.Fprintf(&b, layout, "step (UTC)", "rate", "P+D", "TTFT mean", "TTFT p90", "TPOT mean", "TPOT p90", "")
 	for _, s := range bt.Steps {
@@ -541,6 +557,19 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 	return err
 }
 
+// anyUpperBound says a step's prediction is an upper bound
+// (whatifapi.Figure.UpperBound).
+func anyUpperBound(steps []whatifapi.BacktestStep) bool {
+	for _, s := range steps {
+		for _, p := range s.TTFT {
+			if p.Predicted.UpperBound {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // stepsWords is n steps, singular or plural.
 func stepsWords(n int) string {
 	if n == 1 {
@@ -556,7 +585,12 @@ func unscoredText(sc whatifapi.BacktestScore) string {
 		parts = append(parts, fmt.Sprintf("%d refused %s", sc.Refused[r], r))
 	}
 	for _, k := range slices.Sorted(maps.Keys(sc.Unscored)) {
-		if k != whatifapi.UnscoredRefused {
+		switch {
+		case k == whatifapi.UnscoredRefused:
+		case k == whatifapi.UnscoredUnresolvable && sc.SameBucket > 0:
+			// The third outcome: consistent at the bucket's resolution.
+			parts = append(parts, fmt.Sprintf("%d %s (%d in the measured bucket)", sc.Unscored[k], k, sc.SameBucket))
+		default:
 			parts = append(parts, fmt.Sprintf("%d %s", sc.Unscored[k], k))
 		}
 	}

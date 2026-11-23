@@ -39,6 +39,21 @@ type Prefill struct {
 	// (VPLowerBound), VPAboveSlopeBound one above the low-load slope's
 	// bound, and VPAssumed one the caller supplied (AssumedVP).
 	VPLowerBound, VPAboveSlopeBound, VPAssumed bool
+	// VPServedOnly marks a V_P that is only the rate a pod was seen to
+	// compute, on a fleet that never queued (prefill.SourceServedPeak,
+	// NeverQueued): the knee priced from it stands as a lower bound, and
+	// every TTFT priced from it is refused NoPrefillCapacity, since the true
+	// V_P may be far higher and the figure would be an upper bound at best
+	// (issue llm-d-incubation/llm-d-scaling-manager#369). A V_P the caller
+	// supplies (VPAssumed) is priced as given.
+	VPServedOnly bool
+	// VPFromPlateau marks a V_P read from the occupancy plateau
+	// (VPFromPlateau).
+	VPFromPlateau bool
+	// ExperimentalTTFT marks a fleet priced with the planner's
+	// --experimental-ttft: every figure priced from it carries the flag
+	// ExperimentalTTFT.
+	ExperimentalTTFT bool
 	// FixedLatency is a, in seconds: the latency one request pays on a pod
 	// besides its prompt's work. It enters the request's own latency only,
 	// never the queue's work (busy-minute V_P is already net of it).
@@ -110,6 +125,20 @@ type Prefill struct {
 	// context, as if no token were cached. The replay switch
 	// slo.SwitchTTFTPrefixAttention, planner-only and off.
 	PrefixAttention bool
+	// CachedContextRead says CachedContextTokens and VPCachedContextTokens
+	// were read: the cached context of the question's mean request and of
+	// V_P's minutes, as the whole prompt less the computed one, every
+	// tier's hits counted (slo.SwitchTTFTTierLoad). With PrefixAttention
+	// on, shapedVP takes the attention span from them in place of the
+	// prefix-cache hit rates, which count the GPU's hits alone.
+	CachedContextRead                          bool
+	CachedContextTokens, VPCachedContextTokens float64
+	// TierLoadSeconds is the time a request waits for its cached KV to load
+	// from a tier outside the GPU (a host, disk or peer tier), in seconds:
+	// like a it enters the request's own latency, never the queue's work,
+	// and it is reported apart (TTFTParts.TierLoad). 0 is none
+	// (slo.SwitchTTFTTierLoad off, or no such hit).
+	TierLoadSeconds float64
 	// CurveSlope and CurveCurvature are b and c of P1's low-load curve
 	// s0 + b*I + c*I*I (prefill.Estimate.ASlope and ACurve, with AModel
 	// quadratic): a prompt of length I costs b + c*I per token in a busy
@@ -130,7 +159,47 @@ type Prefill struct {
 	// processor sharing's at a cap of 1, the least an engine runs, and the
 	// first-come one, so never above the onset with PSOnsets off.
 	RunningCap int
+	// Queue is the queue model the caller chose for the prefill pods, and
+	// why. The zero value is the model's own rule, as before: with
+	// TTFTFleet.ProcessorSharing, processor sharing, or the larger of it and
+	// first come past MaxPSPromptCV (BeyondProcessorSharing).
+	Queue QueueChoice
 }
+
+// QueueModel names a model of the prefill pods' queue. The planner chooses one
+// per fleet (Prefill.Queue); issue llm-d-incubation/llm-d-scaling-manager#387
+// is to choose among them by their fit on held-out data, with the engine's
+// configuration as the prior.
+type QueueModel string
+
+const (
+	// QueueByRule is the model's own rule (the zero value): processor sharing
+	// where the spread allows it, else the larger of it and first come.
+	QueueByRule QueueModel = ""
+	// QueueProcessorSharing is processor sharing whatever the prompt's spread:
+	// the engine runs several prompts at once in a step budget that holds
+	// several typical computed prompts, so a long prompt is chunked between
+	// the short ones rather than served first come. Past QueueChoice.Slots
+	// prompts on the busiest pod (rho^(slots+1) above MaxPSOverSlots) the
+	// excess waits first come, and the price is the larger of the two queues',
+	// flagged PSSlotsExceeded.
+	QueueProcessorSharing QueueModel = "processor-sharing"
+)
+
+// QueueChoice is the prefill queue model chosen for a fleet, the prompts one
+// pod runs at once under it (0 is not known), and the reason, in words.
+type QueueChoice struct {
+	Model  QueueModel
+	Slots  int
+	Reason string
+}
+
+// MaxPSOverSlots is the largest chance, at the busiest pod's utilization, that
+// a processor-sharing pod holds more prompts than it runs at once
+// (QueueChoice.Slots) for QueueProcessorSharing to price it alone. Stated,
+// not measured: past it the first-come queue in front of the running prompts
+// is no longer rare.
+const MaxPSOverSlots = 0.05
 
 // MaxVPShapeRatio is how far, either way, the mean prompt may be from the one
 // V_P was read at before V_P is flagged VPShapeMoved, when there is no curve
@@ -577,8 +646,13 @@ func (pl prefillPlan) atRate(rate float64) prefillPlan {
 // h + I_eff/2, so the curve's argument is I_eff + 2h (attentionSpan). With
 // PrefixAttention on, both whole prompts known (the hit rates are read with
 // them) and either hit rate above MaterialPrefixHitMove, the rescale reads
-// that argument at I_vp and at the question, h from each side's own hit rate;
-// otherwise I_eff stands for it, as if nothing were cached, and reads V_P
+// that argument at I_vp and at the question, h from each side's own hit rate.
+// With CachedContextRead (slo.SwitchTTFTTierLoad), h is each side's cached
+// context as read, the whole prompt less the computed one, and the span is
+// priced where either side's h is above MaterialPrefixHitMove of its whole
+// prompt: the prefix-cache hit rate counts the GPU's hits alone, and reads a
+// hit from a host, disk or peer tier as a miss though the prompt attends
+// over it. Otherwise I_eff stands for it, as if nothing were cached, and reads V_P
 // high at a hit (issue llm-d-incubation/llm-d-scaling-manager#311).
 func (p Prefill) shapedVP() (float64, Flag) {
 	if p.VPAssumed {
@@ -586,8 +660,14 @@ func (p Prefill) shapedVP() (float64, Flag) {
 	}
 	i, ivp := p.PromptTokens, p.VPPromptTokens
 	if p.CurveSlope > 0 && p.CurveCurvature > 0 && ivp > 0 {
-		if p.PrefixAttention && p.VPWholePromptTokens > 0 && p.WholePromptTokens > 0 &&
-			max(p.PromptHitRate, p.VPPromptHitRate) > MaterialPrefixHitMove {
+		switch {
+		case !p.PrefixAttention:
+		case p.CachedContextRead:
+			if h, hvp := p.CachedContextTokens, p.VPCachedContextTokens; max(h/(h+i), hvp/(hvp+ivp)) > MaterialPrefixHitMove {
+				i, ivp = i+2*h, ivp+2*hvp
+			}
+		case p.VPWholePromptTokens > 0 && p.WholePromptTokens > 0 &&
+			max(p.PromptHitRate, p.VPPromptHitRate) > MaterialPrefixHitMove:
 			i, ivp = attentionSpan(i, p.PromptHitRate), attentionSpan(ivp, p.VPPromptHitRate)
 		}
 		if i > ivp {
@@ -683,6 +763,11 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 		// A hit rate is read only beside a known whole prompt; with the whole
 		// prompt unknown, nothing reads it (shapedVP, prefixMoved).
 		u = refuse(InvalidInput, fmt.Sprintf("prefix hit rate %g, V_P's %g, want 0 <= hit < 1", p.PromptHitRate, p.VPPromptHitRate))
+	case !Finite(p.CachedContextTokens) || p.CachedContextTokens < 0 || !Finite(p.VPCachedContextTokens) || p.VPCachedContextTokens < 0:
+		u = refuse(InvalidInput, fmt.Sprintf("cached context %g tokens, V_P's %g, want finite values of at least 0",
+			p.CachedContextTokens, p.VPCachedContextTokens))
+	case !Finite(p.TierLoadSeconds) || p.TierLoadSeconds < 0:
+		u = refuse(InvalidInput, fmt.Sprintf("tier load %g s, want a finite value of at least 0", p.TierLoadSeconds))
 	case !Finite(p.CurveSlope) || p.CurveSlope < 0 || !Finite(p.CurveCurvature) || p.CurveCurvature < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("curve b %g, c %g, want finite values of at least 0", p.CurveSlope, p.CurveCurvature))
 	case !(p.VPMargin >= 0 && p.VPMargin <= MaxVPMargin):
@@ -708,7 +793,7 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 			f  Flag
 		}{
 			{p.VPAssumed, AssumedVP}, {p.VPLowerBound, VPLowerBound}, {p.VPAboveSlopeBound, VPAboveSlopeBound},
-			{shape != "", shape}, {shape != VPShapeMoved && p.prefixMoved(), VPShapeMoved},
+			{p.VPFromPlateau, VPFromPlateau}, {p.ExperimentalTTFT, ExperimentalTTFT}, {shape != "", shape}, {shape != VPShapeMoved && p.prefixMoved(), VPShapeMoved},
 			{p.ImbalanceAssumed, AssumedImbalance}, {p.PromptCVAssumed, AssumedPromptSpread},
 			{p.TransferSecondsPerToken == 0, TransferOmitted},
 		} {
@@ -822,6 +907,18 @@ func (pl prefillPlan) utilization(rate float64) float64 {
 	return pl.f * rate * pl.work / float64(pl.p.Replicas)
 }
 
+// overSlots says the busiest pod, processor sharing by its engine's
+// configuration (QueueProcessorSharing), is likely to hold more prompts than it
+// runs at once at rate: rho^(slots+1), the M/G/1-PS chance of more than
+// slots prompts on the pod, above MaxPSOverSlots.
+func (pl prefillPlan) overSlots(rate float64) bool {
+	if pl.p.Queue.Model != QueueProcessorSharing || pl.p.Queue.Slots < 1 {
+		return false
+	}
+	rho := pl.atRate(rate).utilization(rate)
+	return !(rho < 1) || math.Pow(rho, float64(pl.p.Queue.Slots+1)) > MaxPSOverSlots
+}
+
 // waitScale is theta, E[S_work](Ca^2 + Cs^2) / (2(1 - rho)), Kingman's mean
 // wait given a wait: the mean wait is rho * theta.
 func (pl prefillPlan) waitScale(rho float64) float64 {
@@ -849,6 +946,9 @@ func (pl prefillPlan) own() ownTime {
 // wait included: no gate stage and no processor-sharing onsets
 // (ttftPlan.routerWait, psOnsets).
 func (p Prefill) BeyondProcessorSharing() bool {
+	if p.Queue.Model == QueueProcessorSharing {
+		return false
+	}
 	if r := p.PromptMaxRatio; r > 0 && r <= MaxPSPromptSupport && p.ArrivalCV2 <= 1 {
 		return false
 	}
@@ -1009,6 +1109,9 @@ type ttftPlan struct {
 	// kneeUnpriced is TTFTFleet.LowerBoundKneeUnpriced on a V_P that is a
 	// lower bound and not the caller's.
 	kneeUnpriced bool
+	// servedOnly is Prefill.VPServedOnly on a V_P not the caller's: no TTFT
+	// is priced from it.
+	servedOnly bool
 }
 
 // plan checks a fleet and places its flow-control onsets.
@@ -1024,7 +1127,8 @@ func (fl TTFTFleet) plan() (ttftPlan, *Unanswerable) {
 	}
 	pl := ttftPlan{pf: pf, d: fl.Decode, fc: fl.FlowControl, ps: fl.ProcessorSharing,
 		psCapped:     fl.ProcessorSharing && fl.Prefill.BeyondProcessorSharing(),
-		kneeUnpriced: fl.LowerBoundKneeUnpriced && fl.Prefill.VPLowerBound && !fl.Prefill.VPAssumed}
+		kneeUnpriced: fl.LowerBoundKneeUnpriced && fl.Prefill.VPLowerBound && !fl.Prefill.VPAssumed,
+		servedOnly:   fl.Prefill.VPServedOnly && !fl.Prefill.VPAssumed}
 	pl.routerWait = (fl.PriceRouterWait || fl.RouterWaitInPrefill) && pl.ps && !pl.psCapped
 	pl.gateStage = pl.routerWait && fl.PriceRouterWait
 	pl.psOnsets = fl.PSOnsets && pl.ps
@@ -1355,7 +1459,8 @@ type priced struct {
 // queues' prices (the plan carries SpreadBeyondProcessorSharing): the figure
 // and its parts are the larger one's. A refusal from either is the answer.
 func (pl ttftPlan) price(rate, q float64, withDecodeWait, extras bool) priced {
-	if !pl.psCapped {
+	overSlots := pl.ps && pl.pf.overSlots(rate)
+	if !pl.psCapped && !overSlots {
 		return pl.priceOne(rate, q, withDecodeWait, extras)
 	}
 	ps := pl.priceOne(rate, q, withDecodeWait, extras)
@@ -1368,10 +1473,14 @@ func (pl ttftPlan) price(rate, q float64, withDecodeWait, extras bool) priced {
 	if first.u != nil {
 		return first
 	}
+	out := ps
 	if first.out.Seconds > ps.out.Seconds {
-		return first
+		out = first
 	}
-	return ps
+	if overSlots && !pl.psCapped {
+		out.out.Flags = addFlags(out.out.Flags, PSSlotsExceeded)
+	}
+	return out
 }
 
 // decodeSaturates says rate is at or above the decode line's knee (the line
@@ -1396,6 +1505,16 @@ func (pl ttftPlan) aboveDecodeOnset(rate float64) *Unanswerable {
 func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced {
 	pk := pl.pf.knee()
 	out := TTFT{PrefillKnee: pk, Onsets: pl.onsets, Flags: append([]Flag(nil), pl.flags...)}
+	if pl.servedOnly {
+		// A V_P known only as the rate a pod computed prices no TTFT, at any
+		// rate: under its knee the figure would rest on a V_P that may be
+		// far higher, and at or past it the knee is only a lower bound, which
+		// the planner may raise to the work the pods served besides.
+		u := refuse(NoPrefillCapacity, fmt.Sprintf("V_P %.0f tokens/s is only the rate a prefill pod was seen to compute "+
+			"(it never queued for capacity): no TTFT is priced from it; pass --assume-vp for a flagged answer", pl.pf.p.VP))
+		u.Flags = []Flag{VPLowerBound}
+		return priced{u: &u}
+	}
 	if rate >= pk {
 		if pl.kneeUnpriced && !pl.decodeSaturates(rate) {
 			// The decode gate's onset is known whatever bound V_P is: a
@@ -1433,7 +1552,9 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 	out.VPMarginApplied = pf.applied
 	rho := pf.utilization(rate)
 	own := pf.own()
-	a := pl.pf.p.FixedLatency
+	// The tier load waits as a does: a request's own, before its prefill.
+	a := pl.pf.p.FixedLatency + pl.pf.p.TierLoadSeconds
+	out.Parts.TierLoad = pl.pf.p.TierLoadSeconds
 	out.PrefillUtilization = rho
 	out.Parts.OwnPrefill = a + own.mean
 	// side is block 1 for a plan's own time: the worst pod's wait and the own

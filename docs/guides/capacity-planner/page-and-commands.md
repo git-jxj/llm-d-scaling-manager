@@ -177,6 +177,16 @@ A fleet whose load never goes quiet still gets two terms, each flagged:
   it was measured at. If even the shorter prompts compute more than 2,500
   tokens, a is extrapolated from long prompts and may read low; the assumed
   line says so.
+- **A prefill knee raised to the work the fleet served** (`KneeAtServedWork`).
+  Where V_P is only a lower bound, the prefill knee is at least the rate the
+  prefill Pods' sustained computed-token work serves at the prompt priced
+  (see below, after the lower-bound knee).
+- **V_P raised with that knee** (`VPAtServedWork`, only with the replay
+  switch `prefill-vp-at-served-work` on; off by default). Where the knee was
+  raised to the served work, V_P is raised by the same ratio for the TTFT, so
+  the TTFT is priced from the V_P the knee rests on. Off, the TTFT is priced
+  from the lower V_P, and a rate under the raised knee can read the prefill
+  Pods past their capacity. The assumed line gives the ratio.
 - **A lower KV-fill floor for the decode latency line** (`AdaptedBandFloor`).
   The line is fitted over a range of KV fill. A fleet whose decode pods never
   fill far enough above the default floor (0.15) never gets the 0.30 range a
@@ -184,6 +194,63 @@ A fleet whose load never goes quiet still gets two terms, each flagged:
   it to the 10th percentile of the engines' fills over the last 30 minutes,
   never under 0.05. It raises it back only after the fill has spread 0.35 for
   2 minutes. The flag gives the floor used.
+
+**A fleet whose prefill never queues (experimental).** V_P is learned only
+from minutes in which a prefill pod queued, so such a fleet gets V_P refused
+(`NoPrefillCapacity`) or only a lower bound. `--prefill-vp-plateau` reads V_P
+instead from where the prompt tokens served stop rising with the requests in
+prefill per engine (the occupancy plateau). Where that curve has flattened
+the level is V_P; where it is still rising it is a lower bound, and the
+answer keeps the "at least" reading of a lower-bound knee. It is off by
+default and applies to the one command you pass it to: `slo-to-rate`,
+`replicas-to-slo`, `at-replicas`, `backtest`, `predict` and `day-plan` take
+it, and `POST /v1/inputs` takes `prefillVPPlateau` ([API](api.md)).
+Figures priced from it are flagged `VPFromPlateau` and read OUTSIDE
+VALIDATED REGION, and the assumed line says "prefill speed from the
+occupancy plateau (experimental, --prefill-vp-plateau)". The source of V_P
+is `occupancy-plateau` (`vpOrigin` in `-o json`). It is off by default
+because it has not been validated: on the public recordings its level reads
+0.96 to 1.08 of the V_P learned from a queue, but most fleets it gives a
+V_P to still lack a (`NoFixedLatency`), and TTFT priced just under a knee
+from its lower bound read far over what was measured. Try it to see what a
+fleet that never queued would need, for example
+`capacity-planner at-replicas --recording run.jsonl.gz --ttft 2s@p90 --prefill-vp-plateau`;
+do not size from it alone.
+
+**An experimental TTFT model (`--experimental-ttft`, for demonstration).**
+The TTFT model has seven switches that are off by default, because none of
+them has passed the release's validation. `--experimental-ttft` turns all
+seven on for the one command you pass it to:
+
+- `prefill-vp-window-best`: V_P read over the whole recording, not only its
+  last 6 hours;
+- `prefill-vp-at-served-work`: V_P raised to the work the prefill Pods
+  served, where the prefill knee was raised to it;
+- `slo-ttft-computed-hit`: a stated prompt netted by the computed-token hit;
+- `slo-ttft-tier-load` and `slo-ttft-tier-kv-wait`: the load of a cached
+  token from a host, disk or peer tier, at the engine's measured wait for it;
+- `slo-ttft-ps-by-engine`: the prefill queue priced as processor sharing
+  where the engine's flags say it shares its steps;
+- `slo-ttft-hop-window-means`: the router hop read on the means of its
+  windows, on a fleet whose traffic is too noisy for the per-cycle gates.
+
+`slo-to-rate`, `replicas-to-slo`, `at-replicas`, `backtest`, `predict` and
+`day-plan` take it, and `POST /v1/inputs` takes `experimentalTTFT`
+([API](api.md)). Every prefill and TTFT figure of such an answer is flagged
+`ExperimentalTTFT` and reads OUTSIDE VALIDATED REGION (experimental TTFT
+model: processor sharing by engine config, router hop from window means,
+prefill speed raised to the served work; not validated). The assumed line
+lists the switches it turned on, the self-check names the flag, and the
+footer says so. Without the flag the output is the default's, byte for byte.
+
+How it read: on a production P/D fleet, fitted on the first half of a day
+and tested on the second, the TTFT it priced read about 1.3x what was
+measured at the mean, 1.35x at p90 and 1.7x at p95, none under 0.8. Those
+figures are upper bounds: they rest on a V_P that is only a lower bound. The
+self-check's folds on the same recording read the p90 TTFT about 0.76x of
+measured, and called it inconsistent. It is not validated: it is for
+demonstration only, to show what the model can do on such a fleet, never to
+size from.
 
 **TTFT on a fleet that never goes quiet is not validated: prefill capacity
 V_P is a lower bound.** Such a fleet's prefill pods queue at every load, so
@@ -476,6 +543,46 @@ higher, so whether the fleet saturates is not priced", and the summary
 cells at and past that knee are marked `LB`, not `SAT`. Past decode's own
 knee the fleet saturates whatever V_P is, and the verdict says so on
 decode's knee. `--assume-vp` states a V_P to price the prefill side.
+
+Below that knee the TTFT is still priced from the same lower bound, and a
+faster prefill only lowers it, so every such TTFT is an upper bound: the
+true TTFT is at most the figure. The report says so: `<=` before it in
+the summary and the SLO table (and before the e2e sum built on it),
+`upperBound` in the JSON, "≤" on the page. A target it meets is met. A
+target it misses is not a known miss: the cell is marked `UB`, not
+`MISS`, and the verdict is NOT JUDGED, never UNDER-PROVISIONED on it:
+"TTFT p95 is at most 14.5 s against a 200 ms target: it is priced from a
+lower bound of V_P, and the true TTFT may be lower, so the miss is not
+known; --assume-vp states a V_P to price it." For the same reason `max
+at SLO` is at least its rate, and a TTFT floor over the target is at most
+that floor. A TPOT miss is known whatever V_P is, and still gives
+UNDER-PROVISIONED.
+
+The planner reads V_P from the last 6 hours of the recording, as the
+controller does. Only with `--experimental-ttft` (see below) does it read
+V_P over the whole recording: a fleet that queued for prefill only at its
+busiest hours then keeps the V_P read then (flag `VPFromEarlierInWindow`,
+and the assumed line says when: "V_P learned at +6.2 h of the window, 17.8 h
+before the cycle priced"). It is a lower bound, raised to what a Pod was
+seen to compute where that is higher. It is off by default because, on a
+production P/D fleet, the TTFT priced from that lower bound for the rest of
+the day read many times what was measured.
+
+A fleet whose prefill Pods never queued for compute at all has no V_P from a
+queue. The planner then takes the highest rate a prefill Pod computed over 3
+minutes as V_P, as a lower bound, and nothing more (the assumed line says
+"is only the rate a prefill pod was seen to compute"):
+
+- The prefill knee is at least the rate that V_P gives. It is also at least
+  the rate the fleet's prefill Pods kept up: the computed-token work they
+  sustained over 2 minutes, at the Pod count priced, in the last 6 hours,
+  over the prompt they computed (flag `KneeAtServedWork`). A Pod computes no
+  faster than it can, so work it kept up is work it can do. Both figures come
+  from the engines' computed-token counter.
+- No TTFT is priced from such a V_P: every TTFT, and every rate asked at a
+  TTFT target, reads "no prefill speed learned" (`NoPrefillCapacity`), as
+  before. The true V_P may be far higher, so a TTFT priced from it would be
+  an upper bound at best.
 
 A window whose cycles do not cover its span (a capture or recording with
 holes) gets a `window gaps` line under the header line: the cycles the span

@@ -60,6 +60,12 @@ const (
 	// SourceBackPressureBound is the saturation analyzer's prefill lower-bound
 	// window (prefill_bound.go). A lower bound.
 	SourceBackPressureBound Source = "back-pressure-bound"
+	// SourceServedPeak is the highest computed-token rate any pod sustained
+	// over PeakRun minutes, queued or not, taken where no source above has
+	// a reading (Cycle.VPServedUnqueued). A pod never computes faster than
+	// V_P, so it is a lower bound (NeverQueued); with no queue it cannot
+	// tell capacity from the offered load, so it is only that.
+	SourceServedPeak Source = "served-peak"
 )
 
 // Refusal is why a figure was not learned.
@@ -121,6 +127,11 @@ type BoundReason string
 // for an observe-only signal flagging too often under-promises, the
 // conservative side.
 const DataParallelRanks BoundReason = "DataParallelRanks"
+
+// NeverQueued is a V_P from the served peak alone (SourceServedPeak): no
+// pod held a capacity queue long enough for a queued source, so V_P is
+// only known to be at least what a pod was seen to compute.
+const NeverQueued BoundReason = "NeverQueued"
 
 // Row refusals, counted per cycle in Estimate.Refused.
 const (
@@ -206,6 +217,21 @@ type Cycle struct {
 	// rate a pod was seen to sustain, queued or not (Estimate.floorAtServed;
 	// saturation.SwitchPrefillVPFloorServed).
 	VPFloorServed bool
+	// VPServedUnqueued takes the served peak as a lower-bound V_P where no
+	// other source has a reading (SourceServedPeak, NeverQueued), in place
+	// of NoPrefillCapacity (saturation.SwitchPrefillVPServedUnqueued).
+	VPServedUnqueued bool
+	// VPWindowBest takes the best peak under a queue the key read since its
+	// first cycle, where the samples kept (Retention) hold a lower one or
+	// none (Estimate.VPLearnedAt; saturation.SwitchPrefillVPWindowBest): a
+	// replay of a recording reads its whole window, where the controller
+	// ages a reading out.
+	VPWindowBest bool
+	// VPOccupancyPlateau reads V_P from the plateau of the served computed
+	// tokens against the prefill occupancy where V_P is refused for want of
+	// a queue or is a lower bound under it (plateau.go;
+	// saturation.SwitchPrefillVPOccupancyPlateau).
+	VPOccupancyPlateau bool
 	// ALowLoadByRate reads a minute as low load, for the fit of a, by its
 	// request rate against its prompt cluster's service time
 	// (lowLoadByRate), not against its own: a minute whose prefill ran slow
@@ -237,8 +263,9 @@ type Estimate struct {
 	VPSource     Source
 	VPLowerBound bool
 	// VPLowerBoundReason says why busy minutes are a lower bound
-	// (DataParallelRanks). Empty otherwise: sources 2 and 3 are bounds by
-	// their source, and single-rank busy minutes are not one.
+	// (DataParallelRanks), or that V_P is the served peak alone
+	// (NeverQueued). Empty otherwise: sources 2 and 3 are bounds by their
+	// source, and single-rank busy minutes are not one.
 	VPLowerBoundReason BoundReason
 	VPRefused          Refusal
 	VPSamples          int
@@ -251,6 +278,22 @@ type Estimate struct {
 	// VPPromptTokens, VPWholePromptTokens and VPPromptHitRate the peak's, while VPSource and VPLowerBoundReason still
 	// name the source that made V_P a lower bound.
 	VPFlooredAtServed bool
+	// VPLearnedAt is the last minute of the peak under a queue V_P rests on
+	// where that peak is older than the samples kept (Cycle.VPWindowBest),
+	// zero otherwise.
+	VPLearnedAt time.Time
+	// VPPlateau is the occupancy plateau's level (plateau.go), read with
+	// Cycle.VPOccupancyPlateau, whether or not V_P is taken from it; zero
+	// with no occupancy bin at or over PlateauMinOccupancy. VPPlateauFlat
+	// says the curve flattened by the rule there, so the level is V_P, not a
+	// lower bound. VPPlateauMinutes is the minutes of the plateau's run,
+	// VPPlateauSpan the occupancy it spans, and VPPlateauMaxOccupancy the
+	// highest occupancy a counted bin's minute reached.
+	VPPlateau             float64
+	VPPlateauFlat         bool
+	VPPlateauMinutes      int
+	VPPlateauSpan         float64
+	VPPlateauMaxOccupancy float64
 	// VPQueuedMinutes, VPLongestQueuedRun and VPBusyMinutes say why V_P was
 	// refused or where it stands: the samples kept that held a queue on
 	// some sample, the longest run of them (a peak needs PeakRun), and the
@@ -405,6 +448,11 @@ type sample struct {
 	// (timing.go), valid when timedOK.
 	timed   timedSample
 	timedOK bool
+	// occ is the minute's requests in prefill per engine (rowOccupancy), for
+	// the occupancy plateau, valid when occOK; read only with
+	// Cycle.VPOccupancyPlateau.
+	occ   float64
+	occOK bool
 }
 
 // promptPoint is one row's effective prompt length, for the steady gate.
@@ -440,6 +488,11 @@ type keyState struct {
 	pods     map[string]*podState
 	f        []fSample
 	lastSeen time.Time
+	// bestQueued is the best peak under a queue the key has read since its
+	// first cycle, with the last minute of its run, kept past Retention for
+	// Cycle.VPWindowBest; bestQueuedOK says one was read.
+	bestQueued   busy
+	bestQueuedOK bool
 }
 
 // Observer is the learned state of every key. Safe for concurrent use.
@@ -565,6 +618,9 @@ func (o *Observer) Observe(c Cycle) Estimate {
 				ttft: rm.AvgTTFT, ttftKnown: rm.AvgTTFTKnown, queue: rm.AvgQueueTime, queueKnown: rm.AvgQueueTimeKnown,
 				ranks: rm.Ranks()}, ieff, rr)
 		}
+		if c.VPOccupancyPlateau && c.Disaggregated {
+			s.occ, s.occOK = rowOccupancy(rm)
+		}
 		ps.add(s)
 		shares = append(shares, share{rate: s.rate, rateOK: s.rateOK, requests: rr, requestsOK: rrOK, multiRank: s.multiRank})
 	}
@@ -572,6 +628,7 @@ func (o *Observer) Observe(c Cycle) Estimate {
 
 	ks.noteImbalance(shares, allAdmitted, c.Now)
 	est.capacity(ks, c, sglang)
+	est.plateauFill(ks, c)
 	est.fixed(ks, c)
 	if c.AFromTiming {
 		switch est.ARefused {
