@@ -59,7 +59,10 @@ var (
 		vpPlateauFlag,
 		// The same: every prefill and TTFT figure it prices is flagged
 		// ExperimentalTTFT, which no envelope row allows.
-		experimentalTTFTFlag}
+		experimentalTTFTFlag,
+		// The same: every TPOT percentile it prices is flagged
+		// TPOTDistribution, which no envelope row allows.
+		experimentalTPOTFlag}
 	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait",
 		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "prefill-engine-args", "gpus-per-replica",
 		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts", "assume-transfer-base",
