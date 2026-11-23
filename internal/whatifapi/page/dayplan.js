@@ -236,8 +236,8 @@ function dayPlanSVG(plan) {
         g += `<text class="pnote" data-refused="${esc(p.key)}" x="${DAY_L + lay.pw / 2}" y="${p.top + p.h / 2}" text-anchor="middle">` +
           `${esc(p.title)} not sized: ${esc(r.reason === "NoPrefillCapacity" ? "prefill capacity unknown" : (DAY_TERMS[r.term] || r.term) + " not learned")}</text>`;
       } else if (p.key === "decode" && b.some(k => k.needed && k.needed.atLeast)) {
-        g += `<text class="pnote" data-lower-bound="decode" x="${DAY_L + 4}" y="${p.top + 12}">` +
-          `where prefill is not priced, needed is at least: decode's own limit alone</text>`;
+        g += `<text class="pnote" data-lower-bound="decode" x="${DAY_L + lay.pw / 2}" y="${p.top + p.h - 6}" text-anchor="middle">` +
+          `needed is at least: decode alone, prefill not sized</text>`;
       }
     }
     g += dayLabels(labels, xr + 6, p.top, p.top + p.h);
@@ -357,8 +357,8 @@ function dayRefusedHTML(plan) {
   // An unknown prefill capacity reads as the answer view's card does; the
   // code stays in small type.
   return (plan.refused || []).map(r => r.reason === "NoPrefillCapacity" ?
-    `<li><b>Prefill capacity unknown, ${r.buckets} bucket(s).</b> ${esc(noPrefillWords({reason: r.reason, detail: r.detail, flags: /only the rate a prefill pod/.test(r.detail) ? ["VPLowerBound"] : []}))} ` +
-      `Decode is sized alone. <span class="hint">${esc(r.reason)}</span></li>` :
+    `<li title="${esc(r.reason)}"><b>${r.buckets} bucket(s):</b> ${esc(noPrefillWords({reason: r.reason, detail: r.detail, flags: /only the rate a prefill pod/.test(r.detail) ? ["VPLowerBound"] : []}))} ` +
+      `Decode is sized alone.</li>` :
     `<li><b>${esc(DAY_TERMS[r.term] || r.term)} refused (${esc(r.reason)}), ${r.buckets} bucket(s).</b> ` +
     `${esc(r.detail)}. ${esc(r.effect)} <span class="hint">${esc(r.hint)}</span></li>`).join("");
 }

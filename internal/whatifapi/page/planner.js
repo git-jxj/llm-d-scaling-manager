@@ -174,7 +174,7 @@ function fmtNum(v) {
 // figPlain is a figure as plain text: the number, or "refused (reason)".
 function figPlain(f, fmt) {
   const v = val(f);
-  return v != null ? fmt(v) : "not known (" + (f && f.refused ? plainReasonWord(f.refused) : "not estimated") + ")";
+  return v != null ? fmt(v) : "not estimated" + (f && f.refused ? " (" + plainReasonWord(f.refused) + ")" : "");
 }
 
 // figText is figPlain escaped, for HTML.
@@ -1329,7 +1329,9 @@ function renderLimits() {
     {name: "Decode", what: "TPOT", fig: L.decode, cls: "c-dec", binds: binding.includes("decode")},
   ].filter(r => r.fig);
   el("limits").innerHTML = rows.map(r => {
-    const parts = [`<b>${r.name}</b> (${r.what}) <b>${figText(r.fig, fmtRate)}</b>`];
+    // Prefill seen only as a lower bound says so, as its bar does.
+    const pk = r.name === "Prefill" && val(r.fig) == null ? val(p.ttft.markers.prefillKnee) : null;
+    const parts = [`<b>${r.name}</b> (${r.what}) <b>${pk != null ? `at least ${esc(fmtRate(pk))} (lower bound)` : figText(r.fig, fmtRate)}</b>`];
     if (r.binds) parts.push('<span class="binds">binds</span>');
     if (r.fig.boundBy) parts.push("bound by " + esc(plainVerdict(r.fig.boundBy.join(", then ")).replace("operating-point cap", "the safe load")));
     if (r.fig.refused) parts.push(esc(plainReasonWord(r.fig.refused)));
@@ -1533,7 +1535,7 @@ function renderTTFT() {
   el("ttftlegend").innerHTML = legend(series, onset != null);
   el("ttftpoints").innerHTML =
     `<div>Open circle, the TTFT at your rate: <b>${figText(t.line.atRate.figure, fmtSec)}${dagger(t.line.atRate.figure)}</b> ${flagChips(t.line.atRate.figure)}</div>` +
-    `<div>Filled circle, the rate at ${fmtSec(t.line.target)}: <b>${figText(t.line.atTarget.rate, fmtRate)}${dagger(t.line.atTarget.rate)}</b>${esc(aboveCap(p, val(t.line.atTarget.rate)))}` +
+    `<div>Filled circle, the rate at ${fmtSec(t.line.target)}: <b>${val(t.line.floor) != null && val(t.line.floor) > t.line.target ? "none: the target is below the floor" : figText(t.line.atTarget.rate, fmtRate)}${dagger(t.line.atTarget.rate)}</b>${esc(aboveCap(p, val(t.line.atTarget.rate)))}` +
     ` ${flagChips(t.line.atTarget.rate)}</div>` +
     `<div>Floor: ${figText(t.line.floor, fmtSec)}</div>`;
 }
@@ -1599,7 +1601,7 @@ function legend(series, onsets) {
 // rate as dashed lines, the two points, the knees and the cap, and the
 // saturated region shaded.
 function chart(svg, o) {
-  const {W, H} = o, L = 52, R = 16, T = 26, Bm = 34, pw = W - L - R, ph = H - T - Bm;
+  const {W, H} = o, L = 52, R = 16, T = 38, Bm = 34, pw = W - L - R, ph = H - T - Bm;
   const X = v => L + pw * v / o.xmax, Y = v => T + ph * (1 - v / o.ymax);
   const yms = o.ymax < 2;
   const yfmt = v => yms ? fmtNum(v * 1000) : fmtNum(v);
@@ -1636,7 +1638,7 @@ function chart(svg, o) {
     lastX = X(mk.x);
     lastHalf = half;
     s += `<line class="marker" x1="${X(mk.x)}" x2="${X(mk.x)}" y1="${T - 4}" y2="${T + ph}"/>` +
-      `<text x="${X(mk.x)}" y="${row ? T + 12 : T - 8}" class="${row ? "lbl" : ""}" text-anchor="middle">${esc(text)}</text>`;
+      `<text x="${X(mk.x)}" y="${row ? T - 21 : T - 8}" text-anchor="middle">${esc(text)}</text>`;
   }
   let g = "";
   for (const sr of o.series) {
