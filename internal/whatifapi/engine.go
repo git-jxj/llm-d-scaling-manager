@@ -49,10 +49,32 @@ type Resolved struct {
 	// self-check stamps an issue with.
 	Folds          []FoldFit
 	PlannerVersion string
+	// Mixture is each cycle as the experimental rank-mixture TTFT model
+	// reads it, Mixture[i] the cycle of Series[i]
+	// (learnreplay.MixtureSeriesFrom); nil unless that model was asked for
+	// (BacktestRequest.TTFTModel).
+	Mixture []whatif.MixtureCycle
+	// Decode is each cycle as the experimental TPOT distribution reads it,
+	// Decode[i] the cycle of Series[i] (learnreplay.DecodeSeriesFrom); nil
+	// unless that model was asked for (BacktestRequest.TPOTModel).
+	Decode []whatif.DecodeCycle
+	// Engine is the engines' flags those models read, as the source gives
+	// them; zero where neither model was asked for. A backtest request that
+	// does not state them takes the fit's.
+	Engine EngineSlots
 	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
 	// the Series and the Inputs), its weight in the inputs cache
 	// (Config.MaxInputsBytes); 0 weighs nothing.
 	Bytes int
+}
+
+// EngineSlots is what the experimental backtest models read of the engines'
+// flags: the prefill and decode engines' max-num-seqs (PrefillSlots as the
+// prompts a prefill rank runs at once: 1 without chunked prefill) and the
+// decode engine's num_speculative_tokens; 0 not read (or no speculative
+// decoding).
+type EngineSlots struct {
+	PrefillSlots, DecodeSlots, SpecTokens int
 }
 
 // Pricer builds the fleet a scenario prices. It must be safe to call from

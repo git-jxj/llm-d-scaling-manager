@@ -308,6 +308,25 @@ type BacktestRequest struct {
 	// Assume types a term the fit did not learn, as a plan's assume does;
 	// every figure it moves is flagged, and the answer lists it.
 	Assume *Assume `json:"assume,omitempty"`
+	// TTFTModel prices TTFT with an experimental model in place of the
+	// planner's: "" is the planner's, and whatif.QueueRankMixture the only
+	// other (backtest_rank_mixture.go). Every TTFT it prices reads OUTSIDE
+	// VALIDATED REGION.
+	TTFTModel string `json:"ttftModel,omitempty"`
+	// PrefillSlots is the prefill engine's max-num-seqs, read by
+	// TTFTModel's limited-PS check; 0 not known.
+	PrefillSlots int `json:"prefillSlots,omitempty"`
+	// TPOTModel prices the TPOT percentiles with an experimental
+	// per-request distribution in place of the planner's ratio: "" is the
+	// planner's, and whatif.TPOTRenewalLognormal the only other
+	// (backtest_tpot_distribution.go). The mean TPOT stays the planner's.
+	// Every percentile it prices reads OUTSIDE VALIDATED REGION.
+	TPOTModel string `json:"tpotModel,omitempty"`
+	// DecodeSlots is the decode engine's max-num-seqs and SpecTokens its
+	// num_speculative_tokens, read by TPOTModel; 0 not known (or, for
+	// SpecTokens, no speculative decoding).
+	DecodeSlots int `json:"decodeSlots,omitempty"`
+	SpecTokens  int `json:"specTokens,omitempty"`
 }
 
 // BacktestResponse is POST /v1/backtest's answer, and capacity-planner
@@ -344,6 +363,13 @@ type BacktestResponse struct {
 	Steps           []BacktestStep   `json:"steps"`
 	Summary         BacktestSummary  `json:"summary"`
 	Notes           []string         `json:"notes"`
+	// RankMixture is the experimental TTFT model's fit, where the request
+	// asked for it (BacktestRequest.TTFTModel).
+	RankMixture *RankMixtureReport `json:"rankMixture,omitempty"`
+	// TPOTDistribution is the experimental TPOT distribution's fit and its
+	// score at the histogram's resolution, where the request asked for it
+	// (BacktestRequest.TPOTModel).
+	TPOTDistribution *TPOTDistReport `json:"tpotDistribution,omitempty"`
 }
 
 // BacktestWindow is one side of a backtest: its inputs, and the time it
@@ -411,6 +437,12 @@ type BacktestStep struct {
 	// scored (UnscoredUnsettled).
 	RelaxationSeconds *float64 `json:"relaxationSeconds,omitempty"`
 	Unsettled         bool     `json:"unsettled,omitempty"`
+	// RankMixture is the experimental TTFT model's checks at the step,
+	// where the request asked for it.
+	RankMixture *RankMixtureCheck `json:"rankMixture,omitempty"`
+	// TPOTDist is the experimental TPOT distribution at the step, where
+	// the request asked for it.
+	TPOTDist *TPOTDistCheck `json:"tpotDistribution,omitempty"`
 	// TTFTBurst says the step's window is a burst (burstIn) against a
 	// prefill knee priced from a lower bound of V_P, and not against
 	// decode's knee: the true prefill knee may be far higher, so the step is
@@ -607,6 +639,14 @@ func (s *Server) handleBacktest(w http.ResponseWriter, r *http.Request) {
 // backtest answers req on one plan slot, within the plan budget. A split
 // resolves the fit at the split, as POST /v1/inputs would, and keeps it.
 func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestResponse, error) {
+	// The server's experimental models (Config.TTFTModel, TPOTModel) price
+	// a request that names none, as if it had.
+	if req.TTFTModel == "" {
+		req.TTFTModel = s.ttftModel
+	}
+	if req.TPOTModel == "" {
+		req.TPOTModel = s.tpotModel
+	}
 	test, ok := s.inputs.get(req.InputsID)
 	if !ok {
 		return nil, errUnknownInputs
@@ -643,8 +683,21 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 		doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
 		doc.InputsID = contentID("inputs", res.Content)
 		fit = &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
-			config: res.Config, bytes: res.Bytes}
+			config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode, engine: res.Engine}
 		fit = s.inputs.add(doc.InputsID, fit)
+	}
+	// The engines' flags the models read are the fit's, as the source gives
+	// them, where the request does not state them.
+	if req.TTFTModel != "" && req.PrefillSlots == 0 {
+		req.PrefillSlots = fit.engine.PrefillSlots
+	}
+	if req.TPOTModel != "" {
+		if req.DecodeSlots == 0 {
+			req.DecodeSlots = fit.engine.DecodeSlots
+		}
+		if req.SpecTokens == 0 {
+			req.SpecTokens = fit.engine.SpecTokens
+		}
 	}
 	q, err := backtestQuestionOf(fit, test, req, cutoff, split)
 	if err != nil {
@@ -675,7 +728,8 @@ func Backtest(ctx context.Context, fit, wholeTest *Resolved, req BacktestRequest
 	entry := func(res *Resolved) *inputsEntry {
 		doc := res.Inputs
 		doc.InputsID = contentID("inputs", res.Content)
-		return &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency, config: res.Config}
+		return &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency, config: res.Config,
+			mixture: res.Mixture, decode: res.Decode}
 	}
 	q, err := backtestQuestionOf(entry(fit), entry(wholeTest), req, cutoff, split)
 	if err != nil {
@@ -797,6 +851,12 @@ type backtestQuestion struct {
 	// cachedCost is phi priced at every step in place of the pricer's own
 	// (Knobs.CachedTokenCost), for FitCachedTokenCost; nil is the pricer's.
 	cachedCost *float64
+	// mixture is the experimental TTFT model fitted on the fit window, nil
+	// unless the request asked for it.
+	mixture *rankMixtureQ
+	// tpotDist is the experimental TPOT distribution fitted on the fit
+	// window, nil unless the request asked for it.
+	tpotDist *tpotDistQ
 }
 
 // backtestQuestionOf checks req against fit and test, and refuses a test
@@ -917,6 +977,41 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	if q.cv2 == nil {
 		q.assumed = append(q.assumed, "random (Poisson) arrivals: the recording does not measure how bursty arrivals are; "+
 			"state it with --arrival-cv2 (arrivalCV2) when known")
+	}
+	switch req.TTFTModel {
+	case "":
+	case string(whatif.QueueRankMixture):
+		// The model prices only where its identifiability checks pass;
+		// otherwise it abstains, and every TTFT is the planner's own.
+		switch {
+		case len(test.mixture) != len(test.series):
+			q.mixture = abstainedMixture("the test source did not give the per-rank series")
+		default:
+			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots)
+			if ferr != nil {
+				q.mixture = abstainedMixture(ferr.Error())
+			} else {
+				q.mixture = fitted.identified()
+			}
+		}
+		q.assumed = append(q.assumed, q.mixture.assumedLines()...)
+	default:
+		return nil, InputErrorf("ttftModel %q, want %q or none", req.TTFTModel, whatif.QueueRankMixture)
+	}
+	switch req.TPOTModel {
+	case "":
+	case whatif.TPOTRenewalLognormal:
+		// The distribution prices only where its checks pass; otherwise it
+		// abstains, and every TPOT percentile is the planner's own.
+		if len(test.decode) != len(test.series) {
+			q.tpotDist = &tpotDistQ{report: TPOTDistReport{Model: whatif.TPOTRenewalLognormal, Experimental: true, FoldC: []float64{},
+				Fold: []TPOTDistScore{}, Abstained: "the test source did not give the decode series"}}
+		} else {
+			q.tpotDist = fitTPOTDist(fit, fitIdx, q.step, req.DecodeSlots, req.SpecTokens)
+		}
+		q.assumed = append(q.assumed, q.tpotDist.assumedLines()...)
+	default:
+		return nil, InputErrorf("tpotModel %q, want %q or none", req.TPOTModel, whatif.TPOTRenewalLognormal)
 	}
 	return q, nil
 }
@@ -1154,6 +1249,9 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 		}
 		out.Steps = append(out.Steps, s)
 	}
+	if q.tpotDist != nil {
+		q.scoreTPOTDist(steps, out)
+	}
 	q.finish(out)
 	return out, nil
 }
@@ -1177,6 +1275,15 @@ func (q *backtestQuestion) finish(out *BacktestResponse) {
 	out.VerdictLines, out.Excluded = verdictOf(out, q.step)
 	out.Verdict = strings.Join(out.VerdictLines, " ")
 	out.Notes = append(out.Notes, backtestNotes(q)...)
+	if q.mixture != nil {
+		r := q.mixture.report
+		out.RankMixture = &r
+	}
+	if q.tpotDist != nil {
+		r := q.tpotDist.report
+		out.TPOTDistribution = &r
+		out.Notes = append(out.Notes, q.tpotDist.note())
+	}
 	out.BacktestID = contentID("backtest", struct {
 		Fit, Test    string
 		Cutoff       time.Time
@@ -1187,6 +1294,14 @@ func (q *backtestQuestion) finish(out *BacktestResponse) {
 		Assume       Assume
 		Allowed      bool
 	}{q.fitID(), q.test.id, q.cutoff, q.step, q.settle, q.source, q.target, q.cv2, q.assume, q.config.Allowed})
+	if q.mixture != nil {
+		out.BacktestID = contentID("backtest", struct{ ID, Model, Assumed, Abstained string }{out.BacktestID, q.mixture.report.Model,
+			q.mixture.report.Assumed, q.mixture.report.Abstained})
+	}
+	if q.tpotDist != nil {
+		out.BacktestID = contentID("backtest", struct{ ID, TPOTModel, Assumed, Abstained string }{out.BacktestID, q.tpotDist.report.Model,
+			q.tpotDist.report.Assumed, q.tpotDist.report.Abstained})
+	}
 }
 
 // fitID is the fit's inputs id, or the prediction's for a comparison.
@@ -1331,7 +1446,13 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		}
 		return out
 	}
-	if pred.prefillKnee != nil {
+	if q.mixture != nil {
+		q.priceMixture(&pred, &out, st)
+	}
+	if q.tpotDist != nil {
+		q.priceTPOTDist(&pred, &out, st)
+	}
+	if pred.prefillKnee != nil && !q.mixturePriced(out) {
 		if tr := relaxationSeconds(in.rate, *pred.prefillKnee, in.prefill, pred.ca2, pred.promptCV); tr > 0 && !math.IsInf(tr, 1) {
 			out.RelaxationSeconds = ptr(tr)
 			out.Unsettled = !settles(tr, st.windowSeconds)
@@ -1369,7 +1490,8 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 					lo, hi, *judgeKnee, in.rate)
 			}
 		}
-		if _, _, ok := burstIn(samples, *pred.knee); ok && pred.kneeLowerBound && out.Excluded == "" && in.rate < *pred.knee {
+		if _, _, ok := burstIn(samples, *pred.knee); ok && pred.kneeLowerBound && out.Excluded == "" && in.rate < *pred.knee &&
+			!q.mixturePriced(out) {
 			out.TTFTBurst = true
 		}
 		out.KneeShare = ptr(in.rate / *pred.knee)
@@ -2444,9 +2566,18 @@ func upperBoundWords(name string, scores []BacktestScore, more string) string {
 		"and the fleet measured at or under it: consistent, and not scored for accuracy (upperBound).", n, more, name, name)
 }
 
+// TPOTBucketHint is how to measure a TPOT percentile the histogram is too
+// coarse to place: the verdict says it after the steps it left unscored,
+// and the page shows the verdict as it is, so the CLI and the page say it
+// in the same words.
+const TPOTBucketHint = "To measure it, give the histogram finer edges: the router's metrics.requestTPOTBuckets in the " +
+	"EndpointPickerConfig (an llm-d-router build after v1.0.0), or vLLM's --custom-histogram-buckets (v0.33.0 and later). " +
+	"Edges about 15% apart place p90 and p95 within 20%."
+
 // percentileWords is the p90 beside the figure a verdict quotes: within 20%
 // in how many of the steps its measured p90 could be placed, and in how
-// many a histogram bucket too wide to place it left it unscored.
+// many a histogram bucket too wide to place it left it unscored, with
+// TPOTBucketHint after TPOT's.
 func percentileWords(name string, scores []BacktestScore) string {
 	i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 })
 	if i < 0 {
@@ -2471,6 +2602,9 @@ func percentileWords(name string, scores []BacktestScore) string {
 			}
 		}
 		w += "."
+		if name == "TPOT" {
+			w += " " + TPOTBucketHint
+		}
 	}
 	return w
 }

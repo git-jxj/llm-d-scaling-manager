@@ -680,6 +680,13 @@ type SourceRate struct {
 // ITL and its three states, the tokens a step emits, the batch against the
 // cap, the queue and preemptions, the generation rate and the KV. A field
 // is written to a recording only when set.
+//
+// It also keeps the engine's own prefill readings (RequestRate through
+// PrefillComputedTokenRate), which the merged row holds only summed or
+// averaged over the group: the capacity planner's experimental TTFT model
+// (whatif.RankMixture) fits each rank's processor-sharing service time and
+// its traffic share from them. The ITL line does not read them, and an
+// engine's row (EngineRows) does not carry them.
 type EngineReading struct {
 	PodName                  string  `learnrec:"omitzero"`
 	EngineRanks              int     `learnrec:"omitzero"`
@@ -702,6 +709,21 @@ type EngineReading struct {
 	GenerationTokenRateKnown bool    `learnrec:"omitzero"`
 	TokensInUse              int64   `learnrec:"omitzero"`
 	TotalKvCapacityTokens    int64   `learnrec:"omitzero"`
+
+	// RequestRate, AvgTTFT, AvgQueueTime, AvgPrefillTime, AvgInputTokens and
+	// PrefillComputedTokenRate are the engine's own, as ReplicaMetrics
+	// defines them, with their bits.
+	RequestRate                   float64 `learnrec:"omitzero"`
+	RequestRateKnown              bool    `learnrec:"omitzero"`
+	AvgTTFT                       float64 `learnrec:"omitzero"`
+	AvgTTFTKnown                  bool    `learnrec:"omitzero"`
+	AvgQueueTime                  float64 `learnrec:"omitzero"`
+	AvgQueueTimeKnown             bool    `learnrec:"omitzero"`
+	AvgPrefillTime                float64 `learnrec:"omitzero"`
+	AvgPrefillTimeKnown           bool    `learnrec:"omitzero"`
+	AvgInputTokens                float64 `learnrec:"omitzero"`
+	PrefillComputedTokenRate      float64 `learnrec:"omitzero"`
+	PrefillComputedTokenRateKnown bool    `learnrec:"omitzero"`
 }
 
 // EngineReadingOf is what the ITL line reads of an engine's row.
@@ -715,7 +737,13 @@ func EngineReadingOf(rm ReplicaMetrics) EngineReading {
 		QueueLength: rm.QueueLength, MaxRankQueueLength: rm.MaxRankQueueLength,
 		PreemptionRate: rm.PreemptionRate, PreemptionRateKnown: rm.PreemptionRateKnown,
 		GenerationTokenRate: rm.GenerationTokenRate, GenerationTokenRateKnown: rm.GenerationTokenRateKnown,
-		TokensInUse: rm.TokensInUse, TotalKvCapacityTokens: rm.TotalKvCapacityTokens}
+		TokensInUse: rm.TokensInUse, TotalKvCapacityTokens: rm.TotalKvCapacityTokens,
+		RequestRate: rm.RequestRate, RequestRateKnown: rm.RequestRateKnown,
+		AvgTTFT: rm.AvgTTFT, AvgTTFTKnown: rm.AvgTTFTKnown,
+		AvgQueueTime: rm.AvgQueueTime, AvgQueueTimeKnown: rm.AvgQueueTimeKnown,
+		AvgPrefillTime: rm.AvgPrefillTime, AvgPrefillTimeKnown: rm.AvgPrefillTimeKnown,
+		AvgInputTokens:           rm.AvgInputTokens,
+		PrefillComputedTokenRate: rm.PrefillComputedTokenRate, PrefillComputedTokenRateKnown: rm.PrefillComputedTokenRateKnown}
 }
 
 // rowOf is e as a row of its group: the group's identity (namespace, model,

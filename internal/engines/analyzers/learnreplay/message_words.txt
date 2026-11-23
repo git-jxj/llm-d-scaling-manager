@@ -55,6 +55,7 @@
 /v1/chat/completions
 0
 0-9
+0.3
 0.34
 0.95
 1
@@ -230,10 +231,13 @@ KEDA_HPA_REPAIR
 KUEUE_NAMESPACE
 KV
 KV-cache
+KV-deferral
 KVBoundSlots
+KVDeferralOutside
 Kind
 Kubernetes
 Kueue
+L
 LEADER_ELECT
 LEADER_ELECTION_ID
 LEADER_ELECTION_LEASE_DURATION
@@ -260,6 +264,7 @@ LeaderWorkerSet
 Learned
 Learner
 Limited
+LimitedPSHeavyTraffic
 LineNearGate
 LineOnly
 Loaded
@@ -393,10 +398,13 @@ REGION
 REST_CLIENT_TIMEOUT
 ROLE
 R_q
+RankMixtureAbstained
+RankMixtureTTFT
 Ready
 RecordedValue
 Recording
 RegisterAnalyzer
+RelaxationLong
 Released
 Releasing
 Remove
@@ -456,6 +464,8 @@ T2-held
 T2-pinned
 TPOT
 TPOTBucketTooWide
+TPOTDistribution
+TPOTDistributionAbstained
 TPOTQuantileUnbounded
 TTFT
 TYPE
@@ -519,6 +529,7 @@ Webhook
 With
 Workload
 Workloads
+Z
 _
 __name__
 _count
@@ -893,6 +904,7 @@ composite-role-capacities
 compute
 computeCapacityHistory
 computed
+computed-token
 computedTokenRate
 computes
 concurrency
@@ -1316,7 +1328,9 @@ flow
 flow-control
 flow-control-onset
 flowControl
+fold
 folded
+folds
 for
 forbidden
 force
@@ -1438,6 +1452,7 @@ highest
 highestGroup
 hint
 histogram
+histograms
 history
 historyAgeSeconds
 historyKey
@@ -1788,6 +1803,7 @@ lenderClusterQueue
 lenderDebounce
 length
 lengthen
+lengths
 lent
 let
 levels
@@ -1797,6 +1813,7 @@ light
 likely
 limit
 limited
+limited-processor-sharing
 limiter
 limiterTypes
 limiters
@@ -1895,6 +1912,7 @@ lowered
 lowering
 m
 m-prefill
+m_d
 made
 main.go
 make
@@ -1915,6 +1933,7 @@ match
 matches
 matrix
 max
+max-num-seqs
 maxAgeSeconds
 maxBytes
 maxHeadroomReplicas
@@ -1991,6 +2010,7 @@ missing
 missing-duplicated
 missing_kv_capacity
 missing_shape_metrics
+mixture
 mode
 model
 modelAvgInputTokens
@@ -2291,6 +2311,8 @@ p
 p1
 p10-p90
 p2p
+p90
+p_d
 packing
 page_size
 panic
@@ -2492,6 +2514,7 @@ promised
 promisedOnNodes
 promisedUnplaced
 prompt
+prompt-length
 property
 provided
 provider
@@ -2515,6 +2538,7 @@ question
 queue
 queue-priced-as-drain
 queue-scorer
+queue-time
 queueJustifiedReplicas
 queueLength
 queueLengthThreshold
@@ -2540,6 +2564,8 @@ raising
 ran
 range
 rank
+rank-mixture
+ranks
 rate
 rate-at-tpot
 rate-at-ttft
@@ -2614,6 +2640,7 @@ released
 released-to-lender
 releasing
 relieve
+remainder
 remaining
 remediation
 remove
@@ -2622,6 +2649,8 @@ removedNamespaces
 removes
 removing
 rename
+renewal
+renewal-lognormal
 repeated
 replaced
 replacement
@@ -2858,6 +2887,7 @@ selected
 selector
 selectors
 selects
+self-check
 sends
 seq
 seqs
@@ -2918,6 +2948,7 @@ shapeTermIdentified
 share
 share-claimed
 shared
+shares
 sharing
 sharing_unresolved
 short
@@ -3011,6 +3042,7 @@ slopeAge
 slopeAgeSeconds
 slopeBound
 slopeHeld
+slopes
 slots
 slow
 slower
@@ -3247,6 +3279,7 @@ toBucket
 toG
 today
 together
+tok/s
 token
 tokenSec
 tokens
@@ -3351,6 +3384,7 @@ updated
 updating
 upper
 urgent
+us
 usable
 usable-capacity
 usage
@@ -3378,6 +3412,7 @@ utilizationShare.stabilization.skipWaitsWhen.receiverLoadAtLeast
 utilizationShare.stabilization.swingReversals
 utilizationShare.tolerance
 utilizationShare.weightClasses
+utilizations
 v
 v100
 vLLM

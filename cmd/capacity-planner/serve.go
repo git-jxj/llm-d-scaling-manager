@@ -22,6 +22,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
@@ -55,7 +56,15 @@ type serveFlags struct {
 	allowUpload bool
 	// noSelfCheck is --no-self-check: inputs do not self-check unless asked.
 	noSelfCheck bool
-	uploadMax   string
+	// experimentalTTFT is --experimental-ttft: every request is priced with
+	// the experimental TTFT model, so a page user need not ask for it;
+	// rankMixtureTTFT is its =v2, every backtest priced with the
+	// rank-mixture TTFT model (experimentalTTFTValue, as the CLI's).
+	experimentalTTFT, rankMixtureTTFT bool
+	// experimentalTPOT is --experimental-tpot (=v2): every backtest priced
+	// with the per-request TPOT distribution.
+	experimentalTPOT string
+	uploadMax        string
 	// uploads is the store handler made with --allow-upload, for the caller
 	// to Close when the server stops; nil without.
 	uploads *uploadStore
@@ -91,6 +100,8 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.allowedNamespaces, "allowed-namespaces", "", "the namespaces a prometheus source may read, comma-separated; default --namespace alone")
 	fs.BoolVar(&f.allInContainer, "listen-all-in-container", false, "in a container whose port is published to the host's loopback only (-p 127.0.0.1:8080:8080): allow --listen 0.0.0.0:PORT with --auth=none; never where the address is reachable from a network. Refused when KUBERNETES_SERVICE_HOST is set, a best-effort tripwire, not enforcement")
 	fs.StringVar(&f.audiences, "token-audiences", "", "with --auth=kubernetes, the audiences a TokenReview checks a token for, comma-separated; default the API server's")
+	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, "price every request with the experimental TTFT model, as if each asked for experimentalTTFT: for a planner served to people who should see it without asking; =v2 instead prices every backtest with the rank-mixture TTFT model, as if each asked for ttftModel "+string(whatif.QueueRankMixture)+". "+experimentalTTFTV2Usage)
+	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "price every backtest with the experimental per-request TPOT distribution, as if each asked for tpotModel "+whatif.TPOTRenewalLognormal+": "+experimentalTPOTUsage)
 	fs.BoolVar(&f.noSelfCheck, "no-self-check", false, "do not check the planner on each source beside its inputs, unless a request asks (selfCheck true)")
 	fs.BoolVar(&f.allowUpload, "allow-upload", false, "take recordings uploaded from the page (POST /v1/recordings): kept as sent, in a private temporary directory (TMPDIR; TMP on Windows), the last 4, until the server stops. Off by default: whoever may open the planner may then upload")
 	fs.StringVar(&f.uploadMax, "upload-max-size", whatifapi.Quantity(whatifapi.DefaultUploadBytes), "with --allow-upload, the largest upload, a quantity (256Mi); it may gunzip to 16 times that")
@@ -250,9 +261,20 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	if err != nil {
 		return nil, err
 	}
-	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed}
+	tpotV2, err := experimentalTPOTOf(f.experimentalTPOT)
+	if err != nil {
+		return nil, err
+	}
+	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed, experimentalTTFT: f.experimentalTTFT,
+		rankMixture: f.rankMixtureTTFT, tpotDistribution: tpotV2}
 	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlannerVersion: plannerVersion(), SelfCheck: defaultSelfCheck && !f.noSelfCheck, PlanBudget: f.planBudget,
 		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes}
+	if f.rankMixtureTTFT {
+		cfg.TTFTModel = string(whatif.QueueRankMixture)
+	}
+	if tpotV2 {
+		cfg.TPOTModel = whatif.TPOTRenewalLognormal
+	}
 	if f.allowUpload {
 		// Built last, so that no check refusing the flags leaves its
 		// directory behind; the client below is the one step after it.

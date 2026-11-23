@@ -18,7 +18,7 @@ const [scen, day, bt, golden] = [
 ];
 const ctx = vm.createContext({URLSearchParams});
 for (const f of [scen, day, bt]) vm.runInContext(fs.readFileSync(f, "utf8"), ctx, {filename: f});
-const {btSVG, btSummaryText, btLegend, btStepAt, btTipHTML, btScoreTable, btStepTable, btPredictionCSV, selfCheckBadge, selfCheckHTML,
+const {btSVG, btPoint, btSummaryText, btLegend, btStepAt, btTipHTML, btScoreTable, btStepTable, btPredictionCSV, selfCheckBadge, selfCheckHTML,
   dayTime} = ctx;
 const answer = JSON.parse(fs.readFileSync(golden, "utf8"));
 const copy = x => JSON.parse(JSON.stringify(x));
@@ -146,6 +146,43 @@ try {
     ubTip.includes("an upper bound the fleet measured under: consistent, not scored"), ubTip);
   check("an upper-bound prediction reads at most in the step table", btStepTable(upper).includes("at most "));
   check("a plain prediction does not", !btStepTable(answer).includes("at most "));
+
+  // The step table shows mean, p90 and p95 of both figures.
+  const head = btStepTable(answer);
+  check("the step table has p95 columns", head.includes("<th>TTFT p95</th>") && head.includes("<th>TPOT p95</th>"));
+
+  // The experimental models: each says it is experimental, an abstention
+  // says why, and the TPOT distribution says whether its p90 and p95 land
+  // in the measured bucket. Without them nothing says v2.
+  check("a backtest without the models says nothing of them", !btSummaryText(answer).some(l => /v2/.test(l)) && !/v2/.test(head));
+  const v2 = copy(answer);
+  v2.rankMixture = {model: "rank-mixture", experimental: true, abstained: "the spread is not calibrated <b>", assumed: ""};
+  v2.tpotDistribution = {model: "renewal-lognormal", experimental: true, assumed: "C 0.4 fitted on 30 steps.",
+    test: {steps: 10, p90Inside: 7, p95Inside: 6, defaultP90Inside: 2, defaultP95Inside: 1}};
+  const vs = v2.steps.find(s => !s.excluded && btPoint(s, "tpot", "p90") && btPoint(s, "tpot", "p95"));
+  for (const p of vs.ttft) p.predicted.flags = (p.predicted.flags || []).concat(["RankMixtureAbstained"]);
+  for (const p of vs.tpot) if (p.statistic !== "mean") p.predicted.flags = (p.predicted.flags || []).concat(["TPOTDistribution"]);
+  vs.tpotDistribution = {sigma2: 0.01, inv: 0.02, p90Inside: true, p95Inside: false};
+  const vl = btSummaryText(v2);
+  check("the TTFT model's abstention says why", vl.some(l => l.startsWith("EXPERIMENTAL TTFT model v2") && l.includes("abstained: the spread is not calibrated")), vl.join(" | "));
+  check("the TPOT model says it is experimental", vl.some(l => l.startsWith("EXPERIMENTAL TPOT model v2") && l.includes("outside the validated region")));
+  check("the TPOT model's bucket score is shown beside the planner's", vl.some(l => l.includes("p90 in the measured bucket at 7 of 10 steps (the planner's own: 2), p95 at 6 (the planner's own: 1)")));
+  check("what was not judged still follows the verdict", vl[v2.verdictLines.length] === v2.excluded);
+  const vt = btStepTable(v2), vtip = btTipHTML(v2, vs);
+  check("a TPOT v2 figure says it is experimental in the table and the tooltip", vt.includes("[experimental TPOT v2") && vtip.includes("[experimental TPOT v2"));
+  check("an abstained TTFT figure says so", vt.includes("[TTFT v2 abstained") && vtip.includes("[TTFT v2 abstained"));
+  check("TPOT p90 and p95 say whether they land in the measured bucket", vt.includes("(in the measured bucket)") && vt.includes("(not in the measured bucket)") &&
+    vtip.includes("(in the measured bucket)"), vtip);
+  const priced = copy(v2);
+  priced.rankMixture = {model: "rank-mixture", experimental: true, assumed: "S0 0.1 s."};
+  check("a priced TTFT model says it is experimental", btSummaryText(priced).some(l => l.startsWith("EXPERIMENTAL TTFT model v2 (rank-mixture): every TTFT it prices is not validated")));
+
+  // A TPOT percentile the histogram is too coarse to place carries the hint
+  // to measure it, in the verdict the page shows as it is.
+  const coarse = answer.verdictLines.find(l => /p90 TPOT not scored/.test(l));
+  check("the golden has TPOT p90 unscored on a coarse bucket", coarse !== undefined, answer.verdictLines.join(" | "));
+  check("the verdict tells how to measure it", coarse !== undefined && coarse.includes("metrics.requestTPOTBuckets") &&
+    coarse.includes("--custom-histogram-buckets") && btSummaryText(answer).includes(coarse));
 } catch (e) {
   failures.push("threw: " + (e && e.stack || e));
 }

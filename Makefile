@@ -468,8 +468,10 @@ check-doc-comment-owner: ## Fail on a doc comment describing a different declara
 # minutes is about twice that package's time on a runner with the goldens:
 # 868 s before the TTFT staircase's four, and 1729 s with them, 96% of the 30
 # minutes this was. One -timeout covers every package of one go test, so it
-# cannot be scoped to learnreplay alone.
-TEST_TIMEOUT ?= 60m
+# cannot be scoped to learnreplay alone. 90 minutes since cmd/capacity-planner
+# grew to 2000 s on a runner (56% of 60), and one slow runner doubled both it
+# and learnreplay (3600+ s and 2765 s) with no change of its own.
+TEST_TIMEOUT ?= 90m
 
 .PHONY: test
 test: manifests generate fmt vet setup-envtest helm check-import-direction check-doc-comment-owner ## Run tests.
