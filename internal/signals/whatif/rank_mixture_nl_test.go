@@ -298,3 +298,47 @@ func TestFitRankMixtureNL_LineService(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ServiceAttention, att.Law)
 }
+
+// heavyTail is a computed-token law whose top bucket holds 1e-4 of the
+// requests at up to a million tokens: most of the service's second moment.
+func heavyTail() map[float64]float64 {
+	return map[float64]float64{1000: 0.4, 2000: 0.8, 5000: 0.97, 20000: 0.9999, 1000000: 1, math.Inf(1): 1}
+}
+
+// The variant reads every rank's mean service once, from the stratified
+// grid: equal shares read equal utilizations, at the law's mean. v2 reads
+// each rank's from its own draws, and on a heavy tail they scatter.
+func TestRankMixture_StratifiedMoments(t *testing.T) {
+	shares := []float64{0.25, 0.25, 0.25, 0.25}
+	v2 := RankMixture{S0: 0.1, V: 20000, Shares: shares}
+	nlm := v2
+	nlm.Parts = &ZParts{}
+	hx, ok := newCumHist(heavyTail())
+	require.True(t, ok)
+	hl, ok := newCumHist(pointHist(80000))
+	require.True(t, ok)
+	es, cs2 := nlm.serviceMoments(hx, hl)
+	// The law's mean by a fine quadrature of its quantile function.
+	var want float64
+	const n = 1 << 20
+	for i := range n {
+		want += 0.1 + hx.ppf((float64(i)+0.5)/n)/20000
+	}
+	want /= n
+	assert.InEpsilon(t, want, es, 0.005)
+	assert.Positive(t, cs2)
+	d, u := nlm.Draws(4, heavyTail(), pointHist(80000), DefaultMixtureDraws)
+	require.Nil(t, u)
+	for _, r := range d.Checks.Rho {
+		assert.InDelta(t, d.Checks.Rho[0], r, 1e-12, "one law, one utilization")
+	}
+	assert.InEpsilon(t, 4*0.25*es, d.Checks.Rho[0], 1e-9)
+	// Negative control: v2's ranks read their own draws and differ.
+	d2, u := v2.Draws(4, heavyTail(), pointHist(80000), DefaultMixtureDraws)
+	require.Nil(t, u)
+	spread := 0.0
+	for _, r := range d2.Checks.Rho {
+		spread = max(spread, math.Abs(r-d2.Checks.Rho[0]))
+	}
+	assert.Greater(t, spread, 1e-3)
+}
