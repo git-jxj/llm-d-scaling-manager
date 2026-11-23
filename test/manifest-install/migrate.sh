@@ -124,7 +124,11 @@ has_ca() { [ "$(secret_sha "$NS" scaling-manager-scaler-ca)" = "$ca_smt" ]; }
 wait_for 180 "the new CA Secret holds the smt CA" has_ca || fail "CA" "scaling-manager-scaler-ca holds $(secret_sha "$NS" scaling-manager-scaler-ca), the smt CA is $ca_smt"
 # To a file first: with pipefail, grep -q ending the pipe early kills
 # kubectl logs with SIGPIPE and fails the check although the line is there.
-kubectl logs -n "$NS" "deployment/$DEPLOY" > "$LOGS/controller.log" 2>&1
+# Every controller pod: during the rollout an old and a new one both run, and
+# the copy is made by whichever pass comes first.
+kubectl logs -n "$NS" -l control-plane=controller-manager --tail=-1 --prefix > "$LOGS/controller.log" 2>&1
+kubectl logs -n "$NS" -l control-plane=controller-manager --tail=-1 --prefix --previous >> "$LOGS/controller.log" 2>&1
+log "controller restarts after the move: $(kubectl get pods -n "$NS" -l control-plane=controller-manager -o jsonpath='{range .items[*]}{.metadata.name}={.status.containerStatuses[0].restartCount} {end}')"
 grep -q "copied the certificates of the earlier install" "$LOGS/controller.log" \
     || fail "CA" "the controller did not say it copied the earlier install's certificates"
 new_tls() { case "$(status scalerTLS)" in "mutual TLS: Secrets scaling-manager-scaler-ca,"*) return 0 ;; esac; return 1; }

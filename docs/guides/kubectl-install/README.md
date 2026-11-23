@@ -191,7 +191,7 @@ kubectl apply -n <model namespace> -f scaling-manager-grants.yaml -l scaling-man
 
 <!-- guide:extras.guard start -->
 ```bash
-# Optional, Kubernetes 1.30 or later. Only members of system:masters may then set the opt-in label.
+# Optional, Kubernetes 1.30 or later. Only members of system:masters or kubeadm:cluster-admins may then set the opt-in label.
 kubectl apply --server-side -f scaling-manager-label-guard.yaml
 ```
 <!-- guide:extras.guard end -->

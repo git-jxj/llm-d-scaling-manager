@@ -364,7 +364,7 @@ grant_label() { G="$1" yq 'del(.metadata.namespace) | .metadata.labels["scaling-
     release_source label-guard-validatingadmissionpolicybinding
 } | label "$CLUSTER_NS" \
   | write scaling-manager-label-guard.yaml \
-      "Optional, with the one manifest: only members of system:masters may set, change or remove a namespace's scaling-manager.llmd.ai/managed label. Kubernetes 1.30 or later. Edit the group in the policy's expression for another admin group." \
+      "Optional, with the one manifest: only members of system:masters or kubeadm:cluster-admins may set, change or remove a namespace's scaling-manager.llmd.ai/managed label. Kubernetes 1.30 or later. Edit the group list in the policy expression for another admin group." \
       "kubectl apply --server-side -f scaling-manager-label-guard.yaml"
 
 NSRAW="$WORK/ns-kubernetes.yaml"

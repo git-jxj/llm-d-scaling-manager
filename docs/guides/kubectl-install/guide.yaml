@@ -66,7 +66,7 @@ extras:
     run: |
       kubectl apply -n <model namespace> -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=dset-role-writer
   guard:
-    note: Optional, Kubernetes 1.30 or later. Only members of system:masters may then set the opt-in label.
+    note: Optional, Kubernetes 1.30 or later. Only members of system:masters or kubeadm:cluster-admins may then set the opt-in label.
     run: |
       kubectl apply --server-side -f scaling-manager-label-guard.yaml
 

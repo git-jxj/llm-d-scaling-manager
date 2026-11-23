@@ -1,8 +1,9 @@
 # Optional: only an admin may set, change or remove a namespace's opt-in
 # label, scaling-manager.llmd.ai/managed (the kubectl install proposal, "The
 # label alone is not consent"). A tenant who can create or edit namespaces
-# otherwise opts them in. Admins are the members of system:masters; to name
-# another group, edit the group in the expression before applying.
+# otherwise opts them in. Admins are the members of system:masters and of
+# kubeadm:cluster-admins (where kubeadm 1.29 and later puts its admin); to name
+# another group, edit the list in the expression before applying.
 # Needs Kubernetes 1.30 or later (admissionregistration.k8s.io/v1).
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -28,6 +29,6 @@ spec:
       oldObject == null || !has(oldObject.metadata.labels) || !('scaling-manager.llmd.ai/managed' in oldObject.metadata.labels)
       ? '' : oldObject.metadata.labels['scaling-manager.llmd.ai/managed']
   validations:
-  - expression: "variables.now == variables.before || request.userInfo.groups.exists(g, g == 'system:masters')"
+  - expression: "variables.now == variables.before || request.userInfo.groups.exists(g, g in ['system:masters', 'kubeadm:cluster-admins'])"
     message: "only a cluster admin may set, change or remove the label scaling-manager.llmd.ai/managed (ValidatingAdmissionPolicy scaling-manager-label-guard)"
     reason: Forbidden
