@@ -156,16 +156,32 @@ In passive mode it still writes nothing.
 
 ### 4. Watch what it would do
 
-Leave it through each model's busy period, then read the result.
+Leave it through each model's busy period. First check it is in shadow:
 
 ```bash
 kubectl get configmap scaling-manager-controller-status -n $CTRL \
   -o jsonpath='{.data.limiter} {.data.utilizationShare}{"\n"}'        # quota/... shadow
-kubectl logs -n $CTRL deploy/scaling-manager-controller-manager \
-  | grep 'Utilization share: would rebalance'                         # the GPUs it would move
 ```
 
-Per model and per metric: [verification](docs/guides/try-in-passive-mode/README.md#verification)
+Then read what it would do in Prometheus, or graph it beside what runs:
+
+```promql
+# 1 while sharing only reports (a passive model is in the group)
+llmsm_utilization_share_passive_shadow
+# the replicas each model would run, without sharing
+max by (exported_namespace, variant_name) (llmsm_desired_replicas)
+# the GPUs sharing would give each model, and which models a move would fix
+llmsm_utilization_share_target_gpus
+llmsm_utilization_share_actionable == 1
+# how many replicas it would move
+llmsm_utilization_share_replicas_to_move
+```
+
+Nothing moves, so `llmsm_utilization_share_transfers_total` stays flat. The
+same decisions are in the controller's log, as `Utilization share: would
+rebalance` lines, and each model gets a `PassiveRecommendation` Event where
+its would-be count differs from what it runs. Per model, and what each metric
+means: [verification](docs/guides/try-in-passive-mode/README.md#verification)
 and [utilization share in passive mode](docs/guides/try-in-passive-mode/README.md#utilization-share-in-passive-mode).
 
 ### 5. Go active, when you are ready
