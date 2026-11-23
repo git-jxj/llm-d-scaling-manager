@@ -1018,6 +1018,8 @@ func (x *exporter) allowed(r rule, v string) bool {
 		return x.textAllowed(v)
 	case classCommit:
 		return keep(commitShape.MatchString(v))
+	case classMemoryLayout:
+		return keep(capacity.KnownMemoryLayout(v))
 	case classRedact:
 		return v == "redacted"
 	}
