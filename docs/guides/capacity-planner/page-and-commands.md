@@ -600,6 +600,10 @@ cases, and no fleet is sized:
   the 3 minutes are clock time. A recording with no per-cycle clock is
   counted at its mean cycle time, and the summary says so. The summary
   says how far and for how long; the knee reads low for that window.
+  An aggregated fleet, with no prefill pods, is one pool judged on its
+  own knee: the decode knee, whose line was fitted on pods that prefill
+  too. A cycle up to 20% lighter in prompt or output counts at the lower
+  of the two ratios, as a shorter prompt is less work on the same pods.
 
 Only an UNDER is withheld: neither case shows the fleet holding.
 

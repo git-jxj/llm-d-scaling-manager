@@ -1599,7 +1599,12 @@ func (r *reporter) phasesDiffer(binds string) string {
 // replicas served above the share times the fleet knee; a cycle lighter
 // than the shape priced in the length the binding role's knee goes by
 // (prompt for prefill, output for decode) counts its rate scaled down by
-// that ratio, as its own knee is that much higher. The share is
+// that ratio, as its own knee is that much higher. An aggregated fleet, with
+// no prefill variant, is one pool judged on its own knee: the decode knee
+// its line prices, fitted on pods that prefill too, with the pool's run
+// counted on its replicas; a cycle lighter in either length counts its rate
+// scaled by the lower of the two ratios, since a shorter prompt is less work
+// on the same pods (#357). The share is
 // contradictShare, over the band's top where that sets the decode knee:
 // such a knee stops at the highest fill the line was fitted to, short of a
 // full replica. Where the recording holds every cycle's clock
@@ -1688,7 +1693,14 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 			case rolePrefill:
 				x *= min(1, c.InputTokens/il)
 			case roleDecodeWord:
-				x *= min(1, c.OutputTokens/ol)
+				s := c.OutputTokens / ol
+				if !hasPrefill {
+					// An aggregated pool prefills on the same pods: its
+					// work a request lies between the two ratios, so the
+					// lower never counts past its own knee (#357).
+					s = min(s, c.InputTokens/il)
+				}
+				x *= min(1, s)
 			}
 		}
 		if unknown[i] || !atShape || !(whatif.Finite(x) && x > over) || !within(dec[i], nd) || (checkPrefill && !within(pre[i], np)) {
