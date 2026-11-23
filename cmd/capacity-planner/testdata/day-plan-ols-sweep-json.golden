@@ -1090,7 +1090,6 @@
         "decode": 1
       },
       "verdict": "under",
-      "scope": "decode only",
       "sized": 10,
       "unmet": 0
     }

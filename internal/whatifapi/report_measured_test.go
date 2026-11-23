@@ -72,6 +72,38 @@ func TestReportWithholdsOverOnAMeasuredTTFTMiss(t *testing.T) {
 	stated.Load.Source = "asked"
 	stated.WithholdOverOnMeasured(s, l)
 	assert.Equal(t, VerdictOver, stated.Shapes[0].Verdict.Verdict)
+
+	// A shape the question typed is other traffic than the router measured.
+	typed := overReport()
+	typed.Shapes[0].Source = shapeSourceAsked
+	typed.WithholdOverOnMeasured(s, l)
+	assert.Equal(t, VerdictOver, typed.Shapes[0].Verdict.Verdict)
+}
+
+// The miss counts only where the cycles served with at least the fleet
+// judged: a 2 + 2 fleet that missed says nothing of a 4 + 4 one, and a 4 + 4
+// fleet that missed says a 2 + 2 one would miss too.
+func TestReportMeasuredMissIsTheFleetJudged(t *testing.T) {
+	inf := math.Inf(1)
+	slow := map[float64]float64{0.1: 1, 0.5: 2, 2: 10, inf: 10}
+	s, l := busyAndQuiet(slow)
+	for i := range s {
+		s[i].Prefill, s[i].Decode = 2, 2
+	}
+	larger := overReport()
+	larger.Fleet = ReportFleet{Prefill: 4, Decode: 4}
+	larger.WithholdOverOnMeasured(s, l)
+	assert.Equal(t, VerdictOver, larger.Shapes[0].Verdict.Verdict, "the cycles ran a smaller fleet")
+
+	same := overReport()
+	same.Fleet = ReportFleet{Prefill: 2, Decode: 2}
+	same.WithholdOverOnMeasured(s, l)
+	assert.Equal(t, VerdictNotJudged, same.Shapes[0].Verdict.Verdict)
+
+	smaller := overReport()
+	smaller.Fleet = ReportFleet{Prefill: 1, Decode: 2}
+	smaller.WithholdOverOnMeasured(s, l)
+	assert.Equal(t, VerdictNotJudged, smaller.Shapes[0].Verdict.Verdict, "a larger fleet missed")
 }
 
 // The TTFT measured at a load pools the router's histograms of the cycles
@@ -80,12 +112,12 @@ func TestMeasuredTTFTAtLoad(t *testing.T) {
 	inf := math.Inf(1)
 	slow := map[float64]float64{0.1: 1, 0.5: 2, 2: 10, inf: 10}
 	s, l := busyAndQuiet(slow)
-	p90, ok := MeasuredTTFTAtLoad(s, l, LoadP95, 10, 0.9)
+	p90, ok := MeasuredTTFTAtLoad(s, l, FleetCounts{}, LoadP95, 10, 0.9)
 	require.True(t, ok)
 	assert.Greater(t, p90, 1.0, "the busy cycles alone")
-	all, ok := MeasuredTTFTAtLoad(s, l, LoadMean, 10, 0.9)
+	all, ok := MeasuredTTFTAtLoad(s, l, FleetCounts{}, LoadMean, 10, 0.9)
 	require.True(t, ok)
 	assert.Less(t, all, p90, "the quiet cycles pull the pooled p90 down")
-	_, ok = MeasuredTTFTAtLoad(s, l[:3], LoadP95, 10, 0.9)
+	_, ok = MeasuredTTFTAtLoad(s, l[:3], FleetCounts{}, LoadP95, 10, 0.9)
 	assert.False(t, ok, "latency not aligned with the series")
 }
