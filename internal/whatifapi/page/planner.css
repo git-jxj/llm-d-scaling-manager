@@ -178,7 +178,7 @@ svg .line.extrap { stroke-dasharray: 6 4; }
 #buckettable { overflow-x: auto; }
 svg .guide.pin { stroke: var(--muted); stroke-dasharray: 2 4; }
 .c-pre { stroke: var(--series-1); fill: var(--series-1); }
-.c-dec { stroke: var(--series-5); fill: var(--series-5); }
+.c-dec { stroke: var(--text-secondary); fill: var(--text-secondary); }
 svg .line.c-mix, svg .line.c-0, svg .line.c-1, svg .line.c-2, svg .line.c-3, svg .line.c-4 { fill: none; }
 svg .ptA { fill: var(--surface-1); stroke-width: 2; }
 svg .ptB { stroke: var(--surface-1); stroke-width: 2; }
@@ -373,3 +373,4 @@ svg .dot.hollow.bt-low { stroke: var(--critical); }
 svg .dot.hollow.bt-high { stroke: var(--warning); }
 svg .offaxis { fill: var(--text-secondary); font-size: 10px; }
 .execact { margin: 4px 6px 0 0; }
+.hero .v.vsentence { font-size: 18px; line-height: 1.3; }

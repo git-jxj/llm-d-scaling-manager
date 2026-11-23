@@ -1301,10 +1301,13 @@ function renderLimits() {
   // the TTFT floor over its target, or what decode allows alone.
   const floor = val(p.ttft.line.floor), dv = val(L.decode);
   const floorOver = floor != null && floor > p.ttft.line.target;
-  el("fleet").textContent = fv != null ? fmtRate(fv) : floorOver ? "TTFT target unmet" : dv != null ? `decode ${fmtRate(dv)}` : "prefill unmeasured";
+  // A target under the model's floor is the user's to set, said neutrally.
+  el("fleet").textContent = fv != null ? fmtRate(fv) : floorOver ?
+    `Your ${fmtSec(p.ttft.line.target)} TTFT target is below this model's floor (${fmtSec(floor)}) at any load` : dv != null ? `decode ${fmtRate(dv)}` : "prefill unmeasured";
+  el("fleet").classList.toggle("vsentence", fv == null && floorOver);
   const notes = [];
   if (fv == null) {
-    notes.push(floorOver ? `the TTFT floor, ${fmtSec(floor)}, is above the ${fmtSec(p.ttft.line.target)} target at every rate` :
+    notes.push(floorOver ? "set a realistic target under SLO" :
       dv != null ? "what decode carries alone; prefill's limit is not measured (see the answer panel)" : plainReasonWord(f.refused));
   }
   if (f.capApplied) {
@@ -1339,7 +1342,10 @@ function renderLimits() {
 
   const step = (name, s) => {
     const lim = val(s.limit), d = val(s.delta);
-    if (lim == null) return `<li>+1 ${name}: not known (${esc(s.limit.refused ? plainReasonWord(s.limit.refused) : "")})</li>`;
+    if (lim == null) {
+      const nr = s.limit.refused && s.limit.refused.reason === "NoPrefillCapacity";
+      return `<li>+1 ${name}: ${nr ? "prefill's limit is not measured yet" : esc(s.limit.refused ? plainReasonWord(s.limit.refused) : "not estimated")}</li>`;
+    }
     const dtext = d == null ? "" : d === 0 ? ` (+0: ${name} does not bind)` : ` (${d > 0 ? "+" : ""}${fmtRate(d)})`;
     const b = (s.binding || []).join(" and ");
     return `<li>+1 ${name} (${s.fleet.prefill} P / ${s.fleet.decode} D) <b>${fmtRate(lim)}</b>${dtext}${b ? ", then " + esc(b) + " binds" : ""}</li>`;
@@ -1375,7 +1381,14 @@ function drawBars(rows, fleet, rate) {
       s += `<rect class="${r.cls}" x="${L}" y="${y + 5}" width="${Math.max(2, X(v) - L).toFixed(1)}" height="10" rx="4"/>`;
       s += `<text class="lblp" x="${labelX}" y="${y + 14}">${fmtRate(v)}${capped ? " (without headroom " + fmtRate(val(fleet.withoutHeadroom)) + ")" : ""}</text>`;
     } else {
-      s += `<text class="lbl" x="${L + 6}" y="${y + 14}">not known: ${esc(r.fig.refused ? plainReasonWord(r.fig.refused) : "")}</text>`;
+      // A refused bar says what is known: prefill's lower bound, or the
+      // TTFT target under the floor.
+      const pkf = state.plan && state.plan.ttft.markers.prefillKnee, pk = val(pkf);
+      const fl = state.plan && val(state.plan.ttft.line.floor), tg = state.plan && state.plan.ttft.line.target;
+      const words = r.name === "Prefill" && pk != null ? `at least ${fmtRate(pk)} (lower bound)` :
+        r.name === "Fleet" && fl != null && fl > tg ? "the TTFT target is below the floor at any rate" :
+        r.name === "Fleet" && pk != null ? `prefill's limit not measured; at least ${fmtRate(pk)}` : (r.fig.refused ? plainReasonWord(r.fig.refused) : "");
+      s += `<text class="lbl" x="${L + 6}" y="${y + 14}">${esc(words)}</text>`;
     }
     if (capped) {
       const u = X(val(fleet.withoutHeadroom));
@@ -1447,10 +1460,17 @@ function renderTTFT() {
   const m = t.markers, knee = lowerKnee(m);
   // Priced by the experimental TTFT model, the mix line is solid up to the
   // highest load measured and dashed beyond it.
-  const mix = measuredSplit(pts(t.line.curve));
+  // It is dashed from the top of the tested range too, where the held-out
+  // check ends below the highest load measured: past it is an extrapolation.
+  const held = state.inputs && state.inputs.ttftModel && state.inputs.ttftModel.heldOut;
+  const testedTo = held && held.rateTo != null ? held.rateTo : null;
+  const mix = measuredSplit(pts(t.line.curve).map(q => Object.assign(q, {extrapolated: q.extrapolated || (testedTo != null && q.x > testedTo)})));
   const label = t.model && t.model.priced ? t.model.label + ", " : "";
   const series = [{cls: "c-mix", name: `${label}${shapeOf(p)} (the limits are read here)`, pts: mix.measured, band: true}];
-  if (mix.beyond.length) series.push({cls: "c-mix", extra: " extrap", pts: mix.beyond, band: true, name: `extrapolated (${t.model.beyond})`});
+  if (mix.beyond.length) {
+    series.push({cls: "c-mix", extra: " extrap", pts: mix.beyond, band: true,
+      name: testedTo != null ? `extrapolated (above the tested ${fmtRate(testedTo)})` : `extrapolated (${t.model ? t.model.beyond : ""})`});
+  }
   const dots = [];
   const buckets = t.perBucket || [];
   // The lines follow the plan's edges, up to 8: past five the colours
@@ -1502,7 +1522,12 @@ function renderTTFT() {
   el("ttfttitle").textContent = `TTFT ${t.statistic} against the request rate`;
   // A short caption: the model's label and evidence; what is dashed is in
   // the legend, and the rest of the model's note in the Flags drawer.
-  el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : (t.model ? ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) : "");
+  // The caption quotes the score at the chart's own statistic: the page's
+  // check where it ran, else the held-out mean, saying where the rest is.
+  const scored = state.bt ? btVerdictCard(state.bt, t.statistic, state.k.tpotStat)[0] : null;
+  el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : !t.model ? "" :
+    scored && scored.chip.startsWith(`TTFT ${t.statistic} `) ? `${t.model.label}: held-out ${scored.chip} (Check the planner).` :
+    ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) + (t.statistic !== "mean" ? ` TTFT ${t.statistic} is scored in Check the planner.` : "");
   chart(el("ttftchart"), {W: 640, H: 340, xmax, ymax, series, target: t.line.target, belowFloor, floor: belowFloor ? floor : null,
     rate, dots, markers, knee, kneeLB: pkLB && knee === val(m.prefillKnee), onset, pinTarget, clip: "clip-ttft", ytitle: `TTFT ${t.statistic}`});
   el("ttftlegend").innerHTML = legend(series, onset != null);
@@ -1583,8 +1608,11 @@ function chart(svg, o) {
   if (o.knee != null && o.knee < o.xmax) {
     // Past a knee priced from a lower bound of V_P the fleet is not known to
     // saturate: the true knee may be higher.
-    s += `<rect class="${o.kneeLB ? "satlb" : "sat"}" x="${X(o.knee)}" y="${T}" width="${L + pw - X(o.knee)}" height="${ph}"/>` +
-      `<text x="${L + pw - 4}" y="${T + ph - 8}" text-anchor="end">${o.kneeLB ? "past a lower-bound limit" : "overloaded"}</text>`;
+    // The zone's name is drawn where it collides with nothing: only when the
+    // rate set lies well left of it (the legend names it otherwise).
+    const zone = o.kneeLB ? "past a lower-bound limit" : "overloaded";
+    s += `<rect class="${o.kneeLB ? "satlb" : "sat"}" x="${X(o.knee)}" y="${T}" width="${L + pw - X(o.knee)}" height="${ph}"><title>${zone}</title></rect>` +
+      (X(o.rate) < X(o.knee) - 8 && L + pw - X(o.knee) > 7 * zone.length ? `<text x="${L + pw - 4}" y="${T + ph - 8}" text-anchor="end">${zone}</text>` : "");
   }
   for (const v of ticks(o.ymax, 5)) {
     if (v > o.ymax) continue;
@@ -1608,7 +1636,7 @@ function chart(svg, o) {
     lastX = X(mk.x);
     lastHalf = half;
     s += `<line class="marker" x1="${X(mk.x)}" x2="${X(mk.x)}" y1="${T - 4}" y2="${T + ph}"/>` +
-      `<text x="${X(mk.x)}" y="${T - 8 - 11 * row}" text-anchor="middle">${esc(text)}</text>`;
+      `<text x="${X(mk.x)}" y="${row ? T + 12 : T - 8}" class="${row ? "lbl" : ""}" text-anchor="middle">${esc(text)}</text>`;
   }
   let g = "";
   for (const sr of o.series) {
@@ -2235,13 +2263,16 @@ async function startExecutive() {
 function renderExec() {
   const x = state.exec;
   if (!x || !state.inputs || !state.plan || !state.k) return;
-  const v = execView({inputs: state.inputs, plan: state.plan, report: x.report, bt: x.bt, k: state.k,
+  // The check on the Check tab, where it ran, is the one score the panel,
+  // the header chip and the check view quote.
+  const v = execView({inputs: state.inputs, plan: state.plan, report: x.report, bt: x.bt || state.bt, k: state.k,
     reportPending: x.reportPending, btPending: x.btPending});
   const dl = el("execlines");
   dl.replaceChildren();
   for (const l of v.lines) {
     const dt = textNode("dt", l.label);
-    dt.appendChild(textNode("span", l.badge, "badge " + (l.badge === EXEC_BADGES.measured ? "b-measured" : l.badge === EXEC_BADGES.checked ? "b-checked" : "b-estimate")));
+    // A badge only where a row is not an estimate: the note below says so.
+    if (l.badge) dt.appendChild(textNode("span", l.badge, "badge " + (l.badge === EXEC_BADGES.measured ? "b-measured" : "b-checked")));
     dl.appendChild(dt);
     const dd = textNode("dd", l.text);
     if (l.small) dd.appendChild(textNode("span", " " + l.small, "hint"));
@@ -2254,7 +2285,7 @@ function renderExec() {
     }
     dl.appendChild(dd);
   }
-  el("execslo").textContent = "SLO used: " + v.slo;
+  el("execslo").textContent = v.note + " SLO used: " + v.slo;
   el("execsrc").textContent = el("srcchip").textContent;
   el("exec").hidden = false;
   // The panel carries prefill's actions: the card is for size mode alone.
@@ -2563,6 +2594,9 @@ function renderBacktest() {
   steps();
   el("btnotes").innerHTML = bt.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(bt.banner)}</li>`;
   exportsRow(el("btexports"), "check", [["CSV", "text/csv", () => btStepsCSV(bt)], ["JSON", "application/json", () => JSON.stringify(bt, null, 2) + "\n"]]);
+  // The panel, the header chip and the TTFT caption quote this check from now on.
+  renderExec();
+  if (state.plan) renderTTFT();
   const xh = svg.querySelector(".xh"), tip = el("tip");
   svg.onmousemove = e => {
     const r = svg.getBoundingClientRect(), vx = (e.clientX - r.left) * g.W / r.width;
@@ -2876,6 +2910,7 @@ function renderReport(r) {
       b.onclick = () => useVP(card.vp);
       li.appendChild(b);
     }
+    if (s.prompt) li.appendChild(textNode("div", "(" + s.prompt + ")", "rtrust"));
     if (s.trust) li.appendChild(textNode("div", "Self-check: " + s.trust + ".", "rtrust"));
     // Growth sits under the verdict it grows from, never in its place.
     for (const g of s.growth) {

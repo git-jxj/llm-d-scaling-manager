@@ -364,7 +364,7 @@ function btPred(p) {
 // and each statistic predicted and measured.
 function btTipHTML(bt, s) {
   let h = `<b>${esc(s.start.slice(11, 16))} UTC</b>: ${esc(s.rate.toFixed(2))} r/s, ${s.prefill} prefill + ${s.decode} decode`;
-  if (s.kneeShare != null) h += `, ${esc((s.kneeShare * 100).toFixed(0))}% of the load the planner thinks it can carry`;
+  if (s.kneeShare != null) h += `, ${esc((s.kneeShare * 100).toFixed(0))}% of the fleet's limit the planner prices for this step (its knee)`;
   if (s.excluded) h += `<br>not judged: ${esc(BT_EXCLUDED[s.excluded] || s.excluded)}${s.detail ? " (" + esc(s.detail) + ")" : ""}`;
   for (const key of ["ttft", "tpot"]) {
     for (const p of s[key] || []) {

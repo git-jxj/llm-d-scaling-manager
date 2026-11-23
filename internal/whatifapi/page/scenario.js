@@ -564,7 +564,7 @@ function reportRequest(o) {
 // over its target priced from that lower bound is at most its figure, so its
 // miss is not known either.
 const REPORT_MARKS = {met: ["met", "ok"], missed: ["missed", "MISS"], "missed at onset": ["missed", "MISS at onset"], saturated: ["saturated", "SAT"],
-  "past a lower-bound knee": ["unknown", "past a lower-bound knee"], "at most, over target": ["unknown", "at most, over target: not known"],
+  "past a lower-bound knee": ["unknown", "past prefill's lower-bound limit"], "at most, over target": ["unknown", "at most, over target: not known"],
   unknown: ["unknown", "?"], "no target": ["notarget", "no SLO"]};
 
 // REFUSAL_WORDS are the refusals a report shows most, in words.
@@ -752,7 +752,9 @@ function reportView(r) {
     // Growth is its own line beside the verdict, never in its place.
     const growth = (s.growth || []).map(g => Object.assign(verdictLine(g.verdict, "", r.fleet),
       {lead: `with ${g.x}× traffic (${roundRate(g.rate)} r/s)`, rate: g.rate}));
+    // The load's own shape names its prompt length: its knee is not the panel's.
     return Object.assign(v, {label: s.label, extrapolated: !!s.extrapolated, whatIf: s.source === "asked",
+      prompt: s.label === "load" && s.inputTokens ? `priced at the traffic's ${Math.round(s.inputTokens / 1000)}k-token prompts; the answer panel prices the prefill pods' measured work per request` : "",
       decodeOnly: (s.verdict || {}).scope === "decode only", growth});
   });
   const details = shapes.map(s => {
@@ -777,7 +779,10 @@ function reportView(r) {
       flags: flagSummary((s.flags || []).filter(x => x !== "AssumedShape" || s.source === "asked")),
     };
   });
-  return {verdicts, header, rows, details, notes: r.notValidated || [], load: loadLine(r.load),
+  // The details and the notes speak plainly too: symbols and the benchmark
+  // names stay in the Flags drawer and the docs.
+  for (const d of details) d.lines = d.lines.map(plainText);
+  return {verdicts, header, rows, details, notes: (r.notValidated || []).map(plainText), load: loadLine(r.load),
     legendStats: `Each cell is TTFT ${tStat} · TPOT ${pStat}. ${sloLine(slo)}` +
       (floors ? " ≤ marks a TPOT at the decode line's floor: below the fill it was fitted over, so at most that." : "")};
 }
@@ -1058,6 +1063,10 @@ function execAccuracy(bt, k) {
     const fleets = [...new Set(judged.map(s => `${s.prefill} prefill + ${s.decode} decode`))];
     range = `Valid range: ${fleets.length === 1 ? fleets[0] : fleets.length + " fleets"} at ${roundRate(lo)}-${roundRate(hi)} r/s; outside that is an extrapolation.`;
   }
+  // A percentile the check could not score at many steps says why, once.
+  const tsc = (sum.ttft || []).find(x => x.statistic === k.ttftStat);
+  const un = tsc && tsc.unscored ? Object.entries(tsc.unscored).filter(([, n]) => n > 0) : [];
+  if (un.length) parts.push(`TTFT ${k.ttftStat} not scored in ${un.map(([w, n]) => `${n} (${(typeof BT_UNSCORED !== "undefined" && BT_UNSCORED[w]) || w})`).join(", ")}`);
   if (!parts.length) return {text: "The check scored no step: see Check the planner.", range};
   return {text: `On ${hours != null ? hours + " held-out hours" : "the held-out hours"} of your traffic: ${parts.join("; ")}.`, range,
     chip: parts[0].replace(/ within 20% in (\d+) of (\d+) five-minute steps.*/, " $1/$2 within 20%")};
@@ -1099,6 +1108,19 @@ const PLAIN_WORDS = [[/;?\s*--assume-vp states a V_P to price it/g, ""], [/--ass
   [/fleet knee/g, "fleet limit"], [/\bknee\b/g, "limit"], [/operating point/g, "safe load"], [/\bpriced\b/g, "estimated"],
   [/\brefused\b/g, "not known"], [/flow-control onset/g, "point where the router starts queuing"]];
 
+// plainText is a line of the planner's in plain words (PLAIN_WORDS and
+// PLAIN_MORE), whole.
+function plainText(s) {
+  let out = String(s);
+  for (const [re, w] of PLAIN_WORDS.concat(PLAIN_MORE)) out = out.replace(re, w);
+  return out;
+}
+
+// PLAIN_MORE are the right-size card's own terms: the validated region and
+// the runs it was measured on, named in the docs.
+const PLAIN_MORE = [[/OUTSIDE VALIDATED REGION/g, "outside the conditions the model was checked on"],
+  [/the q32 staircase/g, "a 32B benchmark run"], [/the 0\.6B goldens/g, "the small-model benchmark runs"], [/Ca\^2/g, "arrival burstiness"]];
+
 // plainVerdict is a verdict's summary in plain words: no verdict word ahead
 // of it, the planner's terms replaced (PLAIN_WORDS), no trailing stop.
 function plainVerdict(s) {
@@ -1139,33 +1161,6 @@ function execBusiest(load) {
     small: load.peak != null ? `peak ${roundRate(load.peak)} r/s` : ""};
 }
 
-// execUsers is what users see at the busiest load, TTFT and TPOT at the mean,
-// p90 and p95: measured at the busiest held-out step where a check ran, else
-// the plan's estimate at the busiest load at the SLO's statistics.
-function execUsers(o, seen) {
-  const {plan, bt, k} = o;
-  if (bt) {
-    const judged = (bt.steps || []).filter(s => !s.excluded);
-    if (judged.length) {
-      const s = judged.reduce((a, b) => (b.rate > a.rate ? b : a));
-      const fig = p => !p ? null : p.measuredBucket && p.measured == null ? `${execTimes(p.measuredBucket.lo)}-${execTimes(p.measuredBucket.hi)}` :
-        p.aboveHistogram ? "above the top bucket" : p.measured != null ? execTimes(p.measured) : null;
-      const row = key => ["mean", "p90", "p95"].map(st => [st, fig((s[key] || []).find(p => p.statistic === st))]).filter(([, v]) => v)
-        .map(([st, v]) => `${st} ${v}`).join(", ");
-      const t = row("ttft"), p = row("tpot");
-      if (t || p) {
-        return {badge: EXEC_BADGES.measured, text: `At ${s.start.slice(11, 16)} UTC (${roundRate(s.rate)} r/s, the busiest held-out step): ` +
-          [t ? `TTFT ${t}` : "", p ? `TPOT ${p}` : ""].filter(x => x).join("; ") + "."};
-      }
-    }
-  }
-  if (!plan || seen == null) return null;
-  const tt = execCurveAt(plan.ttft && plan.ttft.line && plan.ttft.line.curve, seen);
-  const tp = execCurveAt(plan.tpot && plan.tpot.curve, seen);
-  const parts = [tt != null ? `TTFT ${k.ttftStat} about ${execTimes(tt)}` : "", tp != null ? `TPOT ${k.tpotStat} about ${execTimes(tp)}` : ""].filter(x => x);
-  return parts.length ? {badge: EXEC_BADGES.estimate, text: `At the busiest load: ${parts.join("; ")}.`} : null;
-}
-
 // execView is the panel: {lines: [{label, text, badge, small, actions}],
 // slo, trust}. It leads with what is known, each role's capacity against one
 // busiest load, and never heads a line "not known": a limit seen only as a
@@ -1178,6 +1173,11 @@ function execView(o) {
   const lines = [];
   const busy = execBusiest(report && report.load);
   const seen = busy ? busy.rate : null;
+  // The range the model was tested over: the server's held-out check at
+  // load, else the page's own check.
+  const held = inputs.ttftModel && inputs.ttftModel.heldOut;
+  const judged = bt ? (bt.steps || []).filter(s => !s.excluded) : [];
+  const testedTo = held && held.rateTo != null ? held.rateTo : judged.length ? Math.max(...judged.map(s => s.rate)) : null;
   lines.push({label: "Fleet today", badge: EXEC_BADGES.measured,
     text: `${f.prefill ? `${np} prefill + ${nd} decode` : `${nd} replicas`}: ${execPods(f, np, nd)}.` + (busy ? ` The ${busy.words}.` : ""),
     small: busy ? busy.small : ""});
@@ -1186,91 +1186,126 @@ function execView(o) {
   const L = plan && plan.limits;
   const m = plan && plan.ttft && plan.ttft.markers;
   const dl = L && L.decode ? figValue(L.decode) : null;
-  if (dl != null) {
-    lines.push({label: "Decode", badge: EXEC_BADGES.estimate,
-      text: `${nd} replicas carry ${roundRate(dl)} r/s at the TPOT target` + (seen ? `, ${(dl / seen).toFixed(1)}x the busiest load.` : ".")});
-  }
   const ref = refusalView(plan);
   const pk = m && m.prefillKnee ? m.prefillKnee : null;
   const pkv = figValue(pk);
   const pkLB = !!pk && (pk.flags || []).some(x => x === "VPLowerBound" || x === "KneeAtServedWork");
+  const shape = report && (report.shapes || [])[0];
+
+  // The verdict: the constraint, in plain words, with the right size folded
+  // in where it was judged.
+  if (pkv != null && dl != null) {
+    const prefillFirst = pkv < dl;
+    let text = prefillFirst ? (pkLB ? "Prefill is the constraint. It carried the busiest load without queuing; its true limit is higher than this day shows." :
+      "Prefill is the constraint: it reaches its limit before decode does.") : "Decode is the constraint: it reaches its limit before prefill does.";
+    const v = shape && shape.verdict;
+    if (v && v.verdict && v.verdict !== "NOT JUDGED") text += " " + execVerdict(f, v);
+    else if (v && v.scope === "decode only") text += " " + execVerdict(f, v);
+    lines.push({label: "Verdict", badge: "", text});
+  } else if (shape) {
+    lines.push({label: "Verdict", badge: "", text: execVerdict(f, shape.verdict)});
+  } else if (o.reportPending) {
+    lines.push({label: "Verdict", badge: "", text: "Judging the fleet at the busiest load..."});
+  }
+  if (dl != null) {
+    lines.push({label: "Decode", badge: "",
+      text: `${nd} replicas carry ${roundRate(dl)} r/s at the TPOT target` + (seen ? `, ${execTimes1(dl / seen)} the busiest load.` : ".")});
+  }
   if (f.prefill && (pkv != null || ref)) {
-    const share = pkv != null && seen ? `, ${(pkv / seen).toFixed(1)}x the busiest load` : "";
+    const share = pkv != null && seen ? `, ${execTimes1(pkv / seen)} the busiest load` : "";
     const text = ref && pkv != null && pkLB ? `Speed not yet observed: at least ${roundRate(pkv)} r/s (a lower bound${share}). The pods never queued` +
         (ref.vp != null ? `, so each handles at least ${Math.round(ref.vp).toLocaleString("en-US")} tokens/s` : "") + "; their limit is not measured." :
       ref ? "Speed not yet observed: the source learned no prefill speed per pod." :
       `${np} replicas carry ${pkLB ? "at least " : ""}${roundRate(pkv)} r/s before latency takes off${share}.`;
     const actions = ref ? (ref.vp != null ? [{act: "usevp", vp: ref.vp, label: `Use ${Math.round(ref.vp).toLocaleString("en-US")} tokens/s as the limit (conservative)`}] : [])
       .concat([{act: "busier", label: "Load a busier window"}]) : [];
-    lines.push({label: "Prefill", badge: EXEC_BADGES.estimate, text, actions});
+    lines.push({label: "Prefill", badge: "", text, actions});
   }
-  // Which role binds first, and how busy the prefill pods ran.
-  const shape = report && (report.shapes || [])[0];
-  const pu = shape && shape.utilization && shape.utilization.prefill;
-  const worst = pu && pu.worstPod && pu.worstPod.value != null ? pu.worstPod.value : null;
-  if (pkv != null && dl != null) {
-    const prefillFirst = pkv < dl;
-    // The pods' utilization is the model's, at the speed it priced: past 100%
-    // at a lower-bound speed it says the real speed is higher, since the
-    // pods served the load.
-    const busyWords = worst == null ? "" : worst > 1 ?
-      " (at the lower-bound speed the busiest pod would be past 100% busy, yet the pods served the load: their real speed is higher)" :
-      ` (the busiest prefill pod about ${Math.round(100 * worst)}% busy at the busiest load)`;
-    lines.push({label: "Verdict", badge: EXEC_BADGES.estimate,
-      text: (prefillFirst ? "Prefill binds first" : "Decode binds first") + (prefillFirst ? busyWords : "") +
-        (prefillFirst && pkLB ? "; its limit is not measured yet." : ".")});
-  }
-  // TTFT against its target: at the busiest load and at its floor, the one
-  // statement the chart and the SLO box repeat.
+
+  // TTFT and TPOT: what users saw, measured, first; then the prediction,
+  // marked extrapolated where it lies past the tested range.
+  const meas = execMeasuredHour(inputs.measured);
+  let pred = "";
   if (plan && plan.ttft && seen != null) {
     const t = plan.ttft, at = execCurveAt(t.line.curve, seen), floor = figValue(t.line.floor);
-    const exp = t.model && t.model.priced ? " (experimental model)" : "";
+    const past = testedTo != null && seen > testedTo;
+    const dag = t.model && t.model.priced ? " " + DAGGER : "";
     if (at != null) {
-      const every = floor != null && floor > t.line.target;
-      lines.push({label: "TTFT", badge: EXEC_BADGES.estimate,
-        text: `About ${execTimes(at)} ${t.statistic} at the busiest load${exp}, ` + (at > t.line.target ? "above" : "within") +
-          ` your ${execTimes(t.line.target)} target` + (every ? ` at every rate (floor ${execTimes(floor)}). ` +
-          `${k.ttftDefault ? "The default target may not suit these prompts: set yours under SLO." : ""}` : ".")});
+      pred = `Predicted at ${roundRate(seen)} r/s` + (past ? ` (above the tested ${roundRate(testedTo)} r/s, extrapolated)` : "") + `${dag}: TTFT ${t.statistic} about ${execTimes(at)}`;
+      const atTop = past ? execCurveAt(t.line.curve, testedTo) : null;
+      if (atTop != null) pred += `; at the top of the tested range, ${roundRate(testedTo)} r/s, about ${execTimes(atTop)}`;
+      pred += ".";
+      if (floor != null && floor > t.line.target) {
+        pred += ` The ${execTimes(t.line.target)} target is below this model's floor (${execTimes(floor)}) at any load` +
+          (k.ttftDefault ? ": set a realistic target under SLO." : ".");
+      }
     }
   }
-  const users = execUsers(o, seen);
-  if (users) lines.push(Object.assign({label: "Users see"}, users));
-  else if (o.btPending) lines.push({label: "Users see", badge: EXEC_BADGES.measured, text: "Measuring the latency at the busiest held-out step..."});
-  if (shape) lines.push({label: "Right size", text: execVerdict(f, shape.verdict), badge: EXEC_BADGES.estimate});
-  else if (o.reportPending) lines.push({label: "Right size", text: "Judging the fleet at the busiest load...", badge: EXEC_BADGES.estimate});
+  if (meas || pred) {
+    lines.push({label: "TTFT / TPOT", badge: meas ? EXEC_BADGES.measured : "",
+      text: [meas ? meas.text : "", pred].filter(x => x).join(" "), small: meas ? meas.note : ""});
+  }
 
   // Growth: the fleet the load grown by a quarter and by a half needs. The
   // sizing at those rates (o.growth: [{x, rate, need}], need in words) is
   // wired in by the page where the server sizes it; until then the line says
   // it is pending rather than show a fleet priced by another model.
   const growth = o.growth || [];
-  lines.push({label: "+25% / +50% traffic", badge: EXEC_BADGES.estimate,
+  lines.push({label: "+25% / +50% traffic", badge: "",
     text: growth.length ? growth.map(g => `+${Math.round((g.x - 1) * 100)}% (${roundRate(g.rate)} r/s): ${g.need}`).join("; ") + ", at the same SLO." :
       "Pending: sizing at +25% and +50% of the busiest load comes with the next planner release."});
 
+  // Accuracy: the page's own check where it ran, the one score the check
+  // view shows, at the SLO's statistic; else the server's held-out mean.
   let trust = "";
-  const held = inputs.ttftModel && inputs.ttftModel.heldOut;
-  if (held && held.steps > 0) {
-    // The held-out check the server ran at load: the headline needs no
-    // backtest of its own. Every figure names its statistic.
+  if (bt) {
+    const a = execAccuracy(bt, k);
+    lines.push({label: "Accuracy", text: a.text + (a.range ? " " + a.range.replace("Valid range", "Tested range") : ""), badge: EXEC_BADGES.checked});
+    trust = a.chip ? `Checked on your traffic: ${a.chip}` : "";
+  } else if (held && held.steps > 0) {
     const n = held.within || 0, st = held.statistic || "mean";
     const r = held.medianRatio;
     const lean = r == null ? "" : r < 0.97 ? `, reads ${Math.round((1 - r) * 100)}% low` : r > 1.03 ? `, reads ${Math.round((r - 1) * 100)}% high` : "";
     const fleet = held.prefill != null ? `${held.prefill} prefill + ${held.decode} decode` : "the fleet it ran";
     const range = held.rateFrom != null ? ` Tested range: ${fleet} at ${roundRate(held.rateFrom)}-${roundRate(held.rateTo)} r/s; outside that is an extrapolation.` : "";
+    const other = k.ttftStat !== st ? ` TTFT ${k.ttftStat} is scored in Check the planner.` : "";
     lines.push({label: "Accuracy", badge: EXEC_BADGES.checked,
-      text: `On held-out steps of your traffic: TTFT ${st} within 20% in ${n} of ${held.steps} five-minute steps${lean}.${range}`});
+      text: `On held-out steps of your traffic: TTFT ${st} within 20% in ${n} of ${held.steps} five-minute steps${lean}.${other}${range}`});
     trust = `Checked on your traffic: TTFT ${st} ${n}/${held.steps} within 20%`;
-  } else if (bt) {
-    const a = execAccuracy(bt, k);
-    lines.push({label: "Accuracy", text: a.text + (a.range ? " " + a.range.replace("Valid range", "Tested range") : ""), badge: EXEC_BADGES.checked});
-    trust = a.chip ? `Checked on your traffic: ${a.chip}` : "";
   } else if (o.btPending) {
     lines.push({label: "Accuracy", text: "Checking the planner on your held-out hours...", badge: EXEC_BADGES.checked});
   } else if (inputs.selfCheck && inputs.selfCheck.line) {
     lines.push({label: "Accuracy", text: inputs.selfCheck.line, badge: EXEC_BADGES.checked});
   }
-  return {lines, slo: execSLO(k), trust};
+  return {lines, slo: execSLO(k), trust, note: "Rows are estimates unless marked."};
+}
+
+// execTimes1 is a ratio to the busiest load: two decimals under 1, so 0.98
+// never reads as 1.0.
+function execTimes1(x) {
+  return (x < 1 ? x.toFixed(2) : x.toFixed(1)) + "x";
+}
+
+// execMeasuredHour is what users saw in the source's busiest hour, as the
+// router measured it (inputs.measured): each statistic placed, or as its
+// bucket where the bucket is too wide to place it; and one note on the
+// percentiles not given and why.
+function execMeasuredHour(mh) {
+  if (!mh) return null;
+  const word = s => s.value != null ? execTimes(s.value) : s.bucket ? `${execTimes(s.bucket.lo)}-${execTimes(s.bucket.hi)} (one histogram bucket)` : null;
+  const row = list => (list || []).map(s => [s.statistic, word(s)]).filter(([, v]) => v).map(([st, v]) => `${st} ${v}`).join(", ");
+  const why = (name, list) => (list || []).filter(s => s.value == null && !s.bucket).map(s => `${name} ${s.statistic}: ${s.why}`);
+  const t = row(mh.ttft), p = row(mh.tpot);
+  if (!t && !p) return null;
+  const at = String(mh.from).slice(11, 16) + "-" + String(mh.to).slice(11, 16);
+  const coarse = (mh.tpot || []).filter(s => s.bucket).map(s => s.statistic);
+  const notes = why("TTFT", mh.ttft).concat(why("TPOT", mh.tpot));
+  if (coarse.length) {
+    const b = mh.tpot.find(s => s.bucket).bucket;
+    notes.push(`TPOT ${coarse.join("/")}: the router's ${execTimes(b.lo)}-${execTimes(b.hi)} bucket cannot resolve them`);
+  }
+  return {text: `Users saw (measured, busiest hour ${at} UTC, ${roundRate(mh.rate)} r/s): ` + [t ? `TTFT ${t}` : "", p ? `TPOT ${p}` : ""].filter(x => x).join("; ") + ".",
+    note: notes.join("; ")};
 }
 
 // refusalView is the card shown when the source could not learn prefill's

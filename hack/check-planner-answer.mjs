@@ -54,43 +54,55 @@ const refusedPlan = {limits: {prefill: {refused: {reason: "NoPrefillCapacity", d
   tpot: {statistic: "mean", curve: [{rate: 0, figure: {value: 0.012}}, {rate: 60, figure: {value: 0.02}}]}};
 
 try {
-  // The executive panel: the fleet today first, each line one badge of three.
-  const v = execView({inputs, plan: refusedPlan, report, bt: backtest, k});
-  const badges = new Set(Object.values(EXEC_BADGES));
+  // The executive panel: the fleet today first; a badge only where a row is
+  // measured or checked, the rest estimates, as one note says.
+  const measuredHour = {from: "2026-11-17T13:00:00Z", to: "2026-11-17T14:00:00Z", rate: 24, requests: 80000,
+    ttft: [{statistic: "mean", value: 3.6}, {statistic: "p90", bucket: {lo: 3, hi: 5}}, {statistic: "p95", why: "above the top bucket"}],
+    tpot: [{statistic: "mean", value: 0.016}, {statistic: "p90", bucket: {lo: 0.01, hi: 0.02}}, {statistic: "p95", bucket: {lo: 0.01, hi: 0.02}}]};
+  const withHour = Object.assign(copy(inputs), {measured: measuredHour,
+    ttftModel: {heldOut: {statistic: "mean", within: 130, steps: 144, medianRatio: 0.94, rateFrom: 10, rateTo: 20, prefill: 3, decode: 6}}});
+  const v = execView({inputs: withHour, plan: refusedPlan, report, k});
   check("the panel opens on the fleet today", v.lines[0].label === "Fleet today" && v.lines[0].text.startsWith("3 prefill + 6 decode: 9 pods, 72 GPUs (8 per pod)."), v.lines[0].text);
   check("one busiest load, its statistic named, the peak small", /The busiest load \(p95 of 1-minute cycles\): [0-9.]+ r\/s\.$/.test(v.lines[0].text) && /^peak /.test(v.lines[0].small),
     v.lines[0].text + " | " + v.lines[0].small);
+  check("at most seven rows, in order", v.lines.map(l => l.label).join() === "Fleet today,Verdict,Decode,Prefill,TTFT / TPOT,+25% / +50% traffic,Accuracy",
+    v.lines.map(l => l.label).join());
   const line = name => v.lines.find(l => l.label === name) || {text: ""};
   check("decode leads with what it carries", /^6 replicas carry 40 r\/s at the TPOT target, [0-9.]+x the busiest load\.$/.test(line("Decode").text), line("Decode").text);
   check("prefill says at least, never not known", line("Prefill").text.startsWith("Speed not yet observed: at least 20 r/s (a lower bound") && !/not known/i.test(line("Prefill").text), line("Prefill").text);
+  check("a ratio under 1 keeps two decimals", /, 0\.\d\dx the busiest load/.test(line("Prefill").text), line("Prefill").text);
   check("prefill's line carries the page actions", (line("Prefill").actions || []).map(a => a.act).join() === "usevp,busier" && line("Prefill").actions[0].vp === 18000);
-  check("the verdict names the role that binds first", line("Verdict").text.startsWith("Prefill binds first"), line("Verdict").text);
-  check("TTFT is stated against its target and its floor", /^About [0-9.]+ s p90 at the busiest load, above your 1 s target at every rate \(floor 4\.08 s\)\. The default target may not suit these prompts: set yours under SLO\.$/.test(line("TTFT").text), line("TTFT").text);
-  check("users see TTFT and TPOT at three statistics", /TTFT mean .*p90 .*p95/.test(line("Users see").text) && /TPOT mean/.test(line("Users see").text), line("Users see").text);
+  check("the verdict names the constraint plainly", line("Verdict").text.startsWith("Prefill is the constraint. It carried the busiest load without queuing; its true limit is higher than this day shows."), line("Verdict").text);
+  const tt = line("TTFT / TPOT");
+  check("users saw comes first, measured", tt.text.startsWith("Users saw (measured, busiest hour 13:00-14:00 UTC, 24 r/s): TTFT mean 3.6 s, p90 3 s-5 s (one histogram bucket); TPOT mean 16 ms, p90 10 ms-20 ms (one histogram bucket), p95 10 ms-20 ms (one histogram bucket)."), tt.text);
+  check("the measured row is badged measured", tt.badge === EXEC_BADGES.measured);
+  check("a percentile not given says why, once", tt.small.includes("TTFT p95: above the top bucket") && tt.small.includes("TPOT p90/p95: the router's 10 ms-20 ms bucket cannot resolve them"), tt.small);
+  check("the prediction past the tested range says extrapolated", /Predicted at [0-9.]+ r\/s \(above the tested 20 r\/s, extrapolated\): TTFT p90 about [0-9.]+ s; at the top of the tested range, 20 r\/s, about [0-9.]+ s\./.test(tt.text), tt.text);
+  check("a target under the floor is said neutrally", tt.text.endsWith("The 1 s target is below this model's floor (4.08 s) at any load: set a realistic target under SLO."), tt.text);
   check("no line heads not known or not judged", v.lines.every(l => !/^(not known|not judged)/i.test(l.text)), v.lines.map(l => l.text.slice(0, 30)).join(" | "));
   check("the fleet today is measured", v.lines[0].badge === EXEC_BADGES.measured);
-  check("every line carries one badge of three", v.lines.every(l => badges.has(l.badge)), v.lines.map(l => l.badge).join(","));
-  for (const label of ["Right size", "+25% / +50% traffic", "Accuracy"]) {
-    check(`the panel has ${label}`, v.lines.some(l => l.label === label), v.lines.map(l => l.label).join(", "));
-  }
-  check("the accuracy is checked on your data", v.lines.find(l => l.label === "Accuracy").badge === EXEC_BADGES.checked);
-  check("the accuracy counts held-out steps within 20%", /within 20% in \d+ of \d+ five-minute steps/.test(v.lines.find(l => l.label === "Accuracy").text),
-    v.lines.find(l => l.label === "Accuracy").text);
-  check("the accuracy gives the range tested", /Tested range: .* r\/s; outside that is an extrapolation\./.test(v.lines.find(l => l.label === "Accuracy").text));
-  check("the trust chip quotes the check", /^Checked on your traffic: TTFT \S+ \d+\/\d+ within 20%$/.test(v.trust), v.trust);
+  check("estimates carry no badge, and a note says so", v.lines.filter(l => !l.badge).map(l => l.label).join() === "Verdict,Decode,Prefill,+25% / +50% traffic" && v.note === "Rows are estimates unless marked.",
+    v.lines.map(l => l.label + ":" + l.badge).join(","));
+  check("the accuracy is checked on your data", line("Accuracy").badge === EXEC_BADGES.checked);
+  check("the held-out mean says where the SLO's percentile is scored", line("Accuracy").text.includes("TTFT p90 is scored in Check the planner"), line("Accuracy").text);
   check("the SLO used says a default is the page's", v.slo.includes("the page's default: set yours"), v.slo);
-  check("growth not sized yet says pending", /^Pending/.test(v.lines.find(l => l.label === "+25% / +50% traffic").text));
+  check("growth not sized yet says pending", /^Pending/.test(line("+25% / +50% traffic").text));
   const grown = execView({inputs, plan: refusedPlan, report, k, growth: [{x: 1.25, rate: 25, need: "6 prefill + 12 decode"}, {x: 1.5, rate: 30, need: "at least 14 decode (prefill not sized)"}]});
   check("growth wired in reads each need", grown.lines.find(l => l.label === "+25% / +50% traffic").text.startsWith("+25% (25 r/s): 6 prefill + 12 decode; +50% (30 r/s): at least 14 decode"));
-  // The held-out check the server ran at load is the headline: no backtest needed.
-  const atLoad = copy(inputs);
-  atLoad.ttftModel = {heldOut: {statistic: "mean", within: 130, steps: 144, medianRatio: 0.94, rateFrom: 10, rateTo: 20, prefill: 3, decode: 6}};
-  const held = execView({inputs: atLoad, plan: refusedPlan, report, k});
-  check("the held-out check at load is the accuracy", held.lines.find(l => l.label === "Accuracy").text.startsWith("On held-out steps of your traffic: TTFT mean within 20% in 130 of 144"),
-    held.lines.find(l => l.label === "Accuracy").text);
-  check("and the trust chip, naming its statistic", held.trust === "Checked on your traffic: TTFT mean 130/144 within 20%", held.trust);
+  // With the page's own check, the panel quotes its score at the SLO's
+  // statistic, the one the check view shows, and says why steps went unscored.
+  const checked = execView({inputs: withHour, plan: refusedPlan, report, bt: backtest, k});
+  const acc = checked.lines.find(l => l.label === "Accuracy");
+  check("the check's score is at the SLO's percentile", /TTFT p90 within 20% in \d+ of \d+ five-minute steps/.test(acc.text), acc.text);
+  check("the check's unscored steps say why", /TTFT p90 not scored in \d+ \(/.test(acc.text), acc.text);
+  check("the accuracy gives the range tested", /Tested range: .* r\/s; outside that is an extrapolation\./.test(acc.text), acc.text);
+  check("the trust chip quotes the check, its statistic named", /^Checked on your traffic: TTFT p90 \d+\/\d+ within 20%$/.test(checked.trust), checked.trust);
+  // Without the page's check, the server's held-out mean.
+  check("the held-out check at load is the accuracy", line("Accuracy").text.startsWith("On held-out steps of your traffic: TTFT mean within 20% in 130 of 144"), line("Accuracy").text);
+  check("and the trust chip, naming its statistic", v.trust === "Checked on your traffic: TTFT mean 130/144 within 20%", v.trust);
+  const held = v;
   const pending = execView({inputs, plan: refusedPlan, k, reportPending: true, btPending: true});
-  check("a panel still asking says so", pending.lines.some(l => /^Judging/.test(l.text)) && pending.lines.some(l => /^Checking/.test(l.text)));
+  check("a panel still asking says so", pending.lines.some(l => /^Checking/.test(l.text)));
   // The first screen speaks plainly.
   for (const l of v.lines.concat(held.lines)) {
     const bad = FIRST_SCREEN_BANNED.find(re => re.test(l.text));
@@ -124,13 +136,13 @@ try {
 
   // The headline over the day plan.
   const dayPlan = JSON.parse(fs.readFileSync("cmd/capacity-planner/testdata/day-plan-ols-sweep-json.golden", "utf8"));
-  check("the day plan's headline names the peak and when", /^Peak needed .* at \S+ UTC \([0-9.]+ r\/s\)/.test(ctx.dayHeadline(dayPlan)), ctx.dayHeadline(dayPlan));
+  check("the day plan's headline names the peak and when", /Peak needed .* at \S+ UTC \([0-9.]+ r\/s\)/.test(ctx.dayHeadline(dayPlan)), ctx.dayHeadline(dayPlan));
 
   // A plan sized on decode alone never reads as holding the SLO: the
   // headline counts the intervals whose TTFT was measured over its target.
   const decodeOnly = JSON.parse(fs.readFileSync("cmd/capacity-planner/testdata/day-plan-staircase-b-on-json.golden", "utf8"));
   const dh = ctx.dayHeadline(decodeOnly);
-  check("the day plan's headline counts the measured TTFT misses", dh.includes("Measured TTFT exceeded the 0.19 s target in 16 of 16 intervals; prefill not sized."), dh);
+  check("the day plan's headline leads with the measured TTFT misses, as risk", dh.startsWith("SLO risk: measured TTFT p95 was over 0.19 s in every interval (prefill not sized). Peak needed"), dh);
   check("and never says no hour missed the SLO", !/No hour missed/.test(dh), dh);
 
   // Exports: a field a spreadsheet would run is not a formula.
