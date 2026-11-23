@@ -1380,7 +1380,9 @@ func e2eSum(ttft, tpot whatif.Result, ol float64) whatif.Result {
 //   - OVER-PROVISIONED when a role has a replica to spare: one fewer of it
 //     holds the whole fleet at the load judged, and the role's own check
 //     (knee and target) at the peak too, since removing capacity is the
-//     costly mistake;
+//     costly mistake; a decode replica is spare only where one fewer is
+//     still the count the load needs if the decode knee reads as high as
+//     its label allows (decodeAtBound, #363);
 //   - RIGHT-SIZED otherwise.
 //
 // Each role's standing is reported (Roles), and on UNDER and OVER the
@@ -1782,7 +1784,8 @@ func noteText(notes []string) string {
 
 // roles judges each role's own standing at the load: a role has a replica
 // to spare when one fewer of it holds the whole fleet at the load judged,
-// and its own check (knee and target) at the peak as well. It fills
+// and its own check (knee and target) at the peak as well; decode, also
+// where one fewer still meets the decode knee's error bound. It fills
 // v.Roles, v.Shrink and v.Checks, and says the roles in words, whether a
 // spare rests on the decode knee, and the assumed f any of it rests on.
 func (r *reporter) roles(np, nd int, base fleetEval, v *whatifapi.ReportVerdict) (string, bool, []string, error) {
@@ -1823,6 +1826,11 @@ func (r *reporter) roles(np, nd int, base fleetEval, v *whatifapi.ReportVerdict)
 					rr.Detail = "no spare: one fewer misses at the peak " + rateWords(shrinkAt)
 				}
 			}
+			if d, eb, ok := r.decodeAtBound(base, nd); rr.Spare && role == roleDecodeWord && ok && d > nd-1 {
+				// One fewer holds at the point estimate, but not if the
+				// decode knee reads as high as its label allows (#363).
+				rr.Spare, rr.Detail = false, "no spare: "+boundWords(d, eb)
+			}
 			switch {
 			case rr.Spare:
 				rr.Detail = "one fewer holds" + peak
@@ -1862,7 +1870,9 @@ func (r *reporter) marginWords(op float64) string {
 // needed line).
 // A role it cuts, below np prefill or nd decode, must also hold its own
 // check at the peak, the test roles judges a spare by: removing capacity
-// is the costly mistake. Both tests being monotone in each count, it then
+// is the costly mistake. Decode it cuts no lower than the count the load
+// needs if the decode knee reads as high as its label allows (#363), as a
+// decode spare must. Both tests being monotone in each count, it then
 // never cuts a role roles says has no spare unless it trades the role for
 // more of the other, which v.Grow names and the sentence says. Such a trade is not capped at the
 // fleet's count of the other role: an under-provisioned fleet needs more
@@ -1909,7 +1919,18 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 	}
 	// decodeHolds is decode's own check, which the prefill count does not
 	// move: at the load, and at the peak on a cut.
+	// boundHolds is whether n cuts decode no lower than the count the load
+	// needs if the decode knee reads as high as its label allows (#363):
+	// a cut must hold at that bound, as a decode spare must. Monotone in the
+	// decode count.
+	dBound, _, bounded := r.decodeAtBound(base, nd)
+	boundHolds := func(n whatifapi.FleetCounts) bool {
+		return !bounded || n.Decode >= nd || n.Decode >= dBound
+	}
 	decodeHolds := func(n whatifapi.FleetCounts) (bool, error) {
+		if !boundHolds(n) {
+			return false, nil
+		}
 		e, err := at(n)
 		if err != nil || !e.decodeOK {
 			return false, err
@@ -1921,6 +1942,9 @@ func (r *reporter) needed(np, nd int, base fleetEval, v *whatifapi.ReportVerdict
 		return err == nil && e.decodeOK, err
 	}
 	holds := func(n whatifapi.FleetCounts) (bool, error) {
+		if !boundHolds(n) {
+			return false, nil
+		}
 		e, err := at(n)
 		if err != nil || !e.holds {
 			return false, err
@@ -2035,6 +2059,16 @@ func (r *reporter) atBound(base fleetEval, nd int, out *whatifapi.ReportNeeded) 
 		return ""
 	}
 	return fmt.Sprintf(", %s%d decode if the decode knee reads %.0f%% high", more, d, e*100)
+}
+
+// boundWords says the decode count d the load needs when the decode knee
+// reads e high, "more than" the search's bound past it, as atBound does.
+func boundWords(d int, e float64) string {
+	more := ""
+	if d > whatifapi.DefaultSizeBound {
+		d, more = whatifapi.DefaultSizeBound, "more than "
+	}
+	return fmt.Sprintf("%s%d decode if the decode knee reads %.0f%% high", more, d, e*100)
 }
 
 // decodeAtBound is the decode replicas the load needs at the operating

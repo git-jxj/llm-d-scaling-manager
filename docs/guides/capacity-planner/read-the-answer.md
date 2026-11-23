@@ -179,7 +179,7 @@ With `--prefill 3 --decode 3`:
 With `--prefill 4 --decode 4`:
 
 ```text
-  measured  OVER-PROVISIONED: at the p95 load of 41.7 r/s, decode: one fewer holds even at the peak 43.2 r/s; prefill: one fewer holds even at the peak 43.2 r/s; needs 3 prefill + 3 decode (has 4 + 4), 6 decode if the decode knee reads 99% high; at f 1 needs 3 + 3, at f 1.5 needs 4 + 3 (decode knee outside its validated region; prefill f 1 assumed at 4 pods; prefill f 1 assumed at 3 pods).
+  measured  OVER-PROVISIONED: at the p95 load of 41.7 r/s, decode: no spare: 6 decode if the decode knee reads 99% high; prefill: one fewer holds even at the peak 43.2 r/s; needs 3 prefill + 4 decode (has 4 + 4), 6 decode if the decode knee reads 99% high; at f 1 needs 3 + 4, at f 1.5 needs 4 + 4 (decode knee outside its validated region; prefill f 1 assumed at 4 pods; prefill f 1 assumed at 3 pods).
 ```
 
 And with no prefill speed: the first command, with `--decode 3`:
@@ -192,7 +192,7 @@ And with no prefill speed: the first command, with `--decode 3`:
 | --- | --- | --- |
 | UNDER-PROVISIONED | The busy load runs past headroom times the knee, or misses a target. | Scale to the fleet it `needs`. Size each role's `maxReplicaCount` at least that high. |
 | RIGHT-SIZED | Every target holds with headroom, and no role has a replica to spare. | Nothing. `no spare (11.6% under its operating point)` says how close each role is. |
-| OVER-PROVISIONED | A role has a replica to spare: one fewer still holds every target at the busy load, and at the peak. | Remove the spare, or lower `minReplicaCount`. It never names a cut that fails at the peak. |
+| OVER-PROVISIONED | A role has a replica to spare: one fewer still holds every target at the busy load, and at the peak. | Remove the spare, or lower `minReplicaCount`. It never names a cut that fails at the peak, nor a decode cut below the count the decode knee's error bound needs. |
 | NOT JUDGED | A figure the verdict needs is refused, the load and the shape priced are different traffic, or the window contradicts the model. The sentence says which. | Do what it names: `--assume-vp` for a missing prefill speed, `--shape load` for a shape mismatch, or a longer recording. |
 
 The first three verdicts above rest on the stated prefill speed, which this

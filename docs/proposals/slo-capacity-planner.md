@@ -802,6 +802,20 @@ are SKIPPED for that refusal, or for no saturated window off a ramp:
   line at all, and the other three are on the default intercept, reading 18.7% to
   22.1% fast. So the four staircase goldens validate nothing of decode.
 
+**A shrink holds at the decode knee's bound (#363).** `at-replicas` sizes decode a
+second time with the decode knee reading as high as its label allows: the
+validating row's upper error inside its region, 99.1% outside every row
+(`needed.decodeAtErrorBound`). An OVER-PROVISIONED verdict never cuts decode
+below that count. A decode replica is spare only where one fewer still meets it,
+and the fleet needed cuts decode no lower. Otherwise decode reads `no spare: N
+decode if the decode knee reads E% high`. Removing capacity is the costly
+mistake, and a knee outside its region read 43% to 99% high on the goldens, so the
+point estimate alone does not license the cut. The cost: outside the region,
+decode shows a spare only where the load is about half its operating point or
+less, so fewer fleets read OVER-PROVISIONED on decode. An UNDER-PROVISIONED
+verdict is unchanged. It grows to the point estimate and states the bound count
+beside it.
+
 The rules the page leaves open, chosen here: the row is the unit, as `AvgITL` and
 `generation_tokens` are per pod; a line is asked at the row's fill, clamped to the
 band as an answer is; the knee is read at the row's own shape, on one replica, against
