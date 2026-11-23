@@ -18,6 +18,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/settle"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
 // recordedTypes is every type a recorded event can reach. What a Raw or an
@@ -155,6 +156,13 @@ const (
 	// or holdGracePrefix and an analyzer's name, held as classAnalyzer holds
 	// one.
 	classHoldReason
+	// classMemoryLayout: an engine's memory-layout flags
+	// (capacity.EngineParams.MemoryLayout), "key=value" pairs joined by ';';
+	// kept when every key is a flag the parsers write and every value a
+	// number, a switch or a backend the engine defines
+	// (capacity.KnownMemoryLayout), refused otherwise. Nothing in it is
+	// renamed: a value that could be a name is refused whole.
+	classMemoryLayout
 )
 
 // holdGracePrefix is the hold reason naming the analyzer inside its grace.
@@ -204,7 +212,7 @@ var valueRules = map[string]rule{
 	"Effect":      {class: classVocab}, "KvCacheDtype": {class: classVocab}, "WeightDtype": {class: classVocab},
 	"Quantization": {class: classVocab}, "KVConnector": {class: classVocab},
 	"VLLMVersionFrom":     {class: classVocab},
-	"KVOffloadingBackend": {class: classVocab}, "MemoryLayout": {class: classVocab},
+	"KVOffloadingBackend": {class: classVocab}, "MemoryLayout": {class: classMemoryLayout},
 	// A KV transfer's kind (domain.KVTransferOffloadLoad and the others).
 	"KVTransferRates.Kind": {class: classVocab},
 
@@ -280,7 +288,7 @@ var keyRules = map[string]rule{
 // may hold. A value not here stops the export, naming the field: add the
 // word here when it is the code's own, or classify the field as a rename
 // when it is a name someone chose.
-var vocabulary = withWords(saturation.LowerBoundRoles(), withWords(ttftWords(), withWords(enginerec.Words(), setOf(
+var vocabulary = withWords(cacheTierWords(), withWords(saturation.LowerBoundRoles(), withWords(ttftWords(), withWords(enginerec.Words(), setOf(
 	// Roles and analyzers.
 	"both", "decode", "prefill", "saturation", "slo", "throughput", "saturation-token-based",
 	"queueing-model", "default",
@@ -312,7 +320,14 @@ var vocabulary = withWords(saturation.LowerBoundRoles(), withWords(ttftWords(), 
 	string(config.SLOFlowControlEnabled), string(config.SLOFlowControlDisabled),
 	// The redaction marker.
 	"redacted",
-))))
+)))))
+
+// cacheTierWords is what a replica's cache-tier and KV-transfer series hold:
+// the tiers of ReplicaMetrics.CachedTokenRateBySource (whatif.Sources) and
+// the kinds of ReplicaMetrics.KVTransferRates (domain.KVTransferKinds).
+func cacheTierWords() []string {
+	return slices.Concat(whatif.Sources(), domain.KVTransferKinds())
+}
 
 // withWords adds words to a set and returns it: the composite's own words
 // (enginerec.Words), read from the code that writes them.

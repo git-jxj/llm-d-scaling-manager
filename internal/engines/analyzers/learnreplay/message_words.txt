@@ -612,6 +612,7 @@ all2all_backend
 allMark
 allMarkAt
 all_metrics
+allgather_reducescatter
 allocate
 allocation
 allocation.NewLimiterFromConfig
@@ -661,6 +662,7 @@ arriving
 arrivingPromptTokens
 arrivingRead
 as
+ascend_fuseep
 asked
 asks
 assumed
@@ -1015,6 +1017,8 @@ decodeTermRefused
 decodeVariant
 decoding
 deduced
+deepep
+deepep_high_throughput
 deepep_low_latency
 deeper
 default
@@ -1282,6 +1286,8 @@ flag
 flagged
 flags
 flappingWindow
+flashinfer
+flashinfer_all2allv
 flavor
 fleet
 fleet-shape-change
@@ -1866,6 +1872,8 @@ loaded
 localQueueDemand
 locator.New
 logVerbosity
+log_balancedness
+log_balancedness_interval
 logged
 long
 longer
@@ -2002,7 +2010,9 @@ modelsProcessed
 moe-dp-busiest-rank
 moe_a2a_backend
 monotonicity
+mooncake
 more
+mori
 most
 mostly
 mount
@@ -2062,6 +2072,7 @@ nDecGPS
 nDecModel
 nITL
 nSteady
+naive
 name
 named
 names
@@ -2382,6 +2393,7 @@ pooled
 pools
 positive
 pp_size
+pplx
 pre-population
 predictedGPS
 predictedITL
@@ -3094,6 +3106,7 @@ steadySpread
 steered
 step
 step-budget
+step_interval
 steps
 still
 stop
@@ -3343,6 +3356,7 @@ usage
 usageByNamespace
 usageByType
 use
+use_async
 used
 using
 usual
@@ -3487,6 +3501,7 @@ will
 window
 windowDropped
 windowSamples
+window_size
 windows
 wins
 with

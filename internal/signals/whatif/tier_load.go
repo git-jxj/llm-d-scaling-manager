@@ -32,6 +32,11 @@ const (
 	SourceExternalUnspecified = "external_unspecified"
 )
 
+// Sources are the tiers vllm:prompt_tokens_cached_by_source names, sorted.
+func Sources() []string {
+	return []string{SourceDevice, SourceDisk, SourceExternalUnspecified, SourceHost, SourceP2P}
+}
+
 // MinTierShare is the least share of the whole prompt a tier must serve for
 // its load to count: below it no load is priced, and a tier with no
 // transfer reading does not hold the term back. Stated, not measured: 1% of
