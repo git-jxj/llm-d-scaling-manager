@@ -179,6 +179,10 @@ type RankMixture struct {
 	// chunked prefill, 1 without); 0 is not known, and each rank is priced
 	// as plain processor sharing.
 	Slots int
+	// ShareRows is the fit steps' share profiles at their rates where the
+	// profile is read at the priced load (RankMixtureOptions.SharesAtLoad);
+	// nil prices Shares.
+	ShareRows []ShareRow
 }
 
 // MaxRelaxationShare is the largest relaxation time, as a share of the step
@@ -347,13 +351,14 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 	if n <= 0 {
 		n = DefaultMixtureDraws
 	}
-	per := max(n/len(m.Shares), 50)
-	rng := rand.New(rand.NewPCG(mixtureSeed, uint64(len(m.Shares))))
-	out := RankMixtureDraws{QP: make([]float64, 0, per*len(m.Shares)), L: make([]float64, 0, per*len(m.Shares)),
-		W: make([]float64, 0, per*len(m.Shares))}
+	shares := m.sharesAt(rate)
+	per := max(n/len(shares), 50)
+	rng := rand.New(rand.NewPCG(mixtureSeed, uint64(len(shares))))
+	out := RankMixtureDraws{QP: make([]float64, 0, per*len(shares)), L: make([]float64, 0, per*len(shares)),
+		W: make([]float64, 0, per*len(shares))}
 	s := make([]float64, per)
 	var rhoSum float64
-	for i, p := range m.Shares {
+	for i, p := range shares {
 		lam := rate * p
 		var es, es2 float64
 		for j := range s {
@@ -367,7 +372,7 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 		out.Checks.Rho = append(out.Checks.Rho, rho)
 		rhoSum += rho
 		if !(rho < 1) {
-			u := refuse(Saturated, fmt.Sprintf("rank %d of %d is saturated at %.4g r/s (utilization %.3g)", i+1, len(m.Shares), rate, rho))
+			u := refuse(Saturated, fmt.Sprintf("rank %d of %d is saturated at %.4g r/s (utilization %.3g)", i+1, len(shares), rate, rho))
 			return RankMixtureDraws{}, &u
 		}
 		pK, wait := 0.0, 0.0
@@ -420,7 +425,7 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 		}
 	}
 	if m.KV.Known {
-		mean := rhoSum / float64(len(m.Shares))
+		mean := rhoSum / float64(len(shares))
 		out.Checks.KVOutside = mean < m.KV.RhoLo || mean > m.KV.RhoHi
 	}
 	return out, nil

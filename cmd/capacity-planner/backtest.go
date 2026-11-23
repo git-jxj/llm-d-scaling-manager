@@ -51,6 +51,9 @@ type backtestFlags struct {
 	// rankMixtureTTFT is --experimental-ttft=v2 (experimental_ttft_v2.go),
 	// backtest's only.
 	experimentalTTFT, rankMixtureTTFT bool
+	// rankMixtureFitSteps is --rank-mixture-fit-steps: the rank mixture's
+	// fit-step fixes (whatifapi.BacktestRequest.RankMixtureFitSteps).
+	rankMixtureFitSteps bool
 	// experimentalTPOT is --experimental-tpot (experimental_tpot.go),
 	// backtest's only.
 	experimentalTPOT string
@@ -69,6 +72,9 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0); set, it turns the default --router-wait-in-prefill off")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTV2Usage)
+	fs.BoolVar(&f.rankMixtureFitSteps, "rank-mixture-fit-steps", false, "with --experimental-ttft=v2, fit the KV-deferral lines and "+
+		"the prompt slopes only on steps whose busiest prefill rank is under utilization 0.9, and read the ranks' shares at the "+
+		"priced load (the fit steps of nearest rate) instead of the fit window's mean; off by default")
 }
 
 // parsed records the flags given, once fs is parsed, and lets the default
@@ -191,6 +197,7 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 		return nil
 	}
 	req.TTFTModel, req.PrefillSlots = string(whatif.QueueRankMixture), prefillSlotsOf(fit)
+	req.RankMixtureFitSteps = f.rankMixtureFitSteps
 	if err := withRankMixture(testPath, test); err != nil {
 		return err
 	}
