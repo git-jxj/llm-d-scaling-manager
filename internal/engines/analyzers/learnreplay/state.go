@@ -410,6 +410,13 @@ type shapeSample struct {
 // lower bound. One warm-up's self-check falls from weak to inconsistent with
 // it. It stays off until TTFT under a lower-bound knee is priced.
 //
+// saturation.SwitchPrefillVPPromptCoverage is planner-only and not listed
+// (issue llm-d-incubation/llm-d-scaling-manager#405): it keeps the prompts
+// the minutes V_P rests on read, and prices no TTFT from a V_P at a mean
+// prompt more than whatif.MaxVPShapeRatio outside them
+// (whatif.VPPromptNotCovered). It goes on once the public cross-validation
+// shows no figure newly under what was measured and no worse self-check.
+//
 // saturation.SwitchPrefillVPWindowBest is planner-only and not listed: it
 // keeps the peak under a queue read anywhere in the recording, not only in
 // the last 6 hours, flagged with its age (VPFromEarlierInWindow). No public

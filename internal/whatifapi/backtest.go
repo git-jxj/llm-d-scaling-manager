@@ -2516,7 +2516,8 @@ func backtestHint(reason string, only bool) string {
 			"and the true knee may be higher, so the planner gave no price there and does not call it overloaded"
 	case string(whatif.NoPrefillCapacity):
 		return "no prefill speed was learned to price a TTFT from: none under a queue, or, where the prefill pods never queued, " +
-			"only the rate a pod computed, which prices the knee as a lower bound and no TTFT; fit on more (a larger split, or a longer recording)"
+			"only the rate a pod computed, which prices the knee as a lower bound and no TTFT, or one read only at prompts other than the step's " +
+			"(VPPromptNotCovered); fit on more (a larger split, or a longer recording)"
 	case string(whatif.NoFixedLatency), string(whatif.PinnedDefaultB), string(whatif.NoLine):
 		return "the fitted part held too few busy minutes to learn from; fit on more (a larger split, or a longer recording)"
 	}

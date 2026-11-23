@@ -511,6 +511,7 @@ VLLM_USE_V1
 VPAboveSlopeBound
 VPFromPlateau
 VPLowerBound
+VPPromptNotCovered
 VPScaledToPrompt
 VPShapeMoved
 V_P
@@ -2451,6 +2452,7 @@ prefill-throughput-bound-reading
 prefill-vp-at-served-work
 prefill-vp-floor-served
 prefill-vp-occupancy-plateau
+prefill-vp-prompt-coverage
 prefill-vp-served-unqueued
 prefill-vp-window-best
 prefillBoundHeld
@@ -3488,6 +3490,8 @@ vpPlateau
 vpPlateauFlat
 vpPlateauMinutes
 vpPlateauSpan
+vpPromptHigh
+vpPromptLow
 vpPromptTokens
 vpRefused
 vpSamples

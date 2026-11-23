@@ -582,6 +582,9 @@ type SaturationAnalyzer struct {
 	// prefillVPOccupancyPlateau is SwitchPrefillVPOccupancyPlateau: off
 	// from the constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillVPOccupancyPlateau bool
+	// prefillVPPromptCoverage is SwitchPrefillVPPromptCoverage: off from
+	// the constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillVPPromptCoverage bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor
