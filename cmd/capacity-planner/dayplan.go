@@ -468,6 +468,10 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	if c.Sized > 0 {
 		fmt.Fprintf(&b, "hours under (SLO risk): %s\n", hourList(s.UnderHours, at))
 		fmt.Fprintf(&b, "hours over (waste): %s\n", hourList(s.OverHours, at))
+		if c.MeasuredTTFT > 0 && p.TTFT != nil {
+			fmt.Fprintf(&b, "measured TTFT over its target (%s %s): %d of the %d buckets the router measured\n",
+				p.TTFT.Statistic, msText(p.TTFT.Target), c.MeasuredTTFTOver, c.MeasuredTTFT)
+		}
 		if len(s.DecodeOverHours) > 0 {
 			fmt.Fprintf(&b, "hours decode only had a replica to spare: %s (%s)\n", hourList(s.DecodeOverHours, at), decodeOnlyWords)
 		}

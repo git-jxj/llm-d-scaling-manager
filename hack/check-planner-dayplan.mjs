@@ -178,17 +178,21 @@ try {
   nothing.summary.peakNeeded = null;
   check("a plan with nothing sized says so", daySummaryText(nothing)[0].startsWith("No bucket was sized"));
   // Prefill was not sized: decode is judged alone, and nothing says waste.
-  // The golden's two buckets the model calls over measured their TTFT over
-  // the target, so they carry no verdict: one is put back over here.
-  const missedGolden = half.buckets.filter(x => (x.flags || []).includes("MeasuredTTFTOverTarget"));
-  check("the decode-only golden withholds an over on a measured TTFT miss", missedGolden.length > 0 && missedGolden.every(x => !x.verdict && x.scope === "decode only"),
-    JSON.stringify(missedGolden.map(x => [x.verdict, x.scope])));
-  check("an over withheld on a measured TTFT miss says so", dayTip(half, missedGolden[0]).rows.some(r => r[0] === "verdict" && r[1] === "not judged: measured TTFT over target"));
-  const spare = copy(half);
-  const over = spare.buckets.find(x => (x.flags || []).includes("MeasuredTTFTOverTarget"));
-  over.verdict = "over";
-  over.flags = over.flags.filter(f => f !== "MeasuredTTFTOverTarget");
+  // The golden's decode-only overs stand though their TTFT was measured over
+  // its target: decode has a replica to spare, which is no fleet's.
+  const spare = half;
+  const over = half.buckets.find(x => x.verdict === "over");
+  check("the decode-only golden has a decode-only over", !!over && over.scope === "decode only" && !(over.flags || []).includes("MeasuredTTFTOverTarget"),
+    JSON.stringify(over && [over.scope, over.flags]));
   check("a decode-only over is a decode replica to spare", dayTip(spare, over).rows.some(r => r[0] === "verdict" && r[1] === "decode only: a decode replica to spare"));
+  const missed = copy(half);
+  const mb = missed.buckets.find(x => x.verdict === "over");
+  delete mb.verdict;
+  delete mb.scope;
+  mb.flags = (mb.flags || []).concat("MeasuredTTFTOverTarget");
+  check("a whole fleet's over withheld on a measured TTFT miss says so", dayTip(missed, mb).rows.some(r => r[0] === "verdict" && r[1] === "not judged: measured TTFT over target"));
+  check("the summary counts the measured TTFT misses", daySummaryText(half).some(l => /^Measured TTFT was over its target in 16 of the 16 buckets measured/.test(l)),
+    daySummaryText(half).join(" | "));
   for (const [name, text] of [["the bucket table", dayBucketsTable(spare)], ["the hour table", dayHoursTable(spare)], ["the summary", daySummaryText(spare).join(" ")]]) {
     check(`${name} of a decode-only plan says no waste`, !text.includes("waste"), text.slice(0, 160));
   }
