@@ -802,6 +802,17 @@ are SKIPPED for that refusal, or for no saturated window off a ramp:
   line at all, and the other three are on the default intercept, reading 18.7% to
   22.1% fast. So the four staircase goldens validate nothing of decode.
 
+**A shape priced lighter than the load (#361).** `at-replicas` prices the load at
+the measured shape, the decode variant's last cycles. Where the cycles the load
+was read from ran more than 20% heavier, in prompt or output, than that shape,
+the knee reads high for the load. An OVER-PROVISIONED or RIGHT-SIZED verdict on
+it can cut replicas the load needs, so neither is given: the verdict is NOT
+JUDGED, no fleet is sized, and the summary names both shapes and `--shape load`.
+An UNDER-PROVISIONED verdict stands, as a heavier load only makes it more true.
+This is the mirror of the rule that withholds an UNDER on a shape priced heavier
+than the load (#294, #297). A stated shape is the question's, and keeps every
+verdict.
+
 The rules the page leaves open, chosen here: the row is the unit, as `AvgITL` and
 `generation_tokens` are per pod; a line is asked at the row's fill, clamped to the
 band as an answer is; the knee is read at the row's own shape, on one replica, against

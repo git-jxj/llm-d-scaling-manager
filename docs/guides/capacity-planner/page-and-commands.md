@@ -603,6 +603,14 @@ cases, and no fleet is sized:
 
 Only an UNDER is withheld: neither case shows the fleet holding.
 
+The reverse case withholds the other verdicts. Where the measured shape priced
+is more than 20% shorter, in prompt or output, than the cycles the load was read
+from, its knee reads high for that load. A verdict that the fleet holds,
+RIGHT-SIZED or OVER-PROVISIONED, could then cut replicas the load needs. Such a
+verdict is NOT JUDGED instead, no fleet is sized, and the summary gives both
+shapes; `--shape load` prices the load at its own. An UNDER-PROVISIONED verdict
+on that knee stands: a heavier load only makes it more true.
+
 A prefill knee priced from a V_P that is only a lower bound (flag
 `VPLowerBound`: the prefill Pods never queued for compute under load) is
 at least its rate, and the report says so: `>=` before it in the

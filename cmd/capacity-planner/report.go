@@ -1375,8 +1375,10 @@ func e2eSum(ttft, tpot whatif.Result, ol float64) whatif.Result {
 //   - UNDER-PROVISIONED on a known miss at the load judged;
 //   - NOT JUDGED where it would be UNDER-PROVISIONED on a load of other
 //     traffic than the shape priced, or one the window's own fleet served
-//     past the knee (notJudgedUnder), when its own check is not judged, or
-//     when the prefill side does not price and decode alone holds;
+//     past the knee (notJudgedUnder), when its own check is not judged,
+//     when the prefill side does not price and decode alone holds, or where
+//     the fleet holds on a measured shape priced lighter than the load's
+//     cycles, whose knee reads high for the load (phasesLighter, #361);
 //   - OVER-PROVISIONED when a role has a replica to spare: one fewer of it
 //     holds the whole fleet at the load judged, and the role's own check
 //     (knee and target) at the peak too, since removing capacity is the
@@ -1445,6 +1447,12 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		v.Reason += ". The prefill side is not priced: decode alone cannot show the fleet right-sized or over-provisioned"
 		v.Summary = fmt.Sprintf("%s: the prefill side is not priced (%s); decode alone holds %s%s.", v.Verdict,
 			refusalWords(base.prefillKnee), r.targetWords(), strings.TrimSuffix(" "+lead, ", "))
+		return v, nil
+	case r.phasesLighter() != "":
+		why := r.phasesLighter()
+		v.Verdict = whatifapi.VerdictNotJudged
+		v.Reason += ". " + why
+		v.Summary = fmt.Sprintf("%s: %s %s.", v.Verdict, phasesWords, why)
 		return v, nil
 	}
 	roles, restsOnDecode, notes, err := r.roles(np, nd, base, &v)
@@ -1583,9 +1591,32 @@ func (r *reporter) phasesDiffer(binds string) string {
 	if !r.sh.Measured || ls == nil || !(heavier(il, ls.InputTokens) || olHeavier) {
 		return ""
 	}
-	return fmt.Sprintf("the load's cycles ran at IL %s OL %s, the shape priced is IL %s OL %s, so the knee is of other traffic and "+
-		"no verdict is priced on it; --shape load prices the load at its own shape", num(round(ls.InputTokens)), num(round(ls.OutputTokens)),
-		num(round(il)), num(round(ol)))
+	return r.shapesWords("so the knee is of other traffic and no verdict is priced on it")
+}
+
+// phasesLighter says how the load's cycles ran heavier than the measured
+// shape priced, "" where they did not or a shape was stated: a shape priced
+// lighter than the load's in a length (more than
+// whatifapi.ShapeLoadTolerance under it) reads its knee high for the load,
+// so a verdict that the fleet holds, RIGHT-SIZED or OVER-PROVISIONED, is not
+// given on it (#361). It can cut replicas the load needs. An UNDER on such a
+// knee holds the more, and keeps its verdict.
+func (r *reporter) phasesLighter() string {
+	ls := r.loadShape
+	il, ol := r.pv.shape.AvgInputTokens, r.pv.shape.AvgOutputTokens
+	lighter := func(x, ref float64) bool { return x > 0 && ref > 0 && 1-x/ref > whatifapi.ShapeLoadTolerance }
+	if !r.sh.Measured || ls == nil || !(lighter(il, ls.InputTokens) || lighter(ol, ls.OutputTokens)) {
+		return ""
+	}
+	return r.shapesWords("so the knee reads high for the load and no verdict that the fleet holds is priced on it")
+}
+
+// shapesWords says the load's cycles' shape and the shape priced, then so,
+// and how to price the load at its own shape.
+func (r *reporter) shapesWords(so string) string {
+	ls := r.loadShape
+	return fmt.Sprintf("the load's cycles ran at IL %s OL %s, the shape priced is IL %s OL %s, %s; --shape load prices the load at its own shape",
+		num(round(ls.InputTokens)), num(round(ls.OutputTokens)), num(round(r.pv.shape.AvgInputTokens)), num(round(r.pv.shape.AvgOutputTokens)), so)
 }
 
 // contradicted says how the window's own fleet served more than the model
