@@ -2579,7 +2579,10 @@ works there. In order, and a step that fails stops the run:
    `llm-d-sim`.
 4. `scalerTLS` must start with `mutual TLS`, with no step by a person. KEDA's
    copy in `keda-system` must hold the client certificate,
-   `kedaCopyStale` must be `false`, and no marker ConfigMap may exist.
+   `kedaCopyStale` must be `false`, no marker ConfigMap may exist, and
+   `preflight.keda.mtls` must turn `ok`. Then it patches `logVerbosity`, a
+   restart setting: the controller must restart itself, show
+   `logVerbosity=settings` in `settingsSources`, and be `ready` again.
 5. Patches `utilizationShare: shadow`, then applies both files again
    server-side. The scaler CA, KEDA's copy and the patched key must not
    change.
@@ -2588,7 +2591,8 @@ works there. In order, and a step that fails stops the run:
    it is still outside `namespaceSelector`, and must stay refused for that
    reason.
 7. The smoke suite with passive off (`RELEASE_E2E_SMOKE=true`, the default),
-   skipping "Basic Autoscaling", whose namespace is not labelled. Then
+   skipping "Basic Autoscaling" and "Error Handling", whose own namespaces
+   are not labelled and are refused. Then
    `kedaConnection` must be `current`.
 8. The uninstall of the guide: ScaledObjects, the label, `kubectl delete -f`.
    Nothing labelled `app.kubernetes.io/instance=scaling-manager-system` may be

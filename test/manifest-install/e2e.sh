@@ -83,7 +83,9 @@ wait_for() {
     log "ok: $what (${i}s)"
 }
 
-status() { kubectl get configmap "$STATUS_CM" -n "$NS" -o "jsonpath={.data.$1}" 2>/dev/null; }
+# status <key>: one key of the status ConfigMap; dots in a key (preflight.<check>)
+# are escaped, or jsonpath reads them as nested fields.
+status() { kubectl get configmap "$STATUS_CM" -n "$NS" -o "jsonpath={.data.${1//./\\.}}" 2>/dev/null; }
 status_is() { [ "$(status "$1")" = "$2" ]; }
 status_has_prefix() { case "$(status "$1")" in "$2"*) return 0 ;; esac; return 1; }
 status_contains() { case "$(status "$1")" in *"$2"*) return 0 ;; esac; return 1; }
@@ -167,7 +169,24 @@ copy="scaling-manager-external-scaler-$NS"
     || fail "scaler TLS" "KEDA's copy does not hold the client certificate"
 status_is kedaCopyStale false || fail "scaler TLS" "kedaCopyStale is '$(status kedaCopyStale)'"
 kubectl get configmap scaling-manager-scaler-keda-auth -n "$NS" >/dev/null 2>&1 && fail "scaler TLS" "a marker ConfigMap exists; nothing on this path writes one"
-pass "mutual TLS with no step by a person: KEDA's copy in $KEDA_NS holds the client certificate; kedaCopyStale false"
+# The in-controller keda.mtls judges this path by the controller's status,
+# not by a marker; its first run can precede the status ConfigMap.
+wait_for 150 "preflight.keda.mtls ok" status_has_prefix preflight.keda.mtls ok \
+    || fail "scaler TLS" "preflight.keda.mtls is '$(status preflight.keda.mtls)'"
+pass "mutual TLS with no step by a person: KEDA's copy in $KEDA_NS holds the client certificate; kedaCopyStale false; preflight.keda.mtls ok"
+
+# --- 5b. a changed restart setting restarts the controller -------------------
+
+pod_restarts() { kubectl get pods -n "$NS" -l control-plane=controller-manager -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{"\n"}{end}' | awk '{s += $1} END {print s + 0}'; }
+restarts_more_than() { [ "$(pod_restarts)" -gt "$1" ]; }
+before="$(pod_restarts)"
+settings_patch '{"data":{"logVerbosity":"3"}}'
+wait_for 180 "the controller restarted itself" restarts_more_than "$before" || fail "self-restart" "restartCount stayed $before after a restart setting changed"
+rollout > "$LOGS/rollout-restart.log" 2>&1 || fail "self-restart" "the restarted controller did not become Ready"
+wait_for 180 "settingsSources logVerbosity=settings" status_contains settingsSources "logVerbosity=settings" \
+    || fail "self-restart" "settingsSources: '$(status settingsSources)'"
+wait_for 180 "ready=ok again" ready_ok || fail "self-restart" "ready is '$(status ready)'"
+pass "a changed restart setting (logVerbosity) restarted the controller once ($before -> $(pod_restarts)); ready ok again"
 
 # --- 6. a re-apply keeps what the controller and the operator wrote ----------
 
