@@ -115,3 +115,23 @@ func TestBacktest_UnknownTTFTModelNamesBoth(t *testing.T) {
 	assert.Equal(t, string(whatif.QueueRankMixtureNL), q.mixture.report.Model)
 	assert.Contains(t, q.mixture.report.Abstained, "per-rank series")
 }
+
+// rank-mixture-nl-line is the variant with the service line: it names
+// itself and its law.
+func TestBacktest_RankMixtureNLLine(t *testing.T) {
+	r := &stubResolver{}
+	fit := rmFit(t, r, 3120)
+	ts, tl := btSeries(240, 0, 1)
+	test := btEntry(t, r, "test", ts, tl, btConfig("H100"))
+	test.mixture = btMixture(ts)
+	out := btRun(t, fit, test, BacktestRequest{TTFTModel: string(whatif.QueueRankMixtureNLLine), PrefillSlots: 4})
+	require.NotNil(t, out.RankMixture)
+	assert.Equal(t, string(whatif.QueueRankMixtureNLLine), out.RankMixture.Model)
+	assert.Equal(t, "line", out.RankMixture.Law)
+	assert.Zero(t, out.RankMixture.B)
+	require.NotNil(t, out.RankMixture.ZParts)
+	test.mixture = nil
+	q, err := backtestQuestionOf(fit, test, BacktestRequest{TTFTModel: string(whatif.QueueRankMixtureNLLine)}, time.Time{}, "")
+	require.NoError(t, err)
+	assert.Equal(t, string(whatif.QueueRankMixtureNLLine), q.mixture.report.Model)
+}

@@ -27,6 +27,10 @@ const experimentalTTFTV2 = "v2"
 // and the non-queue part measured part by part. Backtest only.
 const experimentalTTFTV2NL = "v2nl"
 
+// experimentalTTFTV2NLLine is =v2nl with v2's service line, no attention
+// term (whatif.QueueRankMixtureNLLine). Backtest only.
+const experimentalTTFTV2NLLine = "v2nl-line"
+
 // experimentalTTFTV2Usage is backtest's and predict's help for the flag: the
 // switches' (experimentalTTFTUsage), and =v2.
 const experimentalTTFTV2Usage = experimentalTTFTUsage + ". On backtest, =v2 instead prices TTFT with an experimental model: limited " +
@@ -38,13 +42,16 @@ const experimentalTTFTV2Usage = experimentalTTFTUsage + ". On backtest, =v2 inst
 // false neither.
 type experimentalTTFTValue struct {
 	switches, v2 *bool
-	// nl, where set, takes =v2nl: v2 and nl both true.
-	nl *bool
+	// nl, where set, takes =v2nl: v2 and nl both true; line, where set,
+	// takes =v2nl-line: v2, nl and line true.
+	nl, line *bool
 }
 
 // String is the value.
 func (v experimentalTTFTValue) String() string {
 	switch {
+	case v.v2 != nil && *v.v2 && v.nl != nil && *v.nl && v.line != nil && *v.line:
+		return experimentalTTFTV2NLLine
 	case v.v2 != nil && *v.v2 && v.nl != nil && *v.nl:
 		return experimentalTTFTV2NL
 	case v.v2 != nil && *v.v2:
@@ -58,7 +65,10 @@ func (v experimentalTTFTValue) String() string {
 // Set reads one value.
 func (v experimentalTTFTValue) Set(s string) error {
 	if v.nl != nil {
-		*v.nl = s == experimentalTTFTV2NL
+		*v.nl = s == experimentalTTFTV2NL || (s == experimentalTTFTV2NLLine && v.line != nil)
+	}
+	if v.line != nil {
+		*v.line = s == experimentalTTFTV2NLLine
 	}
 	switch s {
 	case "true", "v1":
@@ -67,9 +77,9 @@ func (v experimentalTTFTValue) Set(s string) error {
 		*v.switches, *v.v2 = false, false
 	case experimentalTTFTV2:
 		*v.switches, *v.v2 = false, true
-	case experimentalTTFTV2NL:
-		if v.nl == nil {
-			return fmt.Errorf("--%s=%s is backtest's only", experimentalTTFTFlag, experimentalTTFTV2NL)
+	case experimentalTTFTV2NL, experimentalTTFTV2NLLine:
+		if v.nl == nil || (s == experimentalTTFTV2NLLine && v.line == nil) {
+			return fmt.Errorf("--%s=%s is backtest's only", experimentalTTFTFlag, s)
 		}
 		*v.switches, *v.v2 = false, true
 	default:

@@ -312,6 +312,9 @@ type RankMixtureOptions struct {
 	// is raised to it (RankMixtureFit.SpreadFloored); 0 none.
 	SpreadFloor                         float64
 	NoMixture, NoKV, NoPrompt, NoSpread bool
+	// LineService keeps the service line under FitRankMixtureNL (no
+	// attention term): QueueRankMixtureNLLine.
+	LineService bool
 }
 
 // MinSpreadFitWindow is the shortest fit window the planner calibrates the

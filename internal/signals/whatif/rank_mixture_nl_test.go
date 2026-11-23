@@ -274,3 +274,27 @@ func TestFitSigmas_DecodeFromItsHistogram(t *testing.T) {
 	assert.InDelta(t, sigma, m.Parts.Decode.Sigma, 1e-9)
 	assert.Zero(t, m.Parts.Overhead.Sigma, "no prefill TTFT histogram: no overhead spread")
 }
+
+// LineService keeps v2's service line under the variant's fit: no attention
+// term, the line FitPSInversion reads, and the rest of the variant as is.
+func TestFitRankMixtureNL_LineService(t *testing.T) {
+	truth := RankMixture{S0: 0.1, V: 8000, Shares: []float64{0.3, 0.25, 0.25, 0.2}, Spread: 1, Slots: 4,
+		BetaOverhead: 3e-6, BetaDecode: 2e-6, Beta: 5e-6}
+	steps := syntheticSteps(t, truth, 48)
+	for i := range steps {
+		steps[i].RouterMean += 0.7
+		steps[i].RouterP90 += 0.7
+	}
+	m, _, err := FitRankMixtureNL(steps, RankMixtureOptions{Slots: 4, LineService: true})
+	require.NoError(t, err)
+	assert.Equal(t, ServiceLine, m.Law)
+	assert.Zero(t, m.B)
+	s0, v, _, err := FitPSInversion(steps)
+	require.NoError(t, err)
+	assert.InDelta(t, s0, m.S0, 1e-12)
+	assert.InDelta(t, v, m.V, 1e-9)
+	require.NotNil(t, m.Parts)
+	att, _, err := FitRankMixtureNL(steps, RankMixtureOptions{Slots: 4})
+	require.NoError(t, err)
+	assert.Equal(t, ServiceAttention, att.Law)
+}

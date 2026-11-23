@@ -54,6 +54,9 @@ type backtestFlags struct {
 	// rankMixtureNL is --experimental-ttft=v2nl: the rank mixture's
 	// non-linear variant (whatif.QueueRankMixtureNL).
 	rankMixtureNL bool
+	// rankMixtureNLLine is --experimental-ttft=v2nl-line: the variant with
+	// the service line (whatif.QueueRankMixtureNLLine).
+	rankMixtureNLLine bool
 	// experimentalTPOT is --experimental-tpot (experimental_tpot.go),
 	// backtest's only.
 	experimentalTPOT string
@@ -71,9 +74,9 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's, on by default: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0); =false for router v0.11.0")
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0); set, it turns the default --router-wait-in-prefill off")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
-	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nl: &f.rankMixtureNL}, experimentalTTFTFlag,
+	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nl: &f.rankMixtureNL, line: &f.rankMixtureNLLine}, experimentalTTFTFlag,
 		experimentalTTFTV2Usage+"; =v2nl prices with its non-linear variant (attention service law, non-queue part measured part by part, "+
-			"flagged the same)")
+			"flagged the same); =v2nl-line the same with the service line, no attention term")
 }
 
 // parsed records the flags given, once fs is parsed, and lets the default
@@ -198,6 +201,9 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 	req.TTFTModel, req.PrefillSlots = string(whatif.QueueRankMixture), prefillSlotsOf(fit)
 	if f.rankMixtureNL {
 		req.TTFTModel = string(whatif.QueueRankMixtureNL)
+	}
+	if f.rankMixtureNLLine {
+		req.TTFTModel = string(whatif.QueueRankMixtureNLLine)
 	}
 	if err := withRankMixture(testPath, test); err != nil {
 		return err

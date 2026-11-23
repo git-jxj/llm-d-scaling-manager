@@ -359,7 +359,7 @@ func (rq *rankMixtureQ) assumedLines() []string {
 	}
 	out := []string{rq.report.Assumed + "; spread fitted on the fit window's self-check folds so that their median p90 ratio is 1 " +
 		"(p95 is not fitted); every TTFT is flagged " + string(whatif.RankMixtureTTFT) + " and is OUTSIDE VALIDATED REGION"}
-	if rq.report.Model == string(whatif.QueueRankMixtureNL) {
+	if rq.report.Model == string(whatif.QueueRankMixtureNL) || rq.report.Model == string(whatif.QueueRankMixtureNLLine) {
 		out[0] = rq.report.Assumed + fmt.Sprintf("; nothing calibrated to the router (the fit window prices its own mean at %.3g of "+
 			"measured); every TTFT is flagged %s and is OUTSIDE VALIDATED REGION", rq.report.FitMean, whatif.RankMixtureTTFT)
 	}

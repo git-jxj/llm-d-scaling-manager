@@ -65,6 +65,11 @@ import (
 // Experimental; only a caller that asks prices it.
 const QueueRankMixtureNL QueueModel = "rank-mixture-nl"
 
+// QueueRankMixtureNLLine is QueueRankMixtureNL with v2's service line in
+// place of the attention law (RankMixtureOptions.LineService): the fit
+// changes alone, for a fleet where TTFT matters more than the knee.
+const QueueRankMixtureNLLine QueueModel = "rank-mixture-nl-line"
+
 // ServiceLaw is the prefill service law of the rank mixture.
 type ServiceLaw string
 
@@ -669,7 +674,7 @@ func FitRankMixtureNL(steps []MixtureStep, o RankMixtureOptions) (RankMixture, R
 		return RankMixture{}, RankMixtureNLFit{}, fmt.Errorf("the rank mixture needs at least 8 steps to fit, got %d", len(steps))
 	}
 	m := RankMixture{Law: ServiceAttention, Spread: 1, Slots: o.Slots}
-	if s0, a, b, ok := FitAttention(steps); ok {
+	if s0, a, b, ok := FitAttention(steps); ok && !o.LineService {
 		m.S0, m.B = s0, b
 		m.V = math.Inf(1)
 		if a > 0 {

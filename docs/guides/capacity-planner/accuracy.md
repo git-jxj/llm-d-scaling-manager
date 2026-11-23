@@ -278,11 +278,17 @@ parts. It is off by default, and its figures carry the same flags. The answer's
   steps whose busiest rank sits under `rho` 0.9 (`cleanSteps`). Past it, the
   queue and the front end's time belong to the overload.
 
+`--experimental-ttft=v2nl-line` (`rank-mixture-nl-line`) is the same variant
+with v2's service line in place of the attention term. Use it where TTFT
+matters more than the knee: the attention term moves the knee closer to
+measured, and it also reads TTFT near the knee higher.
+
 Nothing is fitted to the router, so the fit window must price itself. The
 variant abstains where:
 - the fit window's median ratio of priced to measured mean (`fitMean`) is
   outside 0.8 to 1.25;
 - its median p90 ratio (`fitP90`) is outside 0.9 to 1.25;
+- the fit window is under 12 hours, too short for those checks;
 - the computed prompts do not spread (one prompt length);
 - or, as for v2, the ranks' own rates or `--max-num-seqs` are not read.
 

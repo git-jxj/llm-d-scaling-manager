@@ -995,21 +995,23 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 			}
 		}
 		q.assumed = append(q.assumed, q.mixture.assumedLines()...)
-	case string(whatif.QueueRankMixtureNL):
+	case string(whatif.QueueRankMixtureNL), string(whatif.QueueRankMixtureNLLine):
+		model := whatif.QueueModel(req.TTFTModel)
 		switch {
 		case len(test.mixture) != len(test.series):
-			q.mixture = abstainedMixtureNL("the test source did not give the per-rank series")
+			q.mixture = abstainedMixtureNL("the test source did not give the per-rank series", model)
 		default:
-			fitted, ferr := fitRankMixtureNL(fit, fitIdx, q.step, req.PrefillSlots)
+			fitted, ferr := fitRankMixtureNL(fit, fitIdx, q.step, req.PrefillSlots, model)
 			if ferr != nil {
-				q.mixture = abstainedMixtureNL(ferr.Error())
+				q.mixture = abstainedMixtureNL(ferr.Error(), model)
 			} else {
 				q.mixture = fitted.identifiedNL()
 			}
 		}
 		q.assumed = append(q.assumed, q.mixture.assumedLines()...)
 	default:
-		return nil, InputErrorf("ttftModel %q, want %q, %q or none", req.TTFTModel, whatif.QueueRankMixture, whatif.QueueRankMixtureNL)
+		return nil, InputErrorf("ttftModel %q, want %q, %q, %q or none", req.TTFTModel, whatif.QueueRankMixture, whatif.QueueRankMixtureNL,
+			whatif.QueueRankMixtureNLLine)
 	}
 	switch req.TPOTModel {
 	case "":

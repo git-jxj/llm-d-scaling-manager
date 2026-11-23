@@ -33,18 +33,22 @@ type RankMixtureZParts struct {
 
 // fitRankMixtureNL fits whatif.QueueRankMixtureNL on the fit window's steps
 // (mixtureFitSteps).
-func fitRankMixtureNL(fit *inputsEntry, fitIdx []int, step time.Duration, slots int) (*rankMixtureQ, error) {
-	steps, even, backlog, err := mixtureFitSteps(fit, fitIdx, step, whatif.QueueRankMixtureNL)
+func fitRankMixtureNL(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, model whatif.QueueModel) (*rankMixtureQ, error) {
+	steps, even, backlog, err := mixtureFitSteps(fit, fitIdx, step, model)
 	if err != nil {
 		return nil, err
 	}
-	m, diag, err := whatif.FitRankMixtureNL(steps, whatif.RankMixtureOptions{Slots: slots})
+	m, diag, err := whatif.FitRankMixtureNL(steps, whatif.RankMixtureOptions{Slots: slots,
+		LineService: model == whatif.QueueRankMixtureNLLine})
 	if err != nil {
-		return nil, InputErrorf("the experimental TTFT model %s did not fit: %v", whatif.QueueRankMixtureNL, err)
+		return nil, InputErrorf("the experimental TTFT model %s did not fit: %v", model, err)
 	}
 	rq := reportOf(m, whatif.RankMixtureFit{Steps: diag.Steps, ShareCV: diag.ShareCV, FitP90: diag.FitP90}, slots, even, backlog)
 	r := &rq.report
-	r.Model, r.Law, r.B, r.CleanSteps, r.FitMean = string(whatif.QueueRankMixtureNL), string(m.Law), m.B, diag.CleanSteps, diag.FitMean
+	r.Model, r.Law, r.B, r.CleanSteps, r.FitMean = string(model), string(m.Law), m.B, diag.CleanSteps, diag.FitMean
+	if r.Law == "" {
+		r.Law = "line"
+	}
 	r.SpreadDefaulted = diag.Span < whatif.MinSpreadFitWindow
 	if math.IsInf(m.V, 1) {
 		// No term linear in the computed tokens: the attention term holds
@@ -58,10 +62,10 @@ func fitRankMixtureNL(fit *inputsEntry, fitIdx []int, step time.Duration, slots 
 	return rq, nil
 }
 
-// abstainedMixtureNL is the non-linear variant abstaining for why.
-func abstainedMixtureNL(why string) *rankMixtureQ {
+// abstainedMixtureNL is a variant model abstaining for why.
+func abstainedMixtureNL(why string, model whatif.QueueModel) *rankMixtureQ {
 	rq := abstainedMixture(why)
-	rq.report.Model = string(whatif.QueueRankMixtureNL)
+	rq.report.Model = string(model)
 	return rq
 }
 
