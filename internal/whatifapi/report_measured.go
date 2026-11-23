@@ -18,10 +18,13 @@ const measuredOverWords = "a fleet that missed its TTFT target has nothing to sp
 // MeasuredTTFTAtLoad is the TTFT the router measured at the statistic q (0
 // the mean) over the cycles a load judged at stat was read from: every cycle
 // at or above rate for the p95 and the peak, every one with traffic for the
-// mean. The cycles' router histograms are pooled, so a busy cycle weighs by
-// its requests. ok is false with no router histogram at those cycles, or
-// too few requests in one cycle's window to read the statistic.
-func MeasuredTTFTAtLoad(series []SeriesSample, latency []LatencySample, stat string, rate, q float64) (float64, bool) {
+// mean. Only the cycles that served with at least fleet's replicas of each
+// role count: a smaller fleet's miss says nothing of the fleet judged, and a
+// larger one's says it would miss too. The cycles' router histograms are
+// pooled, so a busy cycle weighs by its requests. ok is false with no router
+// histogram at those cycles, or too few requests in one cycle's window to
+// read the statistic.
+func MeasuredTTFTAtLoad(series []SeriesSample, latency []LatencySample, fleet FleetCounts, stat string, rate, q float64) (float64, bool) {
 	if len(series) != len(latency) || !(rate > 0) {
 		return 0, false
 	}
@@ -34,7 +37,7 @@ func MeasuredTTFTAtLoad(series []SeriesSample, latency []LatencySample, stat str
 	n := 0
 	for i, x := range series {
 		l := latency[i].Router
-		if l == nil || !(x.Rate > 0) || x.Rate < floor {
+		if l == nil || !(x.Rate > 0) || x.Rate < floor || x.Prefill < fleet.Prefill || x.Decode < fleet.Decode {
 			continue
 		}
 		for _, b := range l.TTFTBuckets {
@@ -78,9 +81,11 @@ func bucketsOf(pooled map[float64]float64) []domain.LatencyBucket {
 
 // WithholdOverOnMeasured makes NOT JUDGED each shape's OVER-PROVISIONED
 // verdict at the load judged where the router measured the TTFT over its
-// target there (MeasuredTTFTAtLoad), and flags the shape
-// FlagMeasuredTTFTOverTarget. A growth line is a what-if at a rate no cycle
-// ran at, and is left as it is.
+// target there (MeasuredTTFTAtLoad, over the cycles that served with at
+// least the fleet's replicas), and flags the shape
+// FlagMeasuredTTFTOverTarget. A shape the question typed is a what-if of
+// other traffic, and a growth line one at a rate no cycle ran at: both are
+// left as they are.
 func (r *ReportResponse) WithholdOverOnMeasured(series []SeriesSample, latency []LatencySample) {
 	t := r.SLO.TTFT
 	if t == nil || r.Load.Seen == nil || r.Load.Source != "observed" {
@@ -90,14 +95,15 @@ func (r *ReportResponse) WithholdOverOnMeasured(series []SeriesSample, latency [
 	if err != nil {
 		return
 	}
-	m, ok := MeasuredTTFTAtLoad(series, latency, r.Load.Statistic, *r.Load.Seen, q)
+	fleet := FleetCounts{Prefill: r.Fleet.Prefill, Decode: r.Fleet.Decode}
+	m, ok := MeasuredTTFTAtLoad(series, latency, fleet, r.Load.Statistic, *r.Load.Seen, q)
 	if !ok || !(m > t.Target) {
 		return
 	}
 	for i := range r.Shapes {
 		s := &r.Shapes[i]
 		v := &s.Verdict
-		if v.Verdict != VerdictOver {
+		if v.Verdict != VerdictOver || s.Source == shapeSourceAsked {
 			continue
 		}
 		v.Verdict = VerdictNotJudged

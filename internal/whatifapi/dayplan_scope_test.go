@@ -137,3 +137,37 @@ func TestDayRefusalHintSaysALowerBound(t *testing.T) {
 	none := dayRefusalOf(rolePrefill, termTTFT, refusedNoVP(), "")
 	assert.Contains(t, none.Hint, "learned no prefill speed")
 }
+
+// An hour under is decode's alone only where no bucket of the whole fleet in
+// it was under: a whole fleet's under beside a decode-only one is the fleet's
+// SLO risk. An hour with a decode-only over stays decode only.
+func TestDayHourScopeIsDecodeOnlyWhereNoFleetBucketJudged(t *testing.T) {
+	t0 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	b := func(i int, status, verdict, scope string) DayBucket {
+		x := DayBucket{Start: t0.Add(time.Duration(i) * 5 * time.Minute), Status: status, Verdict: verdict, Scope: scope,
+			Actual: &FleetCounts{Prefill: 1, Decode: 1}}
+		if status == BucketSized {
+			x.Needed = &DayNeeded{Decode: 1}
+		}
+		return x
+	}
+	for name, c := range map[string]struct {
+		buckets []DayBucket
+		want    string
+	}{
+		"decode-only under alone": {[]DayBucket{b(0, BucketSized, DayVerdictUnder, ScopeDecodeOnly), b(1, BucketSized, DayVerdictMatch, "")},
+			ScopeDecodeOnly},
+		"a fleet's under beside a decode-only one": {[]DayBucket{b(0, BucketSized, DayVerdictUnder, ScopeDecodeOnly),
+			b(1, BucketSized, DayVerdictUnder, "")}, ""},
+		"a fleet's unmet beside a decode-only under": {[]DayBucket{b(0, BucketSized, DayVerdictUnder, ScopeDecodeOnly),
+			b(1, BucketUnmet, DayVerdictUnder, "")}, ""},
+		"a decode-only unmet": {[]DayBucket{b(0, BucketSized, DayVerdictMatch, ScopeDecodeOnly),
+			b(1, BucketUnmet, DayVerdictUnder, ScopeDecodeOnly)}, ScopeDecodeOnly},
+		"a decode-only over beside a fleet's": {[]DayBucket{b(0, BucketSized, DayVerdictOver, ScopeDecodeOnly),
+			b(1, BucketSized, DayVerdictOver, "")}, ScopeDecodeOnly},
+	} {
+		h := hoursOf(nil, c.buckets)
+		require.Len(t, h, 1, name)
+		assert.Equal(t, c.want, h[0].Scope, name)
+	}
+}

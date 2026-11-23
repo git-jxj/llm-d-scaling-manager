@@ -431,7 +431,8 @@ type DayHour struct {
 	NotServing *FleetCounts `json:"notServing,omitempty"`
 	Verdict    string       `json:"verdict,omitempty"`
 	// Scope is ScopeDecodeOnly where a bucket the verdict counts judged
-	// decode alone (DayBucket.Scope).
+	// decode alone (DayBucket.Scope); an hour under is decode's alone only
+	// where no bucket of the whole fleet in it was under.
 	Scope string `json:"scope,omitempty"`
 	// Sized and Unmet are how many of its buckets were sized and unmet.
 	Sized int `json:"sized"`
@@ -1224,7 +1225,7 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 				return err
 			}
 			x, _ := valueOf(r)
-			db.Status, db.UnmetRole, db.Verdict = BucketUnmet, roleDecode, DayVerdictUnder
+			db.Status, db.UnmetRole, db.Verdict, db.Scope = BucketUnmet, roleDecode, DayVerdictUnder, ScopeDecodeOnly
 			db.Unmet = &Refusal{Reason: ReasonReplicaBound, Detail: fmt.Sprintf("At %d decode replicas, the bound, decode's limit is %.4g r/s, short of %.4g r/s",
 				q.bound.Decode, x, rate)}
 			return nil
@@ -1865,9 +1866,12 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 	}
 	type tally struct {
 		under, over, match, refused, withData int
-		decodeOnly                            bool
-		peak                                  *DayBucket
-		sized, had                            []*DayBucket
+		// decodeOnly is a bucket judged on decode alone, and fleetUnder a
+		// whole fleet's bucket under or unmet: an hour under is decode's
+		// alone only where no whole fleet's bucket was under.
+		decodeOnly, fleetUnder bool
+		peak                   *DayBucket
+		sized, had             []*DayBucket
 	}
 	var t []tally
 	for i := range buckets {
@@ -1900,6 +1904,9 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 			c.under++
 		case BucketRefused:
 			c.refused++
+		}
+		if b.Scope != ScopeDecodeOnly && (b.Status == BucketUnmet || (b.Needed != nil && b.Verdict == DayVerdictUnder)) {
+			c.fleetUnder = true
 		}
 		if b.Needed == nil {
 			continue
@@ -1939,7 +1946,8 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 		case c.match > 0 || c.over > 0:
 			out[i].Verdict = DayVerdictMatch
 		}
-		if c.decodeOnly && out[i].Verdict != DayVerdictRefused && out[i].Verdict != "" {
+		if c.decodeOnly && out[i].Verdict != DayVerdictRefused && out[i].Verdict != "" &&
+			(out[i].Verdict != DayVerdictUnder || !c.fleetUnder) {
 			out[i].Scope = ScopeDecodeOnly
 		}
 	}

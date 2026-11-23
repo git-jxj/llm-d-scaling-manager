@@ -80,6 +80,7 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	if err != nil {
 		return err
 	}
+	f.withLatency = true
 	st, err := f.readState(ctx)
 	if err != nil {
 		return err
@@ -121,6 +122,9 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	}
 	rep.Source.Recording = f.recording
 	rep.SelfCheck = f.checked
+	// As POST /v1/report: an over the router measured missing its TTFT
+	// target at the load judged is withheld.
+	rep.WithholdOverOnMeasured(f.series, f.latency)
 	rep.JudgeTrust()
 	if f.output == outputJSON {
 		enc := json.NewEncoder(out)
