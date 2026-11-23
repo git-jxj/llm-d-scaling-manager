@@ -1719,14 +1719,14 @@ var (
 // shorten it.
 var nodeReadProbeTimeout = 2 * time.Second
 
-// errNodeReadUnanswered is what nodeReadProbe returns, wrapping the List error,
-// before the API server has given a definite answer (success, Forbidden or
-// Unauthorized). A physical limiter alone is not ready on it; a composed policy
-// stays Ready and does not report it as node_read_denied (gpuPolicyReady).
 // errSettingsRestart is the cause that ends the manager when a restart
 // setting changed and --restart-on-settings-change is set.
 var errSettingsRestart = errors.New("a setting read only at start changed")
 
+// errNodeReadUnanswered is what nodeReadProbe returns, wrapping the List error,
+// before the API server has given a definite answer (success, Forbidden or
+// Unauthorized). A physical limiter alone is not ready on it; a composed policy
+// stays Ready and does not report it as node_read_denied (gpuPolicyReady).
 var errNodeReadUnanswered = errors.New("no answer yet from the API server on whether nodes may be listed")
 
 // nodeReadProbe reports whether this controller may list nodes.
