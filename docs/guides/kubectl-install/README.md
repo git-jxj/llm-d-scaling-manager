@@ -22,8 +22,11 @@ What the controller does for you on this path:
   manifest creates empty. It does not need `create` on Secrets.
 - **KEDA's copy.** It writes KEDA's client certificate into the one Secret
   the manifest creates in KEDA's namespace. No step for a person.
-- **Settings.** When a setting that is read at start changes, the controller
-  restarts itself.
+- **Settings.** It waits for its settings, live, with the reason in `ready`.
+  When a setting read at start changes later, it restarts itself.
+- **A suggested plan.** It writes one ScaledObject per model server in each
+  managed namespace into ConfigMap `scaling-manager-scaledobjects-plan`. You
+  review it and apply it.
 
 ## Prerequisites
 
@@ -98,8 +101,8 @@ kubectl apply --server-side -f settings.yaml
 ```
 <!-- guide:install.settings end -->
 
-   Until the settings name Prometheus, the controller cannot start, and
-   the kubelet restarts it.
+   Until the settings name Prometheus, and the CA Secret is mounted, the
+   controller waits. It stays live, and `ready` says what it waits for.
 
 5. Opt a namespace in:
 
@@ -140,9 +143,77 @@ kubectl get events -n scaling-manager-system --field-selector involvedObject.nam
 
 `kubectl wait` cannot wait on ConfigMap data, so a script polls `ready`.
 
-Then register your models with ScaledObjects, as on the other install
-paths. They point at `scaling-manager-external-scaler.scaling-manager-system.svc:9090`
-with `ClusterTriggerAuthentication` `scaling-manager-external-scaler-scaling-manager-system`.
+## Register your models
+
+The controller suggests one ScaledObject per model server: each Deployment
+whose pods carry `llm-d.ai/role` `decode` or `prefill`, with the model id
+from `--served-model-name` or `--model`. Nothing is applied until you do it:
+
+<!-- guide:register.plan start -->
+```bash
+# The controller's suggested ScaledObjects for one namespace. Review min and max, then apply them.
+NS=<model namespace>
+kubectl get configmap scaling-manager-scaledobjects-plan -n scaling-manager-system \
+  -o jsonpath="{.data.$NS}" > so-$NS.yaml
+kubectl apply -n $NS -f so-$NS.yaml
+```
+<!-- guide:register.plan end -->
+
+LeaderWorkerSets and DisaggregatedSets are not suggested yet: write their
+ScaledObjects by hand, with the same scaler address and
+ClusterTriggerAuthentication.
+
+## Monitoring, grants and the label guard
+
+Each is a release file applied per namespace, selected by label, and never
+kept in git with the switches.
+
+<!-- guide:extras.monitoring start -->
+```bash
+# Only where nothing scrapes the model servers yet (llm-d's monitoring components scrape the same port).
+kubectl apply -n <model namespace> -f scaling-manager-monitoring.yaml -l scaling-manager.llmd.ai/monitor=modelserver
+```
+<!-- guide:extras.monitoring end -->
+
+<!-- guide:extras.podwriter start -->
+```bash
+# Per namespace that shares GPUs, before utilizationShare active. Never in git.
+kubectl apply -n <model namespace> -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=pod-writer
+```
+<!-- guide:extras.podwriter end -->
+
+<!-- guide:extras.dsetwriter start -->
+```bash
+# Per namespace with a Static-role DisaggregatedSet, with dsetRoleWriter true. Never in git.
+kubectl apply -n <model namespace> -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=dset-role-writer
+```
+<!-- guide:extras.dsetwriter end -->
+
+<!-- guide:extras.guard start -->
+```bash
+# Optional, Kubernetes 1.30 or later. Only members of system:masters may then set the opt-in label.
+kubectl apply --server-side -f scaling-manager-label-guard.yaml
+```
+<!-- guide:extras.guard end -->
+
+## Move from an smt install
+
+Over a cluster-wide `smt` install, apply the manifest. The controller copies
+the `smt` install's scaler CA into its own Secrets, so KEDA stays connected
+with no restart of its operator (`make test-e2e-manifest-migrate`).
+
+<!-- guide:migrate.apply start -->
+```bash
+# Over an smt install made with --scope cluster. The settings ConfigMap is the same object; add the selector and label the namespaces.
+kubectl apply --server-side -f scaling-manager.yaml
+kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge \
+  -p '{"data":{"namespaceSelector":"scaling-manager.llmd.ai/managed=true,kubernetes.io/metadata.name in (<model namespace>)"}}'
+kubectl label namespace <model namespace> scaling-manager.llmd.ai/managed=true
+```
+<!-- guide:migrate.apply end -->
+
+A namespaced `smt` install is not moved: uninstall it, keeping the
+ScaledObjects, then install as above.
 
 ## Upgrade
 
@@ -158,6 +229,8 @@ the controller wrote.
 # Removes everything this install made, then checks nothing is left.
 I=app.kubernetes.io/instance=scaling-manager-system
 kubectl delete scaledobject -A -l "$I,app.kubernetes.io/managed-by=llm-d-scaling-manager"
+kubectl delete rolebinding,role,podmonitor -A -l "$I"
+kubectl delete validatingadmissionpolicybinding,validatingadmissionpolicy -l "$I"
 kubectl label namespace -l scaling-manager.llmd.ai/managed=true scaling-manager.llmd.ai/managed-
 kubectl delete -f scaling-manager.yaml
 kubectl get clusterrole,clusterrolebinding,clustertriggerauthentication -l "$I"
@@ -168,9 +241,7 @@ The settings go with the namespace.
 
 ## Not in this draft yet
 
-- The suggested ScaledObjects (`scaling-manager-scaledobjects-plan`).
-- `scaling-manager-grants.yaml` (pod writer, DisaggregatedSet role writer)
-  and `scaling-manager-monitoring.yaml`.
-- The conflict checks against another scaling manager.
-- A move from an `smt` install. The scaler Secrets keep their names here
-  but change type, which an existing install cannot take.
+- Suggested ScaledObjects for LeaderWorkerSets and DisaggregatedSets.
+- The EPP monitoring objects of `scaling-manager-monitoring.yaml`.
+- The kustomize tarball and the advanced path, least privilege per
+  namespace.

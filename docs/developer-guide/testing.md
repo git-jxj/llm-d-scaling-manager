@@ -2599,9 +2599,43 @@ works there. In order, and a step that fails stops the run:
    Nothing labelled `app.kubernetes.io/instance=scaling-manager-system` may be
    left, and the namespace must be gone.
 
+Between those steps the run also checks:
+
+- before the settings exist, the controller waits with 0 restarts and the
+  reason in `ready`, and then starts with no restart;
+- `scaling-manager-monitoring.yaml` applied in the model namespace;
+- each grant of `scaling-manager-grants.yaml` gives the controller its right
+  in the model namespace only once applied there;
+- `scaling-manager-label-guard.yaml`: a tenant who may edit namespaces is
+  denied the opt-in label, and the admin is not;
+- the plan: a model-server Deployment appears in
+  `scaling-manager-scaledobjects-plan`, and the suggestion, applied as is,
+  becomes a Ready ScaledObject.
+
 The summary and the smoke log are in `dist/manifest-e2e-logs`
 (`MANIFEST_E2E_LOGS`). Not in CI yet. Not covered: the upgrade from the
-previous release, Argo CD and Flux, and the move from an `smt` install.
+previous release, Argo CD and Flux.
+
+#### The move from an smt install
+
+`make test-e2e-manifest-migrate` (`test/manifest-install/migrate.sh`), on the
+same prerequisites and on a cluster where no scaling manager was installed:
+
+1. Builds the tools image with the rendered release files, and runs `smt
+   install --scope cluster` from it.
+2. Applies a probe Deployment and a ScaledObject on the scaler over mutual
+   TLS, and waits until KEDA reports it Ready with the scaler's metric.
+3. Applies `scaling-manager.yaml` server-side over the `smt` install, adds
+   `namespaceSelector`, and labels the model namespace.
+4. The controller's new Opaque CA Secret must hold the `smt` CA, the log must
+   say it copied it, KEDA's copy must be unchanged, and `scalerTLS` must be
+   mutual TLS.
+5. `kedaConnection` must turn `current` and the probe stay Ready, with
+   KEDA's operator Pod unchanged: the move needs no restart of KEDA.
+
+Then it removes what both installs made. Run it before the manifest e2e on
+the same cluster, or on its own: it refuses a cluster where
+`scaling-manager-system` exists.
 
 ### Install with the tools image
 

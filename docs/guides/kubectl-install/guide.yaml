@@ -43,12 +43,50 @@ check:
         | jq -r '.data | to_entries[] | select(.key | startswith("preflight.")) | "\(.key) \(.value)"'
       kubectl get events -n scaling-manager-system --field-selector involvedObject.name=scaling-manager-controller-status
 
+register:
+  plan:
+    note: The controller's suggested ScaledObjects for one namespace. Review min and max, then apply them.
+    run: |
+      NS=<model namespace>
+      kubectl get configmap scaling-manager-scaledobjects-plan -n scaling-manager-system \
+        -o jsonpath="{.data.$NS}" > so-$NS.yaml
+      kubectl apply -n $NS -f so-$NS.yaml
+
+extras:
+  monitoring:
+    note: Only where nothing scrapes the model servers yet (llm-d's monitoring components scrape the same port).
+    run: |
+      kubectl apply -n <model namespace> -f scaling-manager-monitoring.yaml -l scaling-manager.llmd.ai/monitor=modelserver
+  podwriter:
+    note: Per namespace that shares GPUs, before utilizationShare active. Never in git.
+    run: |
+      kubectl apply -n <model namespace> -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=pod-writer
+  dsetwriter:
+    note: Per namespace with a Static-role DisaggregatedSet, with dsetRoleWriter true. Never in git.
+    run: |
+      kubectl apply -n <model namespace> -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=dset-role-writer
+  guard:
+    note: Optional, Kubernetes 1.30 or later. Only members of system:masters may then set the opt-in label.
+    run: |
+      kubectl apply --server-side -f scaling-manager-label-guard.yaml
+
+migrate:
+  apply:
+    note: Over an smt install made with --scope cluster. The settings ConfigMap is the same object; add the selector and label the namespaces.
+    run: |
+      kubectl apply --server-side -f scaling-manager.yaml
+      kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge \
+        -p '{"data":{"namespaceSelector":"scaling-manager.llmd.ai/managed=true,kubernetes.io/metadata.name in (<model namespace>)"}}'
+      kubectl label namespace <model namespace> scaling-manager.llmd.ai/managed=true
+
 uninstall:
   all:
     note: Removes everything this install made, then checks nothing is left.
     run: |
       I=app.kubernetes.io/instance=scaling-manager-system
       kubectl delete scaledobject -A -l "$I,app.kubernetes.io/managed-by=llm-d-scaling-manager"
+      kubectl delete rolebinding,role,podmonitor -A -l "$I"
+      kubectl delete validatingadmissionpolicybinding,validatingadmissionpolicy -l "$I"
       kubectl label namespace -l scaling-manager.llmd.ai/managed=true scaling-manager.llmd.ai/managed-
       kubectl delete -f scaling-manager.yaml
       kubectl get clusterrole,clusterrolebinding,clustertriggerauthentication -l "$I"
