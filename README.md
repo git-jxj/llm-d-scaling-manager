@@ -61,86 +61,160 @@ the scaler answers with the current replica count, so nothing moves.
 
 ## Install
 
-From a release, with docker; no checkout. You need llm-d model servers in a
-namespace, KEDA and a Prometheus Operator. A cluster admin runs the lines
-marked `# admin`, the namespace owner the rest, each with their own
-kubeconfig. This installs it passive with a GPU quota, so it decides and
-changes nothing. `<gpu product>` is the `GPU.PRODUCT` column of
-`kubectl get nodes -L nvidia.com/gpu.product`.
+From a release, with docker; no checkout and no `make`. It installs
+**passive**: it works out what it would do and changes nothing, until you
+switch it on.
 
-Once per machine: the release's tools image, by the digest the release
-prints. The image carries the release files, signed with it
+**You need:**
+
+- llm-d model servers in one or more namespaces, KEDA, and the Prometheus
+  Operator.
+- A cluster admin and a namespace owner, each with their own kubeconfig. The
+  lines marked `# admin` need the cluster admin.
+- Your GPU product and how many GPUs the models may hold together. The product
+  is the `GPU.PRODUCT` column of `kubectl get nodes -L nvidia.com/gpu.product`.
+- For P/D on a DisaggregatedSet: LeaderWorkerSet v0.10.0 or later
+  (`kubectl api-resources --api-group=disaggregatedset.x-k8s.io` lists
+  `disaggregatedsetrolescalers`).
+
+### 1. Get the `smt` command
+
+Once per machine. The image carries the release files, signed with it
 ([verify it](docs/reference/tools-install.md#set-up-smt)). Use a token
-kubeconfig (the container runs no cloud CLI), and for an API server at
-`127.0.0.1` (kind) add `--network host` to the `docker run`. The namespace
-owner needs the stock `admin` ClusterRole bound in the namespace, nothing
-more. Admin and owner each use their own kubeconfig snapshot: set
-`SMT_KUBECONFIG` to the one to use.
+kubeconfig, because the container runs no cloud CLI. For an API server at
+`127.0.0.1` (kind), add `--network host` to the `docker run`.
 
 ```bash
 TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:v0.12.3
-mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
+mkdir -p ~/.smt && chmod 700 ~/.smt
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
+# One kubeconfig snapshot per role: run each line while kubectl is logged in as that role.
+kubectl config view --minify --flatten > ~/.smt/admin.kubeconfig && chmod 600 ~/.smt/admin.kubeconfig   # admin
+kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig               # owner
 ```
 
-Then:
+The owner needs only the stock `admin` ClusterRole, bound in the namespace
+the scaling manager runs in.
+
+### 2. Install it passive, sharing in shadow
+
+Pick the block for your layout. Each command checks before it writes, stops on
+a problem with the fix, and can be run again.
+
+**Models in several namespaces**: one controller in its own namespace, and
+one GPU budget shared by all of them.
 
 ```bash
-export NAMESPACE=<the namespace running llm-d>
-smt admin-setup -n $NAMESPACE      # admin, once per namespace
-smt install -n $NAMESPACE --prometheus-url https://<prometheus>:9090 --quota "<gpu product>=<gpus>"
-smt admin-finish -n $NAMESPACE     # admin: KEDA's client certificate, then drop the preflight's cluster reads
+export CTRL=scaling-manager-system
+export MODEL_NAMESPACES="<ns1> <ns2>"                    # every namespace with llm-d model servers
+kubectl create namespace $CTRL                                                          # admin
+SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-setup -n $CTRL \
+  $(printf -- '--model-namespace %s ' $MODEL_NAMESPACES)                                # admin
+smt install -n $CTRL --prometheus-url https://<prometheus>:9090 \
+  --quota "<gpu product>=<gpus>" --set quotaScope=cluster --utilization-share shadow
+SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-finish -n $CTRL                        # admin
 ```
 
-`install` runs the read-only preflight, stops on a `FAIL` and prints its fix,
-and ends with the `admin-finish` line. Each command can be run again. A
-private CA for Prometheus: add `--prometheus-ca <file in this directory>`.
-KEDA not found: add `--keda-namespace <namespace>` to `admin-setup`. Flags and
-exit codes: [install commands](docs/reference/tools-install.md). The full
-guide, with the install by hand from the release files:
-[install in a namespace](docs/guides/install-in-namespace/).
-
-Then register the model servers and turn sharing on in shadow. The model
-servers must drain on termination, because sharing scales a donor down;
-`workload-patch` writes what each one needs
-([prepare model servers](docs/guides/prepare-workloads/)):
+**Models in one namespace**: the controller runs beside them.
 
 ```bash
-smt workload-patch -n $NAMESPACE                         # what each model server still needs
-smt scaledobjects-plan -n $NAMESPACE --out plan.yaml     # lists your model servers; edit it
-smt scaledobjects-apply -n $NAMESPACE --plan plan.yaml   # registers them with KEDA
-smt utilization-share check -n $NAMESPACE                # is there a budget to share?
-kubectl patch configmap scaling-manager-settings -n $NAMESPACE --type merge \
-  -p '{"data":{"utilizationShare":"shadow"}}'           # report what sharing would move
+export CTRL=<the namespace running llm-d> MODEL_NAMESPACES=$CTRL
+SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-setup -n $CTRL                         # admin
+smt install -n $CTRL --prometheus-url https://<prometheus>:9090 \
+  --quota "<gpu product>=<gpus>" --utilization-share shadow
+SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-finish -n $CTRL                        # admin
 ```
 
-Leave it through each model's busy period and read what it would have done
-(how: [per model](docs/guides/try-in-passive-mode/README.md#verification),
-[for sharing](docs/guides/try-in-passive-mode/README.md#utilization-share-in-passive-mode)).
-Then go active:
+`install` should end with `Installed in <namespace>, passive.` and
+`admin-finish` with `serves the scaler over mutual TLS`. Some options:
+
+- A private CA for Prometheus: add `--prometheus-ca <file in this directory>`
+  to `install`.
+- KEDA not found: add `--keda-namespace <namespace>` to `admin-setup`.
+- `admin-setup` adds the monitors that scrape the model servers and each
+  router's endpoint picker, where nothing scrapes them yet.
+
+### 3. Register the models
+
+One ScaledObject per model server. On a DisaggregatedSet, there is one per
+role, prefill and decode.
 
 ```bash
-smt release-files --out release                          # the release files the image carries
-sed -e "s/__NAMESPACE__/$NAMESPACE/g" -e "s/__MODEL_NAMESPACE__/$NAMESPACE/g" \
-  release/scaling-manager-activate.yaml | kubectl apply -f -   # admin: the one grant of patch on pods
-kubectl patch configmap scaling-manager-settings -n $NAMESPACE --type merge \
+for ns in $MODEL_NAMESPACES; do
+  SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt scaledobjects-plan -n $ns \
+    --controller-namespace $CTRL --out plan-$ns.yaml              # read-only; edit the plan if you like
+  SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt scaledobjects-apply -n $ns \
+    --controller-namespace $CTRL --plan plan-$ns.yaml
+done
+```
+
+A DisaggregatedSet whose roles are `scaling.mode: Static` has no `/scale` for
+KEDA. Add `--dset-role-writer` to `admin-setup` and `install`, and annotate
+the set ([P/D in passive mode](docs/guides/try-in-passive-mode/README.md#on-a-disaggregatedset)).
+In passive mode it still writes nothing.
+
+### 4. Watch what it would do
+
+Leave it through each model's busy period, then read the result.
+
+```bash
+kubectl get configmap scaling-manager-controller-status -n $CTRL \
+  -o jsonpath='{.data.limiter} {.data.utilizationShare}{"\n"}'        # quota/... shadow
+kubectl logs -n $CTRL deploy/scaling-manager-controller-manager \
+  | grep 'Utilization share: would rebalance'                         # the GPUs it would move
+```
+
+Per model and per metric: [verification](docs/guides/try-in-passive-mode/README.md#verification)
+and [utilization share in passive mode](docs/guides/try-in-passive-mode/README.md#utilization-share-in-passive-mode).
+
+### 5. Go active, when you are ready
+
+Sharing scales a donor down, so each model server must drain on termination.
+`smt workload-patch -n <ns>` reports what each one still needs
+([prepare model servers](docs/guides/prepare-workloads/)).
+
+```bash
+smt release-files --out release
+for ns in $MODEL_NAMESPACES; do                                       # admin: the one grant of patch on pods
+  sed -e "s/__NAMESPACE__/$CTRL/g" -e "s/__MODEL_NAMESPACE__/$ns/g" \
+    release/scaling-manager-activate.yaml | kubectl apply -f -
+done
+kubectl patch configmap scaling-manager-settings -n $CTRL --type merge \
   -p '{"data":{"passive":"false","utilizationShare":"active"}}'
 ```
 
-Sharing is switched by the settings key `utilizationShare`, as here. The
-`utilization-share shadow`/`activate` commands write the scaling policy's
-optimizer block instead; the settings key wins over that block, and the
-release's settings file sets it (to `off`), so on this install switch it with
-`kubectl patch` ([configuration](docs/reference/configuration.md)).
+Switch sharing with the settings key `utilizationShare`, as here, not with
+`smt utilization-share shadow`/`activate`. The settings key wins over the
+scaling policy that those commands write
+([configuration](docs/reference/configuration.md)).
 
-Every step, with its checks: [install in a namespace](docs/guides/install-in-namespace/)
-(or [for the whole cluster](docs/guides/install-cluster-wide/)),
-[try it in passive mode](docs/guides/try-in-passive-mode/) and
-[turn on utilization share](docs/guides/utilization-share/). Without a quota,
-leave out `limiter`, `quotas` and the sharing steps: each model is then scaled
-on its own. From a checkout instead: `make deploy-scaling-manager`
-([installer options](docs/reference/install-options.md)).
+### Undo
+
+```bash
+kubectl patch configmap scaling-manager-settings -n $CTRL --type merge \
+  -p '{"data":{"utilizationShare":"off"}}'                            # sharing off; the budget stays
+```
+
+To remove it completely, follow the cleanup in
+[install in a namespace](docs/guides/install-in-namespace/#cleanup). With
+several namespaces, first run
+`SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-setup -n $CTRL --single-namespace`
+(admin), which takes the model namespaces back. Your models keep serving
+throughout.
+
+### More
+
+- Every step with its checks:
+  - [install in a namespace](docs/guides/install-in-namespace/);
+  - [several namespaces, one budget](docs/guides/utilization-share-namespaced/);
+  - [for the whole cluster](docs/guides/install-cluster-wide/);
+  - [try it in passive mode](docs/guides/try-in-passive-mode/).
+- Flags and exit codes: [install commands](docs/reference/tools-install.md).
+- Without a GPU quota, leave out `--quota` and `--utilization-share`, and each
+  model is scaled on its own.
+- From a checkout instead: `make deploy-scaling-manager`
+  ([installer options](docs/reference/install-options.md)).
 
 ## Contributing
 

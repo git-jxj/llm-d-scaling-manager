@@ -168,12 +168,10 @@ The release's tools image installs option A (step 8) with no checkout and no
 examples use `team-a` and `team-b`. Before you start, know what it does not
 do that steps 6 to 10 do:
 
-- It adds no EPP ServiceMonitor. The arrival rate, the flow-control queue,
-  scale from zero and the SLO checks read the EPP's metrics from Prometheus,
-  so something must scrape each EPP: llm-d's router monitoring
-  (`guides/recipes/router/features/monitoring.values.yaml` in llm-d), or
-  `make setup-prereqs` from a checkout.
 - It installs no KEDA and finds no namespaces for you.
+- `admin-setup` adds an EPP ServiceMonitor only where nothing scrapes the EPP
+  yet (`--no-epp-monitor` adds none). The arrival rate, the flow-control
+  queue, scale from zero and the SLO checks read the EPP's metrics.
 - Options B and C need `make`.
 
 Whoever owns `scaling-manager-system` acts as the scaling manager in every
