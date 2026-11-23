@@ -10,6 +10,7 @@
 // FLAG_WORDS is every flag the engine raises, in plain words, and what clears
 // it. A flag missing here is shown by its name (TestPageNamesEveryFlag).
 const FLAG_WORDS = {
+  MeasuredTTFTOverTarget: ["The model finds a replica to spare, but the router measured the TTFT over its target here: a fleet that missed its TTFT target has nothing to spare, so no verdict is given.", "a TTFT within its target as measured"],
   ShapeLoadMismatch: ["The measured shape (the last cycles') is more than 20% off the shape of the cycles the load was read from: the load is priced at traffic other than the traffic that made it.", "ask the shape load to price the load at its own cycles' shape"],
   UnvalidatedTTFT: ["The TTFT model is not validated, and its figures are not a bound. On the validation recordings (not this fleet) it read high at an assumed prompt spread and up to 33% low at the spread actually sent; the banner gives the figures.", "a fresh frozen staircase run that validates the model"],
   AssumedVP: ["V_P, the prefill token rate, is the value you typed, not a learned one.", "learn V_P: run at a load that keeps a prefill pod busy for a minute"],
@@ -146,6 +147,7 @@ function val(f) {
 function why(f) {
   if (!f) return "not priced";
   if (!f.refused) return "";
+  if (f.refused.reason === "NoPrefillCapacity") return noPrefillWords(f.refused);
   return f.refused.reason + (f.refused.detail ? ": " + f.refused.detail : "");
 }
 
@@ -1195,7 +1197,7 @@ function unmetAdvice(z) {
   const untick = low ? ', or untick "Size for the worst corner of V_P and f"' : "";
   switch (reason) {
   case "NoPrefillCapacity":
-    return 'The source learned no prefill rate V_P: type one under "Assume a term the source did not learn".';
+    return noPrefillWords(u.refused) + ' Type a prefill speed under "Assume a term the source did not learn", or load a busier window.';
   case "NoTPOTHistogram":
     return "The source learned no TPOT percentile ratio R_q: type an assumed ratio under the TPOT target, or pick the mean.";
   case "TargetBelowFloor": {
@@ -1317,6 +1319,9 @@ function drawBars(rows, fleet, rate) {
   const W = 960, L = 70, R = 200, rowH = 26, T = 6, pw = W - L - R;
   const H = T + all.length * rowH + 22;
   const X = v => L + pw * Math.min(v, xmax) / xmax;
+  // A role's limit past the fleet's operating-point cap is drawn solid to
+  // the cap and faded beyond it: the fleet serves no more than the cap.
+  const opCap = state.plan ? val(state.plan.ttft.markers.operatingCap) : null;
   let s = "";
   all.forEach((r, i) => {
     const y = T + i * rowH, v = val(r.fig);
@@ -1324,7 +1329,11 @@ function drawBars(rows, fleet, rate) {
     const labelX = v == null ? 0 : (capped ? Math.max(X(v), X(val(fleet.withoutHeadroom))) : X(v)) + 6;
     s += `<text class="lbl" x="${L - 8}" y="${y + 14}" text-anchor="end">${r.name}</text>`;
     s += `<rect class="barbg" x="${L}" y="${y + 5}" width="${pw}" height="10" rx="4"/>`;
-    if (v != null) {
+    if (v != null && opCap != null && v > opCap) {
+      s += `<rect class="${r.cls}" x="${L}" y="${y + 5}" width="${Math.max(2, X(opCap) - L).toFixed(1)}" height="10" rx="4"/>` +
+        `<rect class="${r.cls} beyondcap" x="${X(opCap).toFixed(1)}" y="${y + 5}" width="${Math.max(0, X(v) - X(opCap)).toFixed(1)}" height="10" rx="4"/>`;
+      s += `<text class="lblp" x="${labelX}" y="${y + 14}">${fmtRate(v)} (past the cap ${fmtRate(opCap)})</text>`;
+    } else if (v != null) {
       s += `<rect class="${r.cls}" x="${L}" y="${y + 5}" width="${Math.max(2, X(v) - L).toFixed(1)}" height="10" rx="4"/>`;
       s += `<text class="lblp" x="${labelX}" y="${y + 14}">${fmtRate(v)}${capped ? " (without headroom " + fmtRate(val(fleet.withoutHeadroom)) + ")" : ""}</text>`;
     } else {
@@ -1340,6 +1349,7 @@ function drawBars(rows, fleet, rate) {
   s += `<text x="${L + pw}" y="${yb + 14}" text-anchor="start" dx="14">r/s</text>`;
   s += `<line class="guide" x1="${X(rate)}" x2="${X(rate)}" y1="${T}" y2="${yb}"/>` +
     `<text class="lbl" x="${X(rate) + 4}" y="${T + 2}" dy="-2">you chose ${fmtRate(rate)}</text>`;
+  if (opCap != null && opCap < xmax) s += `<line class="marker" x1="${X(opCap)}" x2="${X(opCap)}" y1="${T}" y2="${yb}"/>`;
   const svg = el("bars");
   svg.setAttribute("viewBox", `0 -10 ${W} ${H + 10}`);
   svg.innerHTML = s;
@@ -1430,7 +1440,8 @@ function renderTTFT() {
   if (A != null) dots.push({x: t.line.atRate.rate, y: A, cls: "c-mix", label: `${fmtSec(A)} at ${fmtRate(t.line.atRate.rate)}`, below: true, side: aSide});
   if (B != null) dots.push({x: B, y: t.line.target, cls: "c-mix", filled: true, label: `${fmtRate(B)} meets it${aboveCap(p, B)}`, side: aSide === "left" ? "right" : "left"});
   const markers = [];
-  if (val(m.prefillKnee) != null) markers.push({x: val(m.prefillKnee), label: "prefill knee"});
+  const pkLB = kneeLowerBound(m.prefillKnee);
+  if (val(m.prefillKnee) != null) markers.push({x: val(m.prefillKnee), label: pkLB ? "prefill knee at least" : "prefill knee", after: pkLB ? " r/s (lower bound)" : ""});
   if (val(m.decodeKnee) != null) markers.push({x: val(m.decodeKnee), label: "decode knee"});
   if (val(m.operatingCap) != null) markers.push({x: val(m.operatingCap), label: "cap"});
   let onset = null;
@@ -1441,7 +1452,7 @@ function renderTTFT() {
   el("ttfttitle").textContent = `TTFT ${t.statistic} against the request rate`;
   el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : "One line for the mix; its point B is the prefill limit.";
   chart(el("ttftchart"), {W: 640, H: 340, xmax, ymax, series, target: t.line.target, belowFloor, floor: belowFloor ? floor : null,
-    rate, dots, markers, knee, onset, pinTarget, clip: "clip-ttft"});
+    rate, dots, markers, knee, kneeLB: pkLB && knee === val(m.prefillKnee), onset, pinTarget, clip: "clip-ttft"});
   el("ttftlegend").innerHTML = legend(series, onset != null);
   el("ttftpoints").innerHTML =
     `<div>Open circle, the TTFT at your rate: <b>${figText(t.line.atRate.figure, fmtSec)}</b> ${flagChips(t.line.atRate.figure)}</div>` +
@@ -1485,7 +1496,8 @@ function renderTPOT() {
   if (cap != null) markers.push({x: cap, label: "cap"});
   el("tpottitle").textContent = `TPOT ${t.statistic} against the request rate`;
   chart(el("tpotchart"), {W: 460, H: 340, xmax, ymax, series, target: t.target, belowFloor, floor: belowFloor ? floor : null,
-    rate, dots, markers, knee: lk, pinTarget, clip: "clip-tpot"});
+    rate, dots, markers, knee: lk, kneeLB: kneeLowerBound(p.ttft.markers.prefillKnee) && lk === val(p.ttft.markers.prefillKnee),
+    pinTarget, clip: "clip-tpot"});
   el("tpotlegend").innerHTML = legend(series, false);
   const u = t.atTarget.rate.uncapped;
   el("tpotpoints").innerHTML =
@@ -1517,8 +1529,10 @@ function chart(svg, o) {
   let s = `<defs><clipPath id="${o.clip}"><rect x="${L}" y="${T}" width="${pw}" height="${ph}"/></clipPath></defs>`;
   if (o.onset != null && o.onset < o.xmax) s += `<rect class="onset" x="${X(o.onset)}" y="${T}" width="${L + pw - X(o.onset)}" height="${ph}"/>`;
   if (o.knee != null && o.knee < o.xmax) {
-    s += `<rect class="sat" x="${X(o.knee)}" y="${T}" width="${L + pw - X(o.knee)}" height="${ph}"/>` +
-      `<text x="${L + pw - 4}" y="${T + ph - 8}" text-anchor="end">saturated</text>`;
+    // Past a knee priced from a lower bound of V_P the fleet is not known to
+    // saturate: the true knee may be higher.
+    s += `<rect class="${o.kneeLB ? "satlb" : "sat"}" x="${X(o.knee)}" y="${T}" width="${L + pw - X(o.knee)}" height="${ph}"/>` +
+      `<text x="${L + pw - 4}" y="${T + ph - 8}" text-anchor="end">${o.kneeLB ? "past a lower-bound knee" : "saturated"}</text>`;
   }
   for (const v of ticks(o.ymax, 5)) {
     if (v > o.ymax) continue;
@@ -1532,13 +1546,17 @@ function chart(svg, o) {
   s += `<text x="${L + pw / 2}" y="${H - 4}" text-anchor="middle">request rate, r/s</text>` +
     `<text x="12" y="${T + ph / 2}" transform="rotate(-90 12 ${T + ph / 2})" text-anchor="middle">${yms ? "ms" : "s"}</text>`;
   // The knees and the cap, labelled along the top, staggered when close.
-  let lastX = -1e9, row = 0;
+  // A label is staggered up a row when it would touch the one before it,
+  // whose half width is about 3.3 px a character at the chart's font.
+  let lastX = -1e9, lastHalf = 0, row = 0;
   for (const mk of o.markers.slice().sort((a, b) => a.x - b.x)) {
     if (mk.x > o.xmax) continue;
-    row = X(mk.x) - lastX < 70 ? (row + 1) % 2 : 0;
+    const text = `${mk.label} ${fmtNum(mk.x)}${mk.after || ""}`, half = 3.3 * text.length;
+    row = X(mk.x) - lastX < lastHalf + half + 6 ? (row + 1) % 2 : 0;
     lastX = X(mk.x);
+    lastHalf = half;
     s += `<line class="marker" x1="${X(mk.x)}" x2="${X(mk.x)}" y1="${T - 4}" y2="${T + ph}"/>` +
-      `<text x="${X(mk.x)}" y="${T - 8 - 11 * row}" text-anchor="middle">${esc(mk.label)} ${fmtNum(mk.x)}</text>`;
+      `<text x="${X(mk.x)}" y="${T - 8 - 11 * row}" text-anchor="middle">${esc(text)}</text>`;
   }
   let g = "";
   for (const sr of o.series) {
@@ -2323,7 +2341,7 @@ function renumberShapes() {
 }
 
 // addShapeRow adds a request-shape row: IL, OL and hit boxes and a remove
-// button. A blank row is the measured shape.
+// button. A blank row is the shape of the traffic the load ran at.
 function addShapeRow(il, ol, hit) {
   const rows = el("rshapes");
   if (rows.children.length >= MAX_REPORT_SHAPES) {

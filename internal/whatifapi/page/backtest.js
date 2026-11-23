@@ -5,7 +5,8 @@
 // page loads this file after scenario.js (esc) and dayplan.js (the time
 // axis helpers) and before planner.js, which puts the markup on the page.
 //
-// Two panels share one time axis: TTFT, then TPOT, each in seconds. Per
+// Two panels share one time axis: TTFT, then TPOT, each on a log axis whose
+// ticks carry their unit (ms under a second, else s). Per
 // panel, the predicted mean and p90 are step lines, the band from the p90 to
 // its upper bound is a wash of the p90's hue, and the measured mean and p90
 // are dots (mean hollow, p90 filled). A measured p90 in a histogram bucket
@@ -20,8 +21,8 @@
 
 // BT_PANELS is each panel: the key of its figures and its title.
 const BT_PANELS = [
-  {key: "ttft", title: "TTFT, seconds", h: 170},
-  {key: "tpot", title: "TPOT, seconds", h: 150},
+  {key: "ttft", title: "TTFT (log scale; each tick carries its unit)", h: 170},
+  {key: "tpot", title: "TPOT (log scale; each tick carries its unit)", h: 150},
 ];
 // BT_STATS are the statistics drawn, each with its class.
 const BT_STATS = [{stat: "mean", cls: "c-0", dot: "dot hollow"}, {stat: "p90", cls: "c-1", dot: "dot"}];

@@ -20,7 +20,7 @@ import (
 // inputsId names, which must implement Reporter.
 
 // ReportRequest is POST /v1/report's body. Every field but InputsID
-// defaults: the recorded replicas, the measured shape, 50%, 80% and 100% of
+// defaults: the recorded replicas, the load's shape, 50%, 80% and 100% of
 // the knee and the load seen, the policy's SLO and headroom, TTFT at p50 and
 // p90 and TPOT at the mean and p90.
 type ReportRequest struct {
@@ -28,7 +28,9 @@ type ReportRequest struct {
 	Fleet    *FleetKnob `json:"fleet,omitempty"`
 	// Shapes are the request shapes to answer for: "measured", or
 	// "IL/OL[/hit]" with lengths in tokens, a k suffix for 1024 ("8k/200",
-	// "1k/4k/0.3"). Absent, the measured shape.
+	// "1k/4k/0.3"), or "load", the shape of the cycles the load judged at
+	// was read from. Absent, the load's shape, or the measured one where no
+	// cycle of the load read a shape (a stated load).
 	Shapes []string `json:"shapes,omitempty"`
 	// Loads are the table's rates: "5r/s", "80%" of the shape's fleet knee,
 	// "seen", or the load seen grown, "seen x1.5" (also "seen×1.5",
@@ -67,7 +69,8 @@ type ReportRequest struct {
 type ReportQuery struct {
 	// Prefill and Decode are the replica counts; 0 is the recorded count.
 	Prefill, Decode int
-	// Shapes are the shapes to answer for; none is the measured one.
+	// Shapes are the shapes to answer for; none is the load's, or the
+	// measured one where the load read none.
 	Shapes []ReportShapeAsk
 	// Loads are the table's rates; none is 50%, 80%, 100% and seen.
 	Loads []ReportLoadAsk
@@ -621,6 +624,7 @@ func (s *Server) report(ctx context.Context, req ReportRequest) (*ReportResponse
 	out.SchemaVersion = SchemaVersion
 	// The source's self-check was read before this report stated anything.
 	out.SelfCheck = e.doc.SelfCheck.RanWithout(&Stated{Assume: q.Assume, ArrivalCV2: q.ArrivalCV2})
+	out.WithholdOverOnMeasured(e.series, e.latency)
 	out.JudgeTrust()
 	return out, nil
 }

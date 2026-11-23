@@ -162,6 +162,11 @@ const (
 	// variant other than the priced ones served: the rate is the model's,
 	// and part of it went to pods Actual does not count.
 	FlagOtherVariantsServed = "OtherVariantsServed"
+	// FlagMeasuredTTFTOverTarget is a bucket the model would call over
+	// (a replica to spare) whose TTFT, as the router measured it in the
+	// bucket, was over its target: it is given no verdict, since a fleet
+	// that missed its TTFT target has nothing to spare (DayBucket.MeasuredTTFT).
+	FlagMeasuredTTFTOverTarget = "MeasuredTTFTOverTarget"
 )
 
 // DayPlanRequest is POST /v1/dayplan. Every field but InputsID defaults as a
@@ -377,6 +382,15 @@ type DayBucket struct {
 	// absent when both are 0.
 	NotServing *FleetCounts `json:"notServing,omitempty"`
 	Verdict    string       `json:"verdict,omitempty"`
+	// Scope is ScopeDecodeOnly where the verdict judges decode alone: the
+	// source did not price prefill, so "over" says decode has a replica to
+	// spare, never that the fleet does. Empty on a whole fleet's verdict.
+	Scope string `json:"scope,omitempty"`
+	// MeasuredTTFT is the TTFT the router measured in the bucket at the TTFT
+	// target's statistic, seconds, read as a backtest step reads it (the
+	// bucket's last cycle, whose window covers it); absent with no router
+	// histogram, too few requests to read the statistic, or no TTFT target.
+	MeasuredTTFT *float64 `json:"measuredTTFT,omitempty"`
 	// Trust is what the source's self-check says of Verdict, as a
 	// report's verdict's: "not trusted: ..." when the verdict rests on
 	// figures it found inconsistent (the day plan then exits
@@ -416,6 +430,9 @@ type DayHour struct {
 	// when none was.
 	NotServing *FleetCounts `json:"notServing,omitempty"`
 	Verdict    string       `json:"verdict,omitempty"`
+	// Scope is ScopeDecodeOnly where a bucket the verdict counts judged
+	// decode alone (DayBucket.Scope).
+	Scope string `json:"scope,omitempty"`
 	// Sized and Unmet are how many of its buckets were sized and unmet.
 	Sized int `json:"sized"`
 	Unmet int `json:"unmet"`
@@ -461,12 +478,16 @@ type DaySummary struct {
 	HadGPUHours    *float64     `json:"hadGpuHours,omitempty"`
 	HadGPUHoursAll *float64     `json:"hadGpuHoursAll,omitempty"`
 	// UnderHours are the hours with a bucket under or unmet (SLO risk),
-	// OverHours those whose every sized bucket was over (waste), and
-	// RefusedHours those whose every bucket with data was refused.
-	UnderHours   []time.Time `json:"underHours"`
-	OverHours    []time.Time `json:"overHours"`
-	RefusedHours []time.Time `json:"refusedHours"`
-	Counts       DayCounts   `json:"counts"`
+	// OverHours those whose every sized bucket was over, the whole fleet
+	// judged (waste), DecodeOverHours those over with decode judged alone
+	// (DayHour.Scope): decode has a replica to spare, and prefill was not
+	// sized, so they are no fleet's waste. RefusedHours are those whose
+	// every bucket with data was refused.
+	UnderHours      []time.Time `json:"underHours"`
+	OverHours       []time.Time `json:"overHours"`
+	DecodeOverHours []time.Time `json:"decodeOverHours"`
+	RefusedHours    []time.Time `json:"refusedHours"`
+	Counts          DayCounts   `json:"counts"`
 }
 
 // RoleHours is replica-hours per role; Prefill is absent where prefill was
@@ -564,7 +585,7 @@ func (s *Server) dayPlan(ctx context.Context, req DayPlanRequest) ([]byte, error
 func DayPlan(ctx context.Context, res *Resolved, req DayPlanRequest, whatifSchema string) (*DayPlanResponse, error) {
 	doc := res.Inputs
 	doc.InputsID = contentID("inputs", res.Content)
-	e := &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series}
+	e := &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency}
 	req.InputsID = e.id
 	q, err := dayQuestionOf(e, req)
 	if err != nil {
@@ -989,14 +1010,30 @@ func isRefusal(r whatif.Result) bool {
 // and the effect.
 func dayRefusalOf(role, term string, r whatif.Result, effect string) DayRefusal {
 	u, _ := r.(whatif.Unanswerable)
-	return DayRefusal{Role: role, Term: term, Reason: string(u.Reason), Detail: u.Detail, Hint: refusalHint(term, u.Reason), Effect: effect}
+	hint := refusalHint(term, u.Reason)
+	if u.Reason == whatif.NoPrefillCapacity && slices.Contains(u.Flags, whatif.VPLowerBound) {
+		hint = NoPrefillCapacityLowerBoundHint
+	}
+	return DayRefusal{Role: role, Term: term, Reason: string(u.Reason), Detail: u.Detail, Hint: hint, Effect: effect}
 }
+
+// The words a NoPrefillCapacity refusal is said in, the same on the page and
+// in the CLI: NoPrefillCapacityLowerBoundHint where the source learned V_P
+// only as a lower bound (the prefill pods never queued, flag VPLowerBound),
+// noPrefillCapacityHint where it learned none.
+const (
+	NoPrefillCapacityLowerBoundHint = "Prefill capacity unknown: the prefill pods never queued, so a prefill pod computes at least the V_P " +
+		"in the detail (a lower bound), and its limit was not observed. Assume a prefill speed per pod to price it " +
+		"(--assume-vp, or on the page Assume a term, V_P), or load a busier window."
+	noPrefillCapacityHint = "Prefill capacity unknown: the source learned no prefill speed per pod V_P (it saw no prefill pod busy enough). " +
+		"Assume one (--assume-vp, or on the page Assume a term, V_P), or load a busier window."
+)
 
 // refusalHint is what to do about a refusal, in words.
 func refusalHint(term string, reason whatif.Reason) string {
 	switch {
 	case reason == whatif.NoPrefillCapacity:
-		return "The source learned no prefill rate V_P (it saw no prefill pod busy enough). Assume one: --assume-vp, or on the page Assume a term, V_P."
+		return noPrefillCapacityHint
 	case reason == whatif.NoFixedLatency:
 		return "The source learned no fixed prefill latency a (too few low-load minutes). Assume one: --assume-a, or on the page Assume a term, a."
 	case reason == whatif.TargetBelowFloor && term == termTTFT:
@@ -1202,8 +1239,12 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 			// A refusal the probe at one replica a role did not see: it
 			// holds at more replicas, whatever the rate. It is the
 			// source's, not the bucket's.
+			hint := refusalHint(termFleet, whatif.Reason(u.Refused.Reason))
+			if u.Refused.Reason == string(whatif.NoPrefillCapacity) && slices.Contains(u.Refused.Flags, string(whatif.VPLowerBound)) {
+				hint = NoPrefillCapacityLowerBoundHint
+			}
 			addRefusal(refused, DayRefusal{Role: u.Role, Term: termFleet, Reason: u.Refused.Reason, Detail: u.Refused.Detail,
-				Hint:   refusalHint(termFleet, whatif.Reason(u.Refused.Reason)),
+				Hint:   hint,
 				Effect: "These buckets are not sized: the source refuses the fleet's limit at more replicas than one."})
 			db.Status, db.Verdict = BucketRefused, DayVerdictRefused
 			db.Flags = appendNew(db.Flags, FlagFleetRefused)
@@ -1227,9 +1268,14 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 // judges over); else match. The cheapest fleet found (Needed) is one fleet
 // that serves the rate: another mix may serve it as well,
 // and the fleet it had is judged on its own mix, never role by role against
-// Needed. With prefill not priced, decode is judged alone.
+// Needed. With prefill not priced, decode is judged alone (Scope
+// ScopeDecodeOnly). An over is withheld where the router measured the
+// bucket's TTFT over its target: a fleet that missed it has nothing to spare.
 func (q *dayQuestion) hadVerdict(ctx context.Context, g *dayGroup, db *DayBucket, rate float64) error {
 	a := *db.Actual
+	if g.decodeOnly {
+		db.Scope = ScopeDecodeOnly
+	}
 	serves := func(n FleetCounts) (bool, whatif.Result, error) {
 		if n.Decode < 1 || (!g.decodeOnly && n.Prefill < 1) {
 			return false, nil, nil
@@ -1267,12 +1313,56 @@ func (q *dayQuestion) hadVerdict(ctx context.Context, g *dayGroup, db *DayBucket
 			return err
 		}
 		if ok {
+			if m := db.MeasuredTTFT; m != nil && !q.noTTFT && *m > q.sc.TTFT.Target {
+				db.Verdict = ""
+				db.Flags = appendNew(db.Flags, FlagMeasuredTTFTOverTarget)
+				return nil
+			}
 			db.Verdict = DayVerdictOver
 			return nil
 		}
 	}
 	db.Verdict = DayVerdictMatch
 	return nil
+}
+
+// measuredTTFT is the TTFT the router measured over a bucket at the TTFT
+// target's statistic, seconds: read off the bucket's last cycle, whose
+// window covers the bucket as a backtest step's does, when it read enough
+// requests for the statistic (minRequestsFor). Nil with no TTFT target, no
+// router histogram, or too few requests.
+func (q *dayQuestion) measuredTTFT(last time.Time, lat map[time.Time]LatencySample) *float64 {
+	if q.noTTFT || !(q.sc.TTFT.Target > 0) {
+		return nil
+	}
+	l, ok := lat[last]
+	if !ok || l.Router == nil {
+		return nil
+	}
+	stat, err := parseStatistic("ttft.statistic", q.sc.TTFT.Statistic)
+	if err != nil {
+		return nil
+	}
+	h, ok := histOf(l.Router.TTFTBuckets)
+	if !ok || h.total*measureWindowOf(l, MeasuredRouter) < minRequestsFor(stat) {
+		return nil
+	}
+	if stat == 0 {
+		if !(l.Router.TTFTCountRate > 0) {
+			return nil
+		}
+		return ptr(l.Router.TTFTSumRate / l.Router.TTFTCountRate)
+	}
+	v := h.quantile(stat)
+	if !whatif.Finite(v) {
+		// Past the top bucket: the statistic is at least the top bound, which
+		// says it is over a target under that bound, and nothing of one above.
+		if t := h.top(); t > q.sc.TTFT.Target {
+			return ptr(t)
+		}
+		return nil
+	}
+	return ptr(v)
 }
 
 // plan sizes every bucket.
@@ -1311,6 +1401,13 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	gpus := FleetCounts{}
 	for _, x := range series {
 		gpus.Prefill, gpus.Decode = max(gpus.Prefill, x.PrefillGPUs), max(gpus.Decode, x.DecodeGPUs)
+	}
+	// lat is each cycle's latency by its time, for a bucket's measured TTFT.
+	lat := make(map[time.Time]LatencySample, len(q.e.latency))
+	if len(q.e.latency) == len(series) {
+		for i, x := range series {
+			lat[x.At] = q.e.latency[i]
+		}
 	}
 	for _, b := range buckets {
 		db := DayBucket{Start: b.start, Samples: len(b.samples), Shape: DayShape{Source: "window"}}
@@ -1369,6 +1466,7 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 			db.Flags = append(db.Flags, FlagFewCyclesForP95)
 		}
 		db.SizedFor, db.SizedRate = stat, ptr(rate)
+		db.MeasuredTTFT = q.measuredTTFT(b.samples[len(b.samples)-1].At, lat)
 		g, err := groupFor(k)
 		if err != nil {
 			return nil, err
@@ -1748,6 +1846,7 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 	}
 	type tally struct {
 		under, over, match, refused, withData int
+		decodeOnly                            bool
 		peak                                  *DayBucket
 		sized, had                            []*DayBucket
 	}
@@ -1795,6 +1894,9 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 		case DayVerdictMatch:
 			c.match++
 		}
+		if b.Verdict != "" && b.Scope == ScopeDecodeOnly {
+			c.decodeOnly = true
+		}
 		if peakBucket(*b, c.peak, false) {
 			c.peak = b
 		}
@@ -1818,6 +1920,9 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 		case c.match > 0 || c.over > 0:
 			out[i].Verdict = DayVerdictMatch
 		}
+		if c.decodeOnly && out[i].Verdict != DayVerdictRefused && out[i].Verdict != "" {
+			out[i].Scope = ScopeDecodeOnly
+		}
 	}
 	return out
 }
@@ -1829,7 +1934,7 @@ func hoursOf(series []SeriesSample, buckets []DayBucket) []DayHour {
 // priced prefill: over fewer, they would compare a subset under the label
 // of the whole.
 func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus FleetCounts) DaySummary {
-	s := DaySummary{UnderHours: []time.Time{}, OverHours: []time.Time{}, RefusedHours: []time.Time{}}
+	s := DaySummary{UnderHours: []time.Time{}, OverHours: []time.Time{}, DecodeOverHours: []time.Time{}, RefusedHours: []time.Time{}}
 	h := step.Hours()
 	var need, had RoleHours
 	var needP, hadP float64
@@ -1917,6 +2022,10 @@ func summaryOf(buckets []DayBucket, hours []DayHour, step time.Duration, gpus Fl
 		case DayVerdictUnder:
 			s.UnderHours = append(s.UnderHours, hr.Start)
 		case DayVerdictOver:
+			if hr.Scope == ScopeDecodeOnly {
+				s.DecodeOverHours = append(s.DecodeOverHours, hr.Start)
+				continue
+			}
 			s.OverHours = append(s.OverHours, hr.Start)
 		case DayVerdictRefused:
 			s.RefusedHours = append(s.RefusedHours, hr.Start)

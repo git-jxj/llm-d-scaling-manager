@@ -101,13 +101,15 @@
         "prefill": 2,
         "decode": 2
       },
-      "verdict": "over",
+      "scope": "decode only",
+      "measuredTTFT": 0.19868965517241383,
       "flags": [
         "RateFromDecodeRows",
         "FewCyclesForP95",
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "MeasuredTTFTOverTarget"
       ]
     },
     {
@@ -171,6 +173,8 @@
         "decode": 2
       },
       "verdict": "match",
+      "scope": "decode only",
+      "measuredTTFT": 0.19525537323780912,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -238,6 +242,8 @@
         "decode": 2
       },
       "verdict": "match",
+      "scope": "decode only",
+      "measuredTTFT": 0.19723316735224072,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -305,6 +311,8 @@
         "decode": 2
       },
       "verdict": "match",
+      "scope": "decode only",
+      "measuredTTFT": 0.19985416983138388,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -372,6 +380,8 @@
         "decode": 2
       },
       "verdict": "match",
+      "scope": "decode only",
+      "measuredTTFT": 0.25312244897959163,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -439,6 +449,8 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
+      "measuredTTFT": 0.3346247156937074,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -506,6 +518,8 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
+      "measuredTTFT": 0.34090432503276547,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -573,6 +587,8 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
+      "measuredTTFT": 0.35105530187721967,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -640,6 +656,8 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
+      "measuredTTFT": 0.36140277194456116,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -707,6 +725,8 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
+      "measuredTTFT": 0.36908634222919934,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -774,6 +794,8 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
+      "measuredTTFT": 0.3709067769646835,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -841,6 +863,8 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
+      "measuredTTFT": 0.3846257374631269,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -908,6 +932,8 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
+      "measuredTTFT": 0.38437288809381837,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -975,6 +1001,8 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
+      "measuredTTFT": 0.5906832871652814,
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -1042,6 +1070,8 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
+      "measuredTTFT": 0.5442519019442096,
       "flags": [
         "FewCyclesForP95",
         "PrefillNotPriced",
@@ -1109,13 +1139,15 @@
         "prefill": 2,
         "decode": 2
       },
-      "verdict": "over",
+      "scope": "decode only",
+      "measuredTTFT": 0.5616247755834829,
       "flags": [
         "RateFromDecodeRows",
         "FewCyclesForP95",
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "MeasuredTTFTOverTarget"
       ]
     }
   ],
@@ -1144,6 +1176,7 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
       "sized": 9,
       "unmet": 0
     },
@@ -1171,6 +1204,7 @@
         "decode": 2
       },
       "verdict": "under",
+      "scope": "decode only",
       "sized": 7,
       "unmet": 0
     }
@@ -1211,6 +1245,7 @@
       "2026-11-06T03:00:00Z"
     ],
     "overHours": [],
+    "decodeOverHours": [],
     "refusedHours": [],
     "counts": {
       "sized": 16,
@@ -1219,7 +1254,7 @@
       "tooLittleData": 0,
       "noData": 0,
       "under": 10,
-      "over": 2,
+      "over": 0,
       "match": 4,
       "sizedForMean": 3,
       "sizedForP95": 13,
