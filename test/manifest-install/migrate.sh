@@ -122,9 +122,13 @@ pass "the move: kubectl apply --server-side -f $M over the smt install ($(grep -
 
 has_ca() { [ "$(secret_sha "$NS" scaling-manager-scaler-ca)" = "$ca_smt" ]; }
 wait_for 180 "the new CA Secret holds the smt CA" has_ca || fail "CA" "scaling-manager-scaler-ca holds $(secret_sha "$NS" scaling-manager-scaler-ca), the smt CA is $ca_smt"
-kubectl logs -n "$NS" "deployment/$DEPLOY" | grep -q "copied the certificates of the earlier install" \
+# To a file first: with pipefail, grep -q ending the pipe early kills
+# kubectl logs with SIGPIPE and fails the check although the line is there.
+kubectl logs -n "$NS" "deployment/$DEPLOY" > "$LOGS/controller.log" 2>&1
+grep -q "copied the certificates of the earlier install" "$LOGS/controller.log" \
     || fail "CA" "the controller did not say it copied the earlier install's certificates"
-wait_for 180 "scalerTLS mutual TLS" status_has_prefix scalerTLS "mutual TLS" || fail "CA" "scalerTLS is '$(status scalerTLS)'"
+new_tls() { case "$(status scalerTLS)" in "mutual TLS: Secrets scaling-manager-scaler-ca,"*) return 0 ;; esac; return 1; }
+wait_for 180 "scalerTLS mutual TLS from the new Secrets" new_tls || fail "CA" "scalerTLS is '$(status scalerTLS)'"
 status_is kedaCopyStale false || fail "CA" "kedaCopyStale is '$(status kedaCopyStale)'"
 [ "$(secret_sha "$KEDA_NS" "$COPY")" = "$copy_smt" ] || fail "CA" "KEDA's copy changed; KEDA would need a restart"
 wait_for 180 "namespacesManaged=$MODEL_NS" status_is namespacesManaged "$MODEL_NS" || fail "CA" "namespacesManaged '$(status namespacesManaged)'"
