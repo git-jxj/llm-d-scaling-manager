@@ -152,6 +152,17 @@ func (c *Config) LiveSettings() Settings {
 	return c.settings.live.clone()
 }
 
+// NamespaceSelector returns the namespaceSelector setting in force, "" when
+// it is unset. Thread-safe.
+func (c *Config) NamespaceSelector() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.settings.live.NamespaceSelector == nil {
+		return ""
+	}
+	return *c.settings.live.NamespaceSelector
+}
+
 // SettingsPresent reports whether the settings ConfigMap exists, and the
 // resourceVersion last applied. Thread-safe.
 func (c *Config) SettingsPresent() (present bool, resourceVersion string) {

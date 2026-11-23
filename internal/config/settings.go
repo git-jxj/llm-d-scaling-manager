@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -48,12 +49,36 @@ const (
 	SettingScaleToZero                  = "scaleToZero"
 	SettingWatchNamespaces              = "watchNamespaces"
 	SettingLogVerbosity                 = "logVerbosity"
+	// SettingNamespaceSelector is a label selector the namespaces this
+	// controller manages must match, on an install that opts namespaces in
+	// by label (--namespace-opt-in=label). live.
+	SettingNamespaceSelector = "namespaceSelector"
+	// SettingCAFromSecret, "true", reads Prometheus's CA from Secret
+	// PrometheusCASecret, which the release manifest mounts at
+	// PrometheusCAFromSecretPath. restart.
+	SettingCAFromSecret = "caFromSecret"
+	// SettingDSetRoleWriter turns the DisaggregatedSet role writer on: the
+	// DSET_ROLE_WRITER advanced key under a settings name. restart.
+	SettingDSetRoleWriter = "dsetRoleWriter"
 )
+
+// PrometheusCASecret is the Secret holding the CA that signed Prometheus's
+// certificate, under key ca.crt. Its name is fixed, so the controller needs
+// no Secret read at all: the Deployment mounts it, optional.
+const PrometheusCASecret = "scaling-manager-prometheus-ca"
+
+// PrometheusCAFromSecretPath is where the Deployment mounts
+// PrometheusCASecret's ca.crt: the CA path caFromSecret "true" sets.
+const PrometheusCAFromSecretPath = "/etc/scaling-manager-prometheus-ca/ca.crt"
+
+// NamespaceOptInLabel is the label a namespace carries, "true", to opt in to
+// an install that manages namespaces by label (--namespace-opt-in=label).
+const NamespaceOptInLabel = "scaling-manager.llmd.ai/managed"
 
 // LiveSettingKeys are the settings that take effect within a cycle of a change.
 var LiveSettingKeys = []string{
 	SettingPassive, SettingUtilizationShare, SettingLimiter, SettingQuotas, SettingQuotaScope,
-	SettingKueue, SettingKueueBorrow, SettingKueueNamespace,
+	SettingKueue, SettingKueueBorrow, SettingKueueNamespace, SettingNamespaceSelector,
 }
 
 // limiterSettingKeys are the live keys that together build the limiters list.
@@ -74,6 +99,7 @@ var restartSettingKeys = map[string]string{
 	SettingScaleToZero:                  "LLMSM_SCALE_TO_ZERO",
 	SettingWatchNamespaces:              "WATCH_NAMESPACE",
 	SettingLogVerbosity:                 "V",
+	SettingDSetRoleWriter:               "DSET_ROLE_WRITER",
 }
 
 // RestartSettingKeys are the settings read only at start, sorted.
@@ -151,6 +177,9 @@ type Settings struct {
 	// Restart holds the settings read only at start, and the advanced keys,
 	// by loader key (PROMETHEUS_BASE_URL, V, ...), as written.
 	Restart map[string]string
+	// NamespaceSelector is the namespaceSelector setting as written; nil
+	// when unset.
+	NamespaceSelector *string
 }
 
 // LimiterTypes is the limiter set the settings' limiters list selects; empty
@@ -227,6 +256,7 @@ func ParseSettings(data map[string]string, quotaKey string) (Settings, SettingsR
 	for _, k := range advancedSettingKeys {
 		known[k] = true
 	}
+	known[SettingCAFromSecret] = true
 	for _, k := range slices.Sorted(maps.Keys(data)) {
 		if !known[k] {
 			rep.Unknown = append(rep.Unknown, k)
@@ -249,6 +279,14 @@ func ParseSettings(data map[string]string, quotaKey string) (Settings, SettingsR
 			s.UtilizationShare = v
 		default:
 			reject(SettingUtilizationShare, "%q is not off, shadow or active", v)
+		}
+	}
+	if v := get(SettingNamespaceSelector); v != "" {
+		if _, err := labels.Parse(v); err != nil {
+			reject(SettingNamespaceSelector, "%q is not a label selector such as %s=true,kubernetes.io/metadata.name in (team-a): %v",
+				v, NamespaceOptInLabel, err)
+		} else {
+			s.NamespaceSelector = &v
 		}
 	}
 	parseRestartSettings(data, s.Restart, reject)
@@ -286,6 +324,31 @@ func parseRestartSettings(data map[string]string, out map[string]string, reject 
 		}
 		out[k] = v
 	}
+	parseCAFromSecret(data, out, reject)
+}
+
+// parseCAFromSecret puts caFromSecret "true" into out as the CA path the
+// Deployment mounts PrometheusCASecret at. A prometheusCACertPath naming
+// another file contradicts it, and caFromSecret is rejected.
+func parseCAFromSecret(data map[string]string, out map[string]string, reject func(k, format string, a ...any)) {
+	v := strings.TrimSpace(data[SettingCAFromSecret])
+	if v == "" {
+		return
+	}
+	on, err := strconv.ParseBool(v)
+	if err != nil {
+		reject(SettingCAFromSecret, "%q is not true or false", v)
+		return
+	}
+	if !on {
+		return
+	}
+	if p := strings.TrimSpace(data[SettingPrometheusCACertPath]); p != "" && p != PrometheusCAFromSecretPath {
+		reject(SettingCAFromSecret, "it reads the CA from %s, but %s names %q; set one of the two",
+			PrometheusCAFromSecretPath, SettingPrometheusCACertPath, p)
+		return
+	}
+	out[restartSettingKeys[SettingPrometheusCACertPath]] = PrometheusCAFromSecretPath
 }
 
 // validateRestartSetting checks one restart setting's value.
@@ -307,7 +370,7 @@ func validateRestartSetting(key, v string) error {
 		if strings.ContainsAny(v, " \t/:") {
 			return fmt.Errorf("%q is not a host name", v)
 		}
-	case SettingPrometheusInsecureSkipVerify, SettingPrometheusAllowHTTP, SettingScaleToZero:
+	case SettingPrometheusInsecureSkipVerify, SettingPrometheusAllowHTTP, SettingScaleToZero, SettingDSetRoleWriter:
 		if _, err := strconv.ParseBool(v); err != nil {
 			return fmt.Errorf("%q is not true or false", v)
 		}
@@ -557,6 +620,9 @@ func (s Settings) KeepRejected(prev Settings, rejected map[string]string) Settin
 	if _, bad := rejected[SettingUtilizationShare]; bad {
 		out.UtilizationShare = prev.UtilizationShare
 	}
+	if _, bad := rejected[SettingNamespaceSelector]; bad {
+		out.NamespaceSelector = prev.NamespaceSelector
+	}
 	for _, k := range limiterSettingKeys {
 		if _, bad := rejected[k]; bad {
 			out.Limiters = prev.Limiters
@@ -618,6 +684,10 @@ func (s Settings) clone() Settings {
 		}
 	}
 	out.Restart = maps.Clone(s.Restart)
+	if s.NamespaceSelector != nil {
+		v := *s.NamespaceSelector
+		out.NamespaceSelector = &v
+	}
 	return out
 }
 

@@ -58,6 +58,9 @@ ConfigMap and the scaling policy as before. Create it once, with
 | `scaleToZero` | `true`, `false` | `LLMSM_SCALE_TO_ZERO`, else `false` | `LLMSM_SCALE_TO_ZERO` | restart |
 | `watchNamespaces` | namespaces, comma-separated | the `--watch-namespace` flag: the controller's own namespace (namespaced install) or all (cluster-wide) | `LLMSM_WATCH_NS` | restart. When the Deployment names namespaces, this may only narrow them: a namespace it does not name is rejected. Each namespace needs the model-namespace grant |
 | `logVerbosity` | `0` to `10`; `2` info, `4` debug, `5` trace | `--v`, else `LOG_LEVEL` | `LLMSM_VERBOSITY` | restart. `--zap-log-level` on the Deployment still wins |
+| `namespaceSelector` | a label selector, for example `scaling-manager.llmd.ai/managed=true,kubernetes.io/metadata.name in (team-a)` | every namespace labelled `scaling-manager.llmd.ai/managed=true` | none | live. Only on the [one-manifest install](../guides/kubectl-install/) (`--namespace-opt-in=label`); it narrows the labelled namespaces and never widens them. A rejected value keeps the one in force |
+| `caFromSecret` | `true`, `false` | `prometheusCACertPath` | `prometheusCACertPath` set to `/etc/scaling-manager-prometheus-ca/ca.crt` | restart. Reads Prometheus's CA from Secret `scaling-manager-prometheus-ca` (key `ca.crt`), which the Deployment mounts. Rejected beside a `prometheusCACertPath` that names another file |
+| `dsetRoleWriter` | `true`, `false` | `DSET_ROLE_WRITER`, else `false` | `DSET_ROLE_WRITER` | restart. Needs the role writer's grant |
 
 It also takes the [advanced](configuration-advanced.md) keys
 `GLOBAL_OPT_INTERVAL`, `PROMETHEUS_METRICS_CACHE_*` and `LEARNED_STATE_*`
