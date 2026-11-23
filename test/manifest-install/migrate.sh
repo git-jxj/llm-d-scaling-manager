@@ -80,6 +80,8 @@ smt() {
 }
 
 kubectl get namespace "$NS" >/dev/null 2>&1 && fail setup "$NS exists: run on a cluster where no scaling manager is installed"
+# The flattened admin credentials never outlive the run, on any exit path.
+trap 'rm -f "$WORK/admin.kubeconfig"' EXIT
 kubectl config view --minify --flatten > "$WORK/admin.kubeconfig" && chmod 0600 "$WORK/admin.kubeconfig"
 kubectl get secret "$PROMETHEUS_TLS_SECRET" -n "$MONITORING_NS" -o jsonpath='{.data.tls\.crt}' | base64 -d > "$WORK/work/prometheus-ca.crt"
 chmod 0644 "$WORK/work/prometheus-ca.crt"
@@ -153,7 +155,8 @@ pass "KEDA presents its certificate to the moved controller (kedaConnection curr
     kubectl delete -f "$M" --ignore-not-found --wait=true --timeout=300s
     kubectl delete clusterrole,clusterrolebinding,clustertriggerauthentication -l app.kubernetes.io/part-of=scaling-manager --ignore-not-found
     kubectl delete rolebinding,role,podmonitor,servicemonitor,secret,configmap -n "$MODEL_NS" -l app.kubernetes.io/part-of=scaling-manager --ignore-not-found
-} > "$LOGS/cleanup.log" 2>&1
+} > "$LOGS/cleanup.log" 2>&1 || fail cleanup "$(tail -5 "$LOGS/cleanup.log")"
+kubectl get namespace "$NS" >/dev/null 2>&1 && fail cleanup "namespace $NS is still there"
 pass "cleaned up"
 echo "=== summary ==="
 cat "$SUMMARY"
