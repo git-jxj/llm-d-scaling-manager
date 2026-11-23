@@ -305,7 +305,7 @@ release_source() { sed "s/__NAMESPACE__/$CLUSTER_NS/g" "$ROOT/config/release/$1.
     echo '---'
     main_manifest "$WORK/cl-kubernetes.yaml" "$CLUSTER_NS" kubernetes | yq '
         (select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "manager") | .args) +=
-            ["--namespace-opt-in=label", "--keda-namespace=keda", "--self-check-interval=1m", "--restart-on-settings-change=true", "--external-scaler-tls-secrets=opaque", "--wait-for-settings=true"]'
+            ["--namespace-opt-in=label", "--keda-namespace=keda", "--self-check-interval=1m", "--restart-on-settings-change=true", "--external-scaler-tls-secrets=opaque", "--wait-for-settings=true", "--external-scaler-tls-live=true"]'
     echo '---'
     release_source scaler-tls-opaque-secret
     for f in scaledobjects-plan-configmap scaledobjects-plan-role scaledobjects-plan-rolebinding \

@@ -14,6 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 )
 
 const waitNS = "scaling-manager-system"
@@ -50,7 +52,7 @@ func TestSettingsWait(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(s).Build()
 	addr := freeAddr(t)
 	w := &SettingsWait{Client: cl, Namespace: waitNS, SettingsName: "scaling-manager-settings", ProbeAddr: addr,
-		Interval: 20 * time.Millisecond, Done: PrometheusURLSet("prometheusURL"), Log: logr.Discard()}
+		Interval: 20 * time.Millisecond, Done: config.ReadyToStart, Log: logr.Discard()}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

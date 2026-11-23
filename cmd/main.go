@@ -354,6 +354,10 @@ func main() {
 			"opaque: the Opaque Secrets of the one manifest (scaling-manager-scaler-ca, -serving, -client), which a "+
 			"server-side re-apply keeps; while they are empty, the legacy Secrets' certificates are copied across, so a "+
 			"move from an smt install keeps the CA KEDA trusts.")
+	externalScalerTLSLive := flag.Bool("external-scaler-tls-live", false,
+		"With --external-scaler-tls-bootstrap: switch the scaler to mutual TLS when KEDA's side comes into place "+
+			"after start, and adopt a new scaler CA while it is in place, with no restart. Off, the choice is made at "+
+			"start and a change asks for a restart.")
 	waitForSettings := flag.Bool("wait-for-settings", false,
 		"When no source names Prometheus, wait for the settings ConfigMap to set prometheusURL instead of exiting: "+
 			"serve the health probes (live, not ready), write ready and preflight.settings with the reason, and start "+
@@ -507,23 +511,23 @@ func main() {
 	// Precedence: settings ConfigMap > flags > env > config file > defaults
 	// For more information see:
 	// docs/reference/configuration.md
-	cfg, err := config.LoadWithSettings(flag.CommandLine, *configFilePath, settingsData)
-	if errors.Is(err, config.ErrNoPrometheusURL) && *waitForSettings {
-		// The one manifest is applied before the settings: wait for them,
-		// live and saying why, instead of a crash back-off.
+	if ok, _ := config.ReadyToStart(settingsData); !ok && *waitForSettings {
+		// The one manifest is applied before the settings, and the CA Secret
+		// beside them is mounted some seconds later: wait for both, live and
+		// saying why, instead of a crash back-off.
 		wait := &controllerstatus.SettingsWait{
 			Client:       policyProbe,
 			Namespace:    config.SystemNamespace(),
 			SettingsName: config.SettingsConfigMapName(),
 			ProbeAddr:    flag.CommandLine.Lookup("health-probe-bind-address").Value.String(),
-			Done:         controllerstatus.PrometheusURLSet(config.SettingPrometheusURL),
+			Done:         config.ReadyToStart,
 			Log:          setupLog,
 		}
 		if settingsData, err = wait.Wait(signalCtx); err != nil {
 			os.Exit(startupExitCode(signalCtx, setupLog, err, "stopped while waiting for the settings"))
 		}
-		cfg, err = config.LoadWithSettings(flag.CommandLine, *configFilePath, settingsData)
 	}
+	cfg, err := config.LoadWithSettings(flag.CommandLine, *configFilePath, settingsData)
 	if err != nil {
 		setupLog.Error(err, "failed to load configuration - this is a fatal error")
 		logging.Sync() //nolint:errcheck
@@ -1266,7 +1270,8 @@ func main() {
 		os.Exit(1)
 	}
 	if *externalScalerTLSBootstrap {
-		if err := scalertls.Setup(signalCtx, mgr, externalScaler, controllerStatus, allowedScalerClients[0], kedaCopy, tlsSecrets); err != nil {
+		if err := scalertls.Setup(signalCtx, mgr, externalScaler, controllerStatus, allowedScalerClients[0],
+			scalertls.SetupOptions{KEDA: kedaCopy, Names: tlsSecrets, Live: *externalScalerTLSLive}); err != nil {
 			setupLog.Error(err, "unable to set up the external scaler TLS bootstrap")
 			os.Exit(1)
 		}

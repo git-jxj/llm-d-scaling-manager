@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -154,16 +153,5 @@ func (w *SettingsWait) serveProbes() func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
-	}
-}
-
-// PrometheusURLSet is a SettingsWait.Done for the one setting a controller
-// cannot start without.
-func PrometheusURLSet(key string) func(map[string]string) (bool, string) {
-	return func(data map[string]string) (bool, string) {
-		if strings.TrimSpace(data[key]) != "" {
-			return true, ""
-		}
-		return false, key + " is not set"
 	}
 }

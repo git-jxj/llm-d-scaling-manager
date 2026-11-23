@@ -18,6 +18,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/scaler"
 )
 
 // DefaultInterval is how often Bootstrap checks the Secrets after the first
@@ -79,6 +81,16 @@ type Bootstrap struct {
 	// when the copy holds the current certificate, and the marker ConfigMap
 	// is not read. Nil keeps the marker, which a person writes.
 	KEDA *KEDACopy
+	// SwitchTLS, when set, makes the protocol choice live
+	// (--external-scaler-tls-live): when KEDA's side comes into place after
+	// start, the next pass switches the scaler to mutual TLS with this
+	// callback instead of asking for a restart; and while KEDA's side is in
+	// place, a new scaler CA is adopted (the client CA re-read) instead of
+	// reported. Nil keeps the choice made at start.
+	SwitchTLS func(*tls.Config)
+	// AllowedClients are the client identities mutual TLS accepts; set with
+	// SwitchTLS.
+	AllowedClients []string
 
 	serving atomic.Pointer[tls.Certificate]
 
@@ -248,6 +260,19 @@ func (b *Bootstrap) Check(ctx context.Context) {
 	b.mu.Lock()
 	b.markerNow, b.markerErr = marker, merr
 	b.record(o, err)
+	switchNow := false
+	if b.SwitchTLS != nil && err == nil && marker == markerPresent && o.Usable() {
+		switch {
+		case !b.tlsOn:
+			b.tlsOn, switchNow = true, true
+			b.logger().Info("Scaler TLS: KEDA's side is in place now; switching to mutual TLS with no restart",
+				"caSha256", Fingerprint(o.CA))
+		case !bytes.Equal(o.CA.Raw, b.clientCA.Raw):
+			b.logger().Info("Scaler TLS: adopting the new scaler CA, which KEDA's side now carries; the client CA is re-read with no restart",
+				"was", Fingerprint(b.clientCA), "now", Fingerprint(o.CA))
+		}
+		b.clientCA = o.CA
+	}
 	if err == nil && b.tlsOn && o.Serving != nil && o.CA != nil && bytes.Equal(o.CA.Raw, b.clientCA.Raw) {
 		if cur := b.serving.Load(); cur == nil || !bytes.Equal(cur.Leaf.Raw, o.Serving.cert.Raw) {
 			b.serving.Store(o.Serving.tlsCertificate())
@@ -256,7 +281,34 @@ func (b *Bootstrap) Check(ctx context.Context) {
 		}
 	}
 	b.mu.Unlock()
+	if switchNow {
+		b.SwitchTLS(b.MutualTLSConfig())
+	}
 	b.publish()
+}
+
+// MutualTLSConfig serves mutual TLS with the current serving certificate and
+// the current client CA, both read on every handshake, so a CA adopted later
+// is verified against with no restart. It records each accepted client
+// (ObserveHandshake).
+func (b *Bootstrap) MutualTLSConfig() *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			b.mu.Lock()
+			ca := b.clientCA
+			b.mu.Unlock()
+			cfg, err := scaler.NewMutualTLSConfig(b.GetCertificate, ca, b.AllowedClients)
+			if err != nil {
+				return nil, err
+			}
+			cfg.VerifyConnection = Observed(cfg.VerifyConnection, b.ObserveHandshake)
+			// gRPC negotiates h2 by ALPN; the outer config's NextProtos do not
+			// carry over to the one returned here.
+			cfg.NextProtos = []string{"h2"}
+			return cfg, nil
+		},
+	}
 }
 
 // record keeps the outcome of a pass. A failed pass keeps the previous

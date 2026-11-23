@@ -86,9 +86,9 @@ chmod 0644 "$WORK/work/prometheus-ca.crt"
 
 # --- 1. the smt install, and a ScaledObject over mutual TLS -----------------
 
-smt install --scope cluster --keda-namespace "$KEDA_NS" --model-namespace "$MODEL_NS" \
+smt install install --scope cluster --keda-namespace "$KEDA_NS" --model-namespace "$MODEL_NS" \
     --prometheus-url "$PROMETHEUS_URL" --prometheus-ca prometheus-ca.crt \
-    || { tail -30 "$LOGS/install.log"; fail "smt install" "exit $?"; }
+    || { rc=$?; tail -30 "$LOGS/install.log"; fail "smt install" "exit $rc"; }
 status_has_prefix scalerTLS "mutual TLS" || fail "smt install" "scalerTLS is '$(status scalerTLS)'"
 printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: %s\n  namespace: %s\nspec:\n  replicas: 1\n  selector:\n    matchLabels: {app: %s}\n  template:\n    metadata:\n      labels: {app: %s}\n    spec:\n      containers:\n      - name: pause\n        image: registry.k8s.io/pause:3.10\n---\napiVersion: keda.sh/v1alpha1\nkind: ScaledObject\nmetadata:\n  name: %s\n  namespace: %s\nspec:\n  scaleTargetRef: {name: %s}\n  minReplicaCount: 1\n  maxReplicaCount: 2\n  pollingInterval: 5\n  triggers:\n  - type: external\n    authenticationRef: {kind: ClusterTriggerAuthentication, name: %s}\n    metadata:\n      scalerAddress: scaling-manager-external-scaler.%s.svc:9090\n' \
     "$SO" "$MODEL_NS" "$SO" "$SO" "$SO" "$MODEL_NS" "$SO" "$COPY" "$NS" > "$WORK/probe.yaml"

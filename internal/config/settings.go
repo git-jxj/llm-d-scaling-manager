@@ -327,6 +327,33 @@ func parseRestartSettings(data map[string]string, out map[string]string, reject 
 	parseCAFromSecret(data, out, reject)
 }
 
+// ReadyToStart says whether a controller can start with the settings data:
+// a Prometheus URL is set (here, or PROMETHEUS_BASE_URL in the environment),
+// and the CA file the settings name exists. The kubelet fills an optional
+// Secret volume some seconds after the Secret is created, so a CA Secret made
+// beside the settings is not there yet when they are read. why says what is
+// missing; "" when ok.
+func ReadyToStart(data map[string]string) (ok bool, why string) {
+	if strings.TrimSpace(data[SettingPrometheusURL]) == "" && os.Getenv("PROMETHEUS_BASE_URL") == "" {
+		return false, SettingPrometheusURL + " is not set"
+	}
+	path := strings.TrimSpace(data[SettingPrometheusCACertPath])
+	if on, err := strconv.ParseBool(strings.TrimSpace(data[SettingCAFromSecret])); err == nil && on {
+		path = PrometheusCAFromSecretPath
+	}
+	if path == "" {
+		return true, ""
+	}
+	if _, err := statFile(path); err != nil {
+		return false, fmt.Sprintf("the Prometheus CA %s is not there yet (Secret %s, mounted by the kubelet some seconds after it is created): %v",
+			path, PrometheusCASecret, err)
+	}
+	return true, ""
+}
+
+// statFile is os.Stat; tests replace it.
+var statFile = os.Stat
+
 // parseCAFromSecret puts caFromSecret "true" into out as the CA path the
 // Deployment mounts PrometheusCASecret at. A prometheusCACertPath naming
 // another file contradicts it, and caFromSecret is rejected.
