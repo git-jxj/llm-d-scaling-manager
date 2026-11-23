@@ -19,7 +19,7 @@ const [scen, day, bt, golden] = [
 const ctx = vm.createContext({URLSearchParams});
 for (const f of [scen, day, bt]) vm.runInContext(fs.readFileSync(f, "utf8"), ctx, {filename: f});
 const {btSVG, btPoint, btSummaryText, btLegend, btStepAt, btTipHTML, btScoreTable, btStepTable, btPredictionCSV, selfCheckBadge, selfCheckHTML,
-  dayTime} = ctx;
+  dayTime, btUnresolved, btPointClass, btVerdictCard, btNotice, btFailing, btStepsCSV, btBucketTip, btUnscoredList} = ctx;
 const answer = JSON.parse(fs.readFileSync(golden, "utf8"));
 const copy = x => JSON.parse(JSON.stringify(x));
 
@@ -59,11 +59,18 @@ try {
   check("measured figures are drawn as dots", dots > answer.steps.length, dots);
   // A measured percentile in a bucket too wide to place it is drawn as the
   // bucket, a bar, never as a dot at the figure the grid set.
+  // A bucket the figure fell in at many steps (the score's sameBucketBand)
+  // is one band behind the panel, not a bar a step.
+  const unres = btUnresolved(answer);
+  const inBand = (k, p) => { const b = unres[`${k}-${p.statistic}`]; return b && p.measuredBucket.lo === b.lo && p.measuredBucket.hi === b.hi; };
   const inBucket = answer.steps.reduce((n, s) => n + ["ttft", "tpot"].reduce((m, k) =>
-    m + (s[k] || []).filter(p => p.measuredBucket && (p.statistic === "mean" || p.statistic === "p90")).length, 0), 0);
+    m + (s[k] || []).filter(p => p.measuredBucket && (p.statistic === "mean" || p.statistic === "p90") && !inBand(k, p)).length, 0), 0);
   const bars = attrs(g.markup, "rect").filter(a => a["data-bucket"]).length;
-  check("the golden has measured percentiles in a coarse bucket", inBucket > 0, inBucket);
-  check("each is drawn as its bucket", bars === inBucket, `${bars} vs ${inBucket}`);
+  check("the golden has a bucket too wide at many steps", Object.keys(unres).length > 0, JSON.stringify(unres));
+  const bands = attrs(g.markup, "rect").filter(a => a["data-unresolved"]);
+  check("it is one band", bands.length === Object.keys(unres).filter(k => /-(mean|p90)$/.test(k)).length, bands.length);
+  check("the rest are drawn as their buckets", bars === inBucket, `${bars} vs ${inBucket}`);
+  check("a measured dot says how it stands", /<circle class="dot[^"]* bt-(within|low|high)"/.test(g.markup));
 
   // A prediction far above everything measured is clipped and marked.
   const big = copy(answer);
@@ -84,7 +91,9 @@ try {
   check("the step under the cursor is found", at === s0);
   const tip = btTipHTML(answer, s0);
   check("the tooltip names TTFT and TPOT", /TTFT p90/.test(tip) && /TPOT p90/.test(tip), tip);
-  check("the score table has a row a statistic", (btScoreTable(answer).match(/<tr>/g) || []).length === 1 + 2 * answer.summary.ttft.length);
+  const scored = ["ttft", "tpot"].reduce((n, k) => n + answer.summary[k].filter(sc => sc.all.steps > 0).length, 0);
+  check("the score table has a row a statistic scored", (btScoreTable(answer).match(/<tr>/g) || []).length === 1 + scored, scored);
+  check("a statistic not scored is listed with why", btUnscoredList(answer).some(l => l.startsWith("TPOT p90: not scored in")), btUnscoredList(answer).join(" | "));
 
   // Everything taken from the answer is escaped.
   const evil = copy(answer);
@@ -101,7 +110,16 @@ try {
   const js = sat.steps.findIndex(s => !s.excluded);
   for (const p of sat.steps[js].ttft) p.predicted = {refused: {reason: "Saturated", detail: "past the knee"}};
   check("an overloaded step is marked", /data-saturated="ttft"/.test(btSVG(sat).markup));
-  check("the step table has a row a step", (btStepTable(answer).match(/<tr>/g) || []).length === 1 + answer.steps.length);
+  check("the step table has a row a step, under two header rows", (btStepTable(answer).match(/<tr>/g) || []).length === 2 + answer.steps.length);
+  const failing = answer.steps.filter(btFailing);
+  check("failing steps only keeps the steps more than 20% off", (btStepTable(answer, true).match(/<tr>/g) || []).length === 2 + Math.max(failing.length, 1), failing.length);
+  check("a match reads predicted vs measured, the mark and the miss", /[0-9.]+ vs [0-9.]+ (ms|s) \u2713 [0-9]+%/.test(btStepTable(answer)));
+  check("the bucket note is in a tooltip, not the cell", btStepTable(answer).includes("title=\"measured somewhere in") && !/<td[^>]*>[^<]*too wide/.test(btStepTable(answer)));
+  const vc = btVerdictCard(answer, "p90", "mean");
+  check("the verdict card is three lines", vc.length === 3 && /within 20%/.test(vc[0].chip) && /r\/s/.test(vc[2].chip), JSON.stringify(vc));
+  check("the bucket tip says how to measure it", btBucketTip(answer).includes("Finer histogram edges"));
+  const stepsCSV = btStepsCSV(answer).trim().split("\n");
+  check("the steps export as CSV, a row a step", stepsCSV.length === 1 + answer.steps.length && stepsCSV[0].startsWith("start,rate,"), stepsCSV[0]);
 
   // A prediction as CSV: its hashes, a header and a row a step, with each
   // statistic predicted and none measured.
@@ -144,7 +162,7 @@ try {
   const ubTip = btTipHTML(upper, upper.steps[3]);
   check("an upper-bound prediction reads at most in the tooltip", ubTip.includes("predicted at most ") &&
     ubTip.includes("an upper bound the fleet measured under: consistent, not scored"), ubTip);
-  check("an upper-bound prediction reads at most in the step table", btStepTable(upper).includes("at most "));
+  check("an upper-bound prediction reads at most in the step table", btStepTable(upper).includes("\u2264 "));
   check("a plain prediction does not", !btStepTable(answer).includes("at most "));
 
   // The step table shows mean, p90 and p95 of both figures.
@@ -169,8 +187,12 @@ try {
   check("the TPOT model's bucket score is shown beside the planner's", vl.some(l => l.includes("p90 in the measured bucket at 7 of 10 steps (the planner's own: 2), p95 at 6 (the planner's own: 1)")));
   check("what was not judged still follows the verdict", vl[v2.verdictLines.length] === v2.excluded);
   const vt = btStepTable(v2), vtip = btTipHTML(v2, vs);
-  check("a TPOT v2 figure says it is experimental in the table and the tooltip", vt.includes("[experimental TPOT v2") && vtip.includes("[experimental TPOT v2"));
-  check("an abstained TTFT figure says so", vt.includes("[TTFT v2 abstained") && vtip.includes("[TTFT v2 abstained"));
+  check("a TPOT v2 figure carries a dagger in the table and the tooltip", vt.includes("\u2020") && vtip.includes("\u2020"));
+  check("no table cell says experimental", !/<td[^>]*>[^<]*experimental/i.test(vt), vt.slice(0, 200));
+  check("the view's one notice says what the dagger means", btNotice(v2).startsWith("Experimental model (checked on your data)") && btNotice(answer) === "");
+  const abst = copy(v2);
+  for (const s of abst.steps) for (const k of ["ttft", "tpot"]) for (const p of s[k] || []) p.predicted.flags = (p.predicted.flags || []).filter(f => f !== "TPOTDistribution");
+  check("an abstained figure is the planner's own, with no dagger", !btStepTable(abst).includes("\u2020"));
   check("TPOT p90 and p95 say whether they land in the measured bucket", vt.includes("(in the measured bucket)") && vt.includes("(not in the measured bucket)") &&
     vtip.includes("(in the measured bucket)"), vtip);
   const priced = copy(v2);
