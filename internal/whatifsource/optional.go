@@ -106,6 +106,12 @@ var OptionalSeriesList = []OptionalSeries{
 	{Name: "vllm:nixl_post_time_seconds_sum", Source: SourceVLLM, Tier: TierDiagnostic},
 	{Name: "vllm:nixl_post_time_seconds_count", Source: SourceVLLM, Tier: TierDiagnostic},
 	{Name: "vllm:nixl_num_failed_transfers_total", Source: SourceVLLM, Tier: TierDiagnostic},
+	// vLLM: speculative decoding (MTP, EAGLE), the acceptance at each draft
+	// position and the drafts proposed. With them a TPOT spread priced from
+	// the tokens a step emits reads the acceptance law, not one assumed from
+	// the mean accepted tokens a step.
+	{Name: "vllm:spec_decode_num_accepted_tokens_per_pos_total", Source: SourceVLLM, Tier: TierDiagnostic, By: "position"},
+	{Name: "vllm:spec_decode_num_drafts_total", Source: SourceVLLM, Tier: TierDiagnostic},
 	// LMCache, multi-process server (its own port).
 	{Name: "lmcache_mp_lookup_requested_tokens_total", Source: SourceLMCache, Tier: TierCachedFleet},
 	{Name: "lmcache_mp_lookup_hit_tokens_total", Source: SourceLMCache, Tier: TierCachedFleet},
