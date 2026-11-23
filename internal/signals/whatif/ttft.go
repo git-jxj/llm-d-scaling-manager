@@ -125,7 +125,8 @@ type Prefill struct {
 	// set with saturation.SwitchPrefillVPPromptCoverage); 0 is not known.
 	// Known, a mean prompt more than MaxVPShapeRatio outside them is out of
 	// the region V_P was learned in (promptNotCovered): the knee carries
-	// VPPromptNotCovered and no TTFT is priced. An assumed V_P is never.
+	// VPPromptNotCovered and no TTFT is priced. An assumed V_P is never
+	// checked against them.
 	VPPromptLow, VPPromptHigh float64
 	// PrefixAttention prices the attention over a prefix hit's cached
 	// tokens in the curve's rescale (shapedVP): off, I_eff stands for the

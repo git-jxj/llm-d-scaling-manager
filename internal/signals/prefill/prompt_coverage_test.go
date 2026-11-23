@@ -72,3 +72,16 @@ func TestPromptCoverage_AnUnreadPromptIsNoRange(t *testing.T) {
 	assert.Equal(t, 3000.0, lo)
 	assert.Equal(t, 3000.0, hi)
 }
+
+// The occupancy plateau carries the prompts of its top bin's minutes, as the
+// other sources carry theirs.
+func TestPromptCoverage_PlateauCarriesItsRange(t *testing.T) {
+	cs := flatRamp()
+	for i := range cs {
+		cs[i].VPPromptCoverage = true
+	}
+	est := run(NewObserver(), cs...)
+	require.Equal(t, SourceOccupancyPlateau, est.VPSource)
+	assert.InDelta(t, plateauPrompt, est.VPPromptLow, 1e-6)
+	assert.InDelta(t, plateauPrompt, est.VPPromptHigh, 1e-6)
+}

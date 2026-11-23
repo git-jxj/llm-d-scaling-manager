@@ -1789,6 +1789,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestPromptCoverage_BusyMinutesCarryTheirRange"},
 		{"../../../signals/prefill", "TestPromptCoverage_OffCarriesNone"},
+		{"../../../signals/prefill", "TestPromptCoverage_PlateauCarriesItsRange"},
 		{"../../../signals/whatif", "TestPromptNotCovered_PricesNoTTFTOutsideTheRange"},
 		{"../../../signals/whatif", "TestPromptNotCovered_InsideTheRangeIsPriced"},
 		{"../saturation", "TestPrefillVPPromptCoverage_ThroughAnalyze"},
