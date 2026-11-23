@@ -1,0 +1,15 @@
+# get and update on KEDA's copy, by name, in KEDA's namespace: the controller
+# writes it (--keda-namespace). Nothing else in KEDA's namespace, and never
+# create: the manifest pre-creates the Secret (keda-copy-secret.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: scaling-manager-keda-copy
+  namespace: keda
+  labels:
+    app.kubernetes.io/name: scaling-manager
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["scaling-manager-external-scaler-__NAMESPACE__"]
+  verbs: ["get", "update"]

@@ -2546,6 +2546,58 @@ deploy-scaling-manager`
 The upgrade from the previous release's files is covered by the tools-image
 e2e below.
 
+### Install from the one manifest
+
+`make test-e2e-manifest-install` installs from `scaling-manager.yaml`, the one
+manifest of the kubectl install proposal (PR #404, phase 1), with the commands
+of the [draft guide](../guides/kubectl-install/), on the same prerequisites as
+the release-files e2e:
+
+```bash
+CREATE_CLUSTER=true make test-e2e-manifest-install-with-setup
+# or, on a cluster you keep (after make test-e2e-release-manifests-setup):
+make test-e2e-manifest-install
+```
+
+Run it on its own cluster, not after the release-files e2e: KEDA keeps the
+scaler CA of its first connection.
+
+`test/manifest-install/e2e.sh` copies the manifest to a scratch directory and
+works there. In order, and a step that fails stops the run:
+
+1. Checks the manifest against `SHA256SUMS`, and runs the header's `sed` for
+   KEDA in `keda-system`. No mention of `keda` may be left.
+2. The three commands: `kubectl apply --server-side` of the manifest and of
+   a settings file (`prometheusURL`, `caFromSecret`, `namespaceSelector`
+   naming `llm-d-sim`), then the label on `llm-d-sim`. The Prometheus CA goes
+   in Secret `scaling-manager-prometheus-ca` first, and the model-server
+   PodMonitor of the release's model-namespace file is applied.
+3. Waits for the rollout, for `settingsSources` to show `prometheusURL` from
+   the settings (the controller restarts itself to read it), and for the
+   status `ready: ok`. The checks that are not `ok` go to the summary. There
+   must be an Event on the status ConfigMap, and `namespacesManaged` must be
+   `llm-d-sim`.
+4. `scalerTLS` must start with `mutual TLS`, with no step by a person. KEDA's
+   copy in `keda-system` must hold the client certificate,
+   `kedaCopyStale` must be `false`, and no marker ConfigMap may exist.
+5. Patches `utilizationShare: shadow`, then applies both files again
+   server-side. The scaler CA, KEDA's copy and the patched key must not
+   change.
+6. The negative control: a namespace with no label, a Deployment and a
+   ScaledObject on the scaler. `namespacesRefused` must name it. Labelled,
+   it is still outside `namespaceSelector`, and must stay refused for that
+   reason.
+7. The smoke suite with passive off (`RELEASE_E2E_SMOKE=true`, the default),
+   skipping "Basic Autoscaling", whose namespace is not labelled. Then
+   `kedaConnection` must be `current`.
+8. The uninstall of the guide: ScaledObjects, the label, `kubectl delete -f`.
+   Nothing labelled `app.kubernetes.io/instance=scaling-manager-system` may be
+   left, and the namespace must be gone.
+
+The summary and the smoke log are in `dist/manifest-e2e-logs`
+(`MANIFEST_E2E_LOGS`). Not in CI yet. Not covered: the upgrade from the
+previous release, Argo CD and Flux, and the move from an `smt` install.
+
 ### Install with the tools image
 
 `make test-e2e-tools-install` installs with `smt admin-setup`, `smt install`

@@ -1713,6 +1713,33 @@ test-e2e-release-manifests-setup: ## Kind prerequisites for test-e2e-release-man
 .PHONY: test-e2e-release-manifests-with-setup
 test-e2e-release-manifests-with-setup: test-e2e-release-manifests-setup test-e2e-release-manifests ## Prerequisites, then the release-files e2e (never deletes the cluster)
 
+# The install from the one manifest (test/manifest-install/e2e.sh,
+# proposal PR #404, phase 1): kubectl apply
+# --server-side of scaling-manager.yaml, the settings, the namespace label;
+# ready from the in-controller preflight, mutual TLS with KEDA's copy written
+# by the controller, a re-apply that keeps the certificates and a live switch,
+# an unlabelled and an unselected namespace refused at the scaler, the smoke
+# suite, and the uninstall with its leftovers check. On the same kind
+# prerequisites as test-e2e-release-manifests, in the cluster scope (the
+# smoke spec that makes its own namespace is skipped: that namespace is not
+# labelled). docs/developer-guide/testing.md, "Install from the one manifest".
+MANIFEST_E2E_LOGS ?= $(CURDIR)/dist/manifest-e2e-logs
+.PHONY: test-e2e-manifest-install
+test-e2e-manifest-install: kustomize ## Install from scaling-manager.yaml with kubectl apply --server-side, and check it (kind, after test-e2e-release-manifests-setup)
+	@set -e; \
+	$(MAKE) --no-print-directory release-e2e-dist; \
+	rm -rf "$(MANIFEST_E2E_LOGS)"; \
+	smoke=""; \
+	if [ "$(RELEASE_E2E_SMOKE)" = true ]; then \
+		smoke="E2E_EXPECT_SCALER_TLS=true $(MAKE) --no-print-directory test-e2e-smoke CONTROLLER_NAMESPACE=scaling-manager-system KUBECONFIG=$(KUBECONFIG) DEPLOY_ALERTING_RULES=false SKIP='KEDA Smoke Tests - Basic Autoscaling'"; \
+	fi; \
+	KUBECONFIG=$(KUBECONFIG) MODEL_NS=$(E2E_EMULATED_LLMD_NAMESPACE) KEDA_NS=$(E2E_KEDA_NAMESPACE) \
+		MONITORING_NS=$(E2E_MONITORING_NAMESPACE) E2E_LOG_DIR="$(MANIFEST_E2E_LOGS)" SMOKE_CMD="$$smoke" \
+		bash test/manifest-install/e2e.sh "$(RELEASE_E2E_DIST)"
+
+.PHONY: test-e2e-manifest-install-with-setup
+test-e2e-manifest-install-with-setup: test-e2e-release-manifests-setup test-e2e-manifest-install ## Prerequisites, then the one-manifest install e2e (never deletes the cluster)
+
 # The whole-node utilization-share specs (label utilization-share-wholenode): a
 # large model whose replica is one whole 8-GPU node, or a LeaderWorkerSet group
 # of two, beside 1-GPU models. They need up to five free schedulable nodes of
@@ -3321,6 +3348,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n hack/check-release-latest.sh
 	@bash -n deploy/release-manifests.sh
 	@bash -n hack/check-release-manifests.sh
+	@bash -n hack/check-manifest-install.sh
+	@bash -n test/manifest-install/e2e.sh
 	@bash -n hack/check-release-install.sh
 	@bash -n hack/compare-baked-release-files.sh
 	@bash -n hack/testdata/release-install/kubectl
@@ -3668,6 +3697,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# time and requires each break to be caught. An image by tag, a Namespace
 	@# in the file, or a hashed ClusterRole name all render and parse cleanly.
 	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-release-manifests.sh
+	@echo "Checking the one manifest, scaling-manager.yaml: Opaque Secrets with no data, the switches, KEDA's side..."
+	@# proposal PR #404: the file is applied again
+	@# with kubectl apply --server-side on every upgrade, so a Secret with data
+	@# empties the certificates the controller wrote, and a keda mention the
+	@# guide's sed misses half-wires KEDA in another namespace.
+	@KUSTOMIZE=$(KUSTOMIZE) bash hack/check-manifest-install.sh
 	@echo "Checking smt admin-setup, install and admin-finish against the release files..."
 	@# docs/proposals/two-command-install.md: the exit codes, --dry-run equal to
 	@# the sed-substituted files, files refused on a bad SHA256SUMS or another

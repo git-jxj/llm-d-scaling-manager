@@ -65,6 +65,7 @@ RELEASE_FILES=(
     scaling-manager-preflight-cluster.yaml
     scaling-manager-dset-role-writer.yaml
     scaling-manager-dset-role-writer-cluster.yaml
+    scaling-manager.yaml
 )
 
 # The files no end-to-end test installs yet. Each says so in its header;
@@ -278,6 +279,43 @@ for platform in kubernetes openshift; do
             "One controller for the cluster, in namespace $CLUSTER_NS ($platform). Create that namespace first; applies as is." \
             ""
 done
+
+# scaling-manager.yaml: the one manifest, applied with kubectl apply
+# --server-side (proposal PR #404, phase 1). The
+# cluster-wide Kubernetes install above, plus:
+#   - its Namespace, so `kubectl delete -f` removes the install the way KEDA's
+#     and Kueue's do;
+#   - the scaler TLS Secrets as Opaque with no data, which a server-side
+#     re-apply never empties, so they sit in the applied file;
+#   - KEDA's side: the copy of the client certificate in KEDA's namespace
+#     (Opaque, no data), a Role there to get and update it by name, and the
+#     ClusterTriggerAuthentication;
+#   - the reads of the in-controller preflight;
+#   - the switches: namespaces opt in by label, the controller writes KEDA's
+#     copy, and runs the preflight itself.
+# KEDA's namespace is keda; MANIFEST_KEDA_SED is the edit for another one,
+# which docs/guides/kubectl-install gives and hack/check-manifest-install.sh
+# checks reaches every mention.
+MANIFEST=scaling-manager.yaml
+release_source() { sed "s/__NAMESPACE__/$CLUSTER_NS/g" "$ROOT/config/release/$1.yaml"; }
+{
+    printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n' "$CLUSTER_NS"
+    echo '---'
+    main_manifest "$WORK/cl-kubernetes.yaml" "$CLUSTER_NS" kubernetes | yq '
+        (select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "manager") | .args) +=
+            ["--namespace-opt-in=label", "--keda-namespace=keda", "--self-check-interval=1m", "--restart-on-settings-change=true"]'
+    scaler_tls_rbac "$CLUSTER_NS"
+    echo '---'
+    release_source scaler-tls-secret | yq '.type = "Opaque" | del(.data) | ... comments = ""'
+    for f in keda-copy-secret keda-copy-role keda-copy-rolebinding keda-auth-clustertriggerauthentication \
+        self-check-clusterrole self-check-clusterrolebinding self-check-role self-check-rolebinding; do
+        echo '---'
+        release_source "$f"
+    done
+} | label "$CLUSTER_NS" \
+  | write "$MANIFEST" \
+      "The one manifest: namespace $CLUSTER_NS, RBAC, the controller and KEDA's side. Apply with kubectl apply --server-side -f $MANIFEST; then create the settings ConfigMap and label each namespace to manage scaling-manager.llmd.ai/managed=true (docs/guides/kubectl-install)." \
+      "KEDA in another namespace than keda: sed -i -e 's/^\\(  *namespace: \\)keda\$/\\1<ns>/' -e 's/kubernetes.io\\/metadata.name: keda\$/kubernetes.io\\/metadata.name: <ns>/' -e 's/--keda-namespace=keda\$/--keda-namespace=<ns>/' $MANIFEST"
 
 NSRAW="$WORK/ns-kubernetes.yaml"
 
