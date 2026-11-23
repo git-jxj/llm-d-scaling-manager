@@ -99,7 +99,11 @@ type fakeProm struct {
 	countErr error
 	upValue  float64
 	upNone   bool
-	queries  []string
+	// doubles: the pods the double-scrape query returns; epp: the EPP
+	// metric names Prometheus holds.
+	doubles []Sample
+	epp     []string
+	queries []string
 }
 
 func (p *fakeProm) Query(_ context.Context, q string) ([]Sample, error) {
@@ -119,6 +123,14 @@ func (p *fakeProm) Query(_ context.Context, q string) ([]Sample, error) {
 			for _, n := range names {
 				out = append(out, Sample{Labels: map[string]string{"namespace": ns, "__name__": n}, Value: 1})
 			}
+		}
+		return out, nil
+	case strings.HasPrefix(q, "max by (namespace, pod)"):
+		return p.doubles, nil
+	case strings.HasPrefix(q, "group by (__name__)"):
+		var out []Sample
+		for _, n := range p.epp {
+			out = append(out, Sample{Labels: map[string]string{"__name__": n}, Value: 1})
 		}
 		return out, nil
 	case strings.HasPrefix(q, "up{"):
@@ -281,7 +293,8 @@ func newFixture(t *testing.T) *fixture {
 			&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: ControllerServiceAccount}},
 			namespaceReader(ns, ns, "scaling-manager-policy"),
 			cm(ns, KEDAMarkerConfigMap, map[string]string{"clusterTriggerAuthentication": "scaling-manager-external-scaler-" + ns, "secretNamespace": "keda"}),
-			cm(ns, ControllerStatusConfigMap, map[string]string{statusScalerCACert: string(c.caPEM)}),
+			cm(ns, ControllerStatusConfigMap, map[string]string{statusScalerCACert: string(c.caPEM),
+				statusPolicyNamespace: ns, statusPolicyConfigMap: "scaling-manager-scaling-policy-config", statusPolicyAccepted: "true"}),
 		},
 		dyn: []runtime.Object{
 			crd("scaledobjects.keda.sh"),
@@ -293,7 +306,8 @@ func newFixture(t *testing.T) *fixture {
 				"podMonitorNamespaceSelector": map[string]any{},
 			}),
 		},
-		prom:  &fakeProm{series: map[string][]string{ns: requiredModelMetrics}, upValue: 1},
+		prom: &fakeProm{series: map[string][]string{ns: requiredModelMetrics}, upValue: 1,
+			epp: []string{"llm_d_epp_flow_control_queue_size"}},
 		certs: c,
 	}
 }

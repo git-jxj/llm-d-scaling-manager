@@ -18,6 +18,7 @@ var wantChecks = []string{
 	"prometheus.reachable", "metrics.model", "podmonitor.port", "prometheus.selects",
 	"openshift.user-monitoring", "rbac.controller", "rbac.namespaces", "kueue",
 	"overlap", "accelerators", "activation", "lws.disaggregatedset",
+	"conflicts", "policy.source", "metrics.scrape", "metrics.epp",
 }
 
 func TestCheckList(t *testing.T) {

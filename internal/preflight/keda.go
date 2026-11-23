@@ -306,7 +306,7 @@ func checkKEDAMTLSWrittenByController(ctx context.Context, s *state, copyName st
 	case !strings.HasPrefix(tlsState, "mutual TLS"):
 		return []Result{{Status: Fail, Detail: "the scaler serves " + tlsState,
 			Fix: "see scalerTLSAction in ConfigMap " + ControllerStatusConfigMap + " in " + ns}}
-	case status.Data[statusKEDACopyStale] == "true":
+	case status.Data[statusKEDACopyStale] == valueTrue:
 		return []Result{{Status: Fail, Detail: "KEDA's copy, Secret " + copyName + ", does not hold the current client certificate",
 			Fix: "see scalerTLSAction in ConfigMap " + ControllerStatusConfigMap + " in " + ns}}
 	case status.Data[statusScalerUnreachable] != "":

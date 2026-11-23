@@ -179,6 +179,10 @@ var checks = []check{
 	{"accelerators", checkAccelerators},
 	{"activation", checkActivation},
 	{"lws.disaggregatedset", checkLWSDisaggregatedSet},
+	{"conflicts", checkConflicts},
+	{"policy.source", checkPolicySource},
+	{"metrics.scrape", checkScrape},
+	{"metrics.epp", checkEPPMetrics},
 }
 
 // CheckNames lists the checks `check` mode runs, in order.
