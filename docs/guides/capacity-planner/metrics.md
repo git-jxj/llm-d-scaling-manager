@@ -255,6 +255,8 @@ exports `lmcache:*` on the engine's own `/metrics`.
 | `vllm:nixl_post_time_seconds_sum` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | none |
 | `vllm:nixl_post_time_seconds_count` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | none |
 | `vllm:nixl_num_failed_transfers_total` | vLLM 0.11.1+ | `NixlConnector` | diagnostic | failed transfers unseen |
+| `vllm:spec_decode_num_accepted_tokens_per_pos_total` | vLLM, v1 engine | speculative decoding (`--speculative-config`: MTP, EAGLE) | diagnostic | the TPOT spread assumes the acceptance at each draft position from the mean accepted tokens a step |
+| `vllm:spec_decode_num_drafts_total` | vLLM, v1 engine | speculative decoding | diagnostic | as above |
 | `lmcache_mp_lookup_requested_tokens_total` | LMCache 0.5.6+ multi-process server (checked to 0.5.8rc3) | the server's `--prometheus-port` scraped | needed for TTFT on cached fleets | no LMCache hit rate |
 | `lmcache_mp_lookup_hit_tokens_total` | LMCache 0.5.6+ multi-process server | the server's `--prometheus-port` scraped | needed for TTFT on cached fleets | no LMCache hit rate |
 | `lmcache_mp_lookup_hit_l1_tokens_total` | LMCache 0.5.6+ multi-process server | the server's `--prometheus-port` scraped | needed for TTFT on cached fleets | no split of L1 (memory) and L2 (storage) hits |
