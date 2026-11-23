@@ -41,6 +41,11 @@ REPO_DIR="$(pwd)"
 # control for the label opt-in.
 OUTSIDE_NS=scaling-manager-e2e-outside
 LABEL=scaling-manager.llmd.ai/managed
+# The admin label namespaceSelector requires beside the opt-in label: one a
+# tenant who can label namespaces does not set (the proposal, "The label
+# alone is not consent"). The smoke suite puts both on the namespaces it
+# creates (E2E_NAMESPACE_LABELS).
+ADMIT=e2e.scaling-manager.llmd.ai/admitted
 M=scaling-manager.yaml
 STATUS_CM=scaling-manager-controller-status
 DEPLOY=scaling-manager-controller-manager
@@ -127,14 +132,14 @@ kubectl get secret "$PROMETHEUS_TLS_SECRET" -n "$MONITORING_NS" -o jsonpath='{.d
 [ -s "$WORK/prometheus-ca.crt" ] || fail settings "no tls.crt in Secret $PROMETHEUS_TLS_SECRET in $MONITORING_NS"
 kubectl create secret generic scaling-manager-prometheus-ca -n "$NS" --from-file=ca.crt="$WORK/prometheus-ca.crt" >/dev/null \
     || fail settings "could not create Secret scaling-manager-prometheus-ca"
-printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: scaling-manager-settings\n  namespace: %s\ndata:\n  prometheusURL: %s\n  caFromSecret: "true"\n  namespaceSelector: "%s=true,kubernetes.io/metadata.name in (%s)"\n' \
-    "$NS" "$PROMETHEUS_URL" "$LABEL" "$MODEL_NS" > settings.yaml
+printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: scaling-manager-settings\n  namespace: %s\ndata:\n  prometheusURL: %s\n  caFromSecret: "true"\n  namespaceSelector: "%s=true,%s=true"\n' \
+    "$NS" "$PROMETHEUS_URL" "$LABEL" "$ADMIT" > settings.yaml
 kubectl apply --server-side -f settings.yaml > "$LOGS/apply-settings.log" 2>&1 || { cat "$LOGS/apply-settings.log"; fail settings "kubectl apply --server-side -f settings.yaml"; }
 pass "command 2: kubectl apply --server-side -f settings.yaml (prometheusURL, caFromSecret, namespaceSelector)"
 
 # --- 3. command 3: the label -------------------------------------------------
 
-kubectl label namespace "$MODEL_NS" "$LABEL=true" --overwrite >/dev/null || fail label "kubectl label namespace $MODEL_NS"
+kubectl label namespace "$MODEL_NS" "$LABEL=true" "$ADMIT=true" --overwrite >/dev/null || fail label "kubectl label namespace $MODEL_NS"
 # The e2e setup does not scrape the model servers for us: the PodMonitor of
 # the release's model-namespace file, as appendix D's monitoring file would.
 yq 'select(.kind == "PodMonitor")' "$DIST/scaling-manager-model-namespace.yaml" | sed "s/__MODEL_NAMESPACE__/$MODEL_NS/g; s/__NAMESPACE__/$NS/g" \
@@ -251,7 +256,7 @@ fi
 {
     kubectl delete scaledobject -A -l "$INSTANCE,app.kubernetes.io/managed-by=llm-d-scaling-manager" --ignore-not-found
     kubectl delete podmonitor -n "$MODEL_NS" -l app.kubernetes.io/part-of=scaling-manager --ignore-not-found
-    kubectl label namespace -l "$LABEL=true" "$LABEL-"
+    kubectl label namespace -l "$LABEL=true" "$LABEL-" "$ADMIT-"
     kubectl delete -f "$M" --ignore-not-found --wait=true --timeout=300s
 } > "$LOGS/uninstall.log" 2>&1 || { cat "$LOGS/uninstall.log"; fail uninstall "a delete failed"; }
 left=""

@@ -2569,7 +2569,8 @@ works there. In order, and a step that fails stops the run:
    KEDA in `keda-system`. No mention of `keda` may be left.
 2. The three commands: `kubectl apply --server-side` of the manifest and of
    a settings file (`prometheusURL`, `caFromSecret`, `namespaceSelector`
-   naming `llm-d-sim`), then the label on `llm-d-sim`. The Prometheus CA goes
+   requiring the opt-in label and an admin label,
+   `e2e.scaling-manager.llmd.ai/admitted`), then both labels on `llm-d-sim`. The Prometheus CA goes
    in Secret `scaling-manager-prometheus-ca` first, and the model-server
    PodMonitor of the release's model-namespace file is applied.
 3. Waits for the rollout, for `settingsSources` to show `prometheusURL` from
@@ -2591,8 +2592,8 @@ works there. In order, and a step that fails stops the run:
    it is still outside `namespaceSelector`, and must stay refused for that
    reason.
 7. The smoke suite with passive off (`RELEASE_E2E_SMOKE=true`, the default),
-   skipping "Basic Autoscaling" and "Error Handling", whose own namespaces
-   are not labelled and are refused. Then
+   with `E2E_NAMESPACE_LABELS` set to both labels, so the specs that create
+   their own namespace (Basic Autoscaling, Error Handling) label it and run. Then
    `kedaConnection` must be `current`.
 8. The uninstall of the guide: ScaledObjects, the label, `kubectl delete -f`.
    Nothing labelled `app.kubernetes.io/instance=scaling-manager-system` may be

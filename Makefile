@@ -1721,10 +1721,10 @@ test-e2e-release-manifests-with-setup: test-e2e-release-manifests-setup test-e2e
 # an unlabelled and an unselected namespace refused at the scaler, the smoke
 # suite, and the uninstall with its leftovers check. On the same kind
 # prerequisites as test-e2e-release-manifests, in the cluster scope. The
-# smoke specs that make their own namespace (Basic Autoscaling, Error
-# Handling) are skipped: those namespaces are not labelled, and the scaler
-# refuses them, as it should. docs/developer-guide/testing.md, "Install from
-# the one manifest".
+# smoke specs that make their own namespace label it with
+# E2E_NAMESPACE_LABELS, the opt-in label and the admin label the settings'
+# namespaceSelector requires, so none is skipped.
+# docs/developer-guide/testing.md, "Install from the one manifest".
 MANIFEST_E2E_LOGS ?= $(CURDIR)/dist/manifest-e2e-logs
 .PHONY: test-e2e-manifest-install
 test-e2e-manifest-install: kustomize ## Install from scaling-manager.yaml with kubectl apply --server-side, and check it (kind, after test-e2e-release-manifests-setup)
@@ -1733,7 +1733,7 @@ test-e2e-manifest-install: kustomize ## Install from scaling-manager.yaml with k
 	rm -rf "$(MANIFEST_E2E_LOGS)"; \
 	smoke=""; \
 	if [ "$(RELEASE_E2E_SMOKE)" = true ]; then \
-		smoke="E2E_EXPECT_SCALER_TLS=true $(MAKE) --no-print-directory test-e2e-smoke CONTROLLER_NAMESPACE=scaling-manager-system KUBECONFIG=$(KUBECONFIG) DEPLOY_ALERTING_RULES=false SKIP='KEDA Smoke Tests - (Basic Autoscaling|Error Handling)'"; \
+		smoke="E2E_EXPECT_SCALER_TLS=true E2E_NAMESPACE_LABELS=scaling-manager.llmd.ai/managed=true,e2e.scaling-manager.llmd.ai/admitted=true $(MAKE) --no-print-directory test-e2e-smoke CONTROLLER_NAMESPACE=scaling-manager-system KUBECONFIG=$(KUBECONFIG) DEPLOY_ALERTING_RULES=false"; \
 	fi; \
 	KUBECONFIG=$(KUBECONFIG) MODEL_NS=$(E2E_EMULATED_LLMD_NAMESPACE) KEDA_NS=$(E2E_KEDA_NAMESPACE) \
 		MONITORING_NS=$(E2E_MONITORING_NAMESPACE) E2E_LOG_DIR="$(MANIFEST_E2E_LOGS)" SMOKE_CMD="$$smoke" \

@@ -102,7 +102,7 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "full"),
 
 	BeforeAll(func() {
 		nsObj, err := k8sClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{GenerateName: "smoke-keda-basic-"},
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "smoke-keda-basic-", Labels: cfg.NamespaceLabels},
 		}, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), "Failed to create isolated test namespace")
 		ns = nsObj.Name
@@ -264,7 +264,7 @@ var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "full"), Or
 
 	BeforeAll(func() {
 		nsObj, err := k8sClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{GenerateName: "smoke-keda-error-"},
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "smoke-keda-error-", Labels: cfg.NamespaceLabels},
 		}, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), "Failed to create isolated test namespace")
 		ns = nsObj.Name
