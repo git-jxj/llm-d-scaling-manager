@@ -48,6 +48,9 @@ type servedSources struct {
 	// weight the inputs cache counts (--inputs-cache-size).
 	uploads         *uploadStore
 	maxUploadWeight int
+	// experimentalTTFT is serve's --experimental-ttft: every source is read
+	// with the experimental TTFT model, as if each request asked for it.
+	experimentalTTFT bool
 	// onPass, when set, is called as each pass over a recording file opens,
 	// with the pass's count (recordingSource.onPass): a test's hook.
 	onPass func(pass int)
@@ -71,7 +74,7 @@ func apiError(err error) error {
 func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest) (*whatifapi.Resolved, error) {
 	f := answerFlags{question: "serve", cycle: "last", model: req.Model, variant: req.DecodeVariant, prefillVariant: req.PrefillVariant,
 		serveSelfCheck: req.SelfCheck != nil && *req.SelfCheck,
-		seed:           whatif.DefaultResampling().Seed, vpPlateau: req.PrefillVPPlateau, experimentalTTFT: req.ExperimentalTTFT, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
+		seed:           whatif.DefaultResampling().Seed, vpPlateau: req.PrefillVPPlateau, experimentalTTFT: req.ExperimentalTTFT || s.experimentalTTFT, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
 		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {

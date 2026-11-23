@@ -236,7 +236,9 @@ seven on for the one command you pass it to:
 
 `slo-to-rate`, `replicas-to-slo`, `at-replicas`, `backtest`, `predict` and
 `day-plan` take it, and `POST /v1/inputs` takes `experimentalTTFT`
-([API](api.md)). Every prefill and TTFT figure of such an answer is flagged
+([API](api.md)). The page has no switch for it: start `serve
+--experimental-ttft` (in a cluster, add it to the StatefulSet's `args`) and
+every answer on the page uses it. Every prefill and TTFT figure of such an answer is flagged
 `ExperimentalTTFT` and reads OUTSIDE VALIDATED REGION (experimental TTFT
 model: processor sharing by engine config, router hop from window means,
 prefill speed raised to the served work; not validated). The assumed line
