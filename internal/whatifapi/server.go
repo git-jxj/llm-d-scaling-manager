@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
 // maxBody is the largest request body the API reads: a scenario is a few
@@ -171,6 +173,9 @@ type inputsEntry struct {
 	// Resolved.Config).
 	latency []LatencySample
 	config  RunConfig
+	// mixture is the source's cycles for the rank-mixture model
+	// (Resolved.Mixture); nil unless asked.
+	mixture []whatif.MixtureCycle
 	// bytes is the entry's weight in the inputs cache (Resolved.Bytes).
 	bytes int
 }

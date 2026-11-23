@@ -48,7 +48,9 @@ type backtestFlags struct {
 	vpPlateau bool
 	// experimentalTTFT is --experimental-ttft, as answerFlags'
 	// (experimental_ttft.go): both sides are read with its switches on.
-	experimentalTTFT bool
+	// rankMixtureTTFT is --experimental-ttft=v2 (experimental_ttft_v2.go),
+	// backtest's only.
+	experimentalTTFT, rankMixtureTTFT bool
 }
 
 // registerAssume registers the stated-input flags backtest and predict take.
@@ -63,7 +65,7 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's, on by default: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0); =false for router v0.11.0")
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0); set, it turns the default --router-wait-in-prefill off")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
-	fs.BoolVar(&f.experimentalTTFT, experimentalTTFTFlag, false, experimentalTTFTUsage)
+	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTV2Usage)
 }
 
 // parsed records the flags given, once fs is parsed, and lets the default
@@ -126,6 +128,9 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 		if err != nil {
 			return err
 		}
+		if err := f.rankMixture(&req, f.recording, whole, f.recording, fit); err != nil {
+			return err
+		}
 		bt, err = whatifapi.Backtest(ctx, fit, whole, req, cutoff, words, "schema-v"+strconv.Itoa(schemaVersion))
 		if err != nil {
 			return backtestError(err)
@@ -140,6 +145,9 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 		}
 		test, err := f.resolve(ctx, f.test, 0, warn)
 		if err != nil {
+			return err
+		}
+		if err := f.rankMixture(&req, f.test, test, f.fit, fit); err != nil {
 			return err
 		}
 		bt, err = whatifapi.Backtest(ctx, fit, test, req, time.Time{}, "", "schema-v"+strconv.Itoa(schemaVersion))
@@ -163,6 +171,20 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 		return exitStatus(3)
 	}
 	return nil
+}
+
+// rankMixture asks req for the rank mixture where --experimental-ttft=v2 is
+// given, and reads each side's cycles for it: test from testPath, fit from
+// fitPath.
+func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath string, test *whatifapi.Resolved, fitPath string, fit *whatifapi.Resolved) error {
+	if !f.rankMixtureTTFT {
+		return nil
+	}
+	req.TTFTModel, req.PrefillSlots = string(whatif.QueueRankMixture), prefillSlotsOf(fit)
+	if err := withRankMixture(testPath, test); err != nil {
+		return err
+	}
+	return withRankMixture(fitPath, fit)
 }
 
 // backtestError is err as the CLI exits with it: a request the inputs

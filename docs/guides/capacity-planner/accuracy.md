@@ -206,6 +206,46 @@ These always read `OUTSIDE VALIDATED REGION`:
 - Any model but Qwen3-32B, any tensor parallelism but 2, and any Pod count
   but 2 prefill and 2 decode.
 - Any accelerator but H200.
+- Any TTFT from `backtest --experimental-ttft=v2` (below).
+
+## Experimental: the rank-mixture TTFT model
+
+`capacity-planner backtest --experimental-ttft=v2` prices TTFT with a second
+model, for a P/D fleet whose prefill engines run chunked prefill on several
+data-parallel ranks. It is off by default, and every TTFT it prices is flagged
+`RankMixtureTTFT` and reads `OUTSIDE VALIDATED REGION`. TPOT, the exclusions and
+the scoring are the planner's own.
+
+What it prices, per request: `TTFT = Z + q + P`.
+
+| part | model | where it comes from | assumption, and the check on each step |
+|---|---|---|---|
+| `P`, prefill | limited processor sharing on the rank the request lands on, `K` = `--max-num-seqs` prompts at once (1 without chunked prefill). With probability `1 - rho^K` the request starts at once and takes the PS sojourn `S(x)/(1 - rho)`, spread by the planner's PS rule; otherwise it first waits an exponential admission wait. The mean is Zhang and Zwart's, `E[S]/(1 - rho) * ((1 - rho^K) + rho^K (1 + cs^2)/2)`. `S(x) = s0 + x/V`, `x` drawn from the computed-token histogram, which also gives `cs^2` | `s0` and `V` by inverting each rank's mean prefill time, `E[S] = E[T]/(1 + lambda E[T])`, then a line in its mean computed prompt. Where the prompts do not spread (a staircase at one length), the line is not identified: the service is taken proportional to the prompt (`serviceProportional`), right at the prompt it was read at | the approximation is a heavy-traffic one: a rank above `rho` 0.9 is flagged `LimitedPSHeavyTraffic`. Against a simulated rank at `cs^2` 4.9 its mean read within 8 % at `rho` 0.3 to 0.85, and plain PS 17 % to 46 % low from 0.6. The answer reports the share of requests that wait for admission and the busiest rank's tail index (Nair, Wierman and Zwart) |
+| the ranks | each rank its own queue at its share of the traffic; the population is the mixture | the ranks' measured request shares, busiest first | the shares hold over the fit (`shareCv` in the answer) |
+| `q`, KV wait | none with probability `1 - p_d`, else exponential with mean `m_d`; both lines in the ranks' utilization. Fitted, not derived | the prefill engines' queue-time histogram at 0.3 s and 1 s | priced inside the utilizations it was fitted over, else flagged `KVDeferralOutside` |
+| `Z`, the rest | `a0 + s * beta * L`, `L` drawn from the prompt-length histogram | `beta`: the slopes of the engine's pre-queue overhead, the decode engine's first token and the router's remainder against the prompt. A slope is fitted only where its prompts spread (cv 0.03 or more); at one prompt length it is 0 and named in `betaUnidentified`. `s` is a calibration, fitted on the fit window's self-check folds so that their median p90 ratio is 1; p95 is not fitted. On a fit window under 12 h, `s` is 1, not fitted (`spreadDefaulted`); a fitted `s` under 1 is priced at 1 (`spreadFloored`) | `s` near 1 means `beta` holds the prompt's whole effect; its distance from 1 is what `beta` misses. Fitted `s` follows the fit window's own p90-over-mean, so it is not yet known to carry from one day to the next |
+| each step | priced as if its rate held (pointwise stationary) | | the busiest rank's relaxation, `E[S]/(1 - rho)^2`, well under the step; else the step is not scored (`unsettled`). A step whose arrivals (the router's rate `A`) ran ahead of its completions (the engine rows' rate `D`) by `(A - D)/D` over 0.1 left a backlog adding over a tenth of the step to the wait: it is not stationary. The fit leaves it out (`fitStepsBacklogged`), and the model refuses it as a test step |
+
+The model prices only what its inputs identify. It abstains on the whole backtest where:
+- a prompt slope is not identified;
+- the spread is not calibrated (fit window under 12 h);
+- the spread is not identified: it, or one self-check fold's, ends at its upper bound 8, so no spread
+  brings the fold's p90 ratio to 1;
+- `a0` is negative. `a0` is refitted at each spread to hold the mean, so a spread that outgrows `beta`
+  pushes it down; a negative one is that offset, not a time;
+- the service line is not identified (one prompt length);
+- the ranks' own rates or `--max-num-seqs` are not read;
+- or the fit fails.
+
+Every TTFT is then the planner's own, flagged `RankMixtureAbstained`, and `rankMixture.abstained` says why. On
+the public staircases (about an hour each, at one prompt length) it abstains.
+
+The answer's `rankMixture` block names every fitted figure, and each step's
+`rankMixture` block its checks. The model needs a recording made by this version
+or later. It reads each prefill rank's own request rate, prefill time, queue
+time, TTFT and prompt from a LeaderWorkerSet group's engines
+(`GroupEngines`). In an older recording, a row's ranks share its rate evenly,
+and the answer says so.
 
 ## Adding a run
 

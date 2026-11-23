@@ -49,6 +49,11 @@ type Resolved struct {
 	// self-check stamps an issue with.
 	Folds          []FoldFit
 	PlannerVersion string
+	// Mixture is each cycle as the experimental rank-mixture TTFT model
+	// reads it, Mixture[i] the cycle of Series[i]
+	// (learnreplay.MixtureSeriesFrom); nil unless that model was asked for
+	// (BacktestRequest.TTFTModel).
+	Mixture []whatif.MixtureCycle
 	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
 	// the Series and the Inputs), its weight in the inputs cache
 	// (Config.MaxInputsBytes); 0 weighs nothing.
