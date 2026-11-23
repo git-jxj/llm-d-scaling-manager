@@ -483,10 +483,11 @@ func lnSigma(mean, p90 float64) (float64, bool) {
 	return max(z90-math.Sqrt(disc), 0), true
 }
 
-// histQuantile is the q quantile of a cumulative histogram (upper bound to
+// histP90 is the 0.9 quantile of a cumulative histogram (upper bound to
 // rate, +Inf the total), linear inside a bucket and the lower edge in the
 // +Inf one; ok is false where it holds nothing.
-func histQuantile(h map[float64]float64, q float64) (float64, bool) {
+func histP90(h map[float64]float64) (float64, bool) {
+	const q = 0.9
 	tot := h[math.Inf(1)]
 	if !(tot > 0) {
 		return 0, false
@@ -549,7 +550,7 @@ func (m *RankMixture) fitSigmas(clean []MixtureStep) {
 	p := m.Parts
 	var ds []float64
 	for _, st := range clean {
-		if q, ok := histQuantile(st.DecodeTTFTHist, 0.9); ok {
+		if q, ok := histP90(st.DecodeTTFTHist); ok {
 			if s, ok := lnSigma(st.DecodeTTFT, q); ok {
 				ds = append(ds, s)
 			}
@@ -564,7 +565,7 @@ func (m *RankMixture) fitSigmas(clean []MixtureStep) {
 	}
 	var os []obs
 	for _, st := range clean {
-		q, ok := histQuantile(st.PrefillTTFTHist, 0.9)
+		q, ok := histP90(st.PrefillTTFTHist)
 		if !ok || !(q > 0) {
 			continue
 		}

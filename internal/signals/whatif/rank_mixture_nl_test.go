@@ -234,10 +234,10 @@ func TestLnSigmaAndHistQuantile(t *testing.T) {
 	_, ok = lnSigma(0, 1)
 	assert.False(t, ok)
 	h := map[float64]float64{1: 0.5, 2: 0.8, 4: 1, math.Inf(1): 1}
-	q, ok := histQuantile(h, 0.9)
+	q, ok := histP90(h)
 	require.True(t, ok)
 	assert.InDelta(t, 3, q, 1e-12)
-	_, ok = histQuantile(map[float64]float64{}, 0.9)
+	_, ok = histP90(map[float64]float64{})
 	assert.False(t, ok)
 }
 
