@@ -191,8 +191,14 @@ func backlogged(e *inputsEntry, idx []int, from, to time.Time) string {
 // stationary (backlogged) is left out: no queue model's steady state is what
 // it measured, and its TTFT would pass into the fit as cost.
 func fitRankMixture(fit *inputsEntry, fitIdx []int, step time.Duration, slots int) (*rankMixtureQ, error) {
+	rq, _, err := fitRankMixtureSteps(fit, fitIdx, step, slots)
+	return rq, err
+}
+
+// fitRankMixtureSteps is fitRankMixture, and the steps it fitted on.
+func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slots int) (*rankMixtureQ, []whatif.MixtureStep, error) {
 	if len(fit.mixture) != len(fit.series) {
-		return nil, InputErrorf("the experimental TTFT model %s needs the recording's per-rank series, which this source did not give",
+		return nil, nil, InputErrorf("the experimental TTFT model %s needs the recording's per-rank series, which this source did not give",
 			whatif.QueueRankMixture)
 	}
 	idx := slices.Clone(fitIdx)
@@ -239,14 +245,14 @@ func fitRankMixture(fit *inputsEntry, fitIdx []int, step time.Duration, slots in
 		even = max(even, cycles[len(cycles)-1].EvenWithinRows)
 	}
 	if len(steps) == 0 {
-		return nil, InputErrorf("the experimental TTFT model %s fits against the router's measured TTFT mean and p90 and the prefill "+
+		return nil, nil, InputErrorf("the experimental TTFT model %s fits against the router's measured TTFT mean and p90 and the prefill "+
 			"ranks' own rates on stationary steps: of the fit window's %d steps, %d read no router TTFT, %d no prefill rank's rate "+
 			"and %d were not stationary", whatif.QueueRankMixture, len(order), noRouter, noRanks, backlog)
 	}
 	m, diag, err := whatif.FitRankMixture(steps, whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
 		SpreadFloor: whatif.MinSpread})
 	if err != nil {
-		return nil, InputErrorf("the experimental TTFT model %s did not fit: %v", whatif.QueueRankMixture, err)
+		return nil, nil, InputErrorf("the experimental TTFT model %s did not fit: %v", whatif.QueueRankMixture, err)
 	}
 	r := RankMixtureReport{Model: string(whatif.QueueRankMixture), Experimental: true, Assumed: m.Assumed(), S0: m.S0, V: m.V, ServiceProportional: m.ServiceProportional,
 		Shares: m.Shares, ShareCV: diag.ShareCV, EvenWithinRows: even, A0: m.A0, Beta: m.Beta, BetaOverhead: m.BetaOverhead,
@@ -262,7 +268,7 @@ func fitRankMixture(fit *inputsEntry, fitIdx []int, step time.Duration, slots in
 	if m.KV.Known {
 		r.KV = &RankMixtureKV{P0: m.KV.P0, P1: m.KV.P1, M0: m.KV.M0, M1: m.KV.M1, RhoLo: m.KV.RhoLo, RhoHi: m.KV.RhoHi}
 	}
-	return &rankMixtureQ{m: m, report: r}, nil
+	return &rankMixtureQ{m: m, report: r}, steps, nil
 }
 
 // abstainedMixture is the model abstaining for why.

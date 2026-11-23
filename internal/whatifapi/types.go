@@ -39,6 +39,12 @@ type InputsRequest struct {
 	// not validated. Every prefill and TTFT figure is flagged
 	// ExperimentalTTFT.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
+	// TTFTModel prices the main view's TTFT with an experimental model:
+	// "" is the server's default (serve --experimental-ttft=v2), and
+	// whatif.QueueRankMixture the only other. The model is fitted on the
+	// source's window and abstains where it is not identified; the
+	// planner's TTFT then stands.
+	TTFTModel string `json:"ttftModel,omitempty"`
 }
 
 // The source kinds.
@@ -89,6 +95,9 @@ type InputsResponse struct {
 	// ExperimentalTTFT says the source was read with the experimental TTFT
 	// model (InputsRequest.ExperimentalTTFT); absent otherwise.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
+	// TTFTModel is the experimental TTFT model the main view prices with,
+	// as fitted on the source (InputsRequest.TTFTModel); absent otherwise.
+	TTFTModel *TTFTModelInfo `json:"ttftModel,omitempty"`
 }
 
 // SourceInfo is what the inputs were read from. Prometheus is the URL's
@@ -255,6 +264,10 @@ type Figure struct {
 	// is met; one it misses is not known to be missed (issue
 	// llm-d-incubation/llm-d-scaling-manager#369).
 	UpperBound bool `json:"upperBound,omitempty"`
+	// Extrapolated says the figure, priced by the experimental TTFT model,
+	// is at a rate above the highest load the source's fit window served
+	// (TTFTModelView.MeasuredUpTo).
+	Extrapolated bool `json:"extrapolated,omitempty"`
 }
 
 // Band is a bootstrap band, Lo to Hi.
@@ -511,6 +524,9 @@ type TTFTView struct {
 	Line      Line    `json:"line"`
 	PerBucket []Line  `json:"perBucket,omitempty"`
 	Markers   Markers `json:"markers"`
+	// Model is the experimental TTFT model at the plan's fleet, where the
+	// source was resolved with one (InputsResponse.TTFTModel).
+	Model *TTFTModelView `json:"model,omitempty"`
 }
 
 // The semantics a TTFT line has.

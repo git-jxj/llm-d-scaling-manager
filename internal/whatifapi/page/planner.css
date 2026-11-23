@@ -166,6 +166,7 @@ svg .line.pin { stroke-dasharray: 10 3; stroke-width: 2.5; }
    past the context window is dimmed and dotted. */
 svg .line.rep { stroke-dasharray: 7 2 1 2; }
 svg .line.beyond { stroke-opacity: 0.45; stroke-dasharray: 2 3; }
+svg .line.extrap { stroke-dasharray: 6 4; }
 #bucketedges { width: 30ch; max-width: 100%; }
 #bucketedges.invalid { border-color: var(--critical); outline-color: var(--critical); }
 .fielderr { color: var(--critical); font-size: 12px; min-height: 1em; }
