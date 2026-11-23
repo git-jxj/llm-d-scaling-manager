@@ -19,7 +19,8 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
-// contradictsReporter is a reporter on a window of 40 cycles 15 s apart, all
+// contradictsReporter is a reporter on a window of 40 cycles 15 s apart, each
+// cycle's clock recorded, all
 // at 1 r/s on 2 prefill (p) + 2 decode (d) at the shape priced, 1000/1000,
 // but for the cycles in hot, served at rate on prefill replicas pre and
 // decode replicas dec. The arrivals are the served rate.
@@ -27,9 +28,11 @@ func contradictsReporter(hot []int, rate float64, pre, dec int) *reporter {
 	const n = 40
 	at := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
 	st := &learnreplay.State{FirstAt: at, At: at.Add((n - 1) * 15 * time.Second),
-		ArrivalRates: make([]float64, n), ServingReplicas: map[string][]int{"p": make([]int, n), "d": make([]int, n)}}
+		ArrivalRates: make([]float64, n), ServingReplicas: map[string][]int{"p": make([]int, n), "d": make([]int, n)},
+		CycleTimes: make([]time.Time, n)}
 	series := make([]learnreplay.CycleShape, n)
 	for i := range n {
+		st.CycleTimes[i] = at.Add(time.Duration(i) * 15 * time.Second)
 		st.ArrivalRates[i], st.ServingReplicas["p"][i], st.ServingReplicas["d"][i] = 1, 2, 2
 		series[i] = learnreplay.CycleShape{Cycle: i + 1, InputTokens: 1000, OutputTokens: 1000, RequestRate: 1}
 	}
@@ -90,6 +93,35 @@ func TestReport_WindowContradictsTheKnee(t *testing.T) {
 	assert.Empty(t, r.contradicted(2, 2, base), "no per-cycle fleet recorded")
 	r = contradictsReporter(cycles(10, 22), 12, 2, 2)
 	assert.Empty(t, r.contradicted(2, 2, fleetEval{}), "no knee")
+}
+
+// A run past the knee breaks at a gap in the recording: two 2-minute runs
+// (8 cycles 15 s apart each) on either side of a 10-minute gap do not
+// contradict, while 4 minutes without one do. Counted at the mean cycle
+// time, as before per-cycle clocks, the 16 cycles read 8 minutes (the gap
+// lifts the mean to 30 s). A recording with no per-cycle clock keeps the
+// count at the mean cycle time and says so (#358).
+func TestReport_ARecordingGapBreaksTheRun(t *testing.T) {
+	base := fleetEval{kneeOK: true, knee: 4, binds: roleDecodeWord, decodeKnee: whatif.Answer{Value: 4}}
+	gapped := func() *reporter {
+		r := contradictsReporter(cycles(12, 28), 12, 2, 2)
+		for i := 20; i < len(r.st.CycleTimes); i++ {
+			r.st.CycleTimes[i] = r.st.CycleTimes[i].Add(10 * time.Minute)
+		}
+		r.st.At = r.st.CycleTimes[len(r.st.CycleTimes)-1]
+		return r
+	}
+
+	assert.Empty(t, gapped().contradicted(2, 2, base), "two 2-minute runs across a gap are not one")
+
+	got := contradictsReporter(cycles(12, 28), 12, 2, 2).contradicted(2, 2, base)
+	assert.Contains(t, got, "for 4 min without a break (16 cycles), up to 12.0 r/s")
+
+	r := gapped()
+	r.st.CycleTimes = nil
+	got = r.contradicted(2, 2, base)
+	assert.Contains(t, got, "for 8 min without a break (16 cycles, "+untimedRunWords+")",
+		"no per-cycle clock: the gap cannot be seen, and the words say how the run was counted")
 }
 
 // Only what the window served at the shape priced judges the knee: the q32
