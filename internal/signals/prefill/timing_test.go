@@ -86,8 +86,9 @@ func TestTiming_ABusyFleetLearnsAFromEngineTiming(t *testing.T) {
 // one model, so a fit over every minute, not the quieter half, reads the
 // intercept low: the half is what keeps a near a0.
 func TestTiming_TheQuieterHalfKeepsTheIntercept(t *testing.T) {
-	var xs, ys []float64
-	for _, c := range busyMinutes(120, true) {
+	cycles := busyMinutes(120, true)
+	xs, ys := make([]float64, 0, 2*len(cycles)), make([]float64, 0, 2*len(cycles))
+	for _, c := range cycles {
 		for _, rm := range c.Rows {
 			xs, ys = append(xs, rm.PrefillComputedTokenRate/rm.RequestRate), append(ys, rm.AvgPrefillTime)
 		}
