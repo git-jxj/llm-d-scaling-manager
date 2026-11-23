@@ -639,6 +639,14 @@ func (s *Server) handleBacktest(w http.ResponseWriter, r *http.Request) {
 // backtest answers req on one plan slot, within the plan budget. A split
 // resolves the fit at the split, as POST /v1/inputs would, and keeps it.
 func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestResponse, error) {
+	// The server's experimental models (Config.TTFTModel, TPOTModel) price
+	// a request that names none, as if it had.
+	if req.TTFTModel == "" {
+		req.TTFTModel = s.ttftModel
+	}
+	if req.TPOTModel == "" {
+		req.TPOTModel = s.tpotModel
+	}
 	test, ok := s.inputs.get(req.InputsID)
 	if !ok {
 		return nil, errUnknownInputs
@@ -675,8 +683,21 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 		doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
 		doc.InputsID = contentID("inputs", res.Content)
 		fit = &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
-			config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode}
+			config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode, engine: res.Engine}
 		fit = s.inputs.add(doc.InputsID, fit)
+	}
+	// The engines' flags the models read are the fit's, as the source gives
+	// them, where the request does not state them.
+	if req.TTFTModel != "" && req.PrefillSlots == 0 {
+		req.PrefillSlots = fit.engine.PrefillSlots
+	}
+	if req.TPOTModel != "" {
+		if req.DecodeSlots == 0 {
+			req.DecodeSlots = fit.engine.DecodeSlots
+		}
+		if req.SpecTokens == 0 {
+			req.SpecTokens = fit.engine.SpecTokens
+		}
 	}
 	q, err := backtestQuestionOf(fit, test, req, cutoff, split)
 	if err != nil {
@@ -2545,9 +2566,18 @@ func upperBoundWords(name string, scores []BacktestScore, more string) string {
 		"and the fleet measured at or under it: consistent, and not scored for accuracy (upperBound).", n, more, name, name)
 }
 
+// TPOTBucketHint is how to measure a TPOT percentile the histogram is too
+// coarse to place: the verdict says it after the steps it left unscored,
+// and the page shows the verdict as it is, so the CLI and the page say it
+// in the same words.
+const TPOTBucketHint = "To measure it, give the histogram finer edges: the router's metrics.requestTPOTBuckets in the " +
+	"EndpointPickerConfig (an llm-d-router build after v1.0.0), or vLLM's --custom-histogram-buckets (v0.33.0 and later). " +
+	"Edges about 15% apart place p90 and p95 within 20%."
+
 // percentileWords is the p90 beside the figure a verdict quotes: within 20%
 // in how many of the steps its measured p90 could be placed, and in how
-// many a histogram bucket too wide to place it left it unscored.
+// many a histogram bucket too wide to place it left it unscored, with
+// TPOTBucketHint after TPOT's.
 func percentileWords(name string, scores []BacktestScore) string {
 	i := slices.IndexFunc(scores, func(x BacktestScore) bool { return x.Statistic == statP90 })
 	if i < 0 {
@@ -2572,6 +2602,9 @@ func percentileWords(name string, scores []BacktestScore) string {
 			}
 		}
 		w += "."
+		if name == "TPOT" {
+			w += " " + TPOTBucketHint
+		}
 	}
 	return w
 }

@@ -53,6 +53,14 @@ For an operator collecting a window for someone else to plan from.
   ([what it must keep](../capacity-planner/metrics.md#what-your-prometheus-must-keep)).
 - [ ] A window of 30 minutes or more in which load rose. A flat, quiet hour
   teaches the planner little.
+- [ ] Optional, to check TPOT p90 and p95: TPOT histogram edges about 15%
+  apart across the range you serve. With the default router edges (5 to
+  10 ms, 10 to 20 ms) the check cannot place a TPOT percentile and leaves it
+  unscored. Set `metrics.requestTPOTBuckets` in the router's
+  EndpointPickerConfig (an llm-d-router build after v1.0.0,
+  [llm-d-router#3539](https://github.com/llm-d/llm-d-router/pull/3539)), or
+  vLLM's `--custom-histogram-buckets` (v0.33.0 and later), before the window
+  you record ([why](../capacity-planner/check.md#read-the-answer)).
 - [ ] `kubectl` access to Prometheus' namespace (a port-forward), or its URL.
 - [ ] For Path 1: the `capacity-planner` binary of the release you run
   ([Get the planner](../capacity-planner/README.md#get-the-planner)), or a

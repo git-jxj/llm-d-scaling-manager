@@ -235,6 +235,38 @@ were rendered with `kubectl kustomize`, not run on a live OpenShift cluster.
 - The planner refuses a file that is not a learner recording, and says why.
   [Upload a recording](api.md#upload-a-recording) has the details.
 
+### Or show the experimental v2 models on the page
+
+For the namespace admin. Off by default. With these two flags every check
+the page or the API runs (`POST /v1/backtest`) also prices TTFT with the
+rank-mixture model and the TPOT percentiles with the per-request TPOT
+distribution, without anyone asking for them. Neither is validated: every
+figure they price is flagged and reads OUTSIDE VALIDATED REGION, and the
+page says so. Plans and predictions are unchanged.
+[What the two models are](page-and-commands.md#serve-with-the-experimental-v2-models).
+
+```bash
+# Keep the directory, and apply it again after each upgrade, with the new V.
+# Put this patch beside any other in the same file. On OpenShift, use oc and openshift (or openshift-sar).
+cd "$(mktemp -d)"
+cat > kustomization.yaml <<EOF
+resources:
+  - ${SRC}/kubernetes?ref=${V}
+patches:
+  - target:
+      kind: StatefulSet
+      name: capacity-planner
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --experimental-ttft=v2
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --experimental-tpot=v2
+EOF
+kubectl apply -n ${NS} -k .
+```
+
 ## Open it
 
 Send this to the people who use it, with your namespace in it.

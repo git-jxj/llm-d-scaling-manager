@@ -32,6 +32,53 @@ const BT_CLIP = 3;
 const BT_EXCLUDED = {noTraffic: "no traffic", noMeasurement: "no measured requests", scaling: "replicas changing",
   warmUp: "warm-up", notPriced: "not priced", otherVariants: "other variants serving",
   burst: "a burst near the knee in its window"};
+// BT_V2 is each experimental model's flag on a figure, as the figure says
+// it: a figure priced by one is experimental, and one it abstained on is the
+// planner's own.
+const BT_V2 = {RankMixtureTTFT: "experimental TTFT v2, outside the validated region",
+  RankMixtureAbstained: "TTFT v2 abstained, the planner's own",
+  TPOTDistribution: "experimental TPOT v2, outside the validated region",
+  TPOTDistributionAbstained: "TPOT v2 abstained, the planner's own"};
+
+// btV2Mark is what a point's flags say of the experimental models, in
+// brackets, or "".
+function btV2Mark(p) {
+  const marks = ((p.predicted && p.predicted.flags) || []).filter(f => BT_V2[f]).map(f => BT_V2[f]);
+  return marks.length ? ` [${marks.join("; ")}]` : "";
+}
+
+// btInBucket is whether the TPOT distribution's p90 or p95 at a step lies
+// in the measured one's histogram bucket, in words, or "".
+function btInBucket(step, key, stat) {
+  const d = key === "tpot" && step.tpotDistribution;
+  const v = d && (stat === "p90" ? d.p90Inside : stat === "p95" ? d.p95Inside : undefined);
+  if (v == null) return "";
+  return v ? " (in the measured bucket)" : " (not in the measured bucket)";
+}
+
+// btV2Lines are the experimental models' standing, a sentence each: what
+// they price and that it is experimental, or why they abstained; and for
+// TPOT, how often its p90 and p95 landed in the measured bucket.
+function btV2Lines(bt) {
+  const out = [];
+  const m = bt.rankMixture;
+  if (m) {
+    out.push(m.abstained ? `EXPERIMENTAL TTFT model v2 (${m.model}) was asked for and abstained: ${m.abstained}. Every TTFT is the planner's own (RankMixtureAbstained).` :
+      `EXPERIMENTAL TTFT model v2 (${m.model}): every TTFT it prices is not validated and reads outside the validated region (RankMixtureTTFT). ${m.assumed}`);
+  }
+  const d = bt.tpotDistribution;
+  if (d) {
+    out.push(d.abstained ? `EXPERIMENTAL TPOT model v2 (${d.model}) was asked for and abstained: ${d.abstained}. Every TPOT percentile is the planner's own (TPOTDistributionAbstained).` :
+      `EXPERIMENTAL TPOT model v2 (${d.model}): every TPOT percentile it prices is not validated and reads outside the validated region (TPOTDistribution); the mean stays the planner's. ${d.assumed}`);
+    const t = d.test;
+    if (!d.abstained && t && t.steps > 0) {
+      const own = v => v == null ? "" : ` (the planner's own: ${v})`;
+      out.push(`TPOT v2 predicted p90 in the measured bucket at ${t.p90Inside} of ${t.steps} steps${own(t.defaultP90Inside)}, ` +
+        `p95 at ${t.p95Inside}${own(t.defaultP95Inside)}.`);
+    }
+  }
+  return out;
+}
 
 // btPoint is the step's point at stat in key ("ttft" or "tpot"), or null.
 function btPoint(step, key, stat) {
@@ -99,7 +146,7 @@ function btLogTicks(lo, hi) {
 // btSummaryText is the answer in sentences: the verdict, what was not
 // judged, the windows, the configuration and what was measured.
 function btSummaryText(bt) {
-  const out = (bt.verdictLines && bt.verdictLines.length ? bt.verdictLines : [bt.verdict]).concat([bt.excluded]);
+  const out = (bt.verdictLines && bt.verdictLines.length ? bt.verdictLines : [bt.verdict]).concat([bt.excluded], btV2Lines(bt));
   const at = s => s.slice(0, 16).replace("T", " ");
   out.push(`Fitted on ${bt.fit.source} from ${at(bt.fit.from)} to ${at(bt.fit.to)} UTC; tested on ${bt.test.source} from ` +
     `${at(bt.test.from)} to ${at(bt.test.to)} UTC${bt.split ? " (one source split: " + bt.split + ")" : ""}.`);
@@ -311,7 +358,8 @@ function btTipHTML(bt, s) {
       const pred = p.predicted.value != null ? btPred(p) : p.predicted.refused && p.predicted.refused.reason === "Saturated" ?
         "no figure (overloaded)" : "no figure (" + (p.predicted.refused ? p.predicted.refused.reason : "-") + ")";
       const held = p.unscored === "upperBound" ? " (an upper bound the fleet measured under: consistent, not scored)" : "";
-      h += `<br>${key.toUpperCase()} ${esc(p.statistic)}: predicted ${esc(pred)}, measured ${esc(btMeasured(p))}${esc(held)}`;
+      h += `<br>${key.toUpperCase()} ${esc(p.statistic)}: predicted ${esc(pred)}, measured ${esc(btMeasured(p))}${esc(held)}` +
+        `${esc(btInBucket(s, key, p.statistic))}${esc(btV2Mark(p))}`;
     }
   }
   return h;
@@ -345,14 +393,15 @@ function btStepTable(bt) {
     const p = btPoint(s, key, stat);
     if (!p) return "-";
     const pred = p.predicted.value != null ? btPred(p) : p.predicted.refused ? "no figure" : "-";
-    return `${pred} / ${btMeasured(p)}`;
+    return `${pred} / ${btMeasured(p)}${btInBucket(s, key, stat)}${btV2Mark(p)}`;
   };
-  let h = `<table class="t"><thead><tr><th>step (UTC)</th><th>rate</th><th>prefill + decode</th><th>TTFT mean</th><th>TTFT p90</th>` +
-    `<th>TPOT mean</th><th>TPOT p90</th><th>judged</th></tr></thead><tbody>`;
+  const cols = [["ttft", "mean"], ["ttft", "p90"], ["ttft", "p95"], ["tpot", "mean"], ["tpot", "p90"], ["tpot", "p95"]];
+  let h = `<table class="t"><thead><tr><th>step (UTC)</th><th>rate</th><th>prefill + decode</th>` +
+    cols.map(([k, st]) => `<th>${k.toUpperCase()} ${st}</th>`).join("") + `<th>judged</th></tr></thead><tbody>`;
   for (const s of bt.steps) {
     h += `<tr><td>${esc(s.start.slice(11, 16))}</td><td>${esc(s.rate.toFixed(2))}</td><td>${s.prefill} + ${s.decode}</td>` +
-      `<td>${esc(cell(s, "ttft", "mean"))}</td><td>${esc(cell(s, "ttft", "p90"))}</td><td>${esc(cell(s, "tpot", "mean"))}</td>` +
-      `<td>${esc(cell(s, "tpot", "p90"))}</td><td>${s.excluded ? "no: " + esc(BT_EXCLUDED[s.excluded] || s.excluded) : "yes"}</td></tr>`;
+      cols.map(([k, st]) => `<td>${esc(cell(s, k, st))}</td>`).join("") +
+      `<td>${s.excluded ? "no: " + esc(BT_EXCLUDED[s.excluded] || s.excluded) : "yes"}</td></tr>`;
   }
   return h + "</tbody></table>";
 }

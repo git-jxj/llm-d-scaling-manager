@@ -272,6 +272,41 @@ Limits of both:
 - The lowered floor is the same on every replay of one recording, but a
   different window of the same fleet can lower it to a different floor.
 
+### Serve with the experimental v2 models
+
+`backtest` has two more experimental models, each with its own flag
+([how they read](accuracy.md)): `--experimental-ttft=v2` prices TTFT with
+limited processor sharing per prefill rank, and `--experimental-tpot=v2`
+prices the TPOT percentiles with a per-request TPOT distribution. Give both
+to `serve`, and every check the page runs uses them, with no switch on the
+page:
+
+```bash
+bin/capacity-planner serve --recordings ./recordings --experimental-ttft=v2 --experimental-tpot=v2
+```
+
+In a cluster, add both to the StatefulSet's `args`
+([in-cluster](in-cluster.md#or-show-the-experimental-v2-models-on-the-page)).
+
+- **What they change.** Only checks (`POST /v1/backtest`, the page's
+  "Check the planner"). A request that names no model is priced as if it
+  asked for `ttftModel` `rank-mixture` and `tpotModel` `renewal-lognormal`
+  ([API](api.md#the-backtest)); one that names a model keeps it. Plans,
+  sizes, day plans and predictions are the default's. `=v2` does not turn
+  on the seven switches above; plain `--experimental-ttft` does.
+- **What the page shows.** The summary says, for each model, that it is
+  experimental and reads outside the validated region, with its fit; or
+  that it abstained and why, and every figure is then the planner's own.
+  For TPOT it adds in how many steps the predicted p90 and p95 fell in the
+  measured histogram bucket, beside the planner's own count. The step table
+  shows mean, p90 and p95 of TTFT and TPOT, predicted against measured.
+  Each figure a model priced is marked `[experimental TTFT v2 ...]` or
+  `[experimental TPOT v2 ...]`, one it abstained on `[... v2 abstained ...]`,
+  and each TPOT p90 and p95 says whether it is in the measured bucket.
+- **What it costs.** Every source the server loads is read once more for
+  each model, so loading is slower.
+- Without the flags, the server's answers are the default's, byte for byte.
+
 ## Find the fleet a rate needs
 
 Above the controls, pick **What fleet does this traffic need?** Then set the

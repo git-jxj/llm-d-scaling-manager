@@ -70,11 +70,17 @@ func withRankMixture(path string, res *whatifapi.Resolved) error {
 		return err
 	}
 	defer func() { _ = src.Close() }()
+	return rankMixtureFrom(src.open, res)
+}
+
+// rankMixtureFrom is withRankMixture on a source already open: a recording
+// file or a captured window, as serve reads it.
+func rankMixtureFrom(open learnreplay.Source, res *whatifapi.Resolved) error {
 	v := learnreplay.SeriesVariants{Decode: res.Inputs.Fleet.Decode.Variant}
 	if p := res.Inputs.Fleet.Prefill; p != nil {
 		v.Prefill = p.Variant
 	}
-	cycles, err := learnreplay.MixtureSeriesFrom(src.open, learnreplay.StateQuery{Namespace: res.Inputs.Namespace, ModelID: res.Inputs.Model}, v)
+	cycles, err := learnreplay.MixtureSeriesFrom(open, learnreplay.StateQuery{Namespace: res.Inputs.Namespace, ModelID: res.Inputs.Model}, v)
 	if err != nil {
 		return err
 	}

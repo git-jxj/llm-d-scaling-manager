@@ -84,6 +84,12 @@ type Config struct {
 	// upload; 0 or less is DefaultUploadBytes.
 	Uploader       Uploader
 	UploadMaxBytes int64
+	// TTFTModel and TPOTModel are the experimental models a backtest that
+	// names none is priced with (BacktestRequest.TTFTModel, TPOTModel): ""
+	// is the planner's own. The CLI's serve sets them with
+	// --experimental-ttft=v2 and --experimental-tpot=v2; its Resolver then
+	// gives the cycles they read (Resolved.Mixture, Decode).
+	TTFTModel, TPOTModel string
 }
 
 // DefaultPlanBudget is the plan budget a server has when its Config names
@@ -158,6 +164,8 @@ type Server struct {
 	// uploadDeadline how long it may take in all (uploadDeadline).
 	uploadIdle     time.Duration
 	uploadDeadline time.Duration
+	// ttftModel and tpotModel are Config's.
+	ttftModel, tpotModel string
 }
 
 // inputsEntry is a source resolved: its id, the inputs a plan reads its
@@ -179,6 +187,8 @@ type inputsEntry struct {
 	// decode is the source's cycles for the TPOT distribution
 	// (Resolved.Decode); nil unless asked.
 	decode []whatif.DecodeCycle
+	// engine is the engines' flags those models read (Resolved.Engine).
+	engine EngineSlots
 	// bytes is the entry's weight in the inputs cache (Resolved.Bytes).
 	bytes int
 }
@@ -211,7 +221,8 @@ func New(c Config) *Server {
 		plans: newWeighedLRU(defaultPlans, defaultResponseBytes, bodyBytes), sizes: newWeighedLRU(defaultSizes, defaultResponseBytes, bodyBytes),
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget,
-		uploader: c.Uploader, uploadMax: uploadMax, uploadSlots: make(chan struct{}, 1), uploadIdle: uploadIdle, uploadDeadline: uploadDeadline}
+		uploader: c.Uploader, uploadMax: uploadMax, uploadSlots: make(chan struct{}, 1), uploadIdle: uploadIdle, uploadDeadline: uploadDeadline,
+		ttftModel: c.TTFTModel, tpotModel: c.TPOTModel}
 }
 
 // errBusy is a request past the server's bound on work in flight.
@@ -315,7 +326,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	// its own source: two recordings of the same bytes share an id, not a
 	// name.
 	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
-		config: res.Config, bytes: res.Bytes})
+		config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode, engine: res.Engine})
 	body, err := marshal(doc)
 	if err != nil {
 		writeErr(w, err)

@@ -51,6 +51,10 @@ type servedSources struct {
 	// experimentalTTFT is serve's --experimental-ttft: every source is read
 	// with the experimental TTFT model, as if each request asked for it.
 	experimentalTTFT bool
+	// rankMixture and tpotDistribution are serve's --experimental-ttft=v2
+	// and --experimental-tpot=v2: every source also gives the cycles the
+	// experimental backtest models read (experimentalSeries).
+	rankMixture, tpotDistribution bool
 	// onPass, when set, is called as each pass over a recording file opens,
 	// with the pass's count (recordingSource.onPass): a test's hook.
 	onPass func(pass int)
@@ -129,8 +133,13 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	}
 	info.Cycle, info.TotalCycles, info.FirstAt, info.LastAt = st.Cycle, st.Cycles, st.FirstAt, st.At
 	res, err := s.resolved(ctx, &f, st, data, info)
-	// The series is the last pass: a file changed under it is refused, and
-	// nothing is kept under the content id its first pass summed.
+	var serr error
+	if err == nil {
+		serr = s.experimentalSeries(data, res)
+	}
+	// The series, and the experimental models' after it, are the last
+	// passes: a file changed under them is refused, and nothing is kept
+	// under the content id its first pass summed.
 	if cerr := data.unchanged(); cerr != nil {
 		return nil, hidePath(apiError(cerr), hide, info.Name)
 	}
@@ -139,7 +148,31 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 			"(--inputs-cache-size %s): load a shorter recording, or ask whoever runs the planner to raise --inputs-cache-size",
 			info.Name, whatifapi.Quantity(int64(res.Bytes)), whatifapi.Quantity(int64(s.maxUploadWeight)))}
 	}
+	if serr != nil {
+		return nil, hidePath(apiError(serr), hide, info.Name)
+	}
 	return res, err
+}
+
+// experimentalSeries reads, where serve prices every backtest with an
+// experimental model (--experimental-ttft=v2, --experimental-tpot=v2), the
+// cycles that model reads and the engines' flags it takes, in a pass of
+// their own over data: the CLI's backtest reads the same (rankMixture,
+// tpotDistribution). Neither changes the inputs' content id.
+func (s *servedSources) experimentalSeries(data *recordingSource, res *whatifapi.Resolved) error {
+	if s.rankMixture {
+		if err := rankMixtureFrom(data.open, res); err != nil {
+			return err
+		}
+		res.Engine.PrefillSlots = prefillSlotsOf(res)
+	}
+	if s.tpotDistribution {
+		if err := decodeSeriesFrom(data.open, res); err != nil {
+			return err
+		}
+		res.Engine.DecodeSlots, res.Engine.SpecTokens = decodeEngineOf(res)
+	}
+	return nil
 }
 
 // recordingPath is the recording a source names: an upload's name, looked

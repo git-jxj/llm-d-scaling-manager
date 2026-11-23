@@ -33,12 +33,8 @@ const experimentalTPOTUsage = "=v2 prices the TPOT percentiles with an experimen
 // --experimental-tpot=v2 is given, and reads each side's decode cycles for
 // it: test from testPath, fit from fitPath.
 func (f *backtestFlags) tpotDistribution(req *whatifapi.BacktestRequest, testPath string, test *whatifapi.Resolved, fitPath string, fit *whatifapi.Resolved) error {
-	switch f.experimentalTPOT {
-	case "":
-		return nil
-	case experimentalTPOTV2:
-	default:
-		return usagef("--%s=%q, want --%s=%s", experimentalTPOTFlag, f.experimentalTPOT, experimentalTPOTFlag, experimentalTPOTV2)
+	if on, err := experimentalTPOTOf(f.experimentalTPOT); err != nil || !on {
+		return err
 	}
 	req.TPOTModel = whatif.TPOTRenewalLognormal
 	req.DecodeSlots, req.SpecTokens = decodeEngineOf(fit)
@@ -46,6 +42,18 @@ func (f *backtestFlags) tpotDistribution(req *whatifapi.BacktestRequest, testPat
 		return err
 	}
 	return withDecodeSeries(fitPath, fit)
+}
+
+// experimentalTPOTOf reads --experimental-tpot's value, backtest's and
+// serve's alike: true for v2, false unset.
+func experimentalTPOTOf(s string) (bool, error) {
+	switch s {
+	case "":
+		return false, nil
+	case experimentalTPOTV2:
+		return true, nil
+	}
+	return false, usagef("--%s=%q, want --%s=%s", experimentalTPOTFlag, s, experimentalTPOTFlag, experimentalTPOTV2)
 }
 
 // withDecodeSeries is res with the recording's cycles as the TPOT
@@ -57,11 +65,17 @@ func withDecodeSeries(path string, res *whatifapi.Resolved) error {
 		return err
 	}
 	defer func() { _ = src.Close() }()
+	return decodeSeriesFrom(src.open, res)
+}
+
+// decodeSeriesFrom is withDecodeSeries on a source already open: a
+// recording file or a captured window, as serve reads it.
+func decodeSeriesFrom(open learnreplay.Source, res *whatifapi.Resolved) error {
 	v := learnreplay.SeriesVariants{Decode: res.Inputs.Fleet.Decode.Variant}
 	if p := res.Inputs.Fleet.Prefill; p != nil {
 		v.Prefill = p.Variant
 	}
-	cycles, err := learnreplay.DecodeSeriesFrom(src.open, learnreplay.StateQuery{Namespace: res.Inputs.Namespace, ModelID: res.Inputs.Model}, v)
+	cycles, err := learnreplay.DecodeSeriesFrom(open, learnreplay.StateQuery{Namespace: res.Inputs.Namespace, ModelID: res.Inputs.Model}, v)
 	if err != nil {
 		return err
 	}

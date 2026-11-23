@@ -43,7 +43,10 @@ calling the fleet overloaded; the fleet measured mean 11.6 s there. p90 TTFT: wi
 1.88, 2 read more than 20% low.
 mean TPOT: within 20% of measured in 15 of the 15 five-minute steps scored (a figure, and enough measured requests);
 no overall lean (median ratio 0.98). p90 TPOT not scored in 10: the measured p90 fell in a histogram bucket wider
-than 20% of its lower edge, too wide to place it, with the prediction inside it.
+than 20% of its lower edge, too wide to place it, with the prediction inside it. To measure it, give the
+histogram finer edges: the router's metrics.requestTPOTBuckets in the EndpointPickerConfig (an llm-d-router build
+after v1.0.0), or vLLM's --custom-histogram-buckets (v0.33.0 and later). Edges about 15% apart place p90 and p95
+within 20%.
 None of these figures falls within the conditions our own accuracy benchmarks cover
 (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.
 Judged 15 of 16 five-minute steps; not judged: 1 warm-up.
@@ -71,6 +74,15 @@ How to read it:
   tell the two figures apart, so they are consistent at the bucket's
   resolution, which the words give with the bucket's width (TPOT 10 to
   20 ms is 2x wide). That is not within 20%, and never counts as within.
+- **To measure a TPOT p90 or p95 the buckets cannot place**, give the
+  histogram finer edges, and the verdict says so after the unscored steps.
+  Edges about 15% apart across the TPOT range you care about place p90 and
+  p95 within 20%. Either source works:
+  - the router: `metrics.requestTPOTBuckets` (and `requestITLBuckets`) in
+    the EndpointPickerConfig. It needs an llm-d-router build after v1.0.0
+    ([llm-d-router#3539](https://github.com/llm-d/llm-d-router/pull/3539)),
+    which also makes the default edges 5 ms apart from 5 to 50 ms.
+  - vLLM: `--custom-histogram-buckets`, in vLLM v0.33.0 and later.
 - **Median ratio**: the planner's figure over the measured one, at the
   middle step. Above 1 it leans high at the middle; below 1 it leans low. A
   median near 1 can still hide steps it read low, so check that count too.
