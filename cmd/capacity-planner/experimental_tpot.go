@@ -38,10 +38,10 @@ func (f *backtestFlags) tpotDistribution(req *whatifapi.BacktestRequest, testPat
 	}
 	req.TPOTModel = whatif.TPOTRenewalLognormal
 	req.DecodeSlots, req.SpecTokens = decodeEngineOf(fit)
-	if err := withDecodeSeries(testPath, test); err != nil {
+	if err := withDecodeSeries(testPath, test, nil); err != nil {
 		return err
 	}
-	return withDecodeSeries(fitPath, fit)
+	return withDecodeSeries(fitPath, fit, req.FitCycles)
 }
 
 // experimentalTPOTOf reads --experimental-tpot's value, backtest's and
@@ -58,9 +58,10 @@ func experimentalTPOTOf(s string) (bool, error) {
 
 // withDecodeSeries is res with the recording's cycles as the TPOT
 // distribution reads them (learnreplay.DecodeSeriesFrom), read from the file
-// at path in a pass of their own.
-func withDecodeSeries(path string, res *whatifapi.Resolved) error {
-	src, err := openRecording(path, false)
+// at path in a pass of their own: only the cycles keep holds, where it is
+// not nil, as res was read (a load split's fit).
+func withDecodeSeries(path string, res *whatifapi.Resolved, keep *whatifapi.CycleSet) error {
+	src, err := openRecordingCycles(path, keep)
 	if err != nil {
 		return err
 	}

@@ -27,6 +27,25 @@ cut at a time instead, use `--fit-until 2026-11-20T12:00:00Z`. To learn from
 one recording and test on a later one of the same configuration, use
 `--fit day1.jsonl.gz --test day2.jsonl.gz`.
 
+To check that the planner extrapolates to load it has not seen, split by
+load instead of by time:
+
+```bash
+capacity-planner backtest --recording run.jsonl.gz --fit-below p50 --test-above p75
+```
+
+It learns only from the five-minute steps whose arrival rate is below the
+recording's median step rate, and judges only the steps in its top quartile.
+Each bound is a rate (`12.5`, requests per second) or a percentile of the
+steps' rates (`p50`); idle steps are left out of the percentile. The fit is
+read from its steps alone, as if the recording held nothing else, and every
+other check still applies: warm-up, replicas changing, bursts near the knee.
+Steps between the two bounds are reported as `outside the test's load`.
+
+With `--fit` and `--test`, `--fit-below` reads the fit's steps and
+`--test-above` the test's, and the two recordings may cover the same hours:
+a test step that the fit read a cycle of is not judged.
+
 On the page: load the recording in Source, open **Check the planner against
 a period it did not see**, set the slider, and press **Run**. To test on
 another recording, pick **another recording** and choose it.
@@ -330,7 +349,8 @@ Size from the planner when, below the load it thinks the fleet can carry:
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--recording` with `--split` or `--fit-until` | `--split 60%` | One recording, cut in two. |
-| `--fit`, `--test` | | Two recordings. The fit must end before the test starts. |
+| `--fit`, `--test` | | Two recordings. The fit must end before the test starts, unless they are split by load. |
+| `--fit-below`, `--test-above` | | Split by load: fit on the steps whose rate is below the first, judge the steps at or above the second. A rate (`12.5`) or a percentile of the steps' rates (`p50`). Give both. Not with `--split` or `--fit-until`. |
 | `--step` | `5m` | A step, from `1m` to `1h`. A step shorter than the router's five-minute window shares requests with its neighbours. |
 | `--settle` | `2m` | How long after a change of replicas, and after the test starts, a measurement is not judged. |
 | `--arrival-cv2` | random | How bursty arrivals are, when you know it: 1 is random. |

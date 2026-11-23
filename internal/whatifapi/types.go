@@ -65,6 +65,10 @@ type SourceRequest struct {
 	To        string `json:"to,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Cycle     int    `json:"cycle,omitempty"`
+	// Cycles, when set, reads the recording with only these cycles
+	// (learnreplay.CyclesOf): a load split's fit (LoadFitCycles). Never
+	// sent: a backtest sets it.
+	Cycles *CycleSet `json:"-"`
 }
 
 // InputsResponse is a source resolved: every term the plans price from, each
