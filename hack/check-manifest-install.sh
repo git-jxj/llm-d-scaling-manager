@@ -43,7 +43,7 @@ DIGEST="sha256:$(printf 'manifest-install-check' | sha256sum | cut -c1-64)"
 VERSION="v0.13.0-check.1"
 M=scaling-manager.yaml
 NS=scaling-manager-system
-FLAGS="--namespace-opt-in=label --keda-namespace=keda --self-check-interval=1m --restart-on-settings-change=true --external-scaler-tls-secrets=opaque --external-scaler-tls-bootstrap=true"
+FLAGS="--namespace-opt-in=label --keda-namespace=keda --self-check-interval=1m --restart-on-settings-change=true --external-scaler-tls-secrets=opaque --wait-for-settings=true --external-scaler-tls-bootstrap=true"
 
 GOOD="$WORK/good"
 if ! bash "$ROOT/deploy/release-manifests.sh" --image "$REPO@$DIGEST" --version "$VERSION" --out "$GOOD" > "$WORK/render.log" 2>&1; then

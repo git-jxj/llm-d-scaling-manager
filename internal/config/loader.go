@@ -93,6 +93,9 @@ func learnedHorizon(log logr.Logger, key, raw string, parsed time.Duration) time
 	return 0
 }
 
+// ErrNoPrometheusURL is the load error when no source names Prometheus.
+var ErrNoPrometheusURL = errors.New("prometheus configuration is required but not found")
+
 // Load loads and validates the unified configuration.
 // Precedence: flags > env > config file > defaults
 // The main configuration is read from a mounted YAML file, but can be overridden
@@ -278,8 +281,8 @@ func loadConfig(cfg *Config, flagSet *flag.FlagSet, configFilePath string, setti
 	// Prometheus connection config from config file / env
 	promBaseURL := v.GetString("PROMETHEUS_BASE_URL")
 	if promBaseURL == "" {
-		return fmt.Errorf("prometheus configuration is required but not found: set %s in the %s ConfigMap "+
-			"(or PROMETHEUS_BASE_URL in config.yaml or the environment)", SettingPrometheusURL, SettingsConfigMapName())
+		return fmt.Errorf("%w: set %s in the %s ConfigMap "+
+			"(or PROMETHEUS_BASE_URL in config.yaml or the environment)", ErrNoPrometheusURL, SettingPrometheusURL, SettingsConfigMapName())
 	}
 	cfg.prometheus.baseURL = promBaseURL
 	cfg.prometheus.bearerToken = v.GetString("PROMETHEUS_BEARER_TOKEN")

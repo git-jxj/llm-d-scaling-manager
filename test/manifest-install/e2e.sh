@@ -125,6 +125,15 @@ kubectl get namespace "$MODEL_NS" >/dev/null 2>&1 || fail namespace "no model na
 kubectl apply --server-side -f "$M" > "$LOGS/apply-1.log" 2>&1 || { cat "$LOGS/apply-1.log"; fail "apply" "kubectl apply --server-side -f $M"; }
 pass "command 1: kubectl apply --server-side -f $M ($(grep -c . "$LOGS/apply-1.log") objects)"
 
+# Before the settings exist the controller waits for them, live, and says
+# why in its status, instead of exiting into the kubelet's crash back-off.
+pod_restarts() { kubectl get pods -n "$NS" -l control-plane=controller-manager -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{"\n"}{end}' | awk '{s += $1} END {print s + 0}'; }
+wait_for 240 "ready says the settings are missing" status_contains ready "no ConfigMap scaling-manager-settings" \
+    || fail "waiting" "ready is '$(status ready)' before the settings exist"
+sleep 15
+[ "$(pod_restarts)" = 0 ] || fail "waiting" "the controller restarted $(pod_restarts) times while waiting for its settings"
+pass "with no settings the controller waits, live (0 restarts): ready '$(status ready)'"
+
 # --- 2. command 2: the settings ----------------------------------------------
 #
 # The e2e Prometheus has a private CA: its certificate goes in the fixed Secret
@@ -149,15 +158,14 @@ kubectl get podmonitor scaling-manager-modelserver-metrics -n "$MODEL_NS" -o jso
     || fail label "the PodMonitor in $MODEL_NS does not carry the install's instance label"
 pass "command 3: kubectl label namespace $MODEL_NS $LABEL=true (and scaling-manager-monitoring.yaml there)"
 
-# --- 4. the controller starts, restarts for its settings, and gets ready -----
+# --- 4. the controller starts in place once the settings exist, and gets ready
 
 rollout > "$LOGS/rollout-1.log" 2>&1 || fail controller "the Deployment did not become Ready: $(cat "$LOGS/rollout-1.log")"
-# prometheusURL and caFromSecret are read at start; the controller restarts
-# itself once it reads them (--restart-on-settings-change).
+# prometheusURL and caFromSecret are read at start: the waiting controller
+# reads them and starts, with no restart (--wait-for-settings).
 wait_for 300 "the controller read prometheusURL" status_contains settingsSources "prometheusURL=settings" \
     || fail controller "settingsSources: '$(status settingsSources)'"
-restarts="$(kubectl get pods -n "$NS" -l control-plane=controller-manager -o jsonpath='{.items[*].status.containerStatuses[*].restartCount}')"
-log "controller restarts: ${restarts:-?}"
+[ "$(pod_restarts)" = 0 ] || fail controller "the controller restarted $(pod_restarts) times on its way to reading the settings; it should start in place"
 wait_for 300 "ready=ok" ready_ok || { kubectl get configmap "$STATUS_CM" -n "$NS" -o yaml | grep -E '^\s+(ready|preflight\.)' ; fail ready "ready is '$(status ready)'"; }
 pass "ready ok; preflight: $(kubectl get configmap "$STATUS_CM" -n "$NS" -o json | jq -r '[.data | to_entries[] | select(.key | startswith("preflight.")) | .value | split(":")[0]] | group_by(.) | map("\(length) \(.[0])") | join(", ")')"
 kubectl get configmap "$STATUS_CM" -n "$NS" -o json | jq -r '.data | to_entries[] | select(.key | startswith("preflight.")) | select(.value | startswith("ok") | not) | "      \(.key) \(.value)"' | cut -c1-220 | tee -a "$SUMMARY"
@@ -185,7 +193,6 @@ pass "mutual TLS with no step by a person: KEDA's copy in $KEDA_NS holds the cli
 
 # --- 5b. a changed restart setting restarts the controller -------------------
 
-pod_restarts() { kubectl get pods -n "$NS" -l control-plane=controller-manager -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{"\n"}{end}' | awk '{s += $1} END {print s + 0}'; }
 restarts_more_than() { [ "$(pod_restarts)" -gt "$1" ]; }
 before="$(pod_restarts)"
 settings_patch '{"data":{"logVerbosity":"3"}}'

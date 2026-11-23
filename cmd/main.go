@@ -353,6 +353,10 @@ func main() {
 			"opaque: the Opaque Secrets of the one manifest (scaling-manager-scaler-ca, -serving, -client), which a "+
 			"server-side re-apply keeps; while they are empty, the legacy Secrets' certificates are copied across, so a "+
 			"move from an smt install keeps the CA KEDA trusts.")
+	waitForSettings := flag.Bool("wait-for-settings", false,
+		"When no source names Prometheus, wait for the settings ConfigMap to set prometheusURL instead of exiting: "+
+			"serve the health probes (live, not ready), write ready and preflight.settings with the reason, and start "+
+			"once it is set. The one manifest sets it, since it is applied before the settings.")
 	restartOnSettingsChange := flag.Bool("restart-on-settings-change", false,
 		"Restart when a setting read only at start changes in the settings ConfigMap, instead of asking a person "+
 			"to: the process exits and the kubelet starts it again. A key changed again and again puts the Pod "+
@@ -503,6 +507,22 @@ func main() {
 	// For more information see:
 	// docs/reference/configuration.md
 	cfg, err := config.LoadWithSettings(flag.CommandLine, *configFilePath, settingsData)
+	if errors.Is(err, config.ErrNoPrometheusURL) && *waitForSettings {
+		// The one manifest is applied before the settings: wait for them,
+		// live and saying why, instead of a crash back-off.
+		wait := &controllerstatus.SettingsWait{
+			Client:       policyProbe,
+			Namespace:    config.SystemNamespace(),
+			SettingsName: config.SettingsConfigMapName(),
+			ProbeAddr:    flag.CommandLine.Lookup("health-probe-bind-address").Value.String(),
+			Done:         controllerstatus.PrometheusURLSet(config.SettingPrometheusURL),
+			Log:          setupLog,
+		}
+		if settingsData, err = wait.Wait(signalCtx); err != nil {
+			os.Exit(startupExitCode(signalCtx, setupLog, err, "stopped while waiting for the settings"))
+		}
+		cfg, err = config.LoadWithSettings(flag.CommandLine, *configFilePath, settingsData)
+	}
 	if err != nil {
 		setupLog.Error(err, "failed to load configuration - this is a fatal error")
 		logging.Sync() //nolint:errcheck
