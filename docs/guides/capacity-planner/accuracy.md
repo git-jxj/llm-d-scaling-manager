@@ -265,6 +265,15 @@ parts. It is off by default, and its figures carry the same flags. The answer's
   above: the engine's pre-queue overhead, the decode engine's first token and
   the router's remainder. `a0` is the sum of the intercepts, so it is never
   negative, and `s` is 1. `rankMixture.zParts` names each part.
+- **Spreads of the parts.** Each part varies request to request. It is drawn
+  lognormal about its line, so its mean does not move. The decode part's sigma
+  comes from the decode engines' TTFT histogram. The overhead's is the one at
+  which the priced prefill-engine TTFT reads the engines' measured p90. The
+  router's remainder has no histogram of its own and stays a line.
+- **Shares at the load.** A router that balances by load spreads a busy
+  fleet's requests more evenly than a quiet one's. The ranks' shares at a
+  priced rate are the mean of the five fit steps nearest that rate, not the
+  fit window's mean.
 - **Fit hygiene.** The KV-deferral lines and the parts are fitted only on
   steps whose busiest rank sits under `rho` 0.9 (`cleanSteps`). Past it, the
   queue and the front end's time belong to the overload.

@@ -203,3 +203,74 @@ func TestRankMixture_AttentionDraws(t *testing.T) {
 	assert.Greater(t, mb, 1.5*ml)
 	assert.False(t, math.IsNaN(mb))
 }
+
+// sharesAt averages the profiles of the fit steps nearest the priced rate;
+// with too few rows it prices the window's mean profile.
+func TestRankMixture_SharesAtTheLoad(t *testing.T) {
+	m := RankMixture{Shares: []float64{0.7, 0.3}}
+	assert.Equal(t, m.Shares, m.sharesAt(10))
+	for i := range 10 {
+		top := 0.8 - 0.03*float64(i) // more even as the rate rises
+		m.ShareRows = append(m.ShareRows, ShareRow{Rate: float64(i + 1), Shares: []float64{top, 1 - top}})
+	}
+	got := m.sharesAt(10)
+	// The five nearest 10 are rates 6-10: tops 0.65 .. 0.53, mean 0.59.
+	assert.InDelta(t, 0.59, got[0], 1e-9)
+	assert.InDelta(t, 1, got[0]+got[1], 1e-9)
+	assert.InDelta(t, 0.74, m.sharesAt(1)[0], 1e-9)
+	rows := shareRowsOf([]MixtureStep{{Rate: 2, Ranks: []MixtureRank{{Rate: 0.5}, {Rate: 1.5}}}, {Rate: 1, Ranks: []MixtureRank{{Rate: 1}}}}, 2)
+	require.Len(t, rows, 1)
+	assert.Equal(t, []float64{0.75, 0.25}, rows[0].Shares)
+}
+
+// A lognormal's sigma is read back from its mean and p90; the histogram's
+// quantile interpolates inside a bucket.
+func TestLnSigmaAndHistQuantile(t *testing.T) {
+	sigma := 0.6
+	p90 := math.Exp(-sigma*sigma/2 + z90*sigma) // mean 1
+	got, ok := lnSigma(1, p90)
+	require.True(t, ok)
+	assert.InDelta(t, sigma, got, 1e-9)
+	_, ok = lnSigma(0, 1)
+	assert.False(t, ok)
+	h := map[float64]float64{1: 0.5, 2: 0.8, 4: 1, math.Inf(1): 1}
+	q, ok := histQuantile(h, 0.9)
+	require.True(t, ok)
+	assert.InDelta(t, 3, q, 1e-12)
+	_, ok = histQuantile(map[float64]float64{}, 0.9)
+	assert.False(t, ok)
+}
+
+// The parts' spreads keep Z's mean and lengthen its tail; with no sigma the
+// draws carry no Z and price a0 + beta L as before.
+func TestZParts_SpreadIsMeanPreserving(t *testing.T) {
+	m := RankMixture{S0: 0.1, V: 10000, Shares: []float64{1}, A0: 0.9, Beta: 0, Parts: &ZParts{
+		Overhead: ZPart{A: 0.5}, Decode: ZPart{A: 0.4}}}
+	d, u := m.Draws(0.5, expHist(2000), pointHist(40000), 8000)
+	require.Nil(t, u)
+	assert.Nil(t, d.Z)
+	m0, q0 := d.Stats(m.A0, 0, 0.9)
+	m.Parts.Overhead.Sigma, m.Parts.Decode.Sigma = 0.8, 0.5
+	d, u = m.Draws(0.5, expHist(2000), pointHist(40000), 8000)
+	require.Nil(t, u)
+	require.NotNil(t, d.Z)
+	m1, q1 := d.Stats(m.A0, 0, 0.9)
+	assert.InDelta(t, m0, m1, 0.02*m0)
+	assert.Greater(t, q1[0], q0[0]*1.05)
+}
+
+// The decode part's sigma is read from the decode engines' TTFT histogram.
+func TestFitSigmas_DecodeFromItsHistogram(t *testing.T) {
+	sigma := 0.5
+	mean := 0.4
+	p90 := mean * math.Exp(-sigma*sigma/2+z90*sigma)
+	steps := make([]MixtureStep, 0, 6)
+	for range 6 {
+		steps = append(steps, MixtureStep{Rate: 1, DecodeTTFT: mean,
+			DecodeTTFTHist: map[float64]float64{p90 * 0.5: 0.4, p90: 0.9, p90 * 2: 1, math.Inf(1): 1}})
+	}
+	m := RankMixture{S0: 0.1, V: 10000, Shares: []float64{1}, Parts: &ZParts{Decode: ZPart{A: mean}}}
+	m.fitSigmas(steps)
+	assert.InDelta(t, sigma, m.Parts.Decode.Sigma, 1e-9)
+	assert.Zero(t, m.Parts.Overhead.Sigma, "no prefill TTFT histogram: no overhead spread")
+}

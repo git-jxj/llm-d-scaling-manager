@@ -35,6 +35,10 @@ type MixtureStep struct {
 	// histograms: computed tokens, whole prompt tokens and queue time
 	// (seconds), upper bound to rate.
 	Computed, Prompt, Queue map[float64]float64
+	// PrefillTTFTHist and DecodeTTFTHist are the prefill and the decode
+	// engines' pooled TTFT histograms (upper bound to rate); nil where not
+	// read.
+	PrefillTTFTHist, DecodeTTFTHist map[float64]float64
 	// PrefillTTFT and DecodeTTFT are the prefill and the decode engines'
 	// mean TTFT, seconds; PromptMean the prefill ranks' mean whole prompt.
 	PrefillTTFT, DecodeTTFT, PromptMean float64

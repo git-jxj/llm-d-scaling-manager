@@ -140,8 +140,10 @@ backtest.rankMixture.v number
 backtest.rankMixture.zParts object
 backtest.rankMixture.zParts.decodeA number
 backtest.rankMixture.zParts.decodeB number
+backtest.rankMixture.zParts.decodeSigma number
 backtest.rankMixture.zParts.overheadA number
 backtest.rankMixture.zParts.overheadB number
+backtest.rankMixture.zParts.overheadSigma number
 backtest.rankMixture.zParts.remainderA number
 backtest.rankMixture.zParts.remainderB number
 backtest.schemaVersion number
@@ -699,8 +701,10 @@ inputs.ttftModel.fit.v number
 inputs.ttftModel.fit.zParts object
 inputs.ttftModel.fit.zParts.decodeA number
 inputs.ttftModel.fit.zParts.decodeB number
+inputs.ttftModel.fit.zParts.decodeSigma number
 inputs.ttftModel.fit.zParts.overheadA number
 inputs.ttftModel.fit.zParts.overheadB number
+inputs.ttftModel.fit.zParts.overheadSigma number
 inputs.ttftModel.fit.zParts.remainderA number
 inputs.ttftModel.fit.zParts.remainderB number
 inputs.ttftModel.heldOut object
@@ -1424,8 +1428,10 @@ report.ttftModel.fit.v number
 report.ttftModel.fit.zParts object
 report.ttftModel.fit.zParts.decodeA number
 report.ttftModel.fit.zParts.decodeB number
+report.ttftModel.fit.zParts.decodeSigma number
 report.ttftModel.fit.zParts.overheadA number
 report.ttftModel.fit.zParts.overheadB number
+report.ttftModel.fit.zParts.overheadSigma number
 report.ttftModel.fit.zParts.remainderA number
 report.ttftModel.fit.zParts.remainderB number
 report.ttftModel.heldOut object

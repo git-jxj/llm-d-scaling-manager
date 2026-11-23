@@ -189,6 +189,9 @@ type RankMixture struct {
 	// Parts is Z's decomposition where it was measured part by part
 	// (FitRankMixtureNL): A0 and Beta are then their sums and Spread 1.
 	Parts *ZParts
+	// ShareRows is the fit steps' share profiles at their rates, where the
+	// shares are read at the priced load (sharesAt); nil prices Shares.
+	ShareRows []ShareRow
 }
 
 // service is the prefill service time of x computed tokens on a prompt of l
@@ -338,6 +341,10 @@ func (h cumHist) ppf(u float64) float64 {
 // Spread.
 type RankMixtureDraws struct {
 	QP, L, W []float64
+	// Z is each request's non-queue part where it is drawn (the
+	// non-linear variant's spread parts, ZParts.draws); Stats then adds it
+	// in place of a0 + sb L.
+	Z []float64
 	// Checks is the assumptions' checks at the rate.
 	Checks RankMixtureChecks
 }
@@ -367,13 +374,14 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 	if n <= 0 {
 		n = DefaultMixtureDraws
 	}
-	per := max(n/len(m.Shares), 50)
-	rng := rand.New(rand.NewPCG(mixtureSeed, uint64(len(m.Shares))))
-	out := RankMixtureDraws{QP: make([]float64, 0, per*len(m.Shares)), L: make([]float64, 0, per*len(m.Shares)),
-		W: make([]float64, 0, per*len(m.Shares))}
+	shares := m.sharesAt(rate)
+	per := max(n/len(shares), 50)
+	rng := rand.New(rand.NewPCG(mixtureSeed, uint64(len(shares))))
+	out := RankMixtureDraws{QP: make([]float64, 0, per*len(shares)), L: make([]float64, 0, per*len(shares)),
+		W: make([]float64, 0, per*len(shares))}
 	s := make([]float64, per)
 	var rhoSum float64
-	for i, p := range m.Shares {
+	for i, p := range shares {
 		lam := rate * p
 		var es, es2 float64
 		for j := range s {
@@ -395,7 +403,7 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 		out.Checks.Rho = append(out.Checks.Rho, rho)
 		rhoSum += rho
 		if !(rho < 1) {
-			u := refuse(Saturated, fmt.Sprintf("rank %d of %d is saturated at %.4g r/s (utilization %.3g)", i+1, len(m.Shares), rate, rho))
+			u := refuse(Saturated, fmt.Sprintf("rank %d of %d is saturated at %.4g r/s (utilization %.3g)", i+1, len(shares), rate, rho))
 			return RankMixtureDraws{}, &u
 		}
 		pK, wait := 0.0, 0.0
@@ -447,8 +455,11 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 			out.W = append(out.W, w)
 		}
 	}
+	if m.Parts != nil {
+		out.Z = m.Parts.draws(out.L)
+	}
 	if m.KV.Known {
-		mean := rhoSum / float64(len(m.Shares))
+		mean := rhoSum / float64(len(shares))
 		out.Checks.KVOutside = mean < m.KV.RhoLo || mean > m.KV.RhoHi
 	}
 	return out, nil
@@ -520,6 +531,9 @@ func (d RankMixtureDraws) Stats(a0, sb float64, qs ...float64) (mean float64, qu
 	var tw float64
 	for i := range d.QP {
 		y := a0 + d.QP[i] + sb*d.L[i]
+		if d.Z != nil {
+			y = d.QP[i] + d.Z[i]
+		}
 		ps[i] = pt{y, d.W[i]}
 		mean += y * d.W[i]
 		tw += d.W[i]

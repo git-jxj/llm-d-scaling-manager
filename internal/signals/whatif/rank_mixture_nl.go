@@ -1,9 +1,11 @@
 package whatif
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"slices"
 )
 
@@ -75,6 +77,67 @@ func attentionContext(x, l float64) float64 {
 	return max(l-x, 0) + x/2
 }
 
+// Shares at the priced load. A router that balances by load spreads a busy
+// fleet's requests more evenly than a quiet one's (prefix affinity holds a
+// quiet fleet's requests on fewer ranks), so the fit window's mean profile
+// prices a busy step as more lopsided than it is, and its knee low.
+// sharesAt reads the profile of the fit steps nearest the priced rate.
+
+// ShareRow is one fit step's share profile, busiest first, at its rate.
+type ShareRow struct {
+	Rate   float64
+	Shares []float64
+}
+
+// nearShareRows is the fit steps sharesAt averages.
+const nearShareRows = 5
+
+// shareRowsOf is steps' share profiles, each with every rank of the most
+// ranks any step has, at a positive rate.
+func shareRowsOf(steps []MixtureStep, n int) []ShareRow {
+	var out []ShareRow
+	for _, st := range steps {
+		if len(st.Ranks) != n || !(st.Rate > 0) {
+			continue
+		}
+		var tot float64
+		r := make([]float64, n)
+		for i, rk := range st.Ranks {
+			r[i] = max(rk.Rate, 0)
+			tot += r[i]
+		}
+		if !(tot > 0) {
+			continue
+		}
+		slices.SortFunc(r, func(a, b float64) int { return cmp.Compare(b, a) })
+		for i := range r {
+			r[i] /= tot
+		}
+		out = append(out, ShareRow{Rate: st.Rate, Shares: r})
+	}
+	return out
+}
+
+// sharesAt is the share profile priced at rate: the mean of the
+// nearShareRows fit steps nearest it where ShareRows holds that many, else
+// Shares.
+func (m RankMixture) sharesAt(rate float64) []float64 {
+	if len(m.ShareRows) < nearShareRows {
+		return m.Shares
+	}
+	rows := slices.Clone(m.ShareRows)
+	slices.SortStableFunc(rows, func(a, b ShareRow) int { return cmp.Compare(math.Abs(a.Rate-rate), math.Abs(b.Rate-rate)) })
+	out := make([]float64, len(m.Shares))
+	for _, r := range rows[:nearShareRows] {
+		for i := range out {
+			if i < len(r.Shares) {
+				out[i] += r.Shares[i] / nearShareRows
+			}
+		}
+	}
+	return out
+}
+
 // MaxCleanRho is the rank utilization from which a fit-window step is left
 // out of the KV-deferral and Z fits of FitRankMixtureNL.
 const MaxCleanRho = 0.9
@@ -96,10 +159,13 @@ const (
 
 // ZPart is one part of Z as a line in the whole prompt: A seconds plus B
 // seconds a prompt token, both non-negative. Identified is false where the
-// prompts did not spread (B is then 0 and A the part's median).
+// prompts did not spread (B is then 0 and A the part's median). Sigma is
+// the part's spread: each request's part is lognormal about the line's mean
+// with this sigma (mean-preserving); 0 is the line itself.
 type ZPart struct {
 	A, B       float64
 	Identified bool
+	Sigma      float64
 }
 
 // ZParts is Z measured part by part.
@@ -349,6 +415,193 @@ func FitZParts(steps []MixtureStep) (p ZParts, unidentified []string, err error)
 	return p, unidentified, nil
 }
 
+// Spreads of Z's parts. Z's parts are not constants per prompt: the front
+// end, the decode engine's first token (its own queue and the KV transfer)
+// and the router vary request to request. Each part is drawn lognormal about
+// its line with a sigma read from that part's own measured series, so the
+// spread moves the tail and not the mean. The decode part's sigma is read
+// from the decode engines' TTFT histogram (its mean and p90); the overhead's
+// is the one at which the model's prefill-engine TTFT (overhead + queue +
+// prefill) reads the prefill engines' measured TTFT p90 (median ratio 1 over
+// the clean fit steps). The router's remainder has no histogram of its own:
+// its sigma is 0. A lognormal's p90 over its mean rises with sigma only up
+// to z90 (1.28), so the search runs over [0, MaxPartSigma].
+
+// MaxPartSigma bounds a part's sigma.
+const MaxPartSigma = 1.2
+
+// z90 is the standard normal's 0.9 quantile.
+const z90 = 1.2815515655446004
+
+// zSeed fixes the parts' draws.
+const zSeed = 0x5eed + 99
+
+// draws is each request's Z at its prompt l: every part lognormal about its
+// line; nil where no part has a sigma (Z is then the lines' sum, priced as
+// a0 + beta L).
+func (p *ZParts) draws(l []float64) []float64 {
+	if p == nil || !(p.Overhead.Sigma > 0 || p.Decode.Sigma > 0 || p.Remainder.Sigma > 0) {
+		return nil
+	}
+	return p.drawsWith(l, []ZPart{p.Overhead, p.Decode, p.Remainder})
+}
+
+// drawsWith is draws over parts.
+func (p *ZParts) drawsWith(l []float64, parts []ZPart) []float64 {
+	rng := rand.New(rand.NewPCG(zSeed, uint64(len(l))))
+	out := make([]float64, len(l))
+	for i, li := range l {
+		for _, z := range parts {
+			mu := max(z.A+z.B*li, 0)
+			if z.Sigma > 0 {
+				mu *= math.Exp(z.Sigma*rng.NormFloat64() - z.Sigma*z.Sigma/2)
+			}
+			out[i] += mu
+		}
+	}
+	return out
+}
+
+// lnSigma is the sigma of the lognormal with this mean and p90, the smaller
+// root, at most z90; ok is false where either is not positive.
+func lnSigma(mean, p90 float64) (float64, bool) {
+	if !(mean > 0) || !(p90 > 0) {
+		return 0, false
+	}
+	disc := z90*z90 - 2*math.Log(p90/mean)
+	if disc <= 0 {
+		return z90, true
+	}
+	return max(z90-math.Sqrt(disc), 0), true
+}
+
+// histQuantile is the q quantile of a cumulative histogram (upper bound to
+// rate, +Inf the total), linear inside a bucket and the lower edge in the
+// +Inf one; ok is false where it holds nothing.
+func histQuantile(h map[float64]float64, q float64) (float64, bool) {
+	tot := h[math.Inf(1)]
+	if !(tot > 0) {
+		return 0, false
+	}
+	les := make([]float64, 0, len(h))
+	for le := range h {
+		les = append(les, le)
+	}
+	slices.Sort(les)
+	target, prevLe, prevC := q*tot, 0.0, 0.0
+	for _, le := range les {
+		c := h[le]
+		if c >= target {
+			if math.IsInf(le, 1) {
+				return prevLe, true
+			}
+			if c == prevC {
+				return le, true
+			}
+			return prevLe + (le-prevLe)*(target-prevC)/(c-prevC), true
+		}
+		prevLe, prevC = le, c
+	}
+	return 0, false
+}
+
+// weightedQuantile is the q quantile of y weighted by w.
+func weightedQuantile(y, w []float64, q float64) float64 {
+	idx := make([]int, len(y))
+	var tw float64
+	for i := range idx {
+		idx[i] = i
+		tw += w[i]
+	}
+	slices.SortFunc(idx, func(a, b int) int { return cmp.Compare(y[a], y[b]) })
+	acc := 0.0
+	for _, i := range idx {
+		acc += w[i]
+		if acc >= q*tw {
+			return y[i]
+		}
+	}
+	return y[idx[len(idx)-1]]
+}
+
+// poolHist is out with h added at weight 1/n; nil while neither holds any.
+func poolHist(out, h map[float64]float64, n float64) map[float64]float64 {
+	for b, v := range h {
+		if out == nil {
+			out = map[float64]float64{}
+		}
+		out[b] += v / n
+	}
+	return out
+}
+
+// fitSigmas sets the parts' sigmas on m (spreads of Z's parts, above) from
+// the clean steps.
+func (m *RankMixture) fitSigmas(clean []MixtureStep) {
+	p := m.Parts
+	var ds []float64
+	for _, st := range clean {
+		if q, ok := histQuantile(st.DecodeTTFTHist, 0.9); ok {
+			if s, ok := lnSigma(st.DecodeTTFT, q); ok {
+				ds = append(ds, s)
+			}
+		}
+	}
+	if len(ds) > 0 {
+		p.Decode.Sigma = min(medianOf(ds), MaxPartSigma)
+	}
+	type obs struct {
+		d    RankMixtureDraws
+		meas float64
+	}
+	var os []obs
+	for _, st := range clean {
+		q, ok := histQuantile(st.PrefillTTFTHist, 0.9)
+		if !ok || !(q > 0) {
+			continue
+		}
+		d, u := m.Draws(st.Rate, st.Computed, st.Prompt, DefaultMixtureDraws)
+		if u != nil {
+			continue
+		}
+		os = append(os, obs{d, q})
+	}
+	if len(os) == 0 {
+		return
+	}
+	ratio := func(sigma float64) float64 {
+		part := p.Overhead
+		part.Sigma = sigma
+		r := make([]float64, 0, len(os))
+		for _, o := range os {
+			z := p.drawsWith(o.d.L, []ZPart{part})
+			y := make([]float64, len(z))
+			for i := range z {
+				y[i] = o.d.QP[i] + z[i]
+			}
+			r = append(r, weightedQuantile(y, o.d.W, 0.9)/o.meas)
+		}
+		return medianOf(r)
+	}
+	lo, hi := 0.0, MaxPartSigma
+	if ratio(lo) >= 1 {
+		return
+	}
+	if ratio(hi) < 1 {
+		p.Overhead.Sigma = hi
+		return
+	}
+	for range spreadIterations {
+		mid := (lo + hi) / 2
+		if ratio(mid) < 1 {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	p.Overhead.Sigma = (lo + hi) / 2
+}
+
 // FitRankMixtureNL fits QueueRankMixtureNL on the fit window's steps: the
 // attention service (FitAttention; FitPSInversion's line where it is not
 // identified), the shares, the KV-deferral lines and Z's parts on the clean
@@ -382,6 +635,9 @@ func FitRankMixtureNL(steps []MixtureStep, o RankMixtureOptions) (RankMixture, R
 		}
 	}
 	m.Shares = shares
+	if !o.NoMixture {
+		m.ShareRows = shareRowsOf(steps, len(shares))
+	}
 	clean := m.cleanSteps(steps)
 	diag := RankMixtureNLFit{Steps: len(steps), CleanSteps: len(clean), ShareCV: cv}
 	if !o.NoKV {
@@ -401,6 +657,9 @@ func FitRankMixtureNL(steps []MixtureStep, o RankMixtureOptions) (RankMixture, R
 	m.A0 = parts.Overhead.A + parts.Decode.A + parts.Remainder.A
 	m.BetaOverhead, m.BetaDecode, m.BetaRemainder = parts.Overhead.B, parts.Decode.B, parts.Remainder.B
 	m.Beta = m.BetaOverhead + m.BetaDecode + m.BetaRemainder
+	if !o.NoPrompt {
+		m.fitSigmas(clean)
+	}
 	all := drawSteps(m, steps)
 	var means []float64
 	for _, p := range all {

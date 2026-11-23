@@ -17,7 +17,7 @@ import (
 // same way, and abstains where its own checks fail.
 
 // RankMixtureZParts is Z measured part by part, seconds and seconds a
-// prompt token (whatif.ZParts).
+// prompt token, and the parts' spreads (whatif.ZParts).
 type RankMixtureZParts struct {
 	OverheadA  float64 `json:"overheadA"`
 	OverheadB  float64 `json:"overheadB"`
@@ -25,6 +25,10 @@ type RankMixtureZParts struct {
 	DecodeB    float64 `json:"decodeB"`
 	RemainderA float64 `json:"remainderA"`
 	RemainderB float64 `json:"remainderB"`
+	// OverheadSigma and DecodeSigma are the parts' lognormal spreads
+	// (whatif.ZPart.Sigma); 0 is none.
+	OverheadSigma float64 `json:"overheadSigma"`
+	DecodeSigma   float64 `json:"decodeSigma"`
 }
 
 // fitRankMixtureNL fits whatif.QueueRankMixtureNL on the fit window's steps
@@ -48,7 +52,7 @@ func fitRankMixtureNL(fit *inputsEntry, fitIdx []int, step time.Duration, slots 
 	}
 	if p := m.Parts; p != nil {
 		r.ZParts = &RankMixtureZParts{OverheadA: p.Overhead.A, OverheadB: p.Overhead.B, DecodeA: p.Decode.A, DecodeB: p.Decode.B,
-			RemainderA: p.Remainder.A, RemainderB: p.Remainder.B}
+			RemainderA: p.Remainder.A, RemainderB: p.Remainder.B, OverheadSigma: p.Overhead.Sigma, DecodeSigma: p.Decode.Sigma}
 	}
 	return rq, nil
 }
