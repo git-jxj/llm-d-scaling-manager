@@ -345,7 +345,8 @@ function ttftModelNote(m) {
   if (!m) return "";
   if (!m.priced) return `${m.label}: not used here (${m.notPriced}); the planner's own TTFT is drawn.`;
   const parts = [m.label];
-  if (m.evidence) parts.push(m.evidence);
+  // The evidence is the held-out score of the mean TTFT: it says so.
+  if (m.evidence) parts.push("TTFT mean " + m.evidence);
   if (m.measuredUpTo != null) parts.push(`dashed: ${m.beyond} (${Number(m.measuredUpTo.toPrecision(3))} r/s)`);
   if (m.rightEnd) parts.push(m.rightEnd);
   return parts.join(" · ") + ".";
@@ -772,7 +773,8 @@ function reportView(r) {
         ...roleLines(s.verdict),
         `The numbers: ${plainReason((s.verdict || {}).reason || "")}`,
       ].filter(x => x),
-      flags: flagSummary(s.flags),
+      // A shape the question did not type is no "shape you typed".
+      flags: flagSummary((s.flags || []).filter(x => x !== "AssumedShape" || s.source === "asked")),
     };
   });
   return {verdicts, header, rows, details, notes: r.notValidated || [], load: loadLine(r.load),
@@ -1105,58 +1107,132 @@ function plainVerdict(s) {
   return out.replace(/\.\s*$/, "");
 }
 
-// execView is the panel: {lines: [{label, text, badge}], slo, trust}. A
-// line whose data is still coming says so.
+// execCurveAt is a curve's figure at rate x, read between its two nearest
+// points with a figure (linear), or null outside them or where refused.
+function execCurveAt(curve, x) {
+  const pts = (curve || []).map(c => ({x: c.rate, y: figValue(c.figure)})).filter(p => p.y != null);
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    if (x >= a.x && x <= b.x) return b.x === a.x ? a.y : a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x);
+  }
+  return null;
+}
+
+// execPods is the fleet's pods and GPUs in words: "16 pods, 512 GPUs (32 per
+// pod)", or each role's GPUs where they differ.
+function execPods(fleet, np, nd) {
+  const gp = fleet.prefill ? fleet.prefill.gpusPerReplica : 0, gd = fleet.decode.gpusPerReplica;
+  const g = execGPUs(fleet, np, nd);
+  const pods = np + nd;
+  if (g == null) return `${pods} pods`;
+  const per = !fleet.prefill || gp === gd ? `${gd} per pod` : `${gp} a prefill pod, ${gd} a decode pod`;
+  return `${pods} pods, ${g} GPUs (${per})`;
+}
+
+// execBusiest is the one busiest load every line of the panel reads: the
+// load the report judged at, its statistic named; with the peak beside it as
+// small text.
+function execBusiest(load) {
+  if (!load || !load.rate || load.rate.value == null) return null;
+  const stat = load.statistic === "p95-modulation" ? "p95 less counting noise" : load.statistic || "p95";
+  return {rate: load.rate.value, words: `busiest load (${stat} of 1-minute cycles): ${roundRate(load.rate.value)} r/s`,
+    small: load.peak != null ? `peak ${roundRate(load.peak)} r/s` : ""};
+}
+
+// execUsers is what users see at the busiest load, TTFT and TPOT at the mean,
+// p90 and p95: measured at the busiest held-out step where a check ran, else
+// the plan's estimate at the busiest load at the SLO's statistics.
+function execUsers(o, seen) {
+  const {plan, bt, k} = o;
+  if (bt) {
+    const judged = (bt.steps || []).filter(s => !s.excluded);
+    if (judged.length) {
+      const s = judged.reduce((a, b) => (b.rate > a.rate ? b : a));
+      const fig = p => !p ? null : p.measuredBucket && p.measured == null ? `${execTimes(p.measuredBucket.lo)}-${execTimes(p.measuredBucket.hi)}` :
+        p.aboveHistogram ? "above the top bucket" : p.measured != null ? execTimes(p.measured) : null;
+      const row = key => ["mean", "p90", "p95"].map(st => [st, fig((s[key] || []).find(p => p.statistic === st))]).filter(([, v]) => v)
+        .map(([st, v]) => `${st} ${v}`).join(", ");
+      const t = row("ttft"), p = row("tpot");
+      if (t || p) {
+        return {badge: EXEC_BADGES.measured, text: `At ${s.start.slice(11, 16)} UTC (${roundRate(s.rate)} r/s, the busiest held-out step): ` +
+          [t ? `TTFT ${t}` : "", p ? `TPOT ${p}` : ""].filter(x => x).join("; ") + "."};
+      }
+    }
+  }
+  if (!plan || seen == null) return null;
+  const tt = execCurveAt(plan.ttft && plan.ttft.line && plan.ttft.line.curve, seen);
+  const tp = execCurveAt(plan.tpot && plan.tpot.curve, seen);
+  const parts = [tt != null ? `TTFT ${k.ttftStat} about ${execTimes(tt)}` : "", tp != null ? `TPOT ${k.tpotStat} about ${execTimes(tp)}` : ""].filter(x => x);
+  return parts.length ? {badge: EXEC_BADGES.estimate, text: `At the busiest load: ${parts.join("; ")}.`} : null;
+}
+
+// execView is the panel: {lines: [{label, text, badge, small, actions}],
+// slo, trust}. It leads with what is known, each role's capacity against one
+// busiest load, and never heads a line "not known": a limit seen only as a
+// lower bound reads "at least". The headroom is read off the plan on screen,
+// at the shape the charts price, which the panel names.
 function execView(o) {
   const {inputs, plan, report, bt, k} = o;
   const f = inputs.fleet;
   const np = f.prefill ? f.prefill.replicas : 0, nd = f.decode.replicas;
   const lines = [];
-  const load = report && report.load;
-  const shape = report && (report.shapes || [])[0];
-  let busy = "";
-  if (load && load.rolling) {
-    busy = ` Busiest ${Math.round(load.rolling.windowSeconds / 60)} min: ${roundRate(load.rolling.peak)} r/s` +
-      (load.peak != null ? ` (peak ${roundRate(load.peak)} r/s).` : ".");
-  } else if (load && load.peak != null) {
-    busy = ` Peak ${roundRate(load.peak)} r/s.`;
-  }
-  lines.push({label: "Fleet today", text: execFleet(f, np, nd) + "." + busy, badge: EXEC_BADGES.measured});
+  const busy = execBusiest(report && report.load);
+  const seen = busy ? busy.rate : null;
+  lines.push({label: "Fleet today", badge: EXEC_BADGES.measured,
+    text: `${f.prefill ? `${np} prefill + ${nd} decode` : `${nd} replicas`}: ${execPods(f, np, nd)}.` + (busy ? ` The ${busy.words}.` : ""),
+    small: busy ? busy.small : ""});
 
-  // Saturation, read off the knees at the load judged, and the latency the
-  // fleet measured at the busiest held-out step.
-  const seen = load && load.rate && load.rate.value != null ? load.rate.value : null;
-  const cap = shape && shape.capacity;
-  let sat = "";
-  if (cap && seen != null) {
-    const pk = cap.prefillKnee && cap.prefillKnee.value != null ? cap.prefillKnee : null;
-    const dk = cap.decodeKnee && cap.decodeKnee.value != null ? cap.decodeKnee.value : null;
-    const knees = [pk && !pk.lowerBound ? pk.value : null, dk].filter(x => x != null);
-    const lowest = knees.length ? Math.min(...knees) : null;
-    if (lowest != null && seen >= lowest) sat = "Saturated at the busiest load.";
-    else if (pk && pk.lowerBound && seen >= pk.value) sat = "Not known to saturate: the busiest load is past a prefill limit known only as a lower bound.";
-    else if (lowest != null || pk) sat = "Not saturated at the busiest load.";
+  // Each role's capacity at the plan's shape, against the busiest load.
+  const L = plan && plan.limits;
+  const m = plan && plan.ttft && plan.ttft.markers;
+  const dl = L && L.decode ? figValue(L.decode) : null;
+  if (dl != null) {
+    lines.push({label: "Decode", badge: EXEC_BADGES.estimate,
+      text: `${nd} replicas carry ${roundRate(dl)} r/s at the TPOT target` + (seen ? `, ${(dl / seen).toFixed(1)}x the busiest load.` : ".")});
   }
-  const m = bt ? execMeasuredAt(bt, k) : null;
-  const measured = m ? ` Measured at ${m.when} (${roundRate(m.rate)} r/s): ${m.parts.map(x => x.text).join("; ")}.` :
-    o.btPending ? " Measuring the latency at the busiest held-out step..." : "";
-  if (sat || measured) lines.push({label: "Verdict", text: (sat + measured).trim(), badge: m ? EXEC_BADGES.measured : EXEC_BADGES.estimate});
+  const ref = refusalView(plan);
+  const pk = m && m.prefillKnee ? m.prefillKnee : null;
+  const pkv = figValue(pk);
+  const pkLB = !!pk && (pk.flags || []).some(x => x === "VPLowerBound" || x === "KneeAtServedWork");
+  if (f.prefill && (pkv != null || ref)) {
+    const share = pkv != null && seen ? `, ${(pkv / seen).toFixed(1)}x the busiest load` : "";
+    const text = ref && pkv != null && pkLB ? `Speed not yet observed: at least ${roundRate(pkv)} r/s (a lower bound${share}). The pods never queued` +
+        (ref.vp != null ? `, so each handles at least ${Math.round(ref.vp).toLocaleString("en-US")} tokens/s` : "") + "; their limit is not measured." :
+      ref ? "Speed not yet observed: the source learned no prefill speed per pod." :
+      `${np} replicas carry ${pkLB ? "at least " : ""}${roundRate(pkv)} r/s before latency takes off${share}.`;
+    const actions = ref ? (ref.vp != null ? [{act: "usevp", vp: ref.vp, label: `Use ${Math.round(ref.vp).toLocaleString("en-US")} tokens/s as the limit (conservative)`}] : [])
+      .concat([{act: "busier", label: "Load a busier window"}]) : [];
+    lines.push({label: "Prefill", badge: EXEC_BADGES.estimate, text, actions});
+  }
+  // Which role binds first, and how busy the prefill pods ran.
+  const shape = report && (report.shapes || [])[0];
+  const pu = shape && shape.utilization && shape.utilization.prefill;
+  const worst = pu && pu.worstPod && pu.worstPod.value != null ? pu.worstPod.value : null;
+  if (pkv != null && dl != null) {
+    const prefillFirst = pkv < dl;
+    lines.push({label: "Verdict", badge: worst != null ? EXEC_BADGES.measured : EXEC_BADGES.estimate,
+      text: (prefillFirst ? "Prefill binds first" : "Decode binds first") +
+        (prefillFirst && worst != null ? ` (busiest prefill pod ${Math.round(100 * worst)}% busy at the busiest load)` : "") +
+        (prefillFirst && pkLB ? "; its limit is not measured yet." : ".")});
+  }
+  // TTFT against its target: at the busiest load and at its floor, the one
+  // statement the chart and the SLO box repeat.
+  if (plan && plan.ttft && seen != null) {
+    const t = plan.ttft, at = execCurveAt(t.line.curve, seen), floor = figValue(t.line.floor);
+    const exp = t.model && t.model.priced ? " (experimental model)" : "";
+    if (at != null) {
+      const every = floor != null && floor > t.line.target;
+      lines.push({label: "TTFT", badge: EXEC_BADGES.estimate,
+        text: `About ${execTimes(at)} ${t.statistic} at the busiest load${exp}, ` + (at > t.line.target ? "above" : "within") +
+          ` your ${execTimes(t.line.target)} target` + (every ? ` at every rate (floor ${execTimes(floor)}). ` +
+          `${k.ttftDefault ? "The default target may not suit these prompts: set yours under SLO." : ""}` : ".")});
+    }
+  }
+  const users = execUsers(o, seen);
+  if (users) lines.push(Object.assign({label: "Users see"}, users));
+  else if (o.btPending) lines.push({label: "Users see", badge: EXEC_BADGES.measured, text: "Measuring the latency at the busiest held-out step..."});
   if (shape) lines.push({label: "Right size", text: execVerdict(f, shape.verdict), badge: EXEC_BADGES.estimate});
   else if (o.reportPending) lines.push({label: "Right size", text: "Judging the fleet at the busiest load...", badge: EXEC_BADGES.estimate});
-
-  // Headroom: how far the load may grow before each role's limit.
-  if (cap && seen > 0) {
-    const parts = [];
-    const pk = cap.prefillKnee;
-    if (pk && pk.value != null) {
-      parts.push(pk.lowerBound && pk.value < seen ? `prefill's limit not known: the busiest load is past its lower bound, ${roundRate(pk.value)} r/s (prefill never queued)` :
-        pk.lowerBound ? `at least ${(pk.value / seen).toFixed(1)}x before prefill limits TTFT (a lower bound: prefill never queued)` :
-        `${(pk.value / seen).toFixed(1)}x before prefill limits TTFT`);
-    }
-    const dk = cap.decodeKnee;
-    if (dk && dk.value != null) parts.push(`decode ${(dk.value / seen).toFixed(1)}x`);
-    if (parts.length) lines.push({label: "Headroom", text: `From the busiest load (${roundRate(seen)} r/s): ${parts.join("; ")}.`, badge: EXEC_BADGES.estimate});
-  }
 
   // Growth: the fleet the load grown by a quarter and by a half needs. The
   // sizing at those rates (o.growth: [{x, rate, need}], need in words) is
@@ -1171,18 +1247,18 @@ function execView(o) {
   const held = inputs.ttftModel && inputs.ttftModel.heldOut;
   if (held && held.steps > 0) {
     // The held-out check the server ran at load: the headline needs no
-    // backtest of its own.
-    const n = held.within || 0;
+    // backtest of its own. Every figure names its statistic.
+    const n = held.within || 0, st = held.statistic || "mean";
     const r = held.medianRatio;
     const lean = r == null ? "" : r < 0.97 ? `, reads ${Math.round((1 - r) * 100)}% low` : r > 1.03 ? `, reads ${Math.round((r - 1) * 100)}% high` : "";
     const fleet = held.prefill != null ? `${held.prefill} prefill + ${held.decode} decode` : "the fleet it ran";
-    const range = held.rateFrom != null ? ` Valid range: ${fleet} at ${roundRate(held.rateFrom)}-${roundRate(held.rateTo)} r/s; outside that is an extrapolation.` : "";
+    const range = held.rateFrom != null ? ` Tested range: ${fleet} at ${roundRate(held.rateFrom)}-${roundRate(held.rateTo)} r/s; outside that is an extrapolation.` : "";
     lines.push({label: "Accuracy", badge: EXEC_BADGES.checked,
-      text: `On held-out steps of your traffic: TTFT ${held.statistic || "mean"} within 20% in ${n} of ${held.steps} five-minute steps${lean}.${range}`});
-    trust = `Checked on your traffic: TTFT ${n}/${held.steps} within 20%`;
+      text: `On held-out steps of your traffic: TTFT ${st} within 20% in ${n} of ${held.steps} five-minute steps${lean}.${range}`});
+    trust = `Checked on your traffic: TTFT ${st} ${n}/${held.steps} within 20%`;
   } else if (bt) {
     const a = execAccuracy(bt, k);
-    lines.push({label: "Accuracy", text: a.text + (a.range ? " " + a.range : ""), badge: EXEC_BADGES.checked});
+    lines.push({label: "Accuracy", text: a.text + (a.range ? " " + a.range.replace("Valid range", "Tested range") : ""), badge: EXEC_BADGES.checked});
     trust = a.chip ? `Checked on your traffic: ${a.chip}` : "";
   } else if (o.btPending) {
     lines.push({label: "Accuracy", text: "Checking the planner on your held-out hours...", badge: EXEC_BADGES.checked});
@@ -1192,19 +1268,20 @@ function execView(o) {
   return {lines, slo: execSLO(k), trust};
 }
 
-// refusalView is the card the answer shows when the source could not learn
-// prefill's capacity, in plain words with what to do as page actions:
-// {title, text, vp (tokens/s, to use as the limit, or null), code}; null
-// where prefill priced.
-function refusalView(plan) {
-  if (!plan || !plan.limits) return null;
-  const L = plan.limits;
-  const r = [L.prefill, L.fleet].map(x => x && x.refused).find(x => x && x.reason === "NoPrefillCapacity");
+// refusalView is the card shown when the source could not learn prefill's
+// capacity, in plain words with what to do as page actions: {title, text, vp
+// (tokens/s, to use as the limit, or null), code}; null where prefill priced.
+// It reads a plan's limits, or a size's refusal where no fleet within the
+// bound priced (unmet: {refused}).
+function refusalView(plan, unmet) {
+  const L = plan && plan.limits;
+  const r = (L ? [L.prefill, L.fleet].map(x => x && x.refused) : []).concat([unmet && unmet.refused])
+    .find(x => x && x.reason === "NoPrefillCapacity");
   if (!r) return null;
   const lb = (r.flags || []).includes("VPLowerBound");
   const m = /V_P ([0-9.]+) tokens\/s/.exec(r.detail || "");
   const vp = lb && m ? Number(m[1]) : null;
-  const dv = L.decode && L.decode.value != null ? L.decode.value : null;
+  const dv = L && L.decode && L.decode.value != null ? L.decode.value : null;
   const decode = dv != null ? ` Decode alone serves up to ${roundRate(dv)} r/s.` : "";
   const text = vp != null ? `The prefill pods never queued, so they handle at least ${Math.round(vp).toLocaleString("en-US")} tokens/s per pod, but their limit is not observed.${decode}` :
     `The source learned no prefill speed per pod: it saw no prefill pod busy enough.${decode}`;

@@ -335,7 +335,8 @@ function dayTip(plan, b) {
   if (b.needed) row("needed", dayNeededText(b.needed));
   if (b.actual) row("had", `${b.actual.prefill} prefill, ${b.actual.decode} decode`);
   if (b.notServing) row("asked, not serving", `${b.notServing.prefill} prefill, ${b.notServing.decode} decode`);
-  if (b.hadLimit && b.hadLimit.value != null) row("had fleet serves", dayFmt(b.hadLimit.value) + " r/s");
+  // Decode judged alone has no fleet limit: the figure would be decode's.
+  if (b.hadLimit && b.hadLimit.value != null && b.scope !== "decode only") row("had fleet serves", dayFmt(b.hadLimit.value) + " r/s");
   if (dayVerdict(b)) row("verdict", dayVerdict(b));
   if (b.trust) row("self-check", b.trust);
   if (b.unmet) row("beyond the bound", `${b.unmetRole || "fleet"}: ${b.unmet.reason}`);

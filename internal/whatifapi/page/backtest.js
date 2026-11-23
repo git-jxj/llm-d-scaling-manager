@@ -470,7 +470,11 @@ function btCell(s, key, stat) {
   const title = (p.measuredBucket ? `measured somewhere in ${btFmt(p.measuredBucket.lo)} to ${btFmt(p.measuredBucket.hi)}, a histogram bucket too wide to place it` : "") +
     btInBucket(s, key, stat) + (p.unscored ? ` Not scored: ${BT_UNSCORED[p.unscored] || p.unscored}.` : "");
   if (p.aboveHistogram) return {text: `${btPred(p)} vs above the top bucket ✗${d}`, cls, title};
-  if (p.measuredBucket && p.measured == null) return {text: `${btPred(p)} vs ${btFmt(p.measuredBucket.lo)}-${btFmt(p.measuredBucket.hi)}${d}`, cls, title};
+  // A figure the bucket is too wide to place reads as the bucket, never as
+  // a point inside it.
+  if (p.measuredBucket && (p.measured == null || cls === "unresolved")) {
+    return {text: `${btPred(p)} vs ${btFmt(p.measuredBucket.lo)}-${btFmt(p.measuredBucket.hi)} \u2248${d}`, cls, title};
+  }
   if (p.measured == null) return {text: btPred(p) + " vs -" + d, cls, title};
   const mark = cls === "within" ? "✓" : cls === "unresolved" ? "≈" : "✗";
   const off = p.ratio != null ? ` ${Math.round(Math.abs(p.ratio - 1) * 100)}%` : "";
@@ -505,7 +509,11 @@ function btVerdictCard(bt, ttftStat, tpotStat) {
     return {chip: `${name} ${sc.statistic} ${n}/${a.steps} within 20%`, cls: share >= 0.8 ? "within" : share >= 0.5 ? "unresolved" : "low",
       text: `${name} ${sc.statistic}: within 20% of measured in ${n} of ${a.steps} steps scored${lean}.`};
   };
-  lines.push(one("TTFT", btPrimary(bt.summary.ttft, ttftStat)));
+  const tt = btPrimary(bt.summary.ttft, ttftStat);
+  lines.push(one("TTFT", tt));
+  // The header quotes the mean's score: so does the card, beside the target's.
+  const tm = btPrimary(bt.summary.ttft, "mean");
+  if (tt && tm && tm !== tt) lines.push(one("TTFT", tm));
   lines.push(one("TPOT", btPrimary(bt.summary.tpot, tpotStat)));
   const judged = (bt.steps || []).filter(s => !s.excluded);
   if (judged.length) {
@@ -547,7 +555,8 @@ function btBucketTip(bt) {
   // A statistic the charts draw first (p90, then the mean), then any other.
   const k = keys.find(x => x.endsWith("-p90")) || keys.find(x => x.endsWith("-mean")) || keys[0], b = u[k], [key, stat] = k.split("-");
   return `${key.toUpperCase()} ${stat} was measured inside one histogram bucket, ${btFmt(b.lo)} to ${btFmt(b.hi)}, too wide to score it. ` +
-    "Finer histogram edges measure it: see docs/guides/capacity-planner/read-the-answer.md, \"A figure the histogram cannot place\".";
+    "Finer histogram edges measure it: the router's metrics.requestTPOTBuckets and requestTTFTBuckets in the EndpointPickerConfig, or vLLM's " +
+    "--custom-histogram-buckets; edges about 15% apart place p90 and p95 within 20%.";
 }
 
 // btUnscoredList is each statistic not scored at some steps, and why.
@@ -567,14 +576,17 @@ function btUnscoredList(bt) {
 function btStepsCSV(bt) {
   const cols = [["ttft", "mean"], ["ttft", "p90"], ["ttft", "p95"], ["tpot", "mean"], ["tpot", "p90"], ["tpot", "p95"]];
   const head = ["start", "rate", "prefill", "decode", "judged"];
-  for (const [k, s] of cols) head.push(`${k}_${s}_predicted_seconds`, `${k}_${s}_measured_seconds`, `${k}_${s}_class`);
+  for (const [k, s] of cols) head.push(`${k}_${s}_predicted_seconds`, `${k}_${s}_measured_seconds`, `${k}_${s}_bucket_lo_seconds`, `${k}_${s}_bucket_hi_seconds`, `${k}_${s}_class`);
   const num = v => v == null || !isFinite(v) ? "" : String(Number(v.toPrecision(6)));
   const rows = [head.join(",")];
   for (const s of bt.steps) {
     const r = [s.start, s.rate.toFixed(3), String(s.prefill), String(s.decode), s.excluded ? "no: " + s.excluded : "yes"];
     for (const [k, st] of cols) {
       const p = btPoint(s, k, st);
-      r.push(num(p && p.predicted.value), num(p && p.measured), (p && btPointClass(p)) || "");
+      const bk = p && p.measuredBucket;
+      // An unresolved figure exports its bucket, not a point.
+      const unres = p && btPointClass(p) === "unresolved";
+      r.push(num(p && p.predicted.value), unres ? "" : num(p && p.measured), num(bk && bk.lo), num(bk && bk.hi), (p && btPointClass(p)) || "");
     }
     rows.push(r.map(csvField).join(","));
   }

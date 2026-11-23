@@ -366,7 +366,7 @@ async function loadInputs() {
     if (el("pvariant").value.trim()) req.prefillVariant = el("pvariant").value.trim();
     if (el("dvariant").value.trim()) req.decodeVariant = el("dvariant").value.trim();
     const loading = req.source.kind === "prometheus" ? "Reading the Prometheus window (seconds to a minute)" :
-      "Replaying the recording (a day-long one takes a minute or two; asking again starts a second load)";
+      "Replaying the recording (a day-long one takes a minute or two)";
     setStatus(loading + "...");
     const t0 = Date.now();
     // The sticky bar says the load runs and lets you cancel it. The server
@@ -663,7 +663,7 @@ function showSource(inputs) {
     text = `Recording ${s.name}` + (s.cycle && s.cycle !== s.totalCycles ? `, up to cycle ${s.cycle} of ${s.totalCycles}` : "");
   }
   el("srcsum").textContent = text;
-  el("srcchip").textContent = "Source: " + text;
+  el("srcchip").textContent = text;
   el("srcchip").hidden = false;
   // The window the source covers, first cycle to last, in UTC.
   const day = d => d ? new Date(d).toISOString().slice(0, 16).replace("T", " ") : "";
@@ -978,6 +978,7 @@ async function plan() {
         syncControls();
         fitRateSlider(null);
         renderSize();
+        renderRefusal();
         renderFlags();
         renderCompare();
       }
@@ -2223,20 +2224,33 @@ function renderExec() {
     const dt = textNode("dt", l.label);
     dt.appendChild(textNode("span", l.badge, "badge " + (l.badge === EXEC_BADGES.measured ? "b-measured" : l.badge === EXEC_BADGES.checked ? "b-checked" : "b-estimate")));
     dl.appendChild(dt);
-    dl.appendChild(textNode("dd", l.text));
+    const dd = textNode("dd", l.text);
+    if (l.small) dd.appendChild(textNode("span", " " + l.small, "hint"));
+    // A line's actions are page actions, never a CLI flag.
+    for (const a of l.actions || []) {
+      const b = textNode("button", a.label, "execact");
+      b.type = "button";
+      b.onclick = a.act === "usevp" ? () => useVP(a.vp) : busierWindow;
+      dd.appendChild(b);
+    }
+    dl.appendChild(dd);
   }
   el("execslo").textContent = "SLO used: " + v.slo;
-  el("execsrc").textContent = el("srcchip").textContent.replace(/^Source: /, "");
+  el("execsrc").textContent = el("srcchip").textContent;
   el("exec").hidden = false;
+  // The panel carries prefill's actions: the card is for size mode alone.
+  renderRefusal();
   el("trustchip").textContent = v.trust;
   el("trustchip").hidden = !v.trust;
   state.execView = v;
 }
 
-// renderRefusal shows the refusal card where the plan could not price
-// prefill's capacity, with what to do as page actions.
+// renderRefusal shows the refusal card where prefill's capacity could not
+// be priced, with what to do as page actions: in size mode, where the
+// answer panel does not carry them.
 function renderRefusal() {
-  const r = refusalView(state.plan);
+  const z = state.mode === "size" ? state.size : null;
+  const r = state.mode === "size" ? refusalView(state.plan, z && z.unmet) : null;
   el("refusal").hidden = !r;
   if (!r) return;
   el("refusaltitle").textContent = r.title;
@@ -2292,8 +2306,8 @@ function renderNotice(flags, banner) {
 
 // useVP prices prefill at the speed the pods were seen to compute: typed as
 // the assumed prefill speed, flagged as every assumed term is.
-function useVP() {
-  const vp = Number(el("usevp").dataset.vp);
+function useVP(given) {
+  const vp = Number(typeof given === "number" ? given : el("usevp").dataset.vp);
   if (!state.k || !(vp > 0)) return;
   state.k.assume.vp = vp;
   el("a-vp").value = String(Math.round(vp));

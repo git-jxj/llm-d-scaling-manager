@@ -116,7 +116,11 @@ try {
   check("a match reads predicted vs measured, the mark and the miss", /[0-9.]+ vs [0-9.]+ (ms|s) \u2713 [0-9]+%/.test(btStepTable(answer)));
   check("the bucket note is in a tooltip, not the cell", btStepTable(answer).includes("title=\"measured somewhere in") && !/<td[^>]*>[^<]*too wide/.test(btStepTable(answer)));
   const vc = btVerdictCard(answer, "p90", "mean");
-  check("the verdict card is three lines", vc.length === 3 && /within 20%/.test(vc[0].chip) && /r\/s/.test(vc[2].chip), JSON.stringify(vc));
+  check("the verdict card is TTFT at the target, TTFT mean, TPOT and the range", vc.length === 4 && /^TTFT p90 \d+\/\d+ within 20%$/.test(vc[0].chip) &&
+    /^TTFT mean \d+\/\d+ within 20%$/.test(vc[1].chip) && /^TPOT mean/.test(vc[2].chip) && /r\/s/.test(vc[3].chip), JSON.stringify(vc));
+  check("at the mean target the card has no second TTFT line", btVerdictCard(answer, "mean", "mean").length === 3);
+  check("a figure the bucket cannot place reads as the bucket", /vs [0-9.]+ m?s-[0-9.]+ m?s \u2248/.test(btStepTable(answer)));
+  check("the CSV carries each bucket", btStepsCSV(answer).split(String.fromCharCode(10))[0].includes("tpot_p90_bucket_lo_seconds,tpot_p90_bucket_hi_seconds"));
   check("the bucket tip says how to measure it", btBucketTip(answer).includes("Finer histogram edges"));
   const stepsCSV = btStepsCSV(answer).trim().split("\n");
   check("the steps export as CSV, a row a step", stepsCSV.length === 1 + answer.steps.length && stepsCSV[0].startsWith("start,rate,"), stepsCSV[0]);
