@@ -2574,7 +2574,8 @@ works there. In order, and a step that fails stops the run:
    in Secret `scaling-manager-prometheus-ca` first, and the model-server
    PodMonitor of the release's model-namespace file is applied.
 3. Waits for the rollout, for `settingsSources` to show `prometheusURL` from
-   the settings (the controller restarts itself to read it), and for the
+   the settings (the controller waits for it and starts in place, with no
+   restart), and for the
    status `ready: ok`. The checks that are not `ok` go to the summary. There
    must be an Event on the status ConfigMap, and `namespacesManaged` must be
    `llm-d-sim`.

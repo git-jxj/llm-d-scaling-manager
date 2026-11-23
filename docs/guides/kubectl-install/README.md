@@ -226,7 +226,8 @@ the controller wrote.
 
 <!-- guide:uninstall.all start -->
 ```bash
-# Removes everything this install made, then checks nothing is left.
+# Removes everything this install made, then checks nothing is left. With utilizationShare active, the first line sets it to shadow and waits a cycle, so no transfer marks stay on pods.
+kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge -p '{"data":{"utilizationShare":"shadow"}}' && sleep 15
 I=app.kubernetes.io/instance=scaling-manager-system
 kubectl delete scaledobject -A -l "$I,app.kubernetes.io/managed-by=llm-d-scaling-manager"
 kubectl delete rolebinding,role,podmonitor -A -l "$I"
