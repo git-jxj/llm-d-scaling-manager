@@ -24,17 +24,23 @@ const PrepareTimeout = 30 * time.Second
 //
 // It lives here and not in cmd: make build and the Dockerfile compile
 // cmd/main.go alone, so a helper in another file of package main is not built.
-func Setup(ctx context.Context, mgr manager.Manager, srv *scaler.Server, status StatusSink, clientSAN string, keda *KEDACopy) error {
+func Setup(ctx context.Context, mgr manager.Manager, srv *scaler.Server, status StatusSink, clientSAN string, keda *KEDACopy, names *SecretNames) error {
 	boot := &Bootstrap{
 		Ensurer: Ensurer{
 			Reader:    mgr.GetAPIReader(),
 			Writer:    mgr.GetClient(),
 			Namespace: config.SystemNamespace(),
 			ClientSAN: clientSAN,
+			Names:     names,
 		},
 		Status: status,
 		Log:    ctrl.Log.WithName("scaler-tls"),
 		KEDA:   keda,
+	}
+	if names != nil && *names != LegacyNames {
+		// A move from an install with the kubernetes.io/tls Secrets: their CA
+		// is copied across, so KEDA keeps the CA it connected with.
+		boot.MigrateFrom = &LegacyNames
 	}
 	prepareCtx, cancel := context.WithTimeout(ctx, PrepareTimeout)
 	defer cancel()
@@ -51,7 +57,7 @@ func Setup(ctx context.Context, mgr manager.Manager, srv *scaler.Server, status 
 		cfg.VerifyConnection = Observed(cfg.VerifyConnection, boot.ObserveHandshake)
 		srv.TLSConfig = cfg
 		setupLog.Info("KEDA external scaler serves mutual TLS with the certificates the controller provisions",
-			"caSecret", CASecretName, "caSha256", Fingerprint(ca), "allowedClient", clientSAN)
+			"caSecret", boot.names().CA, "caSha256", Fingerprint(ca), "allowedClient", clientSAN)
 	} else {
 		setupLog.Info("WARNING: the KEDA external scaler serves plaintext; scalerTLS and scalerTLSAction in "+
 			"ConfigMap scaling-manager-controller-status say why and what to run",

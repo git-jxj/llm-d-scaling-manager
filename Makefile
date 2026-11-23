@@ -1739,6 +1739,26 @@ test-e2e-manifest-install: kustomize ## Install from scaling-manager.yaml with k
 		MONITORING_NS=$(E2E_MONITORING_NAMESPACE) E2E_LOG_DIR="$(MANIFEST_E2E_LOGS)" SMOKE_CMD="$$smoke" \
 		bash test/manifest-install/e2e.sh "$(RELEASE_E2E_DIST)"
 
+# The move from an smt install to the one manifest
+# (test/manifest-install/migrate.sh): smt install --scope cluster from the
+# tools image built with the release files, a ScaledObject over mutual TLS,
+# then scaling-manager.yaml applied over it. The controller must copy the smt
+# CA into its Opaque Secrets, and KEDA must stay connected with no restart of
+# its operator. On a cluster where no scaling manager was installed yet.
+.PHONY: test-e2e-manifest-migrate
+test-e2e-manifest-migrate: kustomize ## Move an smt install to scaling-manager.yaml and check mutual TLS holds (kind, after test-e2e-release-manifests-setup)
+	@set -e; \
+	$(MAKE) --no-print-directory release-e2e-dist; \
+	rm -rf "$(MANIFEST_E2E_LOGS)-migrate"; \
+	echo "Building $(TOOLS_E2E_IMG) with the release files baked in"; \
+	docker build -q -f Dockerfile.tools --build-context release="$(RELEASE_E2E_DIST)" \
+		--build-arg VERSION=$(RELEASE_E2E_VERSION) \
+		--build-arg RELEASE_SHA256SUMS="$$(sha256sum "$(RELEASE_E2E_DIST)/SHA256SUMS" | cut -d' ' -f1)" \
+		-t $(TOOLS_E2E_IMG) .; \
+	KUBECONFIG=$(KUBECONFIG) TOOLS_IMG=$(TOOLS_E2E_IMG) MODEL_NS=$(E2E_EMULATED_LLMD_NAMESPACE) KEDA_NS=$(E2E_KEDA_NAMESPACE) \
+		MONITORING_NS=$(E2E_MONITORING_NAMESPACE) E2E_LOG_DIR="$(MANIFEST_E2E_LOGS)-migrate" \
+		bash test/manifest-install/migrate.sh "$(RELEASE_E2E_DIST)"
+
 .PHONY: test-e2e-manifest-install-with-setup
 test-e2e-manifest-install-with-setup: test-e2e-release-manifests-setup test-e2e-manifest-install ## Prerequisites, then the one-manifest install e2e (never deletes the cluster)
 
@@ -3352,6 +3372,7 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@bash -n hack/check-release-manifests.sh
 	@bash -n hack/check-manifest-install.sh
 	@bash -n test/manifest-install/e2e.sh
+	@bash -n test/manifest-install/migrate.sh
 	@bash -n hack/check-release-install.sh
 	@bash -n hack/compare-baked-release-files.sh
 	@bash -n hack/testdata/release-install/kubectl

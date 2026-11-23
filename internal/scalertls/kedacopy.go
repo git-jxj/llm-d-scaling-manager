@@ -58,16 +58,16 @@ var copyKeys = []string{corev1.TLSCertKey, corev1.TLSPrivateKeyKey, "ca.crt"}
 // Secret there is not the scaling manager's; err says why for both. Any other
 // failure is markerUnknown. stale is true when the copy does not hold the
 // current certificate.
-func (k *KEDACopy) sync(ctx context.Context, r client.Reader, w client.Client, ns string) (state markerState, stale bool, err error) {
+func (k *KEDACopy) sync(ctx context.Context, r client.Reader, w client.Client, ns, clientName string) (state markerState, stale bool, err error) {
 	var src corev1.Secret
-	if err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: ClientSecretName}, &src); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: clientName}, &src); err != nil {
 		if apierrors.IsNotFound(err) {
-			return markerAbsent, true, fmt.Errorf("the Secret %s in %s does not exist", ClientSecretName, ns)
+			return markerAbsent, true, fmt.Errorf("the Secret %s in %s does not exist", clientName, ns)
 		}
-		return markerUnknown, true, fmt.Errorf("reading Secret %s in %s: %w", ClientSecretName, ns, err)
+		return markerUnknown, true, fmt.Errorf("reading Secret %s in %s: %w", clientName, ns, err)
 	}
 	if len(src.Data[corev1.TLSCertKey]) == 0 {
-		return markerAbsent, true, fmt.Errorf("the Secret %s in %s holds no client certificate yet", ClientSecretName, ns)
+		return markerAbsent, true, fmt.Errorf("the Secret %s in %s holds no client certificate yet", clientName, ns)
 	}
 	var dst corev1.Secret
 	key := client.ObjectKey{Namespace: k.Namespace, Name: k.SecretName}

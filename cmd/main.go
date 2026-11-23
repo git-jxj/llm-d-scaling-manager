@@ -347,6 +347,12 @@ func main() {
 			"of the client certificate itself, into the Secret scaling-manager-external-scaler-<controller namespace> "+
 			"the release manifest pre-creates there, and needs no marker ConfigMap. Empty, the default, leaves the "+
 			"copy to a person (smt admin-finish).")
+	externalScalerTLSSecrets := flag.String("external-scaler-tls-secrets", "legacy",
+		"With --external-scaler-tls-bootstrap: which Secrets hold the scaler's certificates. legacy: the "+
+			"kubernetes.io/tls placeholders of the release files (scaling-manager-external-scaler-ca, -tls, -client-tls). "+
+			"opaque: the Opaque Secrets of the one manifest (scaling-manager-scaler-ca, -serving, -client), which a "+
+			"server-side re-apply keeps; while they are empty, the legacy Secrets' certificates are copied across, so a "+
+			"move from an smt install keeps the CA KEDA trusts.")
 	restartOnSettingsChange := flag.Bool("restart-on-settings-change", false,
 		"Restart when a setting read only at start changes in the settings ConfigMap, instead of asking a person "+
 			"to: the process exits and the kubelet starts it again. A key changed again and again puts the Pod "+
@@ -1218,8 +1224,17 @@ func main() {
 		}
 		kedaCopy = &scalertls.KEDACopy{Namespace: *kedaNamespace, SecretName: scalertls.KEDACopySecretName(config.SystemNamespace())}
 	}
+	var tlsSecrets *scalertls.SecretNames
+	switch *externalScalerTLSSecrets {
+	case "legacy":
+	case "opaque":
+		tlsSecrets = &scalertls.OpaqueNames
+	default:
+		setupLog.Error(nil, "--external-scaler-tls-secrets must be legacy or opaque", "value", *externalScalerTLSSecrets)
+		os.Exit(1)
+	}
 	if *externalScalerTLSBootstrap {
-		if err := scalertls.Setup(signalCtx, mgr, externalScaler, controllerStatus, allowedScalerClients[0], kedaCopy); err != nil {
+		if err := scalertls.Setup(signalCtx, mgr, externalScaler, controllerStatus, allowedScalerClients[0], kedaCopy, tlsSecrets); err != nil {
 			setupLog.Error(err, "unable to set up the external scaler TLS bootstrap")
 			os.Exit(1)
 		}

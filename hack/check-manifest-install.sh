@@ -43,7 +43,7 @@ DIGEST="sha256:$(printf 'manifest-install-check' | sha256sum | cut -c1-64)"
 VERSION="v0.13.0-check.1"
 M=scaling-manager.yaml
 NS=scaling-manager-system
-FLAGS="--namespace-opt-in=label --keda-namespace=keda --self-check-interval=1m --restart-on-settings-change=true --external-scaler-tls-bootstrap=true"
+FLAGS="--namespace-opt-in=label --keda-namespace=keda --self-check-interval=1m --restart-on-settings-change=true --external-scaler-tls-secrets=opaque --external-scaler-tls-bootstrap=true"
 
 GOOD="$WORK/good"
 if ! bash "$ROOT/deploy/release-manifests.sh" --image "$REPO@$DIGEST" --version "$VERSION" --out "$GOOD" > "$WORK/render.log" 2>&1; then
@@ -81,7 +81,7 @@ check() {
     [ -z "$n" ] || say "$M holds what an operator owns (settings, policy, a ScaledObject): $n"
     n="$(q '.[] | select(.kind == "Secret" and .type != "kubernetes.io/service-account-token") | select(.type != "Opaque" or has("data") or has("stringData")) | .metadata.namespace + "/" + .metadata.name + " " + (.type // "-")')"
     [ -z "$n" ] || say "a Secret that is not Opaque with no data, which a re-apply would empty: $n"
-    for k in scaling-manager-external-scaler-ca scaling-manager-external-scaler-tls scaling-manager-external-scaler-client-tls; do
+    for k in scaling-manager-scaler-ca scaling-manager-scaler-serving scaling-manager-scaler-client; do
         [ "$(jq -r --arg k "$k" --arg ns "$NS" '[.[] | select(.kind == "Secret" and .metadata.name == $k and .metadata.namespace == $ns)] | length' "$js")" = 1 ] \
             || say "the scaler TLS Secret $k is not in $NS"
     done
@@ -102,6 +102,38 @@ check() {
     n="$(q '.[] | select(.metadata.namespace != null and .metadata.namespace != $ns and .metadata.namespace != "keda") | .kind + "/" + .metadata.namespace + "/" + .metadata.name')"
     [ -z "$n" ] || say "an object outside $NS and KEDA's namespace: $n"
     grep -nE '__[A-Z_]+__' "$f" >/dev/null && say "$M holds a placeholder nothing fills: $(grep -oE '__[A-Z_]+__' "$f" | sort -u | tr '\n' ' ')"
+
+    # The grants and the monitoring file: applied with kubectl apply -n, so
+    # nothing names a namespace; selected by a label each; found by the
+    # uninstall's instance selector.
+    local g gj
+    for g in scaling-manager-grants.yaml scaling-manager-monitoring.yaml; do
+        gj="$WORK/$g.json"
+        [ -s "$d/$g" ] || { say "$g was not written"; continue; }
+        grep -q "  $g\$" "$d/SHA256SUMS" || say "SHA256SUMS does not list $g"
+        yq ea -o=json -I=0 '[.] | map(select(.kind != null))' "$d/$g" > "$gj" 2>/dev/null || { say "$g does not parse"; continue; }
+        n="$(jq -r '.[] | select(.metadata.namespace != null) | .kind + "/" + .metadata.name' "$gj")"
+        [ -z "$n" ] || say "$g: an object with a namespace, which kubectl apply -n does not move: $n"
+        n="$(jq -r --arg ns "$NS" --arg v "$VERSION" '.[] | select(.metadata.labels["app.kubernetes.io/instance"] != $ns or .metadata.labels["app.kubernetes.io/part-of"] != "scaling-manager" or .metadata.labels["app.kubernetes.io/version"] != $v) | .kind + "/" + .metadata.name' "$gj")"
+        [ -z "$n" ] || say "$g: objects the uninstall does not select (instance $NS): $n"
+    done
+    gj="$WORK/scaling-manager-grants.yaml.json"
+    if [ -s "$gj" ]; then
+        [ "$(jq -r '[.[] | .metadata.labels["scaling-manager.llmd.ai/grant"] // "none"] | sort | join(",")' "$gj")" = "dset-role-writer,dset-role-writer,pod-writer,pod-writer" ] \
+            || say "the grants file does not hold a Role and a RoleBinding per grant label (pod-writer, dset-role-writer): $(jq -r '[.[] | .kind + "=" + (.metadata.labels["scaling-manager.llmd.ai/grant"] // "none")] | join(" ")' "$gj")"
+        n="$(jq -r --arg ns "$NS" '. as $all | .[] | select(.kind == "RoleBinding") | . as $b
+            | select(($b.subjects | length) != 1 or $b.subjects[0].kind != "ServiceAccount" or $b.subjects[0].name != "scaling-manager-controller-manager" or $b.subjects[0].namespace != $ns
+                or ([$all[] | select(.kind == "Role" and .metadata.name == $b.roleRef.name and .metadata.labels["scaling-manager.llmd.ai/grant"] == $b.metadata.labels["scaling-manager.llmd.ai/grant"])] | length) != 1)
+            | $b.metadata.name' "$gj")"
+        [ -z "$n" ] || say "a grant RoleBinding binds another subject than the controller in $NS, or a Role of another grant: $n"
+        n="$(jq -c '.[] | select(.kind == "Role" and .metadata.labels["scaling-manager.llmd.ai/grant"] == "pod-writer") | .rules' "$gj")"
+        [ "$n" = '[{"apiGroups":[""],"resources":["pods"],"verbs":["patch"]}]' ] || say "the pod-writer Role grants more than patch on pods: $n"
+    fi
+    gj="$WORK/scaling-manager-monitoring.yaml.json"
+    if [ -s "$gj" ]; then
+        n="$(jq -r '.[] | select(.metadata.labels["scaling-manager.llmd.ai/monitor"] == null) | .kind + "/" + .metadata.name' "$gj")"
+        [ -z "$n" ] || say "a monitoring object has no scaling-manager.llmd.ai/monitor label to select it by: $n"
+    fi
 
     # KEDA elsewhere: the header's sed must reach every mention of keda.
     local moved="$WORK/moved"
@@ -138,12 +170,12 @@ fi
 
 # Negative controls: one fault per copy; each must fail for its own rule.
 mutate() {
-    local name="$1" expect="$2" expr="$3" d="$WORK/m-$1"
+    local name="$1" expect="$2" expr="$3" file="${4:-$M}" d="$WORK/m-$1"
     rm -rf "$d"; cp -r "$GOOD" "$d"
     case "$expr" in
         append-settings)
             printf -- '---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: scaling-manager-settings\n  namespace: %s\ndata:\n  passive: "true"\n' "$NS" >> "$d/$M" ;;
-        *) yq -i "$expr" "$d/$M" ;;
+        *) yq -i "$expr" "$d/$file" ;;
     esac
     (cd "$d" && sha256sum scaling-manager*.yaml > SHA256SUMS)
     if check "$d" > "$WORK/m-$name.log" 2>&1; then
@@ -158,7 +190,7 @@ mutate() {
 mutate image-by-tag "not pinned" \
     '(select(.kind == "Deployment") | .spec.template.spec.containers[0].image) = "ghcr.io/llm-d-incubation/llm-d-scaling-manager:main"'
 mutate tls-secret-data "Opaque with no data" \
-    '(select(.kind == "Secret" and .metadata.name == "scaling-manager-external-scaler-ca") | .data) = {"tls.crt": ""}'
+    '(select(.kind == "Secret" and .metadata.name == "scaling-manager-scaler-ca") | .data) = {"tls.crt": ""}'
 mutate keda-copy-typed "Opaque with no data" \
     '(select(.kind == "Secret" and .metadata.namespace == "keda") | .type) = "kubernetes.io/tls"'
 mutate settings-in-file "what an operator owns" append-settings
@@ -169,13 +201,24 @@ mutate no-keda-copy "does not pass --keda-namespace=keda" \
 mutate keda-role-wider "more than get and update" \
     '(select(.kind == "Role" and .metadata.namespace == "keda") | .rules[0].verbs) += ["list"]'
 mutate secret-read-unscoped "no resourceNames" \
-    '(select(.kind == "Role" and .metadata.name == "scaling-manager-scaler-tls-role") | .rules[0]) |= del(.resourceNames)'
+    '(select(.kind == "Role" and .metadata.name == "scaling-manager-scaler-tls-opaque") | .rules[0]) |= del(.resourceNames)'
 mutate keda-unmoved "keda is still named" \
     '(select(.kind == "Deployment") | .spec.template.spec.containers[0].env) += [{"name": "KEDA_NS", "value": "keda"}]'
 mutate placeholder-left "placeholder" \
     '(select(.kind == "Role" and .metadata.namespace == "keda") | .rules[0].resourceNames) = ["scaling-manager-external-scaler-__NAMESPACE__"]'
 mutate unlabelled "missing part-of" \
     'del(select(.kind == "ClusterTriggerAuthentication") | .metadata.labels["app.kubernetes.io/instance"])'
+
+mutate grant-namespaced "does not move" \
+    '(select(.kind == "Role" and .metadata.labels["scaling-manager.llmd.ai/grant"] == "pod-writer") | .metadata.namespace) = "team-a"' scaling-manager-grants.yaml
+mutate grant-unlabelled "per grant label" \
+    'del(select(.kind == "RoleBinding" and .metadata.labels["scaling-manager.llmd.ai/grant"] == "dset-role-writer") | .metadata.labels["scaling-manager.llmd.ai/grant"])' scaling-manager-grants.yaml
+mutate grant-wider "more than patch on pods" \
+    '(select(.kind == "Role" and .metadata.labels["scaling-manager.llmd.ai/grant"] == "pod-writer") | .rules[0].verbs) += ["delete"]' scaling-manager-grants.yaml
+mutate grant-other-subject "another subject" \
+    '(select(.kind == "RoleBinding" and .metadata.labels["scaling-manager.llmd.ai/grant"] == "pod-writer") | .subjects[0].namespace) = "team-a"' scaling-manager-grants.yaml
+mutate monitor-unselected "does not select" \
+    'del(select(.kind == "PodMonitor") | .metadata.labels["app.kubernetes.io/instance"])' scaling-manager-monitoring.yaml
 
 echo ""
 echo "manifest install: $PASS passed, $FAIL failed"

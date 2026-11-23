@@ -111,7 +111,7 @@ func (b *Bootstrap) kedaSide(ctx context.Context) (markerState, error) {
 	if b.KEDA == nil {
 		return b.readMarker(ctx)
 	}
-	state, stale, err := b.KEDA.sync(ctx, b.Reader, b.Writer, b.Namespace)
+	state, stale, err := b.KEDA.sync(ctx, b.Reader, b.Writer, b.Namespace, b.names().Client)
 	b.mu.Lock()
 	b.kedaStale = stale
 	b.mu.Unlock()
@@ -269,14 +269,18 @@ func (b *Bootstrap) record(o *Outcome, err error) {
 	}
 	b.last = o
 	if o.CAMinted {
-		b.logger().Info("Scaler TLS: minted a new CA", "secret", CASecretName, "caSha256", Fingerprint(o.CA))
+		b.logger().Info("Scaler TLS: minted a new CA", "secret", b.names().CA, "caSha256", Fingerprint(o.CA))
 	}
 	if o.ServingIssued {
-		b.logger().Info("Scaler TLS: issued the serving certificate", "secret", ServingSecretName,
+		b.logger().Info("Scaler TLS: issued the serving certificate", "secret", b.names().Serving,
 			"notAfter", o.Serving.cert.NotAfter)
 	}
 	if o.ClientIssued {
-		b.logger().Info("Scaler TLS: issued KEDA's client certificate", "secret", ClientSecretName)
+		b.logger().Info("Scaler TLS: issued KEDA's client certificate", "secret", b.names().Client)
+	}
+	if len(o.Migrated) > 0 {
+		b.logger().Info("Scaler TLS: copied the certificates of the earlier install, so KEDA keeps its CA",
+			"copied", o.Migrated)
 	}
 	for _, p := range o.Problems {
 		b.logger().Info("Scaler TLS: " + p)
@@ -397,7 +401,7 @@ func (b *Bootstrap) describe() (state, action string) {
 	switch {
 	case b.tlsOn:
 		state = fmt.Sprintf("mutual TLS: Secrets %s, %s and %s; client identity %s; CA sha256 %s",
-			CASecretName, ServingSecretName, ClientSecretName, b.ClientSAN, Fingerprint(b.clientCA))
+			b.names().CA, b.names().Serving, b.names().Client, b.ClientSAN, Fingerprint(b.clientCA))
 		if c := b.serving.Load(); c != nil && c.Leaf != nil {
 			state += "; serving certificate expires " + c.Leaf.NotAfter.UTC().Format(time.RFC3339)
 		}
@@ -420,7 +424,7 @@ func (b *Bootstrap) describe() (state, action string) {
 	if b.lastErr != nil {
 		steps = append(steps, fmt.Sprintf("the latest check failed (%v): the controller needs get and update on "+
 			"Secrets %s, %s and %s in %s (Role scaling-manager-scaler-tls-role in the release files)",
-			b.lastErr, CASecretName, ServingSecretName, ClientSecretName, b.Namespace))
+			b.lastErr, b.names().CA, b.names().Serving, b.names().Client, b.Namespace))
 	}
 	if b.last != nil {
 		steps = append(steps, b.last.Problems...)
@@ -452,15 +456,15 @@ func (b *Bootstrap) describe() (state, action string) {
 	case !bytes.Equal(b.last.CA.Raw, b.clientCA.Raw):
 		steps = append(steps, fmt.Sprintf("the scaler CA in Secret %s changed since the controller started (sha256 %s; "+
 			"it verifies clients with %s): wire KEDA to it, then restart the controller and KEDA's operator: %s && %s && %s",
-			CASecretName, Fingerprint(b.last.CA), Fingerprint(b.clientCA), b.wireCommand(), b.restartController(), restartKEDA()))
+			b.names().CA, Fingerprint(b.last.CA), Fingerprint(b.clientCA), b.wireCommand(), b.restartController(), restartKEDA()))
 	case pending == PendingCA:
 		steps = append(steps, fmt.Sprintf("KEDA's client certificate (Secret %s) was issued for a new CA; copy it to KEDA again "+
 			"and restart KEDA's operator, which keeps the CA of its first connection (a cluster admin): %s && %s",
-			ClientSecretName, b.wireCommand(), restartKEDA()))
+			b.names().Client, b.wireCommand(), restartKEDA()))
 	case pending == PendingClient:
 		steps = append(steps, fmt.Sprintf("KEDA's client certificate (Secret %s) was issued again; copy it to KEDA "+
 			"(a cluster admin); this notice clears when KEDA presents it, after its operator restarts: %s",
-			ClientSecretName, b.wireCommand()))
+			b.names().Client, b.wireCommand()))
 	}
 	for i := range steps {
 		steps[i] = fmt.Sprintf("%d. %s", i+1, steps[i])
@@ -489,7 +493,7 @@ func (b *Bootstrap) copySteps(pending string) []string {
 	case !bytes.Equal(b.last.CA.Raw, b.clientCA.Raw):
 		steps = append(steps, fmt.Sprintf("the scaler CA in Secret %s changed since the controller started (sha256 %s; "+
 			"it verifies clients with %s); the controller copied it to KEDA: restart the controller, then KEDA's operator: %s && %s",
-			CASecretName, Fingerprint(b.last.CA), Fingerprint(b.clientCA), b.restartController(), restartKEDAHere))
+			b.names().CA, Fingerprint(b.last.CA), Fingerprint(b.clientCA), b.restartController(), restartKEDAHere))
 	case pending == PendingCA:
 		steps = append(steps, "only on a reinstall, when KEDA dialled this scaler before: KEDA's client certificate was "+
 			"issued for a new CA and the controller copied it to KEDA; restart KEDA's operator, which keeps the CA of its "+
@@ -530,7 +534,7 @@ func (b *Bootstrap) wireCommand() string {
 	return fmt.Sprintf(`KEDA_NS="%s" && %skubectl get secret %s -n %s -o go-template='%s'%s | `+
 		`kubectl apply --server-side --force-conflicts --field-manager=llm-d-scaling-manager -n "$KEDA_NS" -f - && `+
 		`sed -e "s/__NAMESPACE__/%s/g" -e "s/__KEDA_NAMESPACE__/$KEDA_NS/g" scaling-manager-keda-auth.yaml | kubectl apply -f -`,
-		kedaNS, prefix, ClientSecretName, ns, tmpl, filter, ns)
+		kedaNS, prefix, b.names().Client, ns, tmpl, filter, ns)
 }
 
 // restartController restarts the controller, which reads KEDA's side at start.

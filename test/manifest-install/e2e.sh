@@ -101,7 +101,8 @@ ready_ok() { status_is ready ok; }
 
 # --- 0. the file, as an operator downloads it --------------------------------
 
-cp "$DIST/$M" "$DIST/SHA256SUMS" "$WORK"/ || fail files "no $M or SHA256SUMS in $DIST"
+cp "$DIST/$M" "$DIST/scaling-manager-grants.yaml" "$DIST/scaling-manager-monitoring.yaml" "$DIST/SHA256SUMS" "$WORK"/ \
+    || fail files "no $M, its grants and monitoring files, or SHA256SUMS in $DIST"
 cd "$WORK" || exit 1
 sha256sum -c --ignore-missing --quiet SHA256SUMS > "$LOGS/sums.log" 2>&1 && grep -q "  $M\$" SHA256SUMS \
     || fail files "$M does not match SHA256SUMS: $(cat "$LOGS/sums.log")"
@@ -140,11 +141,13 @@ pass "command 2: kubectl apply --server-side -f settings.yaml (prometheusURL, ca
 # --- 3. command 3: the label -------------------------------------------------
 
 kubectl label namespace "$MODEL_NS" "$LABEL=true" "$ADMIT=true" --overwrite >/dev/null || fail label "kubectl label namespace $MODEL_NS"
-# The e2e setup does not scrape the model servers for us: the PodMonitor of
-# the release's model-namespace file, as appendix D's monitoring file would.
-yq 'select(.kind == "PodMonitor")' "$DIST/scaling-manager-model-namespace.yaml" | sed "s/__MODEL_NAMESPACE__/$MODEL_NS/g; s/__NAMESPACE__/$NS/g" \
-    | kubectl apply -f - > "$LOGS/podmonitor.log" 2>&1 || { cat "$LOGS/podmonitor.log"; fail label "the model-server PodMonitor"; }
-pass "command 3: kubectl label namespace $MODEL_NS $LABEL=true (and the model-server PodMonitor)"
+# Nothing in the e2e setup scrapes the model servers: the release's
+# monitoring file, in the model namespace (appendix D).
+kubectl apply -n "$MODEL_NS" -f scaling-manager-monitoring.yaml -l scaling-manager.llmd.ai/monitor=modelserver \
+    > "$LOGS/podmonitor.log" 2>&1 || { cat "$LOGS/podmonitor.log"; fail label "the model-server PodMonitor"; }
+kubectl get podmonitor scaling-manager-modelserver-metrics -n "$MODEL_NS" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/instance}' | grep -qx "$NS" \
+    || fail label "the PodMonitor in $MODEL_NS does not carry the install's instance label"
+pass "command 3: kubectl label namespace $MODEL_NS $LABEL=true (and scaling-manager-monitoring.yaml there)"
 
 # --- 4. the controller starts, restarts for its settings, and gets ready -----
 
@@ -170,7 +173,7 @@ pass "namespacesManaged: $(status namespacesManaged)"
 wait_for 120 "scalerTLS mutual TLS" status_has_prefix scalerTLS "mutual TLS" || fail "scaler TLS" "scalerTLS is '$(status scalerTLS)'"
 copy="scaling-manager-external-scaler-$NS"
 [ -n "$(kubectl get secret "$copy" -n "$KEDA_NS" -o jsonpath='{.data.tls\.crt}')" ] || fail "scaler TLS" "KEDA's copy $copy in $KEDA_NS is empty"
-[ "$(secret_sha "$KEDA_NS" "$copy")" = "$(secret_sha "$NS" scaling-manager-external-scaler-client-tls)" ] \
+[ "$(secret_sha "$KEDA_NS" "$copy")" = "$(secret_sha "$NS" scaling-manager-scaler-client)" ] \
     || fail "scaler TLS" "KEDA's copy does not hold the client certificate"
 status_is kedaCopyStale false || fail "scaler TLS" "kedaCopyStale is '$(status kedaCopyStale)'"
 kubectl get configmap scaling-manager-scaler-keda-auth -n "$NS" >/dev/null 2>&1 && fail "scaler TLS" "a marker ConfigMap exists; nothing on this path writes one"
@@ -195,17 +198,32 @@ pass "a changed restart setting (logVerbosity) restarted the controller once ($b
 
 # --- 6. a re-apply keeps what the controller and the operator wrote ----------
 
-ca_before="$(secret_sha "$NS" scaling-manager-external-scaler-ca)"
+ca_before="$(secret_sha "$NS" scaling-manager-scaler-ca)"
 copy_before="$(secret_sha "$KEDA_NS" "$copy")"
 settings_patch '{"data":{"utilizationShare":"shadow"}}'
 kubectl apply --server-side -f "$M" > "$LOGS/apply-2.log" 2>&1 || { cat "$LOGS/apply-2.log"; fail "re-apply" "a second kubectl apply --server-side -f $M"; }
 kubectl apply --server-side -f settings.yaml > "$LOGS/apply-settings-2.log" 2>&1 || { cat "$LOGS/apply-settings-2.log"; fail "re-apply" "a second apply of settings.yaml"; }
-[ "$(secret_sha "$NS" scaling-manager-external-scaler-ca)" = "$ca_before" ] || fail "re-apply" "the scaler CA changed on a re-apply"
+[ "$(secret_sha "$NS" scaling-manager-scaler-ca)" = "$ca_before" ] || fail "re-apply" "the scaler CA changed on a re-apply"
 [ "$(secret_sha "$KEDA_NS" "$copy")" = "$copy_before" ] || fail "re-apply" "KEDA's copy changed on a re-apply"
 [ "$(kubectl get configmap scaling-manager-settings -n "$NS" -o jsonpath='{.data.utilizationShare}')" = shadow ] \
     || fail "re-apply" "the live utilizationShare patch did not survive a re-apply of settings.yaml"
 settings_patch '{"data":{"utilizationShare":"off"}}'
 pass "re-apply of both files: scaler CA, KEDA's copy and a live switch kept"
+
+# --- 6b. the per-namespace grants ----------------------------------------------
+
+SA="system:serviceaccount:$NS:$DEPLOY"
+can() { kubectl auth can-i "$1" "$2" -n "$MODEL_NS" --as="$SA" 2>/dev/null; }
+[ "$(can patch pods)" = no ] || fail grants "the controller may patch pods in $MODEL_NS before the grant"
+[ "$(can patch disaggregatedsets.disaggregatedset.x-k8s.io)" = no ] || fail grants "the controller may patch disaggregatedsets before the grant"
+kubectl apply -n "$MODEL_NS" -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=pod-writer > "$LOGS/grant.log" 2>&1 \
+    || { cat "$LOGS/grant.log"; fail grants "applying the pod-writer grant"; }
+[ "$(can patch pods)" = yes ] || fail grants "the controller may not patch pods in $MODEL_NS after the pod-writer grant"
+[ "$(can patch disaggregatedsets.disaggregatedset.x-k8s.io)" = no ] || fail grants "the pod-writer grant also grants the role writer"
+kubectl apply -n "$MODEL_NS" -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=dset-role-writer > "$LOGS/grant-dset.log" 2>&1 \
+    || { cat "$LOGS/grant-dset.log"; fail grants "applying the dset-role-writer grant"; }
+[ "$(can patch disaggregatedsets.disaggregatedset.x-k8s.io)" = yes ] || fail grants "the controller may not patch disaggregatedsets after its grant"
+pass "grants: patch on pods and on disaggregatedsets in $MODEL_NS only after each labelled grant is applied there"
 
 # --- 7. negative control: a namespace that did not opt in --------------------
 
@@ -255,7 +273,7 @@ fi
 
 {
     kubectl delete scaledobject -A -l "$INSTANCE,app.kubernetes.io/managed-by=llm-d-scaling-manager" --ignore-not-found
-    kubectl delete podmonitor -n "$MODEL_NS" -l app.kubernetes.io/part-of=scaling-manager --ignore-not-found
+    kubectl delete rolebinding,role,podmonitor -A -l "$INSTANCE" --ignore-not-found
     kubectl label namespace -l "$LABEL=true" "$LABEL-" "$ADMIT-"
     kubectl delete -f "$M" --ignore-not-found --wait=true --timeout=300s
 } > "$LOGS/uninstall.log" 2>&1 || { cat "$LOGS/uninstall.log"; fail uninstall "a delete failed"; }

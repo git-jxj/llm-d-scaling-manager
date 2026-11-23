@@ -70,10 +70,10 @@ done
 # The role writer grant: opt-in, and the only files that may grant more than
 # get on disaggregatedsets.
 DSETW_FILES="scaling-manager-dset-role-writer.yaml scaling-manager-dset-role-writer-cluster.yaml"
-# The one manifest (proposal PR #404) has rules of
-# its own, which hack/check-manifest-install.sh asserts; here it is only
-# listed in SHA256SUMS.
-MANIFEST_FILE=scaling-manager.yaml
+# The one manifest and its grants and monitoring files (proposal PR #404)
+# have rules of their own, which hack/check-manifest-install.sh asserts; here
+# they are only listed in SHA256SUMS and signed.
+MANIFEST_FILE="scaling-manager.yaml scaling-manager-grants.yaml scaling-manager-monitoring.yaml"
 ALL_FILES="$MAIN_FILES scaling-manager-settings.yaml scaling-manager-model-namespace.yaml scaling-manager-activate.yaml scaling-manager-keda-auth.yaml scaling-manager-scaler-tls.yaml scaling-manager-kueue.yaml scaling-manager-alerts.yaml scaling-manager-policy-example.yaml scaling-manager-metrics-reader.yaml scaling-manager-preflight.yaml scaling-manager-preflight-cluster.yaml $DSETW_FILES"
 
 render() {
@@ -151,9 +151,11 @@ check_dir() {
     done
     [ "$bad" = 0 ] || return "$bad"
     (cd "$d" && sha256sum -c --quiet SHA256SUMS >/dev/null 2>&1) || say "SHA256SUMS does not match the files"
-    [ "$(wc -l < "$d/SHA256SUMS")" -eq "$(( $(echo $ALL_FILES | wc -w) + 2 ))" ] || say "SHA256SUMS does not list exactly the $(echo $ALL_FILES | wc -w) release files, $MANIFEST_FILE and $TOOLS_TARBALL"
+    [ "$(wc -l < "$d/SHA256SUMS")" -eq "$(( $(echo $ALL_FILES $MANIFEST_FILE | wc -w) + 1 ))" ] || say "SHA256SUMS does not list exactly the $(echo $ALL_FILES | wc -w) release files, $MANIFEST_FILE and $TOOLS_TARBALL"
     grep -q "  $TOOLS_TARBALL\$" "$d/SHA256SUMS" || say "SHA256SUMS does not list $TOOLS_TARBALL"
-    grep -q "  $MANIFEST_FILE\$" "$d/SHA256SUMS" || say "SHA256SUMS does not list $MANIFEST_FILE"
+    for f in $MANIFEST_FILE; do
+        grep -q "  $f\$" "$d/SHA256SUMS" || say "SHA256SUMS does not list $f"
+    done
     # The tools tarball: the image's files under scaling-manager-tools/, the
     # scripts executable, lib/ beside them, the version, and nothing else.
     local listing want_list
@@ -813,7 +815,7 @@ if sign_run; then
     got="$(grep -c '^sign-blob --yes --bundle ' "$WORK/wf/cosign.log")"
     bundles="$(find "$WORK/wf/run/dist" -name '*.sigstore.json' | wc -l)"
     if [ "$got" = "$want" ] && [ "$bundles" = "$want" ] && [ -s "$WORK/wf/run/dist/SHA256SUMS.sigstore.json" ] \
-        && [ -s "$WORK/wf/run/dist/$MANIFEST_FILE.sigstore.json" ] \
+        && [ -s "$WORK/wf/run/dist/scaling-manager.yaml.sigstore.json" ] \
         && [ -s "$WORK/wf/run/dist/capacity-planner-$VERSION-darwin-arm64.sigstore.json" ] \
         && [ -s "$WORK/wf/run/dist/capacity-planner-$VERSION-windows-amd64.exe.sigstore.json" ]; then
         pass

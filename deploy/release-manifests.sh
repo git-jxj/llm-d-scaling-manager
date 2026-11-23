@@ -66,6 +66,8 @@ RELEASE_FILES=(
     scaling-manager-dset-role-writer.yaml
     scaling-manager-dset-role-writer-cluster.yaml
     scaling-manager.yaml
+    scaling-manager-grants.yaml
+    scaling-manager-monitoring.yaml
 )
 
 # The files no end-to-end test installs yet. Each says so in its header;
@@ -303,11 +305,10 @@ release_source() { sed "s/__NAMESPACE__/$CLUSTER_NS/g" "$ROOT/config/release/$1.
     echo '---'
     main_manifest "$WORK/cl-kubernetes.yaml" "$CLUSTER_NS" kubernetes | yq '
         (select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "manager") | .args) +=
-            ["--namespace-opt-in=label", "--keda-namespace=keda", "--self-check-interval=1m", "--restart-on-settings-change=true"]'
-    scaler_tls_rbac "$CLUSTER_NS"
+            ["--namespace-opt-in=label", "--keda-namespace=keda", "--self-check-interval=1m", "--restart-on-settings-change=true", "--external-scaler-tls-secrets=opaque"]'
     echo '---'
-    release_source scaler-tls-secret | yq '.type = "Opaque" | del(.data) | ... comments = ""'
-    for f in keda-copy-secret keda-copy-role keda-copy-rolebinding keda-auth-clustertriggerauthentication \
+    release_source scaler-tls-opaque-secret
+    for f in scaler-tls-opaque-role scaler-tls-opaque-rolebinding keda-copy-secret keda-copy-role keda-copy-rolebinding keda-auth-clustertriggerauthentication \
         self-check-clusterrole self-check-clusterrolebinding self-check-role self-check-rolebinding; do
         echo '---'
         release_source "$f"
@@ -316,6 +317,42 @@ release_source() { sed "s/__NAMESPACE__/$CLUSTER_NS/g" "$ROOT/config/release/$1.
   | write "$MANIFEST" \
       "The one manifest: namespace $CLUSTER_NS, RBAC, the controller and KEDA's side. Apply with kubectl apply --server-side -f $MANIFEST; then create the settings ConfigMap and label each namespace to manage scaling-manager.llmd.ai/managed=true (docs/guides/kubectl-install)." \
       "KEDA in another namespace than keda: sed -i -e 's/^\\(  *namespace: \\)keda\$/\\1<ns>/' -e 's/kubernetes.io\\/metadata.name: keda\$/kubernetes.io\\/metadata.name: <ns>/' -e 's/--keda-namespace=keda\$/--keda-namespace=<ns>/' $MANIFEST"
+
+# scaling-manager-grants.yaml: the per-namespace grants of the one manifest,
+# with no namespace, applied by the cluster admin in each namespace that needs
+# one and selected by label:
+#   kubectl apply -n <ns> -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=pod-writer
+#   kubectl apply -n <ns> -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=dset-role-writer
+# Each binds the controller in $CLUSTER_NS. Labelled with its instance, so the
+# uninstall's selector finds them in every namespace.
+grant_label() { G="$1" yq 'del(.metadata.namespace) | .metadata.labels["scaling-manager.llmd.ai/grant"] = strenv(G) | ... comments = ""'; }
+{
+    release_source pod-writer-role | grant_label pod-writer
+    echo '---'
+    release_source pod-writer-rolebinding | grant_label pod-writer
+    echo '---'
+    cat "$ROOT/config/components/dset-role-writer-namespaced/dset-role-writer-role.yaml" | grant_label dset-role-writer
+    echo '---'
+    NS="$CLUSTER_NS" yq '.subjects[].namespace = strenv(NS) | .metadata.name = "scaling-manager-dset-role-writer-" + strenv(NS)' \
+        "$ROOT/config/components/dset-role-writer-namespaced/dset-role-writer-rolebinding.yaml" | grant_label dset-role-writer
+} | label "$CLUSTER_NS" \
+  | write scaling-manager-grants.yaml \
+      "The one manifest's per-namespace grants, with no namespace: patch on pods (utilization share active, the warm pool) and the DisaggregatedSet role writer (get, list, patch on disaggregatedsets). The cluster admin applies one per namespace that needs it, never in git." \
+      "kubectl apply -n <namespace> -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=pod-writer   # or =dset-role-writer"
+
+# scaling-manager-monitoring.yaml: the model-server PodMonitor, for a
+# namespace nothing scrapes yet, with no namespace and selected by label:
+#   kubectl apply -n <ns> -f scaling-manager-monitoring.yaml -l scaling-manager.llmd.ai/monitor=modelserver
+{
+    MODELDIR="$WORK/monitoring"
+    mkdir -p "$MODELDIR"
+    ln -s "$ROOT/config/modelserver-metrics" "$MODELDIR/base"
+    printf 'resources:\n- ./base\n' > "$MODELDIR/kustomization.yaml"
+    kustomize_build "$MODELDIR" | yq 'del(.metadata.namespace) | .metadata.labels["scaling-manager.llmd.ai/monitor"] = "modelserver"'
+} | label "$CLUSTER_NS" \
+  | write scaling-manager-monitoring.yaml \
+      "The one manifest's model-server monitoring, for a namespace nothing scrapes yet (llm-d's monitoring components scrape the same port): a PodMonitor on port modelserver." \
+      "kubectl apply -n <namespace> -f scaling-manager-monitoring.yaml -l scaling-manager.llmd.ai/monitor=modelserver"
 
 NSRAW="$WORK/ns-kubernetes.yaml"
 
