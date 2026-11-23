@@ -85,6 +85,12 @@ type Server struct {
 	// cmd/main.go publishes it in the controller-status ConfigMap.
 	OnReachability func(unreachable bool, detail string)
 
+	// Admit, when set, refuses every call from a namespace it does not admit
+	// (PermissionDenied), before the call registers anything: the install that
+	// opts namespaces in by label (internal/managedns). Nil serves every
+	// namespace, as every other install does.
+	Admit AdmitFunc
+
 	// refusals rate-limits the log line for a refused TLS handshake. Shared by
 	// the standby and the full server, so the hand-off does not reset it.
 	refusals *refusalLog
@@ -326,7 +332,7 @@ func (s *Server) bind(ctx context.Context, handler pb.ExternalScalerServer, opts
 			grpc.ChainStreamInterceptor(reach.streamInterceptor))
 	}
 	r := &served{srv: grpc.NewServer(opts...), err: make(chan error, 1)}
-	pb.RegisterExternalScalerServer(r.srv, handler)
+	pb.RegisterExternalScalerServer(r.srv, withAdmission(handler, s.Admit))
 	go func() { r.err <- r.srv.Serve(lis) }()
 	return r, nil
 }

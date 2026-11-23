@@ -73,6 +73,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/kubecache"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/kueue"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/logging"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/managedns"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/passive"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/preflight"
@@ -333,6 +334,26 @@ func main() {
 			"side is in place at start (ConfigMap scaling-manager-scaler-keda-auth), plaintext otherwise. "+
 			"The release files set it; make deploy-scaling-manager provisions the certificates itself and passes "+
 			"--external-scaler-cert-path instead, which this flag refuses.")
+
+	// The install from the one release manifest
+	// (proposal PR #404): each flag is off by
+	// default, so every other install path runs as before.
+	namespaceOptIn := flag.String("namespace-opt-in", "",
+		"\"label\": manage only namespaces labelled "+config.NamespaceOptInLabel+"=true that the namespaceSelector "+
+			"setting admits; the scaler refuses every other namespace. Empty, the default, manages what the "+
+			"install's RBAC and --watch-namespace allow. Cluster-scoped installs only.")
+	kedaNamespace := flag.String("keda-namespace", "",
+		"With --external-scaler-tls-bootstrap: the namespace KEDA runs in. The controller then writes KEDA's copy "+
+			"of the client certificate itself, into the Secret scaling-manager-external-scaler-<controller namespace> "+
+			"the release manifest pre-creates there, and needs no marker ConfigMap. Empty, the default, leaves the "+
+			"copy to a person (smt admin-finish).")
+	restartOnSettingsChange := flag.Bool("restart-on-settings-change", false,
+		"Restart when a setting read only at start changes in the settings ConfigMap, instead of asking a person "+
+			"to: the process exits and the kubelet starts it again. A key changed again and again puts the Pod "+
+			"into the kubelet's crash back-off.")
+	selfCheckInterval := flag.Duration("self-check-interval", 0,
+		"Run the preflight checks inside the controller this often and publish each, and ready, in "+
+			"ConfigMap scaling-manager-controller-status. 0, the default, runs none (the preflight Job does).")
 
 	// The warm pool is OFF unless a namespace is named, because it holds GPUs
 	// continuously: that is a cost decision an operator makes, never a default.
@@ -786,6 +807,16 @@ func main() {
 		Recorder: mgr.GetEventRecorderFor("scaling-manager-configmap-reconciler"), //nolint:staticcheck // SA1019, see above
 		Status:   controllerStatus,
 	}
+	// runCtx ends the manager; with --restart-on-settings-change a changed
+	// restart setting ends it too, and the process exits so the kubelet
+	// starts it again with the new value.
+	runCtx, stopToRestart := context.WithCancelCause(signalCtx)
+	defer stopToRestart(nil)
+	if *restartOnSettingsChange {
+		configMapReconciler.RestartOnSettingsChange = func(changed []string) {
+			stopToRestart(fmt.Errorf("%w: %v", errSettingsRestart, changed))
+		}
+	}
 
 	ctx := ctrl.LoggerInto(signalCtx, setupLog)
 	if err = configMapReconciler.BootstrapInitialConfigMaps(ctx); err != nil {
@@ -1117,8 +1148,39 @@ func main() {
 	// (docs/plans/engine/keda-driven-discovery.md). Registering before the lease
 	// is held is harmless and useful -- the engines that consume the registry
 	// start on election and find the workloads already there.
+	// Namespaces opted in by label (--namespace-opt-in=label): the scaler
+	// refuses every other namespace, so nothing there is registered, and the
+	// reporter publishes the managed and refused sets and forgets what was
+	// registered in a namespace that stopped being admitted.
+	var nsAdmission *managedns.Admission
+	switch *namespaceOptIn {
+	case "":
+	case managedns.ModeLabel:
+		if watchNS != "" {
+			setupLog.Error(nil, "--namespace-opt-in=label manages namespaces by label across the cluster; it cannot be "+
+				"combined with --watch-namespace or WATCH_NAMESPACE", "watchNamespace", watchNS)
+			os.Exit(1)
+		}
+		nsAdmission = &managedns.Admission{Reader: mgr.GetClient(), Selector: cfg.NamespaceSelector}
+		if err := mgr.Add(&managedns.Reporter{Admission: nsAdmission, Sink: controllerStatus,
+			Registry: registry.Default, Log: ctrl.Log.WithName("managed-namespaces")}); err != nil {
+			setupLog.Error(err, "unable to add the managed-namespace reporter to the manager")
+			os.Exit(1)
+		}
+		setupLog.Info("Managing namespaces by label", "label", config.NamespaceOptInLabel+"=true",
+			"namespaceSelector", cfg.NamespaceSelector())
+	default:
+		setupLog.Error(nil, "--namespace-opt-in must be empty or label", "value", *namespaceOptIn)
+		os.Exit(1)
+	}
+	var admit scaler.AdmitFunc
+	if nsAdmission != nil {
+		admit = nsAdmission.Admit
+	}
+
 	externalScaler := &scaler.Server{
 		Addr:     *externalScalerBindAddress,
+		Admit:    admit,
 		Client:   mgr.GetAPIReader(),
 		Registry: registry.Default,
 		// A decision is stale after three optimize intervals (and never before
@@ -1148,8 +1210,16 @@ func main() {
 		setupLog.Error(err, "invalid external scaler TLS flags")
 		os.Exit(1)
 	}
+	var kedaCopy *scalertls.KEDACopy
+	if *kedaNamespace != "" {
+		if !*externalScalerTLSBootstrap {
+			setupLog.Error(nil, "--keda-namespace needs --external-scaler-tls-bootstrap: KEDA's copy is of the certificate the controller provisions")
+			os.Exit(1)
+		}
+		kedaCopy = &scalertls.KEDACopy{Namespace: *kedaNamespace, SecretName: scalertls.KEDACopySecretName(config.SystemNamespace())}
+	}
 	if *externalScalerTLSBootstrap {
-		if err := scalertls.Setup(signalCtx, mgr, externalScaler, controllerStatus, allowedScalerClients[0]); err != nil {
+		if err := scalertls.Setup(signalCtx, mgr, externalScaler, controllerStatus, allowedScalerClients[0], kedaCopy); err != nil {
 			setupLog.Error(err, "unable to set up the external scaler TLS bootstrap")
 			os.Exit(1)
 		}
@@ -1190,6 +1260,25 @@ func main() {
 	if err := mgr.AddReadyzCheck("external-scaler", externalScaler.Ready); err != nil {
 		setupLog.Error(err, "unable to register the KEDA external scaler readiness check")
 		os.Exit(1)
+	}
+
+	// The preflight inside the controller (--self-check-interval): the install
+	// from the one release manifest has no preflight Job, so the checks run
+	// here, as the controller's ServiceAccount, and land in the status.
+	if *selfCheckInterval > 0 {
+		env, err := preflight.NewControllerEnv(mgr.GetConfig(), config.SystemNamespace(), 20*time.Second)
+		if err != nil {
+			setupLog.Error(err, "unable to build the in-controller preflight")
+			os.Exit(1)
+		}
+		env.ControllerWritesKEDACopy = kedaCopy != nil
+		if err := mgr.Add(&preflight.Monitor{Env: env, Sink: controllerStatus, Interval: *selfCheckInterval,
+			Recorder:     mgr.GetEventRecorderFor("scaling-manager-preflight"), //nolint:staticcheck // SA1019: core/v1 events; see the configmap reconciler
+			StatusObject: preflight.StatusObjectRef(config.SystemNamespace()),
+			Log:          ctrl.Log.WithName("preflight")}); err != nil {
+			setupLog.Error(err, "unable to add the in-controller preflight to the manager")
+			os.Exit(1)
+		}
 	}
 
 	// The DisaggregatedSet role writer (DSET_ROLE_WRITER, off by default): the
@@ -1444,7 +1533,12 @@ func main() {
 		}
 	}
 
-	if err := mgr.Start(signalCtx); err != nil {
+	err = mgr.Start(runCtx)
+	if cause := context.Cause(runCtx); errors.Is(cause, errSettingsRestart) {
+		setupLog.Info("Exiting so the kubelet restarts the controller with the changed settings", "reason", cause.Error())
+		os.Exit(1)
+	}
+	if err != nil {
 		if errors.Is(err, watchns.ErrSetChanged) {
 			// Not a failure: the container restarts and the cache is rebuilt
 			// from the namespaces that are readable now.
@@ -1577,6 +1671,10 @@ var nodeReadProbeTimeout = 2 * time.Second
 // before the API server has given a definite answer (success, Forbidden or
 // Unauthorized). A physical limiter alone is not ready on it; a composed policy
 // stays Ready and does not report it as node_read_denied (gpuPolicyReady).
+// errSettingsRestart is the cause that ends the manager when a restart
+// setting changed and --restart-on-settings-change is set.
+var errSettingsRestart = errors.New("a setting read only at start changed")
+
 var errNodeReadUnanswered = errors.New("no answer yet from the API server on whether nodes may be listed")
 
 // nodeReadProbe reports whether this controller may list nodes.

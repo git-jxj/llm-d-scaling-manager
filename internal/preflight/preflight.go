@@ -120,7 +120,11 @@ type Env struct {
 	// to manage (WatchNamespaceEnv on the Job); empty, what its Deployment
 	// names. Namespace scope only.
 	WatchNamespace string
-	Now            func() time.Time
+	// ControllerWritesKEDACopy: the controller writes KEDA's copy of the
+	// client certificate itself (--keda-namespace), so keda.mtls reads its
+	// status rather than the marker a person writes.
+	ControllerWritesKEDACopy bool
+	Now                      func() time.Time
 }
 
 // Report is a whole run.

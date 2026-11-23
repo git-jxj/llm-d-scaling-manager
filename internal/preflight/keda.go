@@ -243,6 +243,9 @@ func checkKEDAMTLS(ctx context.Context, s *state) ([]Result, string) {
 		keda = "<KEDA namespace>"
 	}
 	copyName := "scaling-manager-external-scaler-" + ns
+	if s.env.ControllerWritesKEDACopy {
+		return checkKEDAMTLSWrittenByController(ctx, s, copyName), ""
+	}
 	steps := mtlsSteps(ns, keda, copyName)
 	marker, err := s.env.Kube.CoreV1().ConfigMaps(ns).Get(ctx, KEDAMarkerConfigMap, metav1.GetOptions{})
 	if err != nil {
@@ -283,6 +286,34 @@ func checkKEDAMTLS(ctx context.Context, s *state) ([]Result, string) {
 			Fix:    restart + "\n# or KEDA's copy does not match the scaler; copy it again:\n" + steps}}, ""
 	}
 	return []Result{{Status: Pass, Detail: fmt.Sprintf("ClusterTriggerAuthentication %s in place, and the controller reports no refused handshake (no scalerUnreachable in %s)", cta, ControllerStatusConfigMap)}}, ""
+}
+
+// checkKEDAMTLSWrittenByController judges KEDA's side when the controller
+// writes KEDA's copy itself (the one-manifest install): there is no marker,
+// and no step for a person, so it reads what the controller says in its
+// status: how the scaler serves, whether the copy is current, and whether
+// KEDA's handshakes are refused.
+func checkKEDAMTLSWrittenByController(ctx context.Context, s *state, copyName string) []Result {
+	ns := s.env.Namespace
+	status, err := s.env.Kube.CoreV1().ConfigMaps(ns).Get(ctx, ControllerStatusConfigMap, metav1.GetOptions{})
+	if err != nil {
+		return []Result{unknown("ConfigMap "+ControllerStatusConfigMap+" in "+ns, err)}
+	}
+	tlsState := status.Data[statusScalerTLS]
+	switch {
+	case tlsState == "":
+		return []Result{{Status: Unknown, Detail: "the controller has not said how the scaler serves yet (no scalerTLS)"}}
+	case !strings.HasPrefix(tlsState, "mutual TLS"):
+		return []Result{{Status: Fail, Detail: "the scaler serves " + tlsState,
+			Fix: "see scalerTLSAction in ConfigMap " + ControllerStatusConfigMap + " in " + ns}}
+	case status.Data[statusKEDACopyStale] == "true":
+		return []Result{{Status: Fail, Detail: "KEDA's copy, Secret " + copyName + ", does not hold the current client certificate",
+			Fix: "see scalerTLSAction in ConfigMap " + ControllerStatusConfigMap + " in " + ns}}
+	case status.Data[statusScalerUnreachable] != "":
+		return []Result{{Status: Fail, Detail: "the controller reports KEDA cannot reach the scaler (scalerUnreachable): " + status.Data[statusScalerUnreachable],
+			Fix: "restart KEDA's operator, which keeps a connection made before the CA changed"}}
+	}
+	return []Result{{Status: Pass, Detail: "the scaler serves mutual TLS, and the controller keeps KEDA's copy " + copyName + " current"}}
 }
 
 // mtlsSteps are the commands that put KEDA's side of mutual TLS in place:

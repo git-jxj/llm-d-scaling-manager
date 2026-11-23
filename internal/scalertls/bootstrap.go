@@ -74,6 +74,11 @@ type Bootstrap struct {
 	Interval time.Duration
 	// Log is the logger; the zero value logs under ctrl.Log.
 	Log logr.Logger
+	// KEDA, when set, is KEDA's copy of the client certificate, which the
+	// controller then writes itself on every pass: KEDA's side is in place
+	// when the copy holds the current certificate, and the marker ConfigMap
+	// is not read. Nil keeps the marker, which a person writes.
+	KEDA *KEDACopy
 
 	serving atomic.Pointer[tls.Certificate]
 
@@ -95,6 +100,34 @@ type Bootstrap struct {
 	// pass; markerErr why the latest read failed.
 	markerAtStart, markerNow markerState
 	markerErr                error
+	// kedaStale: with KEDA set, the copy does not hold the current client
+	// certificate.
+	kedaStale bool
+}
+
+// kedaSide says whether KEDA's side of mutual TLS is in place: the marker,
+// or with KEDA set, KEDA's copy, written now if it is not current.
+func (b *Bootstrap) kedaSide(ctx context.Context) (markerState, error) {
+	if b.KEDA == nil {
+		return b.readMarker(ctx)
+	}
+	state, stale, err := b.KEDA.sync(ctx, b.Reader, b.Writer, b.Namespace)
+	b.mu.Lock()
+	b.kedaStale = stale
+	b.mu.Unlock()
+	return state, err
+}
+
+// kedaConnection is how KEDA connects, from the client certificates the
+// scaler accepted since start. Call with mu held.
+func (b *Bootstrap) kedaConnection() string {
+	switch {
+	case len(b.presented) == 0:
+		return KEDAConnectionNone
+	case b.last != nil && b.last.Client != nil && b.presented[Fingerprint(b.last.Client)]:
+		return KEDAConnectionCurrent
+	}
+	return KEDAConnectionStale
 }
 
 func (b *Bootstrap) logger() logr.Logger {
@@ -121,8 +154,10 @@ func (b *Bootstrap) Prepare(ctx context.Context) (*x509.Certificate, error) {
 		merr   error
 	)
 	for {
-		marker, merr = b.readMarker(ctx)
+		// The certificates first: KEDA's copy, when the controller writes
+		// it, is made from the client certificate this pass may issue.
 		o, err = b.Ensure(ctx)
+		marker, merr = b.kedaSide(ctx)
 		settled := marker != markerUnknown && (err == nil || marker != markerPresent)
 		if settled || ctx.Err() != nil {
 			break
@@ -196,7 +231,7 @@ func (b *Bootstrap) NeedLeaderElection() bool { return false }
 // certificate, and reports.
 func (b *Bootstrap) Check(ctx context.Context) {
 	o, err := b.Ensure(ctx)
-	marker, merr := b.readMarker(ctx)
+	marker, merr := b.kedaSide(ctx)
 	seen := false
 	if err == nil && o.Client != nil {
 		b.mu.Lock()
@@ -279,6 +314,10 @@ func (b *Bootstrap) ObserveHandshake(cs tls.ConnectionState) {
 	b.mu.Unlock()
 	if wanted {
 		b.logger().Info("Scaler TLS: KEDA presents the client certificate in its Secret")
+	}
+	// A certificate not seen before changes kedaConnection, which only the
+	// controller that writes KEDA's copy publishes.
+	if wanted || b.KEDA != nil {
 		b.publish()
 	}
 }
@@ -312,7 +351,11 @@ func (b *Bootstrap) publish() {
 	if !b.tlsOn && b.last != nil && b.last.Usable() {
 		trust = b.last.Trust
 	}
+	conn, stale := b.kedaConnection(), b.kedaStale
 	b.mu.Unlock()
+	if ks, ok := b.Status.(KEDASink); ok && b.KEDA != nil {
+		ks.SetKEDAConnection(conn, stale)
+	}
 	b.Status.SetScalerTLS(state, action)
 	caPEM, sha := publicCerts(trust)
 	b.Status.SetScalerCA(caPEM, sha)
@@ -362,6 +405,11 @@ func (b *Bootstrap) describe() (state, action string) {
 		state = "plaintext: the scaler TLS Secrets could not be provisioned"
 	case !b.last.Usable():
 		state = "plaintext: the scaler TLS certificates are not usable"
+	case b.KEDA != nil:
+		state = "plaintext: the controller could not write KEDA's copy of the client certificate at start"
+		if b.markerErr != nil {
+			state += ": " + b.markerErr.Error()
+		}
 	case b.markerAtStart == markerForeign:
 		state = "plaintext: " + b.markerErr.Error()
 	default:
@@ -380,6 +428,13 @@ func (b *Bootstrap) describe() (state, action string) {
 	pending := ""
 	if b.last != nil && b.last.Client != nil && !b.presented[Fingerprint(b.last.Client)] {
 		pending = b.last.Pending
+	}
+	if b.KEDA != nil {
+		steps = append(steps, b.copySteps(pending)...)
+		for i := range steps {
+			steps[i] = fmt.Sprintf("%d. %s", i+1, steps[i])
+		}
+		return state, strings.Join(steps, "\n")
 	}
 	switch {
 	case b.last == nil || !b.last.Usable():
@@ -411,6 +466,39 @@ func (b *Bootstrap) describe() (state, action string) {
 		steps[i] = fmt.Sprintf("%d. %s", i+1, steps[i])
 	}
 	return state, strings.Join(steps, "\n")
+}
+
+// copySteps are the steps when the controller writes KEDA's copy itself: no
+// copy command, since the controller makes it; what is left for a person is
+// a restart, of the controller to switch to mutual TLS, or of KEDA's operator,
+// which keeps the CA of its first connection. Call with mu held.
+func (b *Bootstrap) copySteps(pending string) []string {
+	var steps []string
+	restartKEDAHere := "kubectl rollout restart deployment/keda-operator -n " + b.KEDA.Namespace
+	switch {
+	case b.last == nil || !b.last.Usable():
+	case !b.tlsOn && b.markerNow == markerPresent:
+		steps = append(steps, "KEDA's copy is written now; restart the controller to serve mutual TLS: "+b.restartController())
+	case !b.tlsOn:
+		why := "it was not written"
+		if b.markerErr != nil {
+			why = b.markerErr.Error()
+		}
+		steps = append(steps, fmt.Sprintf("the controller writes KEDA's copy, Secret %s in %s, itself, and could not (%s); "+
+			"fix that, then restart the controller: %s", b.KEDA.SecretName, b.KEDA.Namespace, why, b.restartController()))
+	case !bytes.Equal(b.last.CA.Raw, b.clientCA.Raw):
+		steps = append(steps, fmt.Sprintf("the scaler CA in Secret %s changed since the controller started (sha256 %s; "+
+			"it verifies clients with %s); the controller copied it to KEDA: restart the controller, then KEDA's operator: %s && %s",
+			CASecretName, Fingerprint(b.last.CA), Fingerprint(b.clientCA), b.restartController(), restartKEDAHere))
+	case pending == PendingCA:
+		steps = append(steps, "only on a reinstall, when KEDA dialled this scaler before: KEDA's client certificate was "+
+			"issued for a new CA and the controller copied it to KEDA; restart KEDA's operator, which keeps the CA of its "+
+			"first connection (this notice clears when KEDA presents the certificate): "+restartKEDAHere)
+	case b.kedaStale:
+		steps = append(steps, fmt.Sprintf("KEDA's copy, Secret %s in %s, does not hold the current client certificate: %v",
+			b.KEDA.SecretName, b.KEDA.Namespace, b.markerErr))
+	}
+	return steps
 }
 
 // kedaNS is the shell expression for KEDA's namespace: the operator sets

@@ -24,7 +24,7 @@ const PrepareTimeout = 30 * time.Second
 //
 // It lives here and not in cmd: make build and the Dockerfile compile
 // cmd/main.go alone, so a helper in another file of package main is not built.
-func Setup(ctx context.Context, mgr manager.Manager, srv *scaler.Server, status StatusSink, clientSAN string) error {
+func Setup(ctx context.Context, mgr manager.Manager, srv *scaler.Server, status StatusSink, clientSAN string, keda *KEDACopy) error {
 	boot := &Bootstrap{
 		Ensurer: Ensurer{
 			Reader:    mgr.GetAPIReader(),
@@ -34,6 +34,7 @@ func Setup(ctx context.Context, mgr manager.Manager, srv *scaler.Server, status 
 		},
 		Status: status,
 		Log:    ctrl.Log.WithName("scaler-tls"),
+		KEDA:   keda,
 	}
 	prepareCtx, cancel := context.WithTimeout(ctx, PrepareTimeout)
 	defer cancel()

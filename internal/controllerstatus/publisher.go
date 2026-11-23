@@ -305,6 +305,31 @@ const (
 	// not arrived for longer than twice their start time, one per line, with
 	// why. Absent when none.
 	KeyReplicasNotArriving = "replicasNotArriving"
+	// KeyNamespacesManaged lists, comma-separated and sorted, the namespaces
+	// an install that opts namespaces in by label manages. Absent on every
+	// other install.
+	KeyNamespacesManaged = "namespacesManaged"
+	// KeyNamespacesRefused lists the namespaces such an install refuses, one
+	// "<namespace>: <why>" per line: labelled ones the namespaceSelector
+	// setting does not admit, and ones KEDA called the scaler for. Absent
+	// when none.
+	KeyNamespacesRefused = "namespacesRefused"
+	// KeyReady is "ok" when no in-controller preflight check fails, else
+	// "not ready: " and the failing checks. Absent when the controller runs
+	// no checks (--self-check-interval 0).
+	KeyReady = "ready"
+	// KeyPreflightPrefix prefixes one key per in-controller preflight check,
+	// "preflight.<check>": ok, warn, fail or unknown, then the reason and the
+	// fix.
+	KeyPreflightPrefix = "preflight."
+	// KeyKEDAConnection is how KEDA connects to the scaler when the
+	// controller writes KEDA's copy of the client certificate itself: none
+	// (no handshake accepted since start), current (KEDA presented the
+	// current client certificate) or stale (only another one).
+	KeyKEDAConnection = "kedaConnection"
+	// KeyKEDACopyStale is "true" when KEDA's copy in its namespace does not
+	// hold the current client certificate, "false" when it does.
+	KeyKEDACopyStale = "kedaCopyStale"
 )
 
 // PodListDeniedMessage is the KeyPodListDenied value.
@@ -900,6 +925,57 @@ func (p *Publisher) SetReplicasNotArriving(lines []string) {
 		sorted = append(sorted[:maxLines], fmt.Sprintf("+%d more", len(lines)-maxLines))
 	}
 	p.update(func(d map[string]string) { setOrDelete(d, KeyReplicasNotArriving, strings.Join(sorted, "\n")) })
+}
+
+// SetNamespaces records the namespaces an install that opts namespaces in by
+// label manages, and the refused ones with why.
+func (p *Publisher) SetNamespaces(managed []string, refused map[string]string) {
+	if p == nil {
+		return
+	}
+	lines := make([]string, 0, len(refused))
+	for _, ns := range slices.Sorted(maps.Keys(refused)) {
+		lines = append(lines, ns+": "+refused[ns])
+	}
+	p.update(func(d map[string]string) {
+		d[KeyNamespacesManaged] = strings.Join(slices.Sorted(slices.Values(managed)), ",")
+		setOrDelete(d, KeyNamespacesRefused, strings.Join(lines, "\n"))
+	})
+}
+
+// SetPreflight records the in-controller preflight: one key per check
+// (KeyPreflightPrefix + name, its value as given) and KeyReady. A check no
+// longer in checks loses its key.
+func (p *Publisher) SetPreflight(checks map[string]string, ready string) {
+	if p == nil {
+		return
+	}
+	p.update(func(d map[string]string) {
+		for k := range d {
+			if strings.HasPrefix(k, KeyPreflightPrefix) {
+				if _, ok := checks[strings.TrimPrefix(k, KeyPreflightPrefix)]; !ok {
+					delete(d, k)
+				}
+			}
+		}
+		for name, v := range checks {
+			d[KeyPreflightPrefix+name] = v
+		}
+		setOrDelete(d, KeyReady, ready)
+	})
+}
+
+// SetKEDAConnection records how KEDA connects to the scaler and whether
+// KEDA's copy of the client certificate is stale, when the controller writes
+// that copy itself.
+func (p *Publisher) SetKEDAConnection(connection string, copyStale bool) {
+	if p == nil {
+		return
+	}
+	p.update(func(d map[string]string) {
+		setOrDelete(d, KeyKEDAConnection, connection)
+		d[KeyKEDACopyStale] = strconv.FormatBool(copyStale)
+	})
 }
 
 // setOrDelete sets key to value, or removes it when value is empty.
