@@ -516,6 +516,12 @@ type DayCounts struct {
 	SizedForP95Modulation int `json:"sizedForP95Modulation,omitempty"`
 	// PrefillNotPriced is how many sized buckets have no prefill figure.
 	PrefillNotPriced int `json:"prefillNotPriced"`
+	// MeasuredTTFT is how many buckets read a measured TTFT
+	// (DayBucket.MeasuredTTFT), and MeasuredTTFTOver how many of those were
+	// over the TTFT target: the SLO missed as measured, whatever the plan
+	// priced.
+	MeasuredTTFT     int `json:"measuredTTFT"`
+	MeasuredTTFTOver int `json:"measuredTTFTOver"`
 	// Untrusted and NotCovered are how many buckets' verdicts the
 	// self-check does not trust, and does not cover (DayBucket.Trust).
 	Untrusted  int `json:"untrusted,omitempty"`
@@ -1269,8 +1275,10 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 // that serves the rate: another mix may serve it as well,
 // and the fleet it had is judged on its own mix, never role by role against
 // Needed. With prefill not priced, decode is judged alone (Scope
-// ScopeDecodeOnly). An over is withheld where the router measured the
-// bucket's TTFT over its target: a fleet that missed it has nothing to spare.
+// ScopeDecodeOnly). A whole fleet's over is withheld where the router
+// measured the bucket's TTFT over its target: a fleet that missed it has
+// nothing to spare. A decode-only over stands: it says decode has a replica
+// to spare, never that the fleet does, and prefill sets the TTFT.
 func (q *dayQuestion) hadVerdict(ctx context.Context, g *dayGroup, db *DayBucket, rate float64) error {
 	a := *db.Actual
 	if g.decodeOnly {
@@ -1313,7 +1321,7 @@ func (q *dayQuestion) hadVerdict(ctx context.Context, g *dayGroup, db *DayBucket
 			return err
 		}
 		if ok {
-			if m := db.MeasuredTTFT; m != nil && !q.noTTFT && *m > q.sc.TTFT.Target {
+			if m := db.MeasuredTTFT; !g.decodeOnly && m != nil && !q.noTTFT && *m > q.sc.TTFT.Target {
 				db.Verdict = ""
 				db.Flags = appendNew(db.Flags, FlagMeasuredTTFTOverTarget)
 				return nil
@@ -1511,6 +1519,17 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 			"from the cycles present: a gap over the busiest hours sizes them low.")
 	}
 	out.Summary = summaryOf(out.Buckets, out.Hours, q.step, gpus)
+	// The SLO as measured: how many buckets the router read a TTFT for, and
+	// how many of those missed the target, whatever the plan priced.
+	for _, b := range out.Buckets {
+		if b.MeasuredTTFT == nil {
+			continue
+		}
+		out.Summary.Counts.MeasuredTTFT++
+		if *b.MeasuredTTFT > q.sc.TTFT.Target {
+			out.Summary.Counts.MeasuredTTFTOver++
+		}
+	}
 	if g := q.e.doc.Fleet.GPUsPerReplica(); WeighsGPUs(g) {
 		out.Summary.SizedOnGPUs = &g
 	}

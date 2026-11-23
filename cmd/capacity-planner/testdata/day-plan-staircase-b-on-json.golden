@@ -101,6 +101,7 @@
         "prefill": 2,
         "decode": 2
       },
+      "verdict": "over",
       "scope": "decode only",
       "measuredTTFT": 0.19868965517241383,
       "flags": [
@@ -108,8 +109,7 @@
         "FewCyclesForP95",
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill",
-        "MeasuredTTFTOverTarget"
+        "ExtrapolatedFill"
       ]
     },
     {
@@ -1139,6 +1139,7 @@
         "prefill": 2,
         "decode": 2
       },
+      "verdict": "over",
       "scope": "decode only",
       "measuredTTFT": 0.5616247755834829,
       "flags": [
@@ -1146,8 +1147,7 @@
         "FewCyclesForP95",
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill",
-        "MeasuredTTFTOverTarget"
+        "ExtrapolatedFill"
       ]
     }
   ],
@@ -1254,12 +1254,14 @@
       "tooLittleData": 0,
       "noData": 0,
       "under": 10,
-      "over": 0,
+      "over": 2,
       "match": 4,
       "sizedForMean": 3,
       "sizedForP95": 13,
       "sizedForMax": 0,
-      "prefillNotPriced": 16
+      "prefillNotPriced": 16,
+      "measuredTTFT": 16,
+      "measuredTTFTOver": 16
     }
   },
   "searched": 5,

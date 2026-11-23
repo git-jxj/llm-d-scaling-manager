@@ -431,6 +431,11 @@ function daySummaryText(plan) {
   const p95 = plan.sizeFor === "p95-modulation" ? `${c.sizedForP95Modulation || 0} for their p95 less counting noise` : `${c.sizedForP95} for their p95`;
   out.push(`${c.sized} buckets sized (${p95}, ${c.sizedForMean} for their mean, ${c.sizedForMax} for their max), ` +
     `${c.unmet} beyond the bound, ${c.refused} refused, ${c.tooLittleData} with too little data, ${c.noData} with no data.`);
+  // The SLO as the router measured it, whatever the plan priced.
+  if (c.measuredTTFT && plan.ttft) {
+    out.push(`Measured TTFT was over its target in ${c.measuredTTFTOver} of the ${c.measuredTTFT} buckets measured ` +
+      `(TTFT ${plan.ttft.statistic} ${dayFmt(plan.ttft.target)} s)` + (c.prefillNotPriced ? "; prefill was not sized." : "."));
+  }
   if (c.untrusted) out.push(`Self-check: ${c.untrusted} bucket(s) not trusted: their verdicts rest on figures the self-check found inconsistent with this recording (see each bucket).`);
   if (c.notCovered) out.push(`Self-check: ${c.notCovered} bucket(s) not covered: it did not test the rate, fleet or shape each was priced at.`);
   return out;

@@ -1145,7 +1145,9 @@
       "sizedForMean": 0,
       "sizedForP95": 11,
       "sizedForMax": 0,
-      "prefillNotPriced": 4
+      "prefillNotPriced": 4,
+      "measuredTTFT": 0,
+      "measuredTTFTOver": 0
     }
   },
   "searched": 82,
