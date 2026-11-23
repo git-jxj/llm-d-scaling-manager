@@ -54,6 +54,10 @@ type Resolved struct {
 	// (learnreplay.MixtureSeriesFrom); nil unless that model was asked for
 	// (BacktestRequest.TTFTModel).
 	Mixture []whatif.MixtureCycle
+	// Decode is each cycle as the experimental TPOT distribution reads it,
+	// Decode[i] the cycle of Series[i] (learnreplay.DecodeSeriesFrom); nil
+	// unless that model was asked for (BacktestRequest.TPOTModel).
+	Decode []whatif.DecodeCycle
 	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
 	// the Series and the Inputs), its weight in the inputs cache
 	// (Config.MaxInputsBytes); 0 weighs nothing.

@@ -176,6 +176,9 @@ type inputsEntry struct {
 	// mixture is the source's cycles for the rank-mixture model
 	// (Resolved.Mixture); nil unless asked.
 	mixture []whatif.MixtureCycle
+	// decode is the source's cycles for the TPOT distribution
+	// (Resolved.Decode); nil unless asked.
+	decode []whatif.DecodeCycle
 	// bytes is the entry's weight in the inputs cache (Resolved.Bytes).
 	bytes int
 }

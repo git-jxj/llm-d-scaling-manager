@@ -51,6 +51,9 @@ type backtestFlags struct {
 	// rankMixtureTTFT is --experimental-ttft=v2 (experimental_ttft_v2.go),
 	// backtest's only.
 	experimentalTTFT, rankMixtureTTFT bool
+	// experimentalTPOT is --experimental-tpot (experimental_tpot.go),
+	// backtest's only.
+	experimentalTPOT string
 }
 
 // registerAssume registers the stated-input flags backtest and predict take.
@@ -97,6 +100,7 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "the test's arrivals' Ca^2, when known; default Poisson (1), flagged")
 	fs.StringVar(&f.measured, "measured", whatifapi.MeasuredAuto, "the latency scored against: auto (the router's where recorded), router or engine")
 	f.registerAssume(fs)
+	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage)
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
@@ -131,6 +135,9 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 		if err := f.rankMixture(&req, f.recording, whole, f.recording, fit); err != nil {
 			return err
 		}
+		if err := f.tpotDistribution(&req, f.recording, whole, f.recording, fit); err != nil {
+			return err
+		}
 		bt, err = whatifapi.Backtest(ctx, fit, whole, req, cutoff, words, "schema-v"+strconv.Itoa(schemaVersion))
 		if err != nil {
 			return backtestError(err)
@@ -148,6 +155,9 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 			return err
 		}
 		if err := f.rankMixture(&req, f.test, test, f.fit, fit); err != nil {
+			return err
+		}
+		if err := f.tpotDistribution(&req, f.test, test, f.fit, fit); err != nil {
 			return err
 		}
 		bt, err = whatifapi.Backtest(ctx, fit, test, req, time.Time{}, "", "schema-v"+strconv.Itoa(schemaVersion))

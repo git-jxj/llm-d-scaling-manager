@@ -464,6 +464,8 @@ T2-held
 T2-pinned
 TPOT
 TPOTBucketTooWide
+TPOTDistribution
+TPOTDistributionAbstained
 TPOTQuantileUnbounded
 TTFT
 TYPE
@@ -1795,6 +1797,7 @@ lenderClusterQueue
 lenderDebounce
 length
 lengthen
+lengths
 lent
 let
 levels
@@ -2633,6 +2636,8 @@ removedNamespaces
 removes
 removing
 rename
+renewal
+renewal-lognormal
 repeated
 replaced
 replacement

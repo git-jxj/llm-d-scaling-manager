@@ -207,6 +207,7 @@ These always read `OUTSIDE VALIDATED REGION`:
   but 2 prefill and 2 decode.
 - Any accelerator but H200.
 - Any TTFT from `backtest --experimental-ttft=v2` (below).
+- Any TPOT percentile from `backtest --experimental-tpot=v2` (below).
 
 ## Experimental: the rank-mixture TTFT model
 
@@ -246,6 +247,45 @@ or later. It reads each prefill rank's own request rate, prefill time, queue
 time, TTFT and prompt from a LeaderWorkerSet group's engines
 (`GroupEngines`). In an older recording, a row's ranks share its rate evenly,
 and the answer says so.
+
+## Experimental: the per-request TPOT distribution
+
+`capacity-planner backtest --experimental-tpot=v2` prices the TPOT percentiles
+from a model of each request's TPOT, in place of the ratio `R_q` read from the
+histogram's bucket edges. It is off by default. Every percentile it prices is
+flagged `TPOTDistribution` and reads `OUTSIDE VALIDATED REGION`. The mean TPOT
+is the planner's own, and the distribution is placed around it.
+
+Why a ratio read at a bucket edge runs wide: the router's TPOT buckets are
+coarse (10 ms to 20 ms, then 20 ms to 40 ms). Where the measured p90 falls in
+the 10 ms to 20 ms bucket, the edge reading prices it at 20 ms whatever the
+spread inside is.
+
+What it prices, per request: `log TPOT ~ Normal(log m - sigma^2/2, sigma^2)`,
+with `m` the planner's mean and `sigma^2 = g^2 + C E[1/(L-1)]`.
+
+| part | model | where it comes from |
+|---|---|---|
+| the server | a decode replica's data-parallel ranks step in lockstep. Below `--max-num-seqs` no sequence waits for a slot: the step time, not a queue, sets a token's time | the share that would wait is Erlang C at the fit window's highest mean running sequences per rank (`slotWait`). Over 1 % the model abstains |
+| `g^2`, the replicas | the spread of the replicas' time per token, weighted by their request rates | each replica's step time over `1 +` the drafts it accepts a step |
+| `C E[1/(L-1)]`, the request | with speculative decoding a step emits `1 + A` tokens. The steps a request of `L` tokens needs is a first passage of that renewal process. By the renewal central limit theorem its squared CV is about `Var(1+A)/(1+E A)` over `L - 1`: a long request sits near the mean, a short one spreads | `E[1/(L-1)]` from the decode pods' output-length histogram over the step. `C` is fitted by interval-censored likelihood over every bucket of the fit window's router TPOT histogram, floored at the renewal value for the engine's `num_speculative_tokens` (`renewal`) |
+
+`C` is the only fitted figure, and no percentile is fitted, so p90 and p95 are
+both held out. The fit window's two self-check folds (its first half, its first
+three quarters) each fit `C` alone (`foldC`) and are scored on the steps after
+their cut (`fold`).
+
+Each step is also scored at the histogram's resolution: the largest gap between
+the predicted and the measured share of requests under a bucket edge (`ks`), and
+whether the predicted p90 and p95 lie in the bucket the measured ones fell in.
+`shapeKs` is the same gap with the distribution placed at the measured mean, so
+it shows the shape's miss without the mean's. A note under the answer gives
+these figures beside the planner's own ratio.
+
+The model abstains on the whole backtest where `--max-num-seqs` is not read,
+where a slot queue would form, where under two hours of fit steps read the
+router's TPOT histogram and the output lengths, or where `C` ends at its bound.
+Every percentile is then the planner's own, flagged `TPOTDistributionAbstained`.
 
 ## Adding a run
 

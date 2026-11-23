@@ -316,6 +316,17 @@ type BacktestRequest struct {
 	// PrefillSlots is the prefill engine's max-num-seqs, read by
 	// TTFTModel's limited-PS check; 0 not known.
 	PrefillSlots int `json:"prefillSlots,omitempty"`
+	// TPOTModel prices the TPOT percentiles with an experimental
+	// per-request distribution in place of the planner's ratio: "" is the
+	// planner's, and whatif.TPOTRenewalLognormal the only other
+	// (backtest_tpot_distribution.go). The mean TPOT stays the planner's.
+	// Every percentile it prices reads OUTSIDE VALIDATED REGION.
+	TPOTModel string `json:"tpotModel,omitempty"`
+	// DecodeSlots is the decode engine's max-num-seqs and SpecTokens its
+	// num_speculative_tokens, read by TPOTModel; 0 not known (or, for
+	// SpecTokens, no speculative decoding).
+	DecodeSlots int `json:"decodeSlots,omitempty"`
+	SpecTokens  int `json:"specTokens,omitempty"`
 }
 
 // BacktestResponse is POST /v1/backtest's answer, and capacity-planner
@@ -355,6 +366,10 @@ type BacktestResponse struct {
 	// RankMixture is the experimental TTFT model's fit, where the request
 	// asked for it (BacktestRequest.TTFTModel).
 	RankMixture *RankMixtureReport `json:"rankMixture,omitempty"`
+	// TPOTDistribution is the experimental TPOT distribution's fit and its
+	// score at the histogram's resolution, where the request asked for it
+	// (BacktestRequest.TPOTModel).
+	TPOTDistribution *TPOTDistReport `json:"tpotDistribution,omitempty"`
 }
 
 // BacktestWindow is one side of a backtest: its inputs, and the time it
@@ -425,6 +440,9 @@ type BacktestStep struct {
 	// RankMixture is the experimental TTFT model's checks at the step,
 	// where the request asked for it.
 	RankMixture *RankMixtureCheck `json:"rankMixture,omitempty"`
+	// TPOTDist is the experimental TPOT distribution at the step, where
+	// the request asked for it.
+	TPOTDist *TPOTDistCheck `json:"tpotDistribution,omitempty"`
 	// TTFTBurst says the step's window is a burst (burstIn) against a
 	// prefill knee priced from a lower bound of V_P, and not against
 	// decode's knee: the true prefill knee may be far higher, so the step is
@@ -657,7 +675,7 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 		doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
 		doc.InputsID = contentID("inputs", res.Content)
 		fit = &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
-			config: res.Config, bytes: res.Bytes, mixture: res.Mixture}
+			config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode}
 		fit = s.inputs.add(doc.InputsID, fit)
 	}
 	q, err := backtestQuestionOf(fit, test, req, cutoff, split)
@@ -690,7 +708,7 @@ func Backtest(ctx context.Context, fit, wholeTest *Resolved, req BacktestRequest
 		doc := res.Inputs
 		doc.InputsID = contentID("inputs", res.Content)
 		return &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency, config: res.Config,
-			mixture: res.Mixture}
+			mixture: res.Mixture, decode: res.Decode}
 	}
 	q, err := backtestQuestionOf(entry(fit), entry(wholeTest), req, cutoff, split)
 	if err != nil {
@@ -815,6 +833,9 @@ type backtestQuestion struct {
 	// mixture is the experimental TTFT model fitted on the fit window, nil
 	// unless the request asked for it.
 	mixture *rankMixtureQ
+	// tpotDist is the experimental TPOT distribution fitted on the fit
+	// window, nil unless the request asked for it.
+	tpotDist *tpotDistQ
 }
 
 // backtestQuestionOf checks req against fit and test, and refuses a test
@@ -955,6 +976,21 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		q.assumed = append(q.assumed, q.mixture.assumedLines()...)
 	default:
 		return nil, InputErrorf("ttftModel %q, want %q or none", req.TTFTModel, whatif.QueueRankMixture)
+	}
+	switch req.TPOTModel {
+	case "":
+	case whatif.TPOTRenewalLognormal:
+		// The distribution prices only where its checks pass; otherwise it
+		// abstains, and every TPOT percentile is the planner's own.
+		if len(test.decode) != len(test.series) {
+			q.tpotDist = &tpotDistQ{report: TPOTDistReport{Model: whatif.TPOTRenewalLognormal, Experimental: true, FoldC: []float64{},
+				Fold: []TPOTDistScore{}, Abstained: "the test source did not give the decode series"}}
+		} else {
+			q.tpotDist = fitTPOTDist(fit, fitIdx, q.step, req.DecodeSlots, req.SpecTokens)
+		}
+		q.assumed = append(q.assumed, q.tpotDist.assumedLines()...)
+	default:
+		return nil, InputErrorf("tpotModel %q, want %q or none", req.TPOTModel, whatif.TPOTRenewalLognormal)
 	}
 	return q, nil
 }
@@ -1192,6 +1228,9 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 		}
 		out.Steps = append(out.Steps, s)
 	}
+	if q.tpotDist != nil {
+		q.scoreTPOTDist(steps, out)
+	}
 	q.finish(out)
 	return out, nil
 }
@@ -1219,6 +1258,11 @@ func (q *backtestQuestion) finish(out *BacktestResponse) {
 		r := q.mixture.report
 		out.RankMixture = &r
 	}
+	if q.tpotDist != nil {
+		r := q.tpotDist.report
+		out.TPOTDistribution = &r
+		out.Notes = append(out.Notes, q.tpotDist.note())
+	}
 	out.BacktestID = contentID("backtest", struct {
 		Fit, Test    string
 		Cutoff       time.Time
@@ -1232,6 +1276,10 @@ func (q *backtestQuestion) finish(out *BacktestResponse) {
 	if q.mixture != nil {
 		out.BacktestID = contentID("backtest", struct{ ID, Model, Assumed, Abstained string }{out.BacktestID, q.mixture.report.Model,
 			q.mixture.report.Assumed, q.mixture.report.Abstained})
+	}
+	if q.tpotDist != nil {
+		out.BacktestID = contentID("backtest", struct{ ID, TPOTModel, Assumed, Abstained string }{out.BacktestID, q.tpotDist.report.Model,
+			q.tpotDist.report.Assumed, q.tpotDist.report.Abstained})
 	}
 }
 
@@ -1379,6 +1427,9 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 	}
 	if q.mixture != nil {
 		q.priceMixture(&pred, &out, st)
+	}
+	if q.tpotDist != nil {
+		q.priceTPOTDist(&pred, &out, st)
 	}
 	if pred.prefillKnee != nil && !q.mixturePriced(out) {
 		if tr := relaxationSeconds(in.rate, *pred.prefillKnee, in.prefill, pred.ca2, pred.promptCV); tr > 0 && !math.IsInf(tr, 1) {
