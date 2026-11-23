@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"slices"
+	"time"
 )
 
 // This file is a variant of the experimental rank-mixture TTFT model
@@ -52,7 +53,12 @@ import (
 // itself out of sample in A0: its median ratio of the model's mean to the
 // router's measured mean and p90 (RankMixtureNLFit.FitMean, FitP90) are
 // checks, and the model abstains outside [MinNLFitMean, MaxNLFitMean] and
-// [MinNLFitP90, MaxNLFitMean].
+// [MinNLFitP90, MaxNLFitMean]. Those checks mean something only on a window
+// that holds the loads and prompts it will be asked about: on a fit window
+// under MinSpreadFitWindow (v2's rule for its calibration) it abstains too.
+// On the public warm-ups (about an hour, a ramp through prompt shapes and
+// into overload) the checks pass by chance on two and the second half reads
+// 2-4x over at light load and 0.2x under in the overload bursts.
 
 // QueueRankMixtureNL is the experimental TTFT model with the non-linear
 // prefill service and the decomposed non-queue part (rank_mixture_nl.go).
@@ -183,6 +189,8 @@ type RankMixtureNLFit struct {
 	// FitMean and FitP90 are the fit window's median ratios of the model's
 	// mean and p90 to the router's measured ones.
 	FitMean, FitP90 float64
+	// Span is the fit window's length, its steps' span plus one step.
+	Span time.Duration
 }
 
 // solveSmall is the least-squares solution of rows c = y over the columns in
@@ -640,6 +648,9 @@ func FitRankMixtureNL(steps []MixtureStep, o RankMixtureOptions) (RankMixture, R
 	}
 	clean := m.cleanSteps(steps)
 	diag := RankMixtureNLFit{Steps: len(steps), CleanSteps: len(clean), ShareCV: cv}
+	if sorted := slices.SortedFunc(slices.Values(steps), func(a, b MixtureStep) int { return a.At.Compare(b.At) }); len(sorted) > 1 {
+		diag.Span = sorted[len(sorted)-1].At.Sub(sorted[0].At) + stepLength(sorted)
+	}
 	if !o.NoKV {
 		if kv, err := fitKVDeferralAt(clean, func(st MixtureStep) float64 {
 			return st.Rate / float64(len(shares)) * m.service(st.xbar(), st.promptMean())

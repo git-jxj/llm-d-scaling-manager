@@ -45,6 +45,7 @@ func fitRankMixtureNL(fit *inputsEntry, fitIdx []int, step time.Duration, slots 
 	rq := reportOf(m, whatif.RankMixtureFit{Steps: diag.Steps, ShareCV: diag.ShareCV, FitP90: diag.FitP90}, slots, even, backlog)
 	r := &rq.report
 	r.Model, r.Law, r.B, r.CleanSteps, r.FitMean = string(whatif.QueueRankMixtureNL), string(m.Law), m.B, diag.CleanSteps, diag.FitMean
+	r.SpreadDefaulted = diag.Span < whatif.MinSpreadFitWindow
 	if math.IsInf(m.V, 1) {
 		// No term linear in the computed tokens: the attention term holds
 		// them all. JSON has no infinity; 0 reads as none.
@@ -83,6 +84,9 @@ func (rq *rankMixtureQ) identifiedNL() *rankMixtureQ {
 	}
 	if r.Slots <= 0 {
 		why = append(why, "the prefill engine's max-num-seqs not read")
+	}
+	if r.SpreadDefaulted {
+		why = append(why, fmt.Sprintf("fit window under %s: too short for its own checks", whatif.MinSpreadFitWindow))
 	}
 	if !(r.FitMean >= whatif.MinNLFitMean && r.FitMean <= whatif.MaxNLFitMean) {
 		why = append(why, fmt.Sprintf("the fit window's own mean not priced (median ratio %.3g, outside %g-%g)",

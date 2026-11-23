@@ -12,20 +12,26 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
-// The non-linear variant fits where v2 abstains for its calibration (a 2 h
-// fit window): its Z is measured part by part at spread 1, A0 is the sum of
-// the parts' non-negative intercepts, and the report names the law and the
-// parts. Without the request the answer carries none of it.
+// The non-linear variant's Z is measured part by part at spread 1, A0 is the
+// sum of the parts' non-negative intercepts, and the report names the law
+// and the parts; v2's report gains none of it. On a fit window under 12 h
+// it abstains, as v2 does, for its own reason.
 func TestBacktest_RankMixtureNLFits(t *testing.T) {
 	r := &stubResolver{}
-	fit := rmFit(t, r, 480)
+	short := rmFit(t, r, 480)
+	ts0, tl0 := btSeries(240, 0, 1)
+	test0 := btEntry(t, r, "test0", ts0, tl0, btConfig("H100"))
+	test0.mixture = btMixture(ts0)
+	sh := btRun(t, short, test0, BacktestRequest{TTFTModel: string(whatif.QueueRankMixtureNL), PrefillSlots: 4})
+	require.NotNil(t, sh.RankMixture)
+	assert.Contains(t, sh.RankMixture.Abstained, "too short for its own checks")
+	fit := rmFit(t, r, 3120)
 	ts, tl := btSeries(240, 0, 1)
 	test := btEntry(t, r, "test", ts, tl, btConfig("H100"))
 	test.mixture = btMixture(ts)
 
 	v2 := btRun(t, fit, test, BacktestRequest{TTFTModel: string(whatif.QueueRankMixture), PrefillSlots: 4})
 	require.NotNil(t, v2.RankMixture)
-	assert.Contains(t, v2.RankMixture.Abstained, "spread not calibrated")
 
 	out := btRun(t, fit, test, BacktestRequest{TTFTModel: string(whatif.QueueRankMixtureNL), PrefillSlots: 4})
 	require.NotNil(t, out.RankMixture)
@@ -36,7 +42,7 @@ func TestBacktest_RankMixtureNLFits(t *testing.T) {
 	assert.GreaterOrEqual(t, rm.A0, 0.0)
 	assert.InDelta(t, rm.ZParts.OverheadA+rm.ZParts.DecodeA+rm.ZParts.RemainderA, rm.A0, 1e-12)
 	assert.Equal(t, 1.0, rm.Spread)
-	assert.NotContains(t, rm.Abstained, "spread")
+	assert.NotContains(t, rm.Abstained, "too short")
 	assert.Positive(t, rm.FitMean)
 	assert.Contains(t, strings.Join(out.Assumed, "; "), string(whatif.QueueRankMixtureNL))
 	b, err := json.Marshal(v2.RankMixture)
@@ -80,6 +86,9 @@ func TestRankMixtureNL_Identified(t *testing.T) {
 	nan := ok()
 	nan.report.FitP90 = 0
 	assert.Contains(t, nan.identifiedNL().report.Abstained, "own p90 not priced")
+	brief := ok()
+	brief.report.SpreadDefaulted = true
+	assert.Contains(t, brief.identifiedNL().report.Abstained, "too short")
 	k := ok()
 	k.report.Slots = 0
 	assert.Contains(t, k.identifiedNL().report.Abstained, "max-num-seqs not read")
