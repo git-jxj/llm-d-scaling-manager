@@ -544,7 +544,8 @@ function btUnresolved(bt) {
 function btBucketTip(bt) {
   const u = btUnresolved(bt), keys = Object.keys(u);
   if (!keys.length) return "";
-  const k = keys[0], b = u[k], [key, stat] = k.split("-");
+  // A statistic the charts draw first (p90, then the mean), then any other.
+  const k = keys.find(x => x.endsWith("-p90")) || keys.find(x => x.endsWith("-mean")) || keys[0], b = u[k], [key, stat] = k.split("-");
   return `${key.toUpperCase()} ${stat} was measured inside one histogram bucket, ${btFmt(b.lo)} to ${btFmt(b.hi)}, too wide to score it. ` +
     "Finer histogram edges measure it: see docs/guides/capacity-planner/read-the-answer.md, \"A figure the histogram cannot place\".";
 }

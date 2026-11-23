@@ -983,7 +983,7 @@ async function plan() {
       }
       writeLink();
       clearInterval(ticker);
-      const what = out.answer ? `${fleetPlain(out.answer.fleet)}` : `no fleet within the bound (${out.unmet.refused.reason})`;
+      const what = out.answer ? `${fleetPlain(out.answer.fleet)}` : `no fleet within the bound (${plainReasonWord(out.unmet.refused)})`;
       setStatus(`Sized ${fmtRate(out.rate)} in ${((performance.now() - t0) / 1000).toFixed(1)} s: ${what}; ` +
         `${out.searched} fleet${out.searched === 1 ? "" : "s"} searched` + (out.answer ? ", then the plan at the answer." : "."));
       return;
@@ -1177,7 +1177,7 @@ function renderSize() {
   const shortText = short != null ? `, ${fmtRate(-short)} short` + (z.sizeOn === "low" ? " at the worst case of the uncertainty range" : "") :
     (s.headroom && s.headroom.refused ? `, refused at the worst case of the uncertainty range (${esc(s.headroom.refused.reason)})` : "");
   el("fewer").innerHTML = `<li>At the bound (${fleetText(s.fleet)}), the fleet limit: ` +
-    (lim == null ? `refused: ${esc(why(s.limit))}` : `<b>${fmtRate(lim)}</b>${shortText}`) +
+    (lim == null ? `not known: ${esc(why(s.limit))}` : `<b>${fmtRate(lim)}</b>${shortText}`) +
     (boundText(s.limit) ? ", " + esc(boundText(s.limit)) : "") + ` ${flagChips(s.limit)}</li>`;
 }
 
@@ -2520,7 +2520,8 @@ function renderBacktest() {
   svg.setAttribute("viewBox", g.viewBox);
   svg.innerHTML = g.markup;
   el("btlegend").innerHTML = btLegend();
-  el("btdesc").textContent = lines.join(" ");
+  // The charts' description is the verdict card's three lines: the method is in its own section.
+  el("btdesc").textContent = card.textContent;
   el("bttip").textContent = btBucketTip(bt);
   el("btscores").innerHTML = btScoreTable(bt);
   el("btunscored").innerHTML = btUnscoredList(bt).map(t => `<li>${esc(t)}</li>`).join("");

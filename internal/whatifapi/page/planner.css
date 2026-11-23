@@ -365,3 +365,9 @@ table { max-width: 100%; }
   .progbar { flex: 1 1 100%; }
   .chip { white-space: normal; }
 }
+/* A box never grows to an option's or a word's length: it wraps or scrolls. */
+.card, .view, .field, details { min-width: 0; max-width: 100%; }
+@media (max-width: 640px) { select { width: 100%; } }
+svg .dot.hollow.bt-within { stroke: var(--good); }
+svg .dot.hollow.bt-low { stroke: var(--critical); }
+svg .dot.hollow.bt-high { stroke: var(--warning); }
