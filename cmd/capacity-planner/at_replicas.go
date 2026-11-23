@@ -114,6 +114,11 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 		return err
 	}
 	rep.SchemaVersion = whatifapi.SchemaVersion
+	if f.rankMixtureTTFT {
+		if err := f.rankMixtureReport(ctx, rep, q); err != nil {
+			return err
+		}
+	}
 	rep.Source.Recording = f.recording
 	rep.SelfCheck = f.checked
 	rep.JudgeTrust()

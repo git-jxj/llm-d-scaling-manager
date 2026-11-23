@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
@@ -109,4 +112,26 @@ func prefillSlotsOf(res *whatifapi.Resolved) int {
 		return 1
 	}
 	return k
+}
+
+// rankMixtureReport prices rep's TTFT tables with the experimental
+// rank-mixture model (--experimental-ttft=v2), fitted on the recording read
+// again with its per-rank series, as serve's POST /v1/report does.
+func (f *answerFlags) rankMixtureReport(ctx context.Context, rep *whatifapi.ReportResponse, q whatifapi.ReportQuery) error {
+	cycle, err := f.cycleNumber()
+	if err != nil {
+		return err
+	}
+	src := &servedSources{warn: f.warn, recordings: filepath.Dir(f.recording)}
+	res, err := src.Resolve(ctx, whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.variant,
+		PrefillVPPlateau: f.vpPlateau, TTFTModel: string(whatif.QueueRankMixture),
+		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(f.recording), Cycle: cycle}})
+	if err != nil {
+		if whatifapi.IsInputError(err) {
+			return usageError{err}
+		}
+		return err
+	}
+	rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q)
+	return nil
 }
