@@ -1900,6 +1900,7 @@ longestQueuedRun
 loop
 lose
 lost
+low
 low-confirmed
 low-load
 lowHoldFor
@@ -2517,6 +2518,7 @@ promisedOnNodes
 promisedUnplaced
 prompt
 prompt-length
+prompts
 property
 provided
 provider
@@ -3072,6 +3074,7 @@ speculative_draft_model_path
 speculative_eagle_topk
 speculative_num_draft_tokens
 speculative_num_steps
+speed
 spend
 spends
 spent
