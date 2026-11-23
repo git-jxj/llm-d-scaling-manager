@@ -78,12 +78,18 @@ func priceCurves(ctx context.Context, fl Fleet, tpotAsked, prefillRole bool) (*c
 		cs.tpotFloor = noFloor(cs.decodeKnee)
 		return cs, nil
 	}
-	for _, rate := range grid(cs.lowerKnee) {
+	// The experimental TTFT model may draw past a prefill knee that is only
+	// a lower bound, up to the load the fleet served (curveCap).
+	span := cs.lowerKnee
+	if x, ok := fl.(interface{ curveEnd() float64 }); ok {
+		span = max(span, x.curveEnd())
+	}
+	for _, rate := range grid(span) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		t := fl.TTFTAt(rate)
-		cs.ttft = append(cs.ttft, Point{Rate: rate, Figure: figureOf(t, unitSeconds, true)})
+		cs.ttft = append(cs.ttft, Point{Rate: rate, Figure: markExtrapolated(fl, rate, figureOf(t, unitSeconds, true))})
 		if v, ok := t.(whatif.TTFT); ok && cs.ttftFloor.Value == nil {
 			cs.ttftFloor = Figure{Value: ptr(v.Floor), Unit: unitSeconds, Flags: FlagNames(v.Flags)}
 		}
@@ -320,6 +326,10 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The experimental TTFT model, where the source was resolved with one,
+	// prices the TTFT curve and point A; every other figure is the
+	// planner's.
+	fl = p.e.ttftModel.fleet(fl, k)
 	cs, err := p.curves(ctx, k, fl)
 	if err != nil {
 		return nil, err
@@ -342,9 +352,10 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 
 	out := &PlanResponse{SchemaVersion: SchemaVersion, WhatifSchema: p.s.whatifSchema, InputsID: p.e.id, Banner: banner, Scenario: sc}
 	markers := cs.markers(sc.Headroom)
-	out.TTFT = TTFTView{Statistic: sc.TTFT.Statistic, Markers: p.markers("ttft.markers", markers)}
+	out.TTFT = TTFTView{Statistic: sc.TTFT.Statistic, Markers: p.markers("ttft.markers", markers), Model: p.e.ttftModel.view(fl, k)}
 	at, notes := fl.TTFTPoint(rate)
 	out.TTFT.Line = p.line("ttft.line", Line{Bucket: SemanticsMix, Semantics: SemanticsMix, Target: sc.TTFT.Target}, cs, at, ls.Prefill, rate)
+	out.TTFT.Line.AtRate.Figure = markExtrapolated(fl, rate, out.TTFT.Line.AtRate.Figure)
 
 	if sc.TPOT != nil {
 		mean, pct := fl.TPOTAt(rate)

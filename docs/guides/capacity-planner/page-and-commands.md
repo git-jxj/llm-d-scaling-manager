@@ -288,11 +288,16 @@ bin/capacity-planner serve --recordings ./recordings --experimental-ttft=v2 --ex
 In a cluster, add both to the StatefulSet's `args`
 ([in-cluster](in-cluster.md#or-show-the-experimental-v2-models-on-the-page)).
 
-- **What they change.** Only checks (`POST /v1/backtest`, the page's
-  "Check the planner"). A request that names no model is priced as if it
+- **What they change.** Checks (`POST /v1/backtest`, the page's
+  "Check the planner"): a request that names no model is priced as if it
   asked for `ttftModel` `rank-mixture` and `tpotModel` `renewal-lognormal`
-  ([API](api.md#the-backtest)); one that names a model keeps it. Plans,
-  sizes, day plans and predictions are the default's. `=v2` does not turn
+  ([API](api.md#the-backtest)); one that names a model keeps it. With
+  `--experimental-ttft=v2` the main view's TTFT too: the model is fitted on
+  the loaded source, and where it is identified it draws the TTFT curve,
+  point A and the report's TTFT tables, also where the planner refuses
+  them (a prefill that never queued). See
+  [The v2 TTFT curve](#the-v2-ttft-curve). Day plans and predictions are the
+  default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
@@ -306,6 +311,32 @@ In a cluster, add both to the StatefulSet's `args`
 - **What it costs.** Every source the server loads is read once more for
   each model, so loading is slower.
 - Without the flags, the server's answers are the default's, byte for byte.
+
+#### The v2 TTFT curve
+
+- **Where it is drawn.** Up to the planner's own lower knee, never to the
+  knee the model would read from its fitted prefill service rate: that one
+  read 1.06 to 1.56 times the measured capacity on lab recordings. Where
+  the prefill knee is only a lower bound and the fleet served more than it,
+  the curve runs on to the highest load served, since the fleet served it.
+- **Solid, then dashed.** Solid up to the highest load the source served;
+  dashed beyond it, labelled "extrapolated (beyond the highest load
+  measured)". Where the prefill knee is only a lower bound, or refused, the
+  caption adds that the curve's right end is an estimate from the fitted
+  prefill service rate.
+- **The evidence.** The caption names the "Experimental TTFT model" and,
+  where the source holds enough, its score on the source's own held-out
+  folds: "held-out steps: N of M within 20%", for the mean.
+- **Where it is not used.** A stated request shape, a stated prefill term
+  (V_P, a, prompt spread, router hop) or a stated arrival burstiness: the
+  model prices the source's own traffic, and the planner's TTFT stands. The
+  same where it abstains (under 12 h of source, prompts that did not
+  spread, the ranks' own rates or max-num-seqs not recorded).
+- **Other fleets.** At another prefill count each replica's ranks take the
+  recorded share profile at the rate per replica.
+- **The CLI.** `at-replicas --experimental-ttft=v2` prices its tables' TTFT
+  the same way, from a `--recording`. Its verdict and summary cells stay
+  the planner's own.
 
 ## Find the fleet a rate needs
 
