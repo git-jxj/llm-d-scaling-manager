@@ -1,0 +1,54 @@
+name: kubectl-install
+
+install:
+  download:
+    note: The manifest and its signature. Pick the release you install.
+    run: |
+      V=<release, v0.13.0 or later>
+      URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
+      curl -fsSLO $URL/scaling-manager.yaml && curl -fsSLO $URL/scaling-manager.yaml.sigstore.json
+      cosign verify-blob scaling-manager.yaml --bundle scaling-manager.yaml.sigstore.json \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/$V"
+  kedans:
+    note: Only when KEDA does not run in namespace keda. The file header gives the same edit. Repeat it on every upgrade.
+    run: |
+      KEDA_NS=<the namespace KEDA runs in>
+      sed -i -e "s/^\(  *namespace: \)keda\$/\1$KEDA_NS/" \
+        -e "s/kubernetes.io\/metadata.name: keda\$/kubernetes.io\/metadata.name: $KEDA_NS/" \
+        -e "s/--keda-namespace=keda\$/--keda-namespace=$KEDA_NS/" scaling-manager.yaml
+  manifest:
+    note: Command 1. The namespace, the RBAC, the controller and KEDA's side.
+    run: |
+      kubectl apply --server-side -f scaling-manager.yaml
+  settings:
+    note: Command 2. Write settings.yaml as shown above, then apply it.
+    run: |
+      kubectl apply --server-side -f settings.yaml
+  label:
+    note: Command 3. Opt a namespace in. The selector in the settings must admit it too.
+    run: |
+      kubectl label namespace <model namespace> scaling-manager.llmd.ai/managed=true
+
+check:
+  ready:
+    note: ok once every check passes; a failing check's key says what to fix.
+    run: |
+      kubectl get configmap scaling-manager-controller-status -n scaling-manager-system \
+        -o jsonpath='{.data.ready}{"\n"}{.data.namespacesManaged}{"\n"}{.data.namespacesRefused}{"\n"}{.data.scalerTLS}{"\n"}'
+  checks:
+    note: Each preflight check, and the Events when one changes.
+    run: |
+      kubectl get configmap scaling-manager-controller-status -n scaling-manager-system -o json \
+        | jq -r '.data | to_entries[] | select(.key | startswith("preflight.")) | "\(.key) \(.value)"'
+      kubectl get events -n scaling-manager-system --field-selector involvedObject.name=scaling-manager-controller-status
+
+uninstall:
+  all:
+    note: Removes everything this install made, then checks nothing is left.
+    run: |
+      I=app.kubernetes.io/instance=scaling-manager-system
+      kubectl delete scaledobject -A -l "$I,app.kubernetes.io/managed-by=llm-d-scaling-manager"
+      kubectl label namespace -l scaling-manager.llmd.ai/managed=true scaling-manager.llmd.ai/managed-
+      kubectl delete -f scaling-manager.yaml
+      kubectl get clusterrole,clusterrolebinding,clustertriggerauthentication -l "$I"
