@@ -1794,6 +1794,7 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestLoneRate_BusyMinutesWin"},
 		{"../../../signals/prefill", "TestLoneRate_ADataParallelRowCountsItsRanks"},
 		{"../../../signals/prefill", "TestLoneRate_AnAgedServedPeakStillBounds"},
+		{"../../../signals/prefill", "TestLoneRate_RaisesALowerBoundToTheLargerOfTheTwo"},
 		{"../saturation", "TestPrefillVPLoneRate_ThroughAnalyze"},
 	},
 	// The first holds it off from the constructor; the others run it on and

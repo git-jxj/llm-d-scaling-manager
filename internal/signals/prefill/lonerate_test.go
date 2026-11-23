@@ -134,6 +134,32 @@ func TestLoneRate_BusyMinutesWin(t *testing.T) {
 	assert.Equal(t, 22000.0, est.VP)
 }
 
+// A lower bound, a peak under a queue with no busy minutes read, is raised to
+// a lone rate that is V_P, and a lower bound above it, within
+// LoneServedTolerance, is kept: the larger of the two, not a bound. Off, the
+// peak under a queue stays a lower bound.
+func TestLoneRate_RaisesALowerBoundToTheLargerOfTheTwo(t *testing.T) {
+	at := func(on bool, peak float64) Estimate {
+		rows := append(repeat(12, atOccupancy(1000, 20000, 0.1, 1)), repeat(PeakRun, queued("p-0", peak, 3))...)
+		return run(NewObserver(), loneCycles(on, rows...)...)
+	}
+	under := at(true, 19000)
+	require.Equal(t, SourceLoneRate, under.VPSource, "%+v", under)
+	assert.InDelta(t, 20000.0, under.VP, 1e-6)
+	assert.False(t, under.VPLowerBound)
+	assert.Empty(t, under.VPLowerBoundReason)
+
+	over := at(true, 21500)
+	require.Equal(t, SourceLoneRate, over.VPSource, "%+v", over)
+	assert.InDelta(t, 21500.0, over.VP, 1e-6, "the larger of the two")
+	assert.False(t, over.VPLowerBound)
+
+	off := at(false, 19000)
+	assert.Equal(t, SourcePeakUnderQueue, off.VPSource)
+	assert.True(t, off.VPLowerBound)
+	assert.InDelta(t, 19000.0, off.VP, 1e-6)
+}
+
 // A row of four engines computes four lone requests at once: its lone rate
 // is four engines' speed, V_P being a row's.
 func TestLoneRate_ADataParallelRowCountsItsRanks(t *testing.T) {
