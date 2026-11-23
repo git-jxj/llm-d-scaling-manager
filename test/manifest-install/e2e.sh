@@ -232,6 +232,24 @@ kubectl apply -n "$MODEL_NS" -f scaling-manager-grants.yaml -l scaling-manager.l
 [ "$(can patch disaggregatedsets.disaggregatedset.x-k8s.io)" = yes ] || fail grants "the controller may not patch disaggregatedsets after its grant"
 pass "grants: patch on pods and on disaggregatedsets in $MODEL_NS only after each labelled grant is applied there"
 
+# --- 6b2. the optional label guard -------------------------------------------
+
+cp "$DIST/scaling-manager-label-guard.yaml" .
+kubectl apply --server-side -f scaling-manager-label-guard.yaml > "$LOGS/guard.log" 2>&1 || { cat "$LOGS/guard.log"; fail guard "applying the label guard"; }
+GUARD_NS=scaling-manager-e2e-guard
+kubectl create namespace "$GUARD_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+# A tenant who may edit namespaces, but is no admin.
+kubectl create clusterrole scaling-manager-e2e-tenant --verb=get,list,patch,update --resource=namespaces --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl create clusterrolebinding scaling-manager-e2e-tenant --clusterrole=scaling-manager-e2e-tenant --user=e2e-tenant --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+denied() { ! kubectl label namespace "$GUARD_NS" "$LABEL=true" --as=e2e-tenant > "$LOGS/guard-tenant.log" 2>&1 && grep -q "only a cluster admin" "$LOGS/guard-tenant.log"; }
+# The policy takes a few seconds to reach the API server's admission.
+wait_for 60 "the guard denies the tenant" denied || fail guard "the tenant labelled $GUARD_NS: $(cat "$LOGS/guard-tenant.log")"
+kubectl label namespace "$GUARD_NS" e2e.example/other=x --as=e2e-tenant >/dev/null 2>&1 || fail guard "the guard denied the tenant another label"
+kubectl label namespace "$GUARD_NS" "$LABEL=true" >/dev/null || fail guard "the guard denied the admin"
+kubectl delete namespace "$GUARD_NS" --wait=false >/dev/null
+kubectl delete clusterrolebinding,clusterrole scaling-manager-e2e-tenant --ignore-not-found >/dev/null
+pass "label guard: a tenant who may edit namespaces cannot set $LABEL (other labels yes); the admin can"
+
 # --- 6c. the suggested ScaledObjects, reviewed and applied -------------------
 
 PROBE=plan-probe-decode
@@ -298,6 +316,7 @@ fi
 {
     kubectl delete scaledobject -A -l "$INSTANCE,app.kubernetes.io/managed-by=llm-d-scaling-manager" --ignore-not-found
     kubectl delete rolebinding,role,podmonitor -A -l "$INSTANCE" --ignore-not-found
+    kubectl delete validatingadmissionpolicybinding,validatingadmissionpolicy -l "$INSTANCE" --ignore-not-found
     kubectl label namespace -l "$LABEL=true" "$LABEL-" "$ADMIT-"
     kubectl delete -f "$M" --ignore-not-found --wait=true --timeout=300s
 } > "$LOGS/uninstall.log" 2>&1 || { cat "$LOGS/uninstall.log"; fail uninstall "a delete failed"; }

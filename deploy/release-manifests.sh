@@ -68,6 +68,7 @@ RELEASE_FILES=(
     scaling-manager.yaml
     scaling-manager-grants.yaml
     scaling-manager-monitoring.yaml
+    scaling-manager-label-guard.yaml
 )
 
 # The files no end-to-end test installs yet. Each says so in its header;
@@ -354,6 +355,17 @@ grant_label() { G="$1" yq 'del(.metadata.namespace) | .metadata.labels["scaling-
   | write scaling-manager-monitoring.yaml \
       "The one manifest's model-server monitoring, for a namespace nothing scrapes yet (llm-d's monitoring components scrape the same port): a PodMonitor on port modelserver." \
       "kubectl apply -n <namespace> -f scaling-manager-monitoring.yaml -l scaling-manager.llmd.ai/monitor=modelserver"
+
+# scaling-manager-label-guard.yaml: optional, only an admin may set the
+# opt-in label on a namespace (a ValidatingAdmissionPolicy and its binding).
+{
+    release_source label-guard-validatingadmissionpolicy
+    echo '---'
+    release_source label-guard-validatingadmissionpolicybinding
+} | label "$CLUSTER_NS" \
+  | write scaling-manager-label-guard.yaml \
+      "Optional, with the one manifest: only members of system:masters may set, change or remove a namespace's scaling-manager.llmd.ai/managed label. Kubernetes 1.30 or later. Edit the group in the policy's expression for another admin group." \
+      "kubectl apply --server-side -f scaling-manager-label-guard.yaml"
 
 NSRAW="$WORK/ns-kubernetes.yaml"
 

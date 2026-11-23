@@ -73,7 +73,7 @@ DSETW_FILES="scaling-manager-dset-role-writer.yaml scaling-manager-dset-role-wri
 # The one manifest and its grants and monitoring files (proposal PR #404)
 # have rules of their own, which hack/check-manifest-install.sh asserts; here
 # they are only listed in SHA256SUMS and signed.
-MANIFEST_FILE="scaling-manager.yaml scaling-manager-grants.yaml scaling-manager-monitoring.yaml"
+MANIFEST_FILE="scaling-manager.yaml scaling-manager-grants.yaml scaling-manager-monitoring.yaml scaling-manager-label-guard.yaml"
 ALL_FILES="$MAIN_FILES scaling-manager-settings.yaml scaling-manager-model-namespace.yaml scaling-manager-activate.yaml scaling-manager-keda-auth.yaml scaling-manager-scaler-tls.yaml scaling-manager-kueue.yaml scaling-manager-alerts.yaml scaling-manager-policy-example.yaml scaling-manager-metrics-reader.yaml scaling-manager-preflight.yaml scaling-manager-preflight-cluster.yaml $DSETW_FILES"
 
 render() {

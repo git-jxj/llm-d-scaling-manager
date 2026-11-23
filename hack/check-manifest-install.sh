@@ -112,7 +112,7 @@ check() {
     # nothing names a namespace; selected by a label each; found by the
     # uninstall's instance selector.
     local g gj
-    for g in scaling-manager-grants.yaml scaling-manager-monitoring.yaml; do
+    for g in scaling-manager-grants.yaml scaling-manager-monitoring.yaml scaling-manager-label-guard.yaml; do
         gj="$WORK/$g.json"
         [ -s "$d/$g" ] || { say "$g was not written"; continue; }
         grep -q "  $g\$" "$d/SHA256SUMS" || say "SHA256SUMS does not list $g"
@@ -224,6 +224,8 @@ mutate grant-wider "more than patch on pods" \
     '(select(.kind == "Role" and .metadata.labels["scaling-manager.llmd.ai/grant"] == "pod-writer") | .rules[0].verbs) += ["delete"]' scaling-manager-grants.yaml
 mutate grant-other-subject "another subject" \
     '(select(.kind == "RoleBinding" and .metadata.labels["scaling-manager.llmd.ai/grant"] == "pod-writer") | .subjects[0].namespace) = "team-a"' scaling-manager-grants.yaml
+mutate guard-unselected "does not select" \
+    'del(select(.kind == "ValidatingAdmissionPolicyBinding") | .metadata.labels["app.kubernetes.io/instance"])' scaling-manager-label-guard.yaml
 mutate monitor-unselected "does not select" \
     'del(select(.kind == "PodMonitor") | .metadata.labels["app.kubernetes.io/instance"])' scaling-manager-monitoring.yaml
 
