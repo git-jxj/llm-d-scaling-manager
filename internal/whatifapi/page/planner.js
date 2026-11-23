@@ -222,7 +222,8 @@ function flagChips(f) {
   const flags = (f && f.flags) || [];
   const shown = flags.filter(n => SHOWN_FLAGS.has(n)), rest = flags.filter(n => !SHOWN_FLAGS.has(n) && n !== "UnvalidatedTTFT");
   return shown.map(n => `<span class="chip flagged" title="${esc((FLAG_WORDS[n] || [n])[0])}">${esc(n)}</span>`).join(" ") +
-    (rest.length ? ` <span class="chip" title="${esc(rest.join(", "))}">+${rest.length} more flags</span>` : "");
+    // The rest are in the Flags drawer: no "+N more" chip beside a figure.
+    "";
 }
 
 // setStatus writes the status line, which a screen reader announces. While
@@ -1264,7 +1265,8 @@ function renderAtTarget() {
   if (state.k.ttftDefault) set.push(`TTFT ${PAGE_TTFT.statistic} ${fmtSec(PAGE_TTFT.seconds)}`);
   if (state.k.tpotDefault) set.push(`TPOT ${PAGE_TPOT.statistic} ${fmtSec(PAGE_TPOT.seconds)}`);
   el("pagetargets").textContent = set.length ? `Targets set by the page, not the policy: ${set.join(", ")}. Set your own above.` : "";
-  el("pagetargets").hidden = !set.length;
+  // The answer panel's SLO line says it once; the controls prompt for yours.
+  el("pagetargets").hidden = true;
   const ratio = p.tpot && p.tpot.ratio;
   let note = "";
   if (ratio && ratio.refused) note = "R_q is not learned (" + ratio.refused.reason + "): type a ratio, or pick the mean.";
@@ -1295,9 +1297,16 @@ function bindsWithoutHeadroom(L) {
 function renderLimits() {
   const p = state.plan, L = p.limits, f = L.fleet;
   const fv = val(f);
-  el("fleet").textContent = fv != null ? fmtRate(fv) : "not known";
+  // With no fleet limit the hero says what is known, never "not known":
+  // the TTFT floor over its target, or what decode allows alone.
+  const floor = val(p.ttft.line.floor), dv = val(L.decode);
+  const floorOver = floor != null && floor > p.ttft.line.target;
+  el("fleet").textContent = fv != null ? fmtRate(fv) : floorOver ? "TTFT target unmet" : dv != null ? `decode ${fmtRate(dv)}` : "prefill unmeasured";
   const notes = [];
-  if (fv == null) notes.push(f.refused ? plainReasonWord(f.refused) + (f.refused.reason === "NoPrefillCapacity" ? ": see the card above" : "") : "not estimated");
+  if (fv == null) {
+    notes.push(floorOver ? `the TTFT floor, ${fmtSec(floor)}, is above the ${fmtSec(p.ttft.line.target)} target at every rate` :
+      dv != null ? "what decode carries alone; prefill's limit is not measured (see the answer panel)" : plainReasonWord(f.refused));
+  }
   if (f.capApplied) {
     notes.push(`held to the safe load, ${Math.round(100 * p.scenario.headroom)}% of the limit; without that margin: ${figPlain(f.withoutHeadroom, fmtRate)}` +
       (bindsWithoutHeadroom(L) ? `, where ${bindsWithoutHeadroom(L)} binds` : ""));
@@ -1491,10 +1500,11 @@ function renderTTFT() {
   const rate = p.limits.chosen.rate;
   const xmax = Math.max(knee != null ? knee * 1.2 : 10, rate * 1.1, pinXmax());
   el("ttfttitle").textContent = `TTFT ${t.statistic} against the request rate`;
-  el("ttftcap").textContent = (buckets.length ? BUCKET_NOTE : "One line for the mix; its filled circle is the prefill limit.") +
-    (t.model ? " " + ttftModelNote(t.model) : "");
+  // A short caption: the model's label and evidence; what is dashed is in
+  // the legend, and the rest of the model's note in the Flags drawer.
+  el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : (t.model ? ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) : "");
   chart(el("ttftchart"), {W: 640, H: 340, xmax, ymax, series, target: t.line.target, belowFloor, floor: belowFloor ? floor : null,
-    rate, dots, markers, knee, kneeLB: pkLB && knee === val(m.prefillKnee), onset, pinTarget, clip: "clip-ttft"});
+    rate, dots, markers, knee, kneeLB: pkLB && knee === val(m.prefillKnee), onset, pinTarget, clip: "clip-ttft", ytitle: `TTFT ${t.statistic}`});
   el("ttftlegend").innerHTML = legend(series, onset != null);
   el("ttftpoints").innerHTML =
     `<div>Open circle, the TTFT at your rate: <b>${figText(t.line.atRate.figure, fmtSec)}${dagger(t.line.atRate.figure)}</b> ${flagChips(t.line.atRate.figure)}</div>` +
@@ -1539,7 +1549,7 @@ function renderTPOT() {
   el("tpottitle").textContent = `TPOT ${t.statistic} against the request rate`;
   chart(el("tpotchart"), {W: 460, H: 340, xmax, ymax, series, target: t.target, belowFloor, floor: belowFloor ? floor : null,
     rate, dots, markers, knee: lk, kneeLB: kneeLowerBound(p.ttft.markers.prefillKnee) && lk === val(p.ttft.markers.prefillKnee),
-    pinTarget, clip: "clip-tpot"});
+    pinTarget, clip: "clip-tpot", ytitle: `TPOT ${t.statistic}`});
   el("tpotlegend").innerHTML = legend(series, false);
   const u = t.atTarget.rate.uncapped;
   el("tpotpoints").innerHTML =
@@ -1586,7 +1596,7 @@ function chart(svg, o) {
     s += `<text x="${X(v)}" y="${T + ph + 16}" text-anchor="middle">${fmtNum(v)}</text>`;
   }
   s += `<text x="${L + pw / 2}" y="${H - 4}" text-anchor="middle">request rate, r/s</text>` +
-    `<text x="12" y="${T + ph / 2}" transform="rotate(-90 12 ${T + ph / 2})" text-anchor="middle">${yms ? "ms" : "s"}</text>`;
+    `<text x="12" y="${T + ph / 2}" transform="rotate(-90 12 ${T + ph / 2})" text-anchor="middle">${esc(o.ytitle || "")} (${yms ? "ms" : "s"})</text>`;
   // The knees and the cap, labelled along the top, staggered when close.
   // A label is staggered up a row when it would touch the one before it,
   // whose half width is about 3.3 px a character at the chart's font.
@@ -1614,6 +1624,15 @@ function chart(svg, o) {
       };
       for (const q of sr.pts) (q.y != null && q.lo != null && q.hi != null) ? run.push(q) : flush();
       flush();
+    }
+  }
+  // Where a line leaves the plot at the top, a marker says so: the curve
+  // goes on above the axis.
+  for (const sr of o.series) {
+    const out = (sr.pts || []).find(q => q.y != null && q.y > o.ymax && q.x <= o.xmax);
+    if (out) {
+      s += `<text class="offaxis" x="${X(out.x).toFixed(1)}" y="${T + 10}" text-anchor="middle">&#9650;` +
+        `<title>${esc(sr.name || "")}: above the axis from ${esc(fmtRate(out.x))}</title></text>`;
     }
   }
   for (const sr of o.series.slice().reverse()) {
@@ -2845,9 +2864,18 @@ function renderReport(r) {
     li.appendChild(shapeLabel(s));
     if (s.whatIf) li.appendChild(textNode("span", " if all traffic were this shape", "rwhatif"));
     if (s.decodeOnly) li.appendChild(textNode("span", "decode only", "rmark unknown rscope"));
-    li.appendChild(textNode("b", " " + s.verdict + ": "));
+    // NOT JUDGED reads as plain words, with what to do as a page action.
+    const notJudged = s.verdict === "NOT JUDGED";
+    li.appendChild(textNode("b", " " + (notJudged ? "Not judged yet" : s.verdict) + ": "));
     if (s.needs) li.appendChild(textNode("span", s.needs, s.unmet ? "rneeds unmet" : "rneeds"));
-    li.appendChild(textNode("span", " " + s.rest, "rverdict"));
+    li.appendChild(textNode("span", " " + (notJudged ? plainVerdict(s.rest) + "." : s.rest), "rverdict"));
+    const card = notJudged ? refusalView(state.plan) : null;
+    if (card && card.vp != null) {
+      const b = textNode("button", `Use ${Math.round(card.vp).toLocaleString("en-US")} tokens/s as prefill's limit, then judge again`, "execact");
+      b.type = "button";
+      b.onclick = () => useVP(card.vp);
+      li.appendChild(b);
+    }
     if (s.trust) li.appendChild(textNode("div", "Self-check: " + s.trust + ".", "rtrust"));
     // Growth sits under the verdict it grows from, never in its place.
     for (const g of s.growth) {

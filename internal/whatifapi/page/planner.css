@@ -120,7 +120,7 @@ input[type=number] { width: 80px; font-variant-numeric: tabular-nums; }
 .view { padding-top: 12px; }
 .view > .card + .card, .view > .card + details, .view > details + details { margin-top: 12px; }
 .whatif { font-size: 15px; grid-column: 1 / -1; margin: 0; }
-.notice { font-size: 13px; color: var(--text-secondary); margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--warning); background: var(--surface-1); }
+.notice { font-size: 13px; color: var(--text-secondary); margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--surface-1); }
 .summary { display: grid; grid-template-columns: 280px 1fr; gap: 20px; align-items: start; }
 .hero .k { font-size: 12px; color: var(--text-secondary); }
 .hero .v { font-size: 32px; font-weight: 600; line-height: 1.15; margin: 2px 0 4px; font-variant-numeric: tabular-nums; }
@@ -178,7 +178,7 @@ svg .line.extrap { stroke-dasharray: 6 4; }
 #buckettable { overflow-x: auto; }
 svg .guide.pin { stroke: var(--muted); stroke-dasharray: 2 4; }
 .c-pre { stroke: var(--series-1); fill: var(--series-1); }
-.c-dec { stroke: var(--series-2); fill: var(--series-2); }
+.c-dec { stroke: var(--series-5); fill: var(--series-5); }
 svg .line.c-mix, svg .line.c-0, svg .line.c-1, svg .line.c-2, svg .line.c-3, svg .line.c-4 { fill: none; }
 svg .ptA { fill: var(--surface-1); stroke-width: 2; }
 svg .ptB { stroke: var(--surface-1); stroke-width: 2; }
@@ -371,3 +371,5 @@ table { max-width: 100%; }
 svg .dot.hollow.bt-within { stroke: var(--good); }
 svg .dot.hollow.bt-low { stroke: var(--critical); }
 svg .dot.hollow.bt-high { stroke: var(--warning); }
+svg .offaxis { fill: var(--text-secondary); font-size: 10px; }
+.execact { margin: 4px 6px 0 0; }

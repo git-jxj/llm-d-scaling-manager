@@ -354,7 +354,12 @@ function dayTipHTML(plan, b) {
 // dayRefusedHTML is the plan's refusals, each in words: what the source
 // could not price, what to do, and what the plan did instead.
 function dayRefusedHTML(plan) {
-  return (plan.refused || []).map(r => `<li><b>${esc(DAY_TERMS[r.term] || r.term)} refused (${esc(r.reason)}), ${r.buckets} bucket(s).</b> ` +
+  // An unknown prefill capacity reads as the answer view's card does; the
+  // code stays in small type.
+  return (plan.refused || []).map(r => r.reason === "NoPrefillCapacity" ?
+    `<li><b>Prefill capacity unknown, ${r.buckets} bucket(s).</b> ${esc(noPrefillWords({reason: r.reason, detail: r.detail, flags: /only the rate a prefill pod/.test(r.detail) ? ["VPLowerBound"] : []}))} ` +
+      `Decode is sized alone. <span class="hint">${esc(r.reason)}</span></li>` :
+    `<li><b>${esc(DAY_TERMS[r.term] || r.term)} refused (${esc(r.reason)}), ${r.buckets} bucket(s).</b> ` +
     `${esc(r.detail)}. ${esc(r.effect)} <span class="hint">${esc(r.hint)}</span></li>`).join("");
 }
 
@@ -457,7 +462,17 @@ function dayHeadline(plan) {
   const had = peak.actual ? `; it ran ${peak.actual.prefill} + ${peak.actual.decode}` : "";
   const under = (plan.summary.underHours || []).length;
   return `Peak needed ${need} at ${dayClock(dayTime(peak.start), days)} UTC (${dayFmt(peak.sizedRate)} r/s)${had}. ` +
-    (under ? `${under} hour${under === 1 ? "" : "s"} missed the SLO (red).` : "No hour missed the SLO.");
+    (under ? `${under} hour${under === 1 ? "" : "s"} short of the rate (red). ` : "") + dayMeasuredLine(plan);
+}
+
+// dayMeasuredLine says how the SLO fared as measured: a plan priced on
+// decode alone says nothing of TTFT, so "no hour missed" would read the
+// unpriced prefill as holding. "" where nothing was measured.
+function dayMeasuredLine(plan) {
+  const c = plan.summary.counts;
+  if (!plan.ttft || !c.measuredTTFT) return c.prefillNotPriced ? "Prefill was not sized." : "";
+  return `Measured TTFT exceeded the ${dayFmt(plan.ttft.target)} s target in ${c.measuredTTFTOver} of ${c.measuredTTFT} intervals` +
+    (c.prefillNotPriced ? "; prefill not sized." : ".");
 }
 
 // dayHoursCSV is the hours as CSV: each hour's rate, the fleet it needed and

@@ -126,6 +126,13 @@ try {
   const dayPlan = JSON.parse(fs.readFileSync("cmd/capacity-planner/testdata/day-plan-ols-sweep-json.golden", "utf8"));
   check("the day plan's headline names the peak and when", /^Peak needed .* at \S+ UTC \([0-9.]+ r\/s\)/.test(ctx.dayHeadline(dayPlan)), ctx.dayHeadline(dayPlan));
 
+  // A plan sized on decode alone never reads as holding the SLO: the
+  // headline counts the intervals whose TTFT was measured over its target.
+  const decodeOnly = JSON.parse(fs.readFileSync("cmd/capacity-planner/testdata/day-plan-staircase-b-on-json.golden", "utf8"));
+  const dh = ctx.dayHeadline(decodeOnly);
+  check("the day plan's headline counts the measured TTFT misses", dh.includes("Measured TTFT exceeded the 0.19 s target in 16 of 16 intervals; prefill not sized."), dh);
+  check("and never says no hour missed the SLO", !/No hour missed/.test(dh), dh);
+
   // Exports: a field a spreadsheet would run is not a formula.
   check("a CSV field is quoted where it must be", csvField("a,b") === "\"a,b\"" && csvField("say \"x\"") === "\"say \"\"x\"\"\"");
   check("a CSV field is never a formula", csvField("=1+1") === "'=1+1" && csvField("-1.5") === "-1.5");
