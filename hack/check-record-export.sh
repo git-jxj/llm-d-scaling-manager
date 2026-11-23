@@ -61,7 +61,7 @@ $CHECK"
   ) > "$dir.out" 2>&1
 }
 
-PRESENT="vllm:kv_cache_usage_perc vllm:external_prefix_cache_hits_total vllm:prompt_tokens_cached_by_source_total lmcache_mp_lookup_hit_tokens_total llm_d_disagg_sidecar_prefill_duration_seconds_sum vllm:hisparse_host_hits_total vllm:hisparse_host_misses_total DCGM_FI_PROF_SM_ACTIVE"
+PRESENT="vllm:kv_cache_usage_perc vllm:external_prefix_cache_hits_total vllm:prompt_tokens_cached_by_source_total lmcache_mp_lookup_hit_tokens_total llm_d_disagg_sidecar_prefill_duration_seconds_sum vllm:hisparse_cache_hits_total vllm:hisparse_cache_misses_total DCGM_FI_PROF_SM_ACTIVE"
 
 # 1. Some cache-tier series present, the rest absent: nothing fails, every
 # CACHE_METRICS name has its two chunks, and the check names which are there.
@@ -77,7 +77,7 @@ for m in $cache; do
   have=$(ls "$TMP/ok/planner-export/${m//:/_}".*.json 2>/dev/null | wc -l)
   [ "$have" -eq 2 ] || { echo "FAIL: $m has $have of 2 chunks" >&2; fail=1; }
 done
-[ "$n" -ge 152 ] || { echo "FAIL: CACHE_METRICS holds $n names, fewer than the 152 the export list needs" >&2; fail=1; }
+[ "$n" -ge 158 ] || { echo "FAIL: CACHE_METRICS holds $n names, fewer than the 158 the export list needs" >&2; fail=1; }
 for m in vllm:external_prefix_cache_hits_total vllm:prompt_tokens_cached_by_source_total lmcache_mp_lookup_hit_tokens_total llm_d_disagg_sidecar_prefill_duration_seconds_sum vllm:hisparse_ DCGM_FI_PROF_SM_ACTIVE; do
   grep -qx "present: $m" "$out" || { echo "FAIL: the check did not report $m present" >&2; fail=1; }
 done
@@ -93,7 +93,7 @@ fi
 if ! python3 "$CONVERT" -o "$TMP/ok.om" "$TMP"/ok/planner-export/*.json 2>"$TMP/conv.err"; then
   echo "FAIL: the converter refused the export: $(cat "$TMP/conv.err")" >&2; fail=1
 else
-  for m in vllm:external_prefix_cache_hits_total lmcache_mp_lookup_hit_tokens_total vllm:hisparse_host_hits_total vllm:hisparse_host_misses_total DCGM_FI_PROF_SM_ACTIVE; do
+  for m in vllm:external_prefix_cache_hits_total lmcache_mp_lookup_hit_tokens_total vllm:hisparse_cache_hits_total vllm:hisparse_cache_misses_total DCGM_FI_PROF_SM_ACTIVE; do
     grep -q "^$m{" "$TMP/ok.om" || { echo "FAIL: $m did not reach the converted file" >&2; fail=1; }
   done
 fi

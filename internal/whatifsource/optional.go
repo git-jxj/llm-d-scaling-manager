@@ -259,6 +259,13 @@ var OptionalSeriesList = []OptionalSeries{
 	{Name: "DCGM_FI_PROF_DRAM_ACTIVE", Source: SourceDCGM, Tier: TierDiagnostic},
 	{Name: "DCGM_FI_DEV_POWER_USAGE", Source: SourceDCGM, Tier: TierDiagnostic},
 	{Name: "DCGM_FI_DEV_SM_CLOCK", Source: SourceDCGM, Tier: TierDiagnostic},
+	// The same six as the DCGM exporter names them from 4.9.0, with units.
+	{Name: "DCGM_FI_DEV_GPU_UTIL_RATIO", Source: SourceDCGM, Tier: TierDiagnostic},
+	{Name: "DCGM_FI_PROF_SM_UTIL_RATIO", Source: SourceDCGM, Tier: TierDiagnostic},
+	{Name: "DCGM_FI_PROF_TENSOR_UTIL_RATIO", Source: SourceDCGM, Tier: TierDiagnostic},
+	{Name: "DCGM_FI_PROF_DRAM_UTIL_RATIO", Source: SourceDCGM, Tier: TierDiagnostic},
+	{Name: "DCGM_FI_DEV_BOARD_POWER_WATTS", Source: SourceDCGM, Tier: TierDiagnostic},
+	{Name: "DCGM_FI_DEV_SM_CLOCK_HERTZ", Source: SourceDCGM, Tier: TierDiagnostic},
 	// vLLM: decode time and per-token latency per request, and how
 	// requests ended.
 	{Name: "vllm:request_time_per_output_token_seconds_sum", Source: SourceVLLM, Tier: TierDiagnostic},

@@ -390,7 +390,18 @@ The tiers:
 DCGM series carry the exporter's namespace in `namespace`, and the GPU's
 Pod in `exported_namespace` and `exported_pod`. The capture selects them by
 `exported_namespace`; the manual export by `DCGM_SELECTOR`, which you can
-set to select by `exported_pod` instead.
+set to select by `exported_pod` instead. That holds when Prometheus does not
+honor the exporter's labels (`honorLabels: false`, the default of the
+exporter's and the GPU Operator's ServiceMonitor). With `honorLabels: true`
+the GPU's Pod namespace stays in `namespace`: the capture then reads the
+DCGM series as absent, and the manual export needs
+`DCGM_SELECTOR="namespace='<NAMESPACE>'"`.
+
+Every DCGM series needs the exporter's Kubernetes Pod mapping, which puts
+the Pod's labels on it. The exporter renamed its fields in 4.9.0, with
+units, so each is listed under both names; a fleet exports one set.
+`DCGM_FI_PROF_SM_ACTIVE` and `DCGM_FI_PROF_SM_UTIL_RATIO` are in none of
+the counter files the exporter ships: add them to a custom one.
 
 | Series | Source and version | Produced with | Tier | Without it |
 | --- | --- | --- | --- | --- |
@@ -401,12 +412,18 @@ set to select by `exported_pod` instead.
 | `vllm:estimated_flops_per_gpu_total` | vLLM, recent builds | `--enable-mfu-metrics` | diagnostic | spare prefill compute not read |
 | `vllm:estimated_read_bytes_per_gpu_total` | vLLM, recent builds | `--enable-mfu-metrics` | diagnostic | as above |
 | `vllm:estimated_write_bytes_per_gpu_total` | vLLM, recent builds | `--enable-mfu-metrics` | diagnostic | as above |
-| `DCGM_FI_DEV_GPU_UTIL` | NVIDIA DCGM exporter | the exporter's Kubernetes Pod mapping | diagnostic | how busy the GPUs are at light load, unseen |
-| `DCGM_FI_PROF_SM_ACTIVE` | NVIDIA DCGM exporter | profiling fields enabled | diagnostic | as above |
-| `DCGM_FI_PROF_PIPE_TENSOR_ACTIVE` | NVIDIA DCGM exporter | profiling fields enabled | diagnostic | as above |
-| `DCGM_FI_PROF_DRAM_ACTIVE` | NVIDIA DCGM exporter | profiling fields enabled | diagnostic | as above |
-| `DCGM_FI_DEV_POWER_USAGE` | NVIDIA DCGM exporter | on by default | diagnostic | as above |
-| `DCGM_FI_DEV_SM_CLOCK` | NVIDIA DCGM exporter | on by default | diagnostic | as above |
+| `DCGM_FI_DEV_GPU_UTIL` | NVIDIA DCGM exporter, before 4.9.0 | on by default | diagnostic | how busy the GPUs are at light load, unseen |
+| `DCGM_FI_PROF_SM_ACTIVE` | NVIDIA DCGM exporter, before 4.9.0 | a custom counters file | diagnostic | as above |
+| `DCGM_FI_PROF_PIPE_TENSOR_ACTIVE` | NVIDIA DCGM exporter, before 4.9.0 | on by default, on GPUs with profiling fields | diagnostic | as above |
+| `DCGM_FI_PROF_DRAM_ACTIVE` | NVIDIA DCGM exporter, before 4.9.0 | on by default, on GPUs with profiling fields | diagnostic | as above |
+| `DCGM_FI_DEV_POWER_USAGE` | NVIDIA DCGM exporter, before 4.9.0 | on by default | diagnostic | as above |
+| `DCGM_FI_DEV_SM_CLOCK` | NVIDIA DCGM exporter, before 4.9.0 | on by default | diagnostic | as above |
+| `DCGM_FI_DEV_GPU_UTIL_RATIO` | NVIDIA DCGM exporter, 4.9.0 and later | on by default | diagnostic | as above |
+| `DCGM_FI_PROF_SM_UTIL_RATIO` | NVIDIA DCGM exporter, 4.9.0 and later | a custom counters file | diagnostic | as above |
+| `DCGM_FI_PROF_TENSOR_UTIL_RATIO` | NVIDIA DCGM exporter, 4.9.0 and later | on by default, on GPUs with profiling fields | diagnostic | as above |
+| `DCGM_FI_PROF_DRAM_UTIL_RATIO` | NVIDIA DCGM exporter, 4.9.0 and later | on by default, on GPUs with profiling fields | diagnostic | as above |
+| `DCGM_FI_DEV_BOARD_POWER_WATTS` | NVIDIA DCGM exporter, 4.9.0 and later | on by default | diagnostic | as above |
+| `DCGM_FI_DEV_SM_CLOCK_HERTZ` | NVIDIA DCGM exporter, 4.9.0 and later | on by default | diagnostic | as above |
 | `vllm:request_time_per_output_token_seconds_sum` | vLLM, all supported | on by default | diagnostic | the engine's mean per-token latency read from its buckets only |
 | `vllm:request_time_per_output_token_seconds_count` | vLLM, all supported | on by default | diagnostic | as above |
 | `vllm:request_decode_time_seconds_bucket` | vLLM, all supported | on by default | diagnostic | no decode time per request |
