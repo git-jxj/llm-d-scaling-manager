@@ -605,7 +605,7 @@ func podMonitorInNamespace(ctx context.Context, s *state, ns string, pods []core
 			continue
 		}
 		declared := false
-		var seen []string
+		seen := make([]string, 0, len(m.pods))
 		for _, p := range m.pods {
 			names := podPortNames(p)
 			seen = append(seen, p.Name+" ("+strings.Join(names, ", ")+")")
@@ -734,8 +734,13 @@ func podMonitorPorts(pm *unstructured.Unstructured) []string {
 // podPortNames lists a pod's container port names, init (sidecar) containers
 // included: a sidecar is discovered like any other container.
 func podPortNames(p corev1.Pod) []string {
-	var out []string
-	for _, c := range append(append([]corev1.Container(nil), p.Spec.Containers...), p.Spec.InitContainers...) {
+	containers := append(append([]corev1.Container(nil), p.Spec.Containers...), p.Spec.InitContainers...)
+	n := 0
+	for _, c := range containers {
+		n += len(c.Ports)
+	}
+	out := make([]string, 0, n)
+	for _, c := range containers {
 		for _, port := range c.Ports {
 			name := port.Name
 			if name == "" {
