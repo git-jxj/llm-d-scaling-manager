@@ -82,3 +82,58 @@ func TestEnsure_MigratesTheLegacyCA(t *testing.T) {
 		})
 	}
 }
+
+// A CA rotation after the move (the rotate command empties the new CA)
+// mints a new CA. The old Secrets an smt install left behind still hold the
+// CA being rotated away from; copying it back would undo the rotation.
+func TestEnsure_RotationAfterMigrationMints(t *testing.T) {
+	var c counter
+	objs := append(installerSecrets(t), opaquePlaceholders()...)
+	cl := newClient(t, &c, interceptor.Funcs{}, objs...)
+	if o, err := opaqueEnsurer(cl, true).Ensure(context.Background()); err != nil || len(o.Migrated) != 3 {
+		t.Fatalf("migration: %v (%v)", o, err)
+	}
+	ca := getSecret(t, cl, OpaqueNames.CA)
+	for _, k := range []string{corev1.TLSCertKey, corev1.TLSPrivateKeyKey, corev1.ServiceAccountRootCAKey} {
+		ca.Data[k] = []byte{}
+	}
+	if err := cl.Update(context.Background(), ca); err != nil {
+		t.Fatal(err)
+	}
+	o, err := opaqueEnsurer(cl, true).Ensure(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(o.Migrated) != 0 || !o.CAMinted {
+		t.Fatalf("rotation after the move: migrated %v, CAMinted %v; want a new CA", o.Migrated, o.CAMinted)
+	}
+	if bytes.Equal(getSecret(t, cl, OpaqueNames.CA).Data[corev1.TLSCertKey], readFixture(t, "ca.crt")) {
+		t.Fatal("the rotated CA is the old install's CA again")
+	}
+}
+
+// A fresh install with no earlier Secrets mints, and a later rotation mints
+// again even if an smt install's Secrets appear in between.
+func TestEnsure_MintedCANeverMigrates(t *testing.T) {
+	var c counter
+	cl := newClient(t, &c, interceptor.Funcs{}, opaquePlaceholders()...)
+	if o, err := opaqueEnsurer(cl, true).Ensure(context.Background()); err != nil || !o.CAMinted {
+		t.Fatalf("fresh install: %v (%v)", o, err)
+	}
+	for _, s := range installerSecrets(t) {
+		if err := cl.Create(context.Background(), s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ca := getSecret(t, cl, OpaqueNames.CA)
+	for _, k := range []string{corev1.TLSCertKey, corev1.TLSPrivateKeyKey, corev1.ServiceAccountRootCAKey} {
+		ca.Data[k] = []byte{}
+	}
+	if err := cl.Update(context.Background(), ca); err != nil {
+		t.Fatal(err)
+	}
+	o, err := opaqueEnsurer(cl, true).Ensure(context.Background())
+	if err != nil || len(o.Migrated) != 0 || !o.CAMinted {
+		t.Fatalf("rotation: migrated %v, CAMinted %v (%v)", o.Migrated, o.CAMinted, err)
+	}
+}

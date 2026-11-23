@@ -79,6 +79,12 @@ const (
 	// is written with the certificate and removed once KEDA presents it, by
 	// whichever replica sees that.
 	PendingAnnotation = "scaling-manager.llmd.ai/keda-copy-pending"
+	// CAFilledAnnotation, on the CA Secret under Ensurer.Names, says the
+	// controller filled it once, by a copy from an earlier install or by
+	// minting (only with Ensurer.MigrateFrom set). A CA emptied after that is
+	// a rotation: a new CA is minted, never the earlier install's copied
+	// back. The rotate command empties the data and keeps the annotation.
+	CAFilledAnnotation = "scaling-manager.llmd.ai/ca-filled"
 	// ServiceCAConfigMap holds the OpenShift service CA bundle in every
 	// namespace, under ServiceCAKey: what KEDA must trust when the service CA
 	// issued the serving certificate.
@@ -187,9 +193,10 @@ type Ensurer struct {
 	// placeholders every install but the one manifest makes.
 	Names *SecretNames
 	// MigrateFrom, when set, names an earlier install's three Secrets: while
-	// the CA under Names is empty, a CA and leaves there that are the
-	// scaling manager's are copied across rather than a new CA minted, so
-	// KEDA, which keeps the CA of its first connection, stays connected.
+	// the CA under Names is empty and was never filled (CAFilledAnnotation),
+	// a CA and leaves there that are the scaling manager's are copied across
+	// rather than a new CA minted, so KEDA, which keeps the CA of its first
+	// connection, stays connected.
 	MigrateFrom *SecretNames
 }
 
@@ -230,6 +237,10 @@ func (e *Ensurer) migrate(ctx context.Context) ([]string, error) {
 	if err != nil || ownerOf(newCA) != ownerUs || !empty(newCA) {
 		return nil, err
 	}
+	if _, filled := newCA.Annotations[CAFilledAnnotation]; filled {
+		// Emptied after the controller filled it: a rotation.
+		return nil, nil
+	}
 	oldCA, err := e.get(ctx, from.CA)
 	if err != nil || ownerOf(oldCA) != ownerUs || empty(oldCA) {
 		return nil, err
@@ -260,6 +271,12 @@ func (e *Ensurer) migrate(ctx context.Context) ([]string, error) {
 				dst.Annotations = map[string]string{}
 			}
 			dst.Annotations[PendingAnnotation] = v
+		}
+		if p[1] == to.CA {
+			if dst.Annotations == nil {
+				dst.Annotations = map[string]string{}
+			}
+			dst.Annotations[CAFilledAnnotation] = "copied from " + p[0]
 		}
 		if err := e.Writer.Update(ctx, dst); err != nil {
 			if apierrors.IsConflict(err) {
@@ -383,7 +400,11 @@ func (e *Ensurer) ensureOnce(ctx context.Context) (*Outcome, error) {
 		if ca, err = mintCA(e.Namespace, now); err != nil {
 			return nil, fmt.Errorf("minting the scaler CA: %w", err)
 		}
-		if err := e.write(ctx, caSecret, ca, ca.certPEM, nil); err != nil {
+		var filled map[string]string
+		if e.MigrateFrom != nil {
+			filled = map[string]string{CAFilledAnnotation: "minted"}
+		}
+		if err := e.write(ctx, caSecret, ca, ca.certPEM, filled); err != nil {
 			return nil, err
 		}
 		o.CAMinted = true
