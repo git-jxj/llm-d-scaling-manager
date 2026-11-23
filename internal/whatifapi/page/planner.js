@@ -26,6 +26,7 @@ const FLAG_WORDS = {
   VPAboveSlopeBound: ["V_P is above what the low-load fit allows: one of the two readings is wrong.", "more low-load readings, or a busy-minutes reading of V_P"],
   VPScaledToPrompt: ["V_P was read at another prompt length and rescaled along the fitted curve.", "a V_P reading at this prompt length"],
   VPShapeMoved: ["V_P was read at a prompt length far from this one and held: on longer prompts it over-promises.", "a V_P reading at this prompt length"],
+  VPPromptNotCovered: ["The prefill speed was learned at different prompt lengths, more than 1.2 times away from this one: no TTFT is priced from it, and the knee is outside the validated region.", "a V_P reading at this prompt length"],
   AssumedImbalance: ["The load imbalance f between prefill pods is assumed, not learned.", "a window with per-pod prefill load"],
   AssumedPromptSpread: ["The prompt-length spread (cv) is assumed, not read from a histogram.", "a prompt-length histogram (recorder R1)"],
   SpreadBeyondProcessorSharing: ["The prompt spread is wider than processor sharing was validated at: TTFT is the larger of the processor-sharing and first-come prices.", "nothing: a property of the traffic"],

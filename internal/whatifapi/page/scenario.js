@@ -605,6 +605,7 @@ const REPORT_FLAG_WORDS = {
   DecodeOnly: "decode only: prefill is not priced",
   VPLowerBound: "the prefill speed is a lower bound",
   VPFromPlateau: "the prefill speed is from the occupancy plateau (experimental)",
+  VPPromptNotCovered: "prefill speed learned at different prompt lengths",
   ExperimentalTTFT: "priced with the experimental TTFT model (not validated)",
 };
 
