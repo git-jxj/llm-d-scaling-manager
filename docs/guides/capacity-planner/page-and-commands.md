@@ -297,7 +297,9 @@ In a cluster, add both to the StatefulSet's `args`
   point A and the report's TTFT tables, also where the planner refuses
   them (a prefill that never queued). See
   [The v2 TTFT curve](#the-v2-ttft-curve). Sizes follow, from the model's
-  prefill limit. Day plans and predictions are the default's. `=v2` does not turn
+  prefill limit. With `--experimental-tpot=v2` the main view's TPOT p90
+  and p95 too: see [The v2 TPOT curve](#the-v2-tpot-curve). Day plans and
+  predictions are the default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
@@ -344,6 +346,39 @@ In a cluster, add both to the StatefulSet's `args`
 - **The CLI.** `at-replicas --experimental-ttft=v2` prices its tables' TTFT
   the same way, from a `--recording`. Its verdict and summary cells stay
   the planner's own.
+
+#### The v2 TPOT curve
+
+- **What it moves.** Only the TPOT p90 and p95. The mean TPOT is the
+  planner's own. The model places a per-request distribution around that
+  mean ([how it reads](accuracy.md#experimental-the-per-request-tpot-distribution)),
+  fitted on the loaded source, so each percentile is the mean times one
+  ratio: the source's decode spread and output lengths, the same at every
+  rate. The plan's `tpot.ratio` names it, with the source
+  "experimental TPOT model".
+- **What it prices.** The TPOT curve, point A, and decode's limit at a p90
+  or p95 target: the rate whose mean meets the target over that ratio. A
+  size at such a target sizes decode on it. The report's measured-shape
+  table prices its TPOT percentile the same way. The report's verdict,
+  capacity and summary cells stay the planner's own.
+- **Solid, then dashed.** As the TTFT curve: solid up to the highest load
+  the source served, per decode replica, and dashed beyond it. Each figure
+  past that load carries `extrapolated` true.
+- **The evidence.** The caption names the "Experimental TPOT model" and its
+  score on the source's held-out folds, at the measured mean: in how many
+  steps the predicted p90 and p95 fell in the router histogram's bucket the
+  measured one fell in.
+- **Where it is not used.** A statistic other than p90 or p95, a stated
+  output length or a stated R_q (`assume.tpotRatio`): the planner's own
+  percentile stands. The same where it abstains (under 2 h of steps with
+  the router's TPOT histogram and the output lengths, max-num-seqs not
+  read, more than 1 % of sequences waiting for a slot, or C at its bound).
+- **Other fleets.** At another decode count the ratio is the recorded one,
+  and the assumed lines say so.
+- **The self-check.** With the model on, the source's self-check prices its
+  TPOT percentiles with it too, each fold fitted on the fold's own window.
+- **The CLI.** `at-replicas --experimental-tpot=v2` prices its tables' TPOT
+  percentile the same way, from a `--recording`.
 
 ## Find the fleet a rate needs
 

@@ -13,9 +13,11 @@ import (
 // whatifapi.BacktestRequest.TPOTModel): lognormal around the planner's mean
 // TPOT, its log-variance the decode groups' spread plus a renewal term over
 // the step's output lengths, fitted on the backtest's fit window by
-// interval-censored likelihood over the router's TPOT buckets. It is
-// backtest's only. Every percentile it prices is flagged
-// whatif.TPOTDistribution and reads OUTSIDE VALIDATED REGION.
+// interval-censored likelihood over the router's TPOT buckets. On
+// at-replicas it prices the tables' TPOT p90 and p95 the same way, fitted
+// on the --recording (answerFlags.experimentalReport), and serve's main view
+// with it (whatifapi.InputsRequest.TPOTModel). Every percentile it prices
+// is flagged whatif.TPOTDistribution and reads OUTSIDE VALIDATED REGION.
 
 // experimentalTPOTFlag is the flag's name.
 const experimentalTPOTFlag = "experimental-tpot"

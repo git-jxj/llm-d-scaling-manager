@@ -114,24 +114,37 @@ func prefillSlotsOf(res *whatifapi.Resolved) int {
 	return k
 }
 
-// rankMixtureReport prices rep's TTFT tables with the experimental
-// rank-mixture model (--experimental-ttft=v2), fitted on the recording read
-// again with its per-rank series, as serve's POST /v1/report does.
-func (f *answerFlags) rankMixtureReport(ctx context.Context, rep *whatifapi.ReportResponse, q whatifapi.ReportQuery) error {
+// experimentalReport prices rep's tables with the experimental models
+// asked: the TTFT with the rank-mixture model (--experimental-ttft=v2), the
+// TPOT p90 and p95 with the per-request TPOT distribution
+// (--experimental-tpot=v2), each fitted on the recording read again with
+// the series it reads, as serve's POST /v1/report does.
+func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.ReportResponse, q whatifapi.ReportQuery) error {
 	cycle, err := f.cycleNumber()
 	if err != nil {
 		return err
 	}
+	req := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.variant, PrefillVPPlateau: f.vpPlateau,
+		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(f.recording), Cycle: cycle}}
+	if f.rankMixtureTTFT {
+		req.TTFTModel = string(whatif.QueueRankMixture)
+	}
+	if f.tpotDistribution {
+		req.TPOTModel = whatif.TPOTRenewalLognormal
+	}
 	src := &servedSources{warn: f.warn, recordings: filepath.Dir(f.recording)}
-	res, err := src.Resolve(ctx, whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.variant,
-		PrefillVPPlateau: f.vpPlateau, TTFTModel: string(whatif.QueueRankMixture),
-		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(f.recording), Cycle: cycle}})
+	res, err := src.Resolve(ctx, req)
 	if err != nil {
 		if whatifapi.IsInputError(err) {
 			return usageError{err}
 		}
 		return err
 	}
-	rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q)
+	if f.rankMixtureTTFT {
+		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q)
+	}
+	if f.tpotDistribution {
+		rep.TPOTModel = whatifapi.ApplyTPOTModel(res, rep, q)
+	}
 	return nil
 }

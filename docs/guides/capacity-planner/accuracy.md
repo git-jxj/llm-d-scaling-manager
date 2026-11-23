@@ -207,7 +207,7 @@ These always read `OUTSIDE VALIDATED REGION`:
   but 2 prefill and 2 decode.
 - Any accelerator but H200.
 - Any TTFT from `backtest --experimental-ttft=v2` (below).
-- Any TPOT percentile from `backtest --experimental-tpot=v2` (below).
+- Any TPOT percentile from `--experimental-tpot=v2`, in a backtest or the main view (below).
 
 ## Experimental: the rank-mixture TTFT model
 

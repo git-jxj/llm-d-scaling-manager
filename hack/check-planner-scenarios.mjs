@@ -18,7 +18,7 @@ const S = name => vm.runInContext(name, ctx);
 const {esc, linkProblem, checkScenario, readScenarioFile, parseStore, visibleScenarios, putScenario, dropScenario, freeName,
   cleanName, delta, fleetDelta, scenarioTitle, sourceProblem, linkAtLoadStart, linkAtLoadEnd, beginOpen, importPlan, sameCurve, figDelta,
   compareRows, parseEdges, linkedEdges, edgesBoxProblem, beyondContext, contextNote, bucketSeries, retryDelay, measuredSplit,
-  ttftModelNote} = ctx;
+  ttftModelNote, tpotModelNote} = ctx;
 const MAX_NAME = S("MAX_NAME"), MAX_SCENARIOS = S("MAX_SCENARIOS"), MAX_LINK = S("MAX_LINK");
 
 let passed = 0;
@@ -741,6 +741,29 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("ttftModelNote: not priced says why", not.includes("not used here (the model abstained: x)") && not.includes("planner's own"), not);
   check("ttftModelNote: no model, no note", ttftModelNote(undefined) === "" && ttftModelNote(null) === "");
 }
+
+// tpotModelNote: the experimental TPOT model's note on the TPOT figure, the
+// same parts as the TTFT's; not priced, the planner's own percentile is
+// drawn, never its TTFT.
+{
+  const m = {label: "Experimental TPOT model", priced: true, measuredUpTo: 13.456, beyond: "beyond the highest load measured",
+    evidence: "held-out steps, at the measured mean: p90 in the measured bucket on 20 of 24, p95 on 19"};
+  const n = tpotModelNote(m);
+  check("tpotModelNote: names the model", n.startsWith("Experimental TPOT model"), n);
+  check("tpotModelNote: the evidence", n.includes("p90 in the measured bucket on 20 of 24"), n);
+  check("tpotModelNote: what is dashed, and from where", n.includes("dashed: beyond the highest load measured (13.5 r/s)"), n);
+  check("tpotModelNote: no right end of its own", !n.includes("right end"), n);
+  const not = tpotModelNote({label: "Experimental TPOT model", priced: false, notPriced: "the model prices p90 and p95, not p99"});
+  check("tpotModelNote: not priced says why", not.includes("not used here (the model prices p90 and p95, not p99)"), not);
+  check("tpotModelNote: the planner's own percentile stands", not.includes("planner's own TPOT percentile is drawn") && !not.includes("TTFT"), not);
+  check("tpotModelNote: no model, no note", tpotModelNote(undefined) === "" && tpotModelNote(null) === "");
+  // A TPOT curve the model prices splits where its points are marked, as
+  // the TTFT's does.
+  const curve = [{x: 1, y: 0.01, extrapolated: false}, {x: 2, y: 0.02, extrapolated: true}];
+  const s = measuredSplit(curve);
+  check("measuredSplit: a TPOT curve meets at its last measured point", s.measured.length === 1 && s.beyond.map(p => p.x).join() === "1,2",
+    JSON.stringify(s));
+}
 } catch (e) {
   failures.push("a case threw, and the cases after it did not run: " + e.message);
 }
@@ -752,7 +775,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 353;
+const EXPECTED_CASES = 361;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

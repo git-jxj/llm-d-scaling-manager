@@ -131,6 +131,12 @@ type answerFlags struct {
 	// tables' TTFT with the experimental rank-mixture model, fitted on the
 	// recording (experimental_ttft_v2.go); refused elsewhere.
 	rankMixtureTTFT bool
+	// experimentalTPOT is --experimental-tpot (=v2): at-replicas prices its
+	// tables' TPOT p90 and p95 with the experimental per-request TPOT
+	// distribution, fitted on the recording (experimental_tpot.go); refused
+	// elsewhere. tpotDistribution is it read.
+	experimentalTPOT string
+	tpotDistribution bool
 	// fixedImbalance, above zero, is f at every prefill count above one,
 	// assumed: the report's sensitivity to f (fSensitivity). No flag sets
 	// it.
@@ -193,6 +199,9 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
 		". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on the --recording")
+	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "at-replicas only: =v2 prices the tables' TPOT p90 and p95 with an "+
+		"experimental per-request TPOT distribution fitted on the --recording, around the planner's own mean; every percentile it prices "+
+		"is flagged TPOTDistribution and reads OUTSIDE VALIDATED REGION")
 	fs.BoolVar(&f.imbalanceAcrossCounts, "imbalance-across-counts", whatif.DefaultPlannerImbalanceAcrossCounts, fmt.Sprintf("at a prefill count P1 has not learned, price f off a curve fitted to the counts it learned; with none learned, and with =false, max(%g, f) (flagged AssumedImbalance either way)", whatif.ImbalanceFloor))
 	f.window.registerWindow(fs)
 	fs.Lookup("prometheus").Usage = "answer from a window of this Prometheus (base URL), captured and generated in memory, in place of --recording"
@@ -211,7 +220,16 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 	if err := f.checkTTFT(); err != nil {
 		return err
 	}
+	on, err := experimentalTPOTOf(f.experimentalTPOT)
+	if err != nil {
+		return err
+	}
+	f.tpotDistribution = on
 	switch {
+	case f.tpotDistribution && f.question != reportQuestion:
+		return usagef("--%s=%s is backtest's, serve's and at-replicas'", experimentalTPOTFlag, experimentalTPOTV2)
+	case f.tpotDistribution && f.recording == "":
+		return usagef("--%s=%s fits the model on a --recording", experimentalTPOTFlag, experimentalTPOTV2)
 	case f.rankMixtureTTFT && f.question != reportQuestion:
 		return usagef("--%s=%s is backtest's, predict's, serve's and at-replicas'", experimentalTTFTFlag, experimentalTTFTV2)
 	case f.rankMixtureTTFT && f.recording == "":
