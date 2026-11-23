@@ -204,8 +204,8 @@ with no restart of its operator (`make test-e2e-manifest-migrate`).
 
 <!-- guide:migrate.apply start -->
 ```bash
-# Over an smt install made with --scope cluster. The settings ConfigMap is the same object; add the selector and label the namespaces.
-kubectl apply --server-side -f scaling-manager.yaml
+# Over an smt install made with --scope cluster. --force-conflicts takes the controller Deployment over from smt, this once. The settings ConfigMap is the same object; add the selector and label the namespaces.
+kubectl apply --server-side --force-conflicts -f scaling-manager.yaml
 kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge \
   -p '{"data":{"namespaceSelector":"scaling-manager.llmd.ai/managed=true,kubernetes.io/metadata.name in (<model namespace>)"}}'
 kubectl label namespace <model namespace> scaling-manager.llmd.ai/managed=true

@@ -107,7 +107,11 @@ if [ "$KEDA_NS" != keda ]; then
     sedline="$(sed -n '1,6{s/^# KEDA in another namespace than keda: //p}' "$M")"
     eval "${sedline//<ns>/$KEDA_NS}" || fail move "the header's sed failed"
 fi
-kubectl apply --server-side -f "$M" > "$LOGS/apply.log" 2>&1 || { cat "$LOGS/apply.log"; fail move "kubectl apply --server-side -f $M over the smt install"; }
+# --force-conflicts: the manifest takes the controller Deployment over from
+# smt, whose client-side apply owns fields the manifest also sets. Only the
+# move needs it; a later apply of the manifest does not.
+kubectl apply --server-side --force-conflicts -f "$M" > "$LOGS/apply.log" 2>&1 || { cat "$LOGS/apply.log"; fail move "kubectl apply --server-side --force-conflicts -f $M over the smt install"; }
+kubectl apply --server-side -f "$M" > "$LOGS/apply-again.log" 2>&1 || { cat "$LOGS/apply-again.log"; fail move "a second apply, without --force-conflicts, after the move"; }
 kubectl patch configmap scaling-manager-settings -n "$NS" --type merge \
     -p "{\"data\":{\"namespaceSelector\":\"$LABEL=true,$ADMIT=true\"}}" >/dev/null || fail move "patching namespaceSelector"
 kubectl label namespace "$MODEL_NS" "$LABEL=true" "$ADMIT=true" --overwrite >/dev/null || fail move "labelling $MODEL_NS"

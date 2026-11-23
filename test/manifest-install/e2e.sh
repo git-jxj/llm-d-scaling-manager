@@ -221,15 +221,23 @@ pass "re-apply of both files: scaler CA, KEDA's copy and a live switch kept"
 
 SA="system:serviceaccount:$NS:$DEPLOY"
 can() { kubectl auth can-i "$1" "$2" -n "$MODEL_NS" --as="$SA" 2>/dev/null; }
+# can_dset: a SubjectAccessReview, since kubectl auth can-i resolves a
+# resource by discovery, and the DisaggregatedSet CRD may not be installed.
+can_dset() {
+    local allowed
+    allowed="$(printf '{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","spec":{"user":"%s","groups":["system:serviceaccounts"],"resourceAttributes":{"namespace":"%s","verb":"patch","group":"disaggregatedset.x-k8s.io","resource":"disaggregatedsets"}}}' "$SA" "$MODEL_NS" \
+        | kubectl create -f - -o jsonpath='{.status.allowed}' 2>/dev/null)"
+    if [ "$allowed" = true ]; then echo yes; else echo no; fi
+}
 [ "$(can patch pods)" = no ] || fail grants "the controller may patch pods in $MODEL_NS before the grant"
-[ "$(can patch disaggregatedsets.disaggregatedset.x-k8s.io)" = no ] || fail grants "the controller may patch disaggregatedsets before the grant"
+[ "$(can_dset)" = no ] || fail grants "the controller may patch disaggregatedsets before the grant"
 kubectl apply -n "$MODEL_NS" -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=pod-writer > "$LOGS/grant.log" 2>&1 \
     || { cat "$LOGS/grant.log"; fail grants "applying the pod-writer grant"; }
 [ "$(can patch pods)" = yes ] || fail grants "the controller may not patch pods in $MODEL_NS after the pod-writer grant"
-[ "$(can patch disaggregatedsets.disaggregatedset.x-k8s.io)" = no ] || fail grants "the pod-writer grant also grants the role writer"
+[ "$(can_dset)" = no ] || fail grants "the pod-writer grant also grants the role writer"
 kubectl apply -n "$MODEL_NS" -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=dset-role-writer > "$LOGS/grant-dset.log" 2>&1 \
     || { cat "$LOGS/grant-dset.log"; fail grants "applying the dset-role-writer grant"; }
-[ "$(can patch disaggregatedsets.disaggregatedset.x-k8s.io)" = yes ] || fail grants "the controller may not patch disaggregatedsets after its grant"
+[ "$(can_dset)" = yes ] || fail grants "the controller may not patch disaggregatedsets after its grant"
 pass "grants: patch on pods and on disaggregatedsets in $MODEL_NS only after each labelled grant is applied there"
 
 # --- 6b2. the optional label guard -------------------------------------------
