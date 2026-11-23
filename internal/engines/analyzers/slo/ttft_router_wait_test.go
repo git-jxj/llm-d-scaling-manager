@@ -132,6 +132,13 @@ var notOnTheTTFTPath = map[string]string{
 	"VPFromPlateau":             "planner only: the controller never reads V_P from the occupancy plateau",
 	"ExperimentalTTFT":          "planner only: the CLI's --experimental-ttft",
 	"PSSlotsExceeded":           "planner only: slo-ttft-ps-by-engine, which the analyzer never prices with",
+	"RankMixtureTTFT":           "planner backtest only: --experimental-ttft=v2",
+	"RankMixtureAbstained":      "planner backtest only: --experimental-ttft=v2",
+	"LimitedPSHeavyTraffic":     "planner backtest only: --experimental-ttft=v2",
+	"KVDeferralOutside":         "planner backtest only: --experimental-ttft=v2",
+	"RelaxationLong":            "planner backtest only: --experimental-ttft=v2",
+	"TPOTDistribution":          "TPOT, planner backtest only: --experimental-tpot=v2",
+	"TPOTDistributionAbstained": "TPOT, planner backtest only: --experimental-tpot=v2",
 }
 
 // Every flag the whatif package declares is on the TTFT series' list, the
