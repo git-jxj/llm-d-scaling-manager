@@ -435,3 +435,34 @@ function daySummaryText(plan) {
   if (c.notCovered) out.push(`Self-check: ${c.notCovered} bucket(s) not covered: it did not test the rate, fleet or shape each was priced at.`);
   return out;
 }
+
+// dayHeadline is the day plan in one line, over its chart: the most the
+// busiest bucket needed and when, beside what the fleet ran then, and how
+// many hours missed the SLO; "" with nothing sized.
+function dayHeadline(plan) {
+  let peak = null;
+  for (const b of plan.buckets) {
+    if (b.needed && b.sizedRate != null && (!peak || b.sizedRate > peak.sizedRate)) peak = b;
+  }
+  if (!peak) return "";
+  const days = daySpansDays(plan);
+  const n = peak.needed;
+  const need = n.prefill == null ? `at least ${n.decode} decode (prefill not sized)` : `${n.atLeast ? "at least " : ""}${n.prefill} prefill + ${n.decode} decode`;
+  const had = peak.actual ? `; it ran ${peak.actual.prefill} + ${peak.actual.decode}` : "";
+  const under = (plan.summary.underHours || []).length;
+  return `Peak needed ${need} at ${dayClock(dayTime(peak.start), days)} UTC (${dayFmt(peak.sizedRate)} r/s)${had}. ` +
+    (under ? `${under} hour${under === 1 ? "" : "s"} missed the SLO (red).` : "No hour missed the SLO.");
+}
+
+// dayHoursCSV is the hours as CSV: each hour's rate, the fleet it needed and
+// had, and its verdict in words.
+function dayHoursCSV(plan) {
+  const rows = [["hour_utc", "rate_mean", "rate_p95", "needed_prefill", "needed_decode", "needed_at_least", "had_prefill", "had_decode", "verdict"].join(",")];
+  for (const h of plan.hours) {
+    const n = h.needed || {}, a = h.actual || {};
+    rows.push([h.start, h.rate ? h.rate.mean.toFixed(3) : "", h.rate ? h.rate.p95.toFixed(3) : "", n.prefill == null ? "" : n.prefill,
+      n.decode == null ? "" : n.decode, n.atLeast ? "yes" : "", a.prefill == null ? "" : a.prefill, a.decode == null ? "" : a.decode,
+      dayVerdict(h) || "not sized"].map(csvField).join(","));
+  }
+  return rows.join("\n") + "\n";
+}
