@@ -22,8 +22,8 @@ import (
 // abstains on the fit window's length, after the fit it reports.
 func TestRankMixtureStratified_MainView(t *testing.T) {
 	src := &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(q32Recording)}
-	inputs := func(f serveFlags, asked *bool) bool {
-		f.recordings, f.listen, f.auth, f.noSelfCheck = q32Dir, "127.0.0.1:0", whatifapi.AuthNone, true
+	inputs := func(served, asked *bool) bool {
+		f := serveFlags{recordings: q32Dir, listen: "127.0.0.1:0", auth: whatifapi.AuthNone, noSelfCheck: true, rankMixtureStratified: served}
 		h, err := f.handler(newFlags("serve", io.Discard), io.Discard)
 		require.NoError(t, err)
 		code, body := loopbackPost(t, h, "/v1/inputs", whatifapi.InputsRequest{Source: src, TTFTModel: string(whatif.QueueRankMixture),
@@ -36,10 +36,10 @@ func TestRankMixtureStratified_MainView(t *testing.T) {
 		return in.TTFTModel.Fit.Stratified
 	}
 	off, on := false, true
-	assert.True(t, inputs(serveFlags{}, nil), "inputs: on by default")
-	assert.False(t, inputs(serveFlags{}, &off), "inputs: the request's false turns it off")
-	assert.False(t, inputs(serveFlags{rankMixtureStratified: &off}, nil), "inputs: serve's =false is the default")
-	assert.True(t, inputs(serveFlags{rankMixtureStratified: &off}, &on), "inputs: the request overrides serve")
+	assert.True(t, inputs(nil, nil), "inputs: on by default")
+	assert.False(t, inputs(nil, &off), "inputs: the request's false turns it off")
+	assert.False(t, inputs(&off, nil), "inputs: serve's =false is the default")
+	assert.True(t, inputs(&off, &on), "inputs: the request overrides serve")
 
 	atReplicas := func(args ...string) bool {
 		out, _ := runCmd(t, append([]string{"at-replicas", "--recording", q32Recording, "--ttft", "2s@p90", "-o", "json",
