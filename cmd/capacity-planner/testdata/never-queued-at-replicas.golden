@@ -33,7 +33,7 @@ SLO vs load        r/s    TTFT p50/90 ms                       TPOT mean/p90 ms 
 checks
   2 prefill + 2 decode  does not hold: 12.46 r/s is above 0.85 x the fleet knee 13.35 r/s = 11.35 r/s; TTFT p95 not judged (TTFT not priced (V_P a lower bound))
 assumed: V_P 17046 tokens/s is only the rate a prefill pod was seen to compute: the pods never queued for capacity, so the prefill knee is at least the rate it gives and no TTFT is priced from it; --assume-vp states one; prompt 1000 tokens (--shape); prompt cv 2 (no computed-prompt histogram); flow control off (no queue series); Poisson arrivals
-flags: UnvalidatedTTFT; VPLowerBound; AssumedPromptSpread; AssumedShape; HeldLine; BelowFittedBand; CoarseTPOTBucket; MeanBoundedTPOTPercentile
+flags: UnvalidatedTTFT; VPLowerBound; AssumedPromptSpread; AssumedShape; HeldLine; BatchBeyondFit; BelowFittedBand; CoarseTPOTBucket; MeanBoundedTPOTPercentile
 
 not validated:
   - decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 43% to 99% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)

@@ -229,6 +229,14 @@ type VariantState struct {
 	// LineRows is the variant's rows of its latest cycles that have one, off
 	// a ramp and on one, for the line check (state_line.go).
 	LineRows []whatif.LineRow
+	// FitRows is the variant's rows the line was fitted on, steady and in
+	// the band (above it for an above-band line): a refitted line's over the
+	// cycles its readings span, a held
+	// line's over the window of its last own fit (lineSamples.fitRows). The
+	// planner reads the most sequences a rank they held, and flags a figure
+	// priced past it (BatchBeyondFit). Nil where they are not known: the
+	// planner then reads LineRows.
+	FitRows []whatif.LineRow
 	// BelowBandITL is the floor below the band, in seconds: the 10th
 	// percentile of the variant's latest mean ITLs read off a ramp at a fill
 	// under the band's bottom (whatif.BelowBand.LeastITL). 0 with fewer than
@@ -595,7 +603,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	type snap struct {
 		st                       *State
 		windows, engine, arrived int
-		rows                     map[string][]whatif.LineRow
+		rows, fit                map[string][]whatif.LineRow
 		below                    map[string][2]float64 // ITL seconds, fill
 		ratios                   map[string]float64
 	}
@@ -702,6 +710,14 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		}
 		ttft.noteJoint(in, ev.Now, args, sglang)
 		lines.note(in, n, ev.Now, busiest)
+		for _, rep := range r.sat.LearnerReports()[in.Namespace+"|"+in.ModelID] {
+			if rep.Learner != learn.ITL {
+				continue
+			}
+			if t := saturation.ITLTier(rep.Source, false); t == whatif.TierOLS || t == whatif.TierPinnedB {
+				lines.noteOwnFit(rep.Variant, ev.Now)
+			}
+		}
 		batch.note(in)
 		ttft.noteTerm(in, ev.Now, args)
 		if n == cycle || early[n] {
@@ -729,9 +745,11 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 				return true
 			}
 			sn := &snap{st: s, windows: len(windows), engine: len(engine), arrived: len(arrivals),
-				rows: map[string][]whatif.LineRow{}, below: map[string][2]float64{}, ratios: map[string]float64{}}
+				rows: map[string][]whatif.LineRow{}, fit: map[string][]whatif.LineRow{}, below: map[string][2]float64{}, ratios: map[string]float64{}}
 			for _, v := range s.Variants {
 				sn.rows[v.Variant] = slices.Clone(lines.rows(v.Variant))
+				v.ReadingsFrom, v.ReadingsTo = cyclesSpanned(v.LineReadings, cycleAt)
+				sn.fit[v.Variant] = lines.fitRows(v)
 				itlSec, fill := lines.leastBelowBand(v.Variant)
 				sn.below[v.Variant] = [2]float64{itlSec, fill}
 				sn.ratios[v.Variant] = lines.busiestRatio(v.Variant)
@@ -757,6 +775,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	for i := range st.Variants {
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
+		st.Variants[i].FitRows = lines.fitRows(st.Variants[i])
 		st.Variants[i].BelowBandITL, st.Variants[i].BelowBandFill = lines.leastBelowBand(st.Variants[i].Variant)
 		st.Variants[i].BusiestRankRatio = lines.busiestRatio(st.Variants[i].Variant)
 		st.Variants[i].liftToFloor(lineAtFloor && st.disaggregated())
@@ -777,6 +796,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		for i := range s.Variants {
 			s.Variants[i].ReadingsFrom, s.Variants[i].ReadingsTo = cyclesSpanned(s.Variants[i].LineReadings, cycleAt)
 			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]
+			s.Variants[i].FitRows = sn.fit[s.Variants[i].Variant]
 			b := sn.below[s.Variants[i].Variant]
 			s.Variants[i].BelowBandITL, s.Variants[i].BelowBandFill = b[0], b[1]
 			s.Variants[i].BusiestRankRatio = sn.ratios[s.Variants[i].Variant]
