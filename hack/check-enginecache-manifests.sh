@@ -973,7 +973,11 @@ case "\$1 \$2" in
       case "\$ARGV" in
         *"jsonpath={.status.phase}"*)
             if [ -n "\${STUB_RETAINED:-}" ]; then
-                if [ -s "$T/rebind.patch" ]; then printf Bound; else printf Pending; fi
+                if [ -s "$T/rebind.patch" ] || { [ "\${STUB_RETAINED}" = available ] && [ -s "\${STUB_APPLIED:-}" ]; }; then
+                    printf Bound
+                else
+                    printf Pending
+                fi
             elif [ -n "\${STUB_BIND_AFTER:-}" ]; then
                 n=\$(( \$(cat "$T/bind.n" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$T/bind.n"
                 if [ "\$n" -ge "\$STUB_BIND_AFTER" ]; then printf Bound; else printf Pending; fi
@@ -1016,7 +1020,11 @@ case "\$1 \$2" in
                        case "\${STUB_PV_STATE:-exists}" in
                          absent) ;;
                          forbidden) echo "Error from server (Forbidden): persistentvolumes $PVNAME is forbidden: stub" >&2; exit 1 ;;
-                         exists) printf '%s' "\${STUB_PV_RECORD-scaling-manager-enginecache|/mnt/local/weights/check-ns/engine-cache|node-local-engine-cache|Retain|check-ns|engine-cache|Bound|current-claim-uid|42}" ;;
+                         exists)
+                             printf '%s' "\${STUB_PV_RECORD-scaling-manager-enginecache|/mnt/local/weights/check-ns/engine-cache|node-local-engine-cache|Retain|check-ns|engine-cache|Bound|current-claim-uid|42}"
+                             case "\$ARGV" in
+                               *".spec.claimRef}"*) printf '|%s' "\${STUB_PV_CLAIM_REF-present}" ;;
+                             esac ;;
                        esac ;;
                    *"jsonpath={.spec.hostPath.path}"*) case "\$ARGV" in *" $PVNAME "*) printf '%s' "\${STUB_PV_PATH-/mnt/local/weights/check-ns/engine-cache}" ;; *) echo "stub kubectl: pv read for a volume that is not the claim's:\$ARGV" >&2; exit 2 ;; esac ;;
                    *" -o name "*)
@@ -1145,22 +1153,51 @@ for record in "${RETAINED_RECORD/|Released|/|Bound|}" "${RETAINED_RECORD/|old-cl
     fi
 done
 
+# Manually clearing claimRef leaves the retained volume Available. The
+# manifest must restore the reservation and name the volume in the new claim.
+AVAILABLE_RECORD="${RETAINED_RECORD/|check-ns|engine-cache|Released|old-claim-uid|/|||Available||}"
+: > "$T/calls"
+rm -f "$T/rebind.patch"
+if STUB_PV_RECORD="$AVAILABLE_RECORD" STUB_PV_CLAIM_REF="" STUB_RETAINED=available STUB_PVC_PHASE="" \
+    STUB_PVC_CLASS=node-local-engine-cache STUB_APPLIED="$T/rebind-available.yaml" PATH="$T/fastsleep:$STUB_PATH" \
+    bash deploy/enginecache.sh "${EAPPLY[@]}" > "$T/rebind-available.out" 2>&1 &&
+    ! grep -q '^patch pv' "$T/calls" && grep -q '^apply -f' "$T/calls" &&
+    [ "$(yq -r 'select(.kind == "PersistentVolume") | .spec.claimRef.namespace + "/" + .spec.claimRef.name' "$T/rebind-available.yaml")" = check-ns/engine-cache ] &&
+    [ "$(yq -r 'select(.kind == "PersistentVolumeClaim") | .spec.volumeName' "$T/rebind-available.yaml")" = "$PVNAME" ] &&
+    grep -q 'claim engine-cache: Bound' "$T/rebind-available.out"; then
+    ok "re-apply: an Available volume with no claimRef binds without a patch"
+else
+    fail "re-apply: an Available volume with no claimRef must bind without a patch: $(tail -1 "$T/rebind-available.out")"
+fi
+
 for record in "${RETAINED_RECORD/scaling-manager-enginecache/other-manager}" \
     "${RETAINED_RECORD/weights\/check-ns/weights\/other}" \
     "${RETAINED_RECORD/node-local-engine-cache/other-class}" \
     "${RETAINED_RECORD/|Retain|/|Delete|}" \
     "${RETAINED_RECORD/|check-ns|/|other-ns|}" \
-    "${RETAINED_RECORD/|engine-cache|/|other-claim|}"; do
+    "${RETAINED_RECORD/|engine-cache|/|other-claim|}" \
+    "$AVAILABLE_RECORD"; do
     : > "$T/calls"
     if STUB_PV_RECORD="$record" STUB_PVC_CLASS=node-local-engine-cache PATH="$STUB_PATH" \
         bash deploy/enginecache.sh "${EAPPLY[@]}" > "$T/rebind-foreign.out" 2>&1; then
         fail "re-apply: must refuse a volume with different ownership, path, class, reclaim policy or claim"
-    elif grep -q 'refusing to modify it' "$T/rebind-foreign.out" && ! grep -qE '^(patch pv|apply -f)' "$T/calls"; then
+    elif grep -q 'found managed-by' "$T/rebind-foreign.out" && grep -q 'Refusing to modify it' "$T/rebind-foreign.out" &&
+        ! grep -qE '^(patch pv|apply -f)' "$T/calls"; then
         ok "re-apply: a volume with a mismatched identity is left alone"
     else
         fail "re-apply: mismatched volume: $(tail -1 "$T/rebind-foreign.out")"
     fi
 done
+
+: > "$T/calls"
+if STUB_PV_RECORD="${AVAILABLE_RECORD/|Available|/|Released|}" STUB_PV_CLAIM_REF="" STUB_PVC_CLASS=node-local-engine-cache PATH="$STUB_PATH" \
+    bash deploy/enginecache.sh "${EAPPLY[@]}" > "$T/rebind-released.out" 2>&1; then
+    fail "re-apply: a Released volume with no claimRef must be refused"
+elif grep -q "phase 'Released'" "$T/rebind-released.out" && ! grep -qE '^(patch pv|apply -f)' "$T/calls"; then
+    ok "re-apply: a Released volume with no claimRef is left alone"
+else
+    fail "re-apply: Released volume with no claimRef: $(tail -1 "$T/rebind-released.out")"
+fi
 
 : > "$T/calls"
 if STUB_PV_STATE=forbidden STUB_PVC_CLASS=node-local-engine-cache PATH="$STUB_PATH" \
@@ -1177,7 +1214,8 @@ if STUB_PV_RECORD="$RETAINED_RECORD" STUB_RETAINED=1 STUB_PVC_CLASS=node-local-e
     STUB_PATCH_ERROR='Error from server (Conflict): the object has been modified' PATH="$STUB_PATH" \
     bash deploy/enginecache.sh "${EAPPLY[@]}" > "$T/rebind-conflict.out" 2>&1; then
     fail "re-apply: must fail if the volume changed since it was read"
-elif grep -q 'Conflict' "$T/rebind-conflict.out" && grep -q '^patch pv' "$T/calls" && ! grep -q '^apply -f' "$T/calls"; then
+elif grep -q 'Conflict' "$T/rebind-conflict.out" && grep -q 'patch permission on persistentvolumes' "$T/rebind-conflict.out" &&
+    grep -q '^patch pv' "$T/calls" && ! grep -q '^apply -f' "$T/calls"; then
     ok "re-apply: a concurrent volume change stops apply"
 else
     fail "re-apply: volume patch conflict: $(tail -1 "$T/rebind-conflict.out")"

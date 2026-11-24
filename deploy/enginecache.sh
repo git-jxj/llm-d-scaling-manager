@@ -687,19 +687,24 @@ EOF
 # A Retain PV can outlive its claim. Keep the reservation by claim name,
 # but remove the previous claim's identity before applying its replacement.
 rebind_released_cache_volume() {
-    local pv fields state managed_by path storage_class policy claim_namespace claim_name phase claim_uid version patch
+    local pv fields state managed_by path storage_class policy claim_namespace claim_name phase claim_uid version claim_ref patch
     pv="$(pv_for)"
     fields='{.metadata.labels.app\.kubernetes\.io/managed-by}{"|"}{.spec.hostPath.path}{"|"}{.spec.storageClassName}{"|"}'
     fields+='{.spec.persistentVolumeReclaimPolicy}{"|"}{.spec.claimRef.namespace}{"|"}{.spec.claimRef.name}{"|"}'
-    fields+='{.status.phase}{"|"}{.spec.claimRef.uid}{"|"}{.metadata.resourceVersion}'
+    fields+='{.status.phase}{"|"}{.spec.claimRef.uid}{"|"}{.metadata.resourceVersion}{"|"}{.spec.claimRef}'
     state="$(kubectl get pv "$pv" --ignore-not-found -o "jsonpath=$fields")" ||
         log_error "cannot read PersistentVolume ${pv} for ${NAMESPACE}/${CLAIM}"
     [ -n "$state" ] || return 0
-    IFS='|' read -r managed_by path storage_class policy claim_namespace claim_name phase claim_uid version <<< "$state"
+    IFS='|' read -r managed_by path storage_class policy claim_namespace claim_name phase claim_uid version claim_ref <<< "$state"
+    # An admin may have manually cleared claimRef. The manifest can restore
+    # the reservation on an Available volume with no claimRef.
     if [[ "$managed_by" != scaling-manager-enginecache || "$path" != "${NODE_PATH}/${SUBDIR}" ||
-          "$storage_class" != "$STORAGE_CLASS" || "$policy" != Retain ||
-          "$claim_namespace" != "$NAMESPACE" || "$claim_name" != "$CLAIM" ]]; then
-        log_error "PersistentVolume ${pv} does not match the Retain engine cache for ${NAMESPACE}/${CLAIM} at ${NODE_PATH}/${SUBDIR} on ${STORAGE_CLASS}; refusing to modify it"
+          "$storage_class" != "$STORAGE_CLASS" || "$policy" != Retain ]] ||
+       { [[ "$claim_namespace" != "$NAMESPACE" || "$claim_name" != "$CLAIM" ]] &&
+         [[ "$phase" != Available || -n "$claim_ref" ]]; }; then
+        local found="managed-by '${managed_by}', path '${path}', storage class '${storage_class}', reclaim policy '${policy}'"
+        found+=", claim '${claim_namespace}/${claim_name}', phase '${phase}'"
+        log_error "PersistentVolume ${pv} does not match the Retain engine cache for ${NAMESPACE}/${CLAIM} at ${NODE_PATH}/${SUBDIR} on ${STORAGE_CLASS} (found ${found}). Refusing to modify it"
     fi
     [[ "$phase" == Released && -n "$claim_uid" ]] || return 0
     [ -n "$version" ] || log_error "PersistentVolume ${pv} has no resourceVersion; cannot safely rebind it"
@@ -708,7 +713,7 @@ rebind_released_cache_volume() {
     # Merge patch can remove claimRef.resourceVersion when it is already absent.
     printf -v patch '{"metadata":{"resourceVersion":"%s"},"spec":{"claimRef":{"uid":null,"resourceVersion":null}}}' "$version"
     kubectl patch pv "$pv" --type merge --patch "$patch" >/dev/null ||
-        log_error "cannot clear the old claim identity on PersistentVolume ${pv}"
+        log_error "cannot clear the old claim identity on PersistentVolume ${pv} (requires patch permission on persistentvolumes and an unchanged volume resourceVersion. See the kubectl error above)"
 }
 
 cmd_apply() {

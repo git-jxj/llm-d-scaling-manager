@@ -678,9 +678,10 @@ the replica. The directory must be:
 
 The caller needs `get`, `create`, and `patch` access to cluster-scoped
 PersistentVolumes (`storage-admin` on OpenShift). Ask the cluster admin to run
-`make engine-cache` if your role lacks that access. After recreating the namespace
-in the same trust domain, rerun with the same cache path to reuse its retained
-volume and cached files.
+`make engine-cache` if your role lacks that access. If you delete and recreate
+the namespace with the same name, run `make engine-cache` again with the same
+path. The new claim binds to the retained volume, and the caches on the nodes
+stay warm.
 
 **Without a node directory.** The caches only need a read-write path that
 outlives the pod; a shared `ReadWriteMany` claim the namespace already has
