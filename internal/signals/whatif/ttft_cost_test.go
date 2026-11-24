@@ -52,7 +52,10 @@ func describe(r Result) string {
 	case TTFT:
 		s := v.Sensitivity
 		v.Sensitivity = nil
-		return fmt.Sprintf("ttft %+v sensitivity %s", v, followed(s))
+		// PrefillWork splits OwnPrefill for the planner's concurrency and
+		// moves no figure; the pins predate it, so it is left out of them.
+		v.Parts.PrefillWork = 0
+		return strings.Replace(fmt.Sprintf("ttft %+v sensitivity %s", v, followed(s)), " PrefillWork:0", "", 1)
 	default:
 		return fmt.Sprintf("%T %+v", r, r)
 	}
