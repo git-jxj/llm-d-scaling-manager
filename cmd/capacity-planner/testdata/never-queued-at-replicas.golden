@@ -1,23 +1,23 @@
 ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-11-14 07:09-09:35Z, cycle 580 of 580
 decode engine   vLLM release not recorded
 prefill engine  vLLM release not recorded
-load judged     12.48 r/s, the p95 of the 573 of 580 cycles with traffic
+load judged     12.46 r/s, the p95 less counting noise of the 573 of 580 cycles with traffic
 load seen       per cycle (1-minute rates): mean 3.00, p95 12.48, peak 15.38 r/s; p95 less counting noise 12.46; busiest 2m1s (8 cycles): 12.96 r/s
 SLO             TTFT p95 200.0 ms (policy)
 cell = TTFT p95 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused
 mark = the SLO (TTFT p95 200.0 ms (policy)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
 summary  50%             80%              100%            seen
-  load   -/27.1 @6.67 ?  -/39.7 @10.68 ?  -/- @13.35 SAT  -/50.2 @12.48 ?
+  load   -/27.1 @6.67 ?  -/39.7 @10.68 ?  -/- @13.35 SAT  -/50.0 @12.46 ?
 verdicts
-  load    UNDER-PROVISIONED: at the p95 load of 12.5 r/s, the fleet runs past its operating point of 11.3 r/s (0.85 of its 13.3 r/s knee); needs at least 3 decode (has 2), 5 decode if the decode knee reads 99% high.
+  load    UNDER-PROVISIONED: at the p95 less counting noise load of 12.5 r/s, the fleet runs past its operating point of 11.3 r/s (0.85 of its 13.3 r/s knee); needs at least 3 decode (has 2), 5 decode if the decode knee reads 99% high.
 
 shape load: IL 1000 OL 1133, prefix hit 0.00 (the load's cycles)
-  the load's cycles (the p95 and above: 30, cycles 8-89): IL 1000 OL 1133, prefix hit 0.00
+  the load's cycles (the p95's cycles, the p95 and above: 30, cycles 8-89): IL 1000 OL 1133, prefix hit 0.00
 utilization at the load judged
-  decode        KV fill 0.450 (band top 0.8), slots 418 of 512, wait p 0.045
+  decode        KV fill 0.448 (band top 0.8), slots 416 of 512, wait p 0.041
   KV pull       utilization 0.018 per decode pod, mean wait unpriced (TTFT refused)
-  prefill       utilization pooled 0.39, worst pod 0.39 (f 1)
-  verdict       UNDER-PROVISIONED: at the p95 load of 12.5 r/s, the fleet runs past its operating point of 11.3 r/s (0.85 of its 13.3 r/s knee); needs at least 3 decode (has 2), 5 decode if the decode knee reads 99% high.
+  prefill       utilization pooled 0.38, worst pod 0.38 (f 1)
+  verdict       UNDER-PROVISIONED: at the p95 less counting noise load of 12.5 r/s, the fleet runs past its operating point of 11.3 r/s (0.85 of its 13.3 r/s knee); needs at least 3 decode (has 2), 5 decode if the decode knee reads 99% high.
 capacity            req/s     out tok/s   bound by
   prefill knee      >=32.37   36680       prefill compute: N_p 2 x V_P x (1 - 0.05 margin) / (f 1.000 x 1000 tokens); at least: V_P is a lower bound
   decode knee       13.35     15124       decode batch cap at fill 0.551
@@ -29,9 +29,9 @@ SLO vs load        r/s    TTFT p50/90 ms                       TPOT mean/p90 ms 
   50% of knee      6.67   TTFT not priced (V_P a lower bound)  15.94/27.08       TTFT not priced (V_P a lower bound)
   80% of knee      10.68  TTFT not priced (V_P a lower bound)  23.36/39.68       TTFT not priced (V_P a lower bound)
   100% of knee     13.35  TTFT not priced (V_P a lower bound)  saturated         TTFT not priced (V_P a lower bound)
-  load seen (93%)  12.48  TTFT not priced (V_P a lower bound)  29.53/50.18       TTFT not priced (V_P a lower bound)
+  load seen (93%)  12.46  TTFT not priced (V_P a lower bound)  29.45/50.04       TTFT not priced (V_P a lower bound)
 checks
-  2 prefill + 2 decode  does not hold: 12.48 r/s is above 0.85 x the fleet knee 13.35 r/s = 11.35 r/s; TTFT p95 not judged (TTFT not priced (V_P a lower bound))
+  2 prefill + 2 decode  does not hold: 12.46 r/s is above 0.85 x the fleet knee 13.35 r/s = 11.35 r/s; TTFT p95 not judged (TTFT not priced (V_P a lower bound))
 assumed: V_P 17046 tokens/s is only the rate a prefill pod was seen to compute: the pods never queued for capacity, so the prefill knee is at least the rate it gives and no TTFT is priced from it; --assume-vp states one; prompt 1000 tokens (--shape); prompt cv 2 (no computed-prompt histogram); flow control off (no queue series); Poisson arrivals
 flags: UnvalidatedTTFT; VPLowerBound; AssumedPromptSpread; AssumedShape; HeldLine; BelowFittedBand; CoarseTPOTBucket; MeanBoundedTPOTPercentile
 
