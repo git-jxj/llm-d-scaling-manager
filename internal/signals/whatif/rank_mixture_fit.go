@@ -299,6 +299,9 @@ type RankMixtureOptions struct {
 	// is raised to it (RankMixtureFit.SpreadFloored); 0 none.
 	SpreadFloor                         float64
 	NoMixture, NoKV, NoPrompt, NoSpread bool
+	// StratifiedMoments prices with stratified service moments
+	// (RankMixture.Stratified); off by default.
+	StratifiedMoments bool
 }
 
 // MinSpreadFitWindow is the shortest fit window the planner calibrates the
@@ -330,7 +333,8 @@ func FitCore(steps []MixtureStep, o RankMixtureOptions) (RankMixture, float64, e
 			shares[i] = 1 / float64(len(shares))
 		}
 	}
-	m := RankMixture{S0: s0, V: v, ServiceProportional: proportional, Shares: shares, Spread: 1, Slots: o.Slots}
+	m := RankMixture{S0: s0, V: v, ServiceProportional: proportional, Shares: shares, Spread: 1, Slots: o.Slots,
+		Stratified: o.StratifiedMoments}
 	if !o.NoKV {
 		if kv, err := FitKVDeferral(steps, s0, v, len(shares)); err == nil {
 			m.KV = kv
