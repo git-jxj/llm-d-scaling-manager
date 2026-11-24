@@ -49,6 +49,7 @@
 /bin/bash
 /bin/sh
 /bridge
+/etc/scaling-manager-prometheus-ca/ca.crt
 /mu
 /tmp
 /tmp/
@@ -455,6 +456,7 @@ ScaledObject
 Scaling
 ScalingPolicy
 Seconds
+Secret
 Selected
 Seq
 Set
@@ -821,6 +823,7 @@ by
 byRole
 bytes
 c
+caFromSecret
 cache
 cacheKey.name
 cacheKey.namespace
@@ -1145,6 +1148,7 @@ dropped
 droppedRoles
 droppedTokens
 dropping
+dsetRoleWriter
 dtype
 duplicate
 duration
@@ -1734,6 +1738,7 @@ kube_pod_status_ready
 kube_pod_status_ready_time
 kube_replicaset_owner
 kubelet
+kubernetes.io/metadata.name
 kueue
 kueue-gate
 kueue-lender-release
@@ -2093,6 +2098,7 @@ mori
 most
 mostly
 mount
+mounted
 move
 moved
 moves
@@ -2161,6 +2167,7 @@ namespaceDefault
 namespacePools
 namespaceQuotas
 namespaceScoped
+namespaceSelector
 namespaces
 nan
 narrow
@@ -2917,10 +2924,12 @@ scaling-manager-learned-state
 scaling-manager-managed
 scaling-manager-manager-config
 scaling-manager-policy
+scaling-manager-prometheus-ca
 scaling-manager-scaling-policy-config
 scaling-manager-settings
 scaling-manager-system
 scaling-manager-utilization-share-history
+scaling-manager.llmd.ai/managed
 scaling-policy
 scalingModifiers
 scheduled
@@ -2938,6 +2947,7 @@ scrape
 scrapeError
 scraped
 second
+seconds
 see
 seed
 seeds
@@ -3252,6 +3262,7 @@ targetReduce
 targetReplicas
 target_model_name
 targets
+team-a
 tell
 template
 tenants
