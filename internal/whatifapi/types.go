@@ -456,6 +456,13 @@ type Assume struct {
 	// AboveFlowControlOnset, a miss); absent, the CLI's default
 	// (whatif.DefaultRouterWaitInPrefill, whatif.DefaultPriceRouterWait).
 	RouterWait string `json:"routerWait,omitempty"`
+	// LoadAwareRouter states that the router balances prefill by load, as
+	// llm-d's EPP queue scorer does (--load-aware-router): f is held to the
+	// utilization it was read at, then falls to 1 at the pooled prefill knee
+	// (whatif.Prefill.LoadAwareRouter). No recording says what the router
+	// scores, so it is stated, never read; absent or false, f is held at
+	// every load (whatif.DefaultPlannerLoadAwareRouter).
+	LoadAwareRouter bool `json:"loadAwareRouter,omitempty"`
 }
 
 // The values Assume.FlowControl takes.

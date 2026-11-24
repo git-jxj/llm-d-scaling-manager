@@ -640,6 +640,7 @@ function showLearned(inputs) {
     el("l-" + a.box).textContent = text;
   }
   if (inputs.terms.some(x => x.name === "prefill" && x.refused)) refused = true;
+  el("a-lar").checked = false;
   el("assumebox").open = refused;
   el("assumecount").textContent = "none typed";
 }
@@ -764,6 +765,7 @@ function applyLink() {
   k.edges = le.edges;
   state.linkNote = le.note;
   for (const a of ASSUMABLE) if (num(a.key) != null) k.assume[a.key] = num(a.key);
+  if (g("loadAwareRouter") === "1") k.assume.loadAwareRouter = true;
   if (num("max") != null) k.maxRep = Math.min(64, Math.max(1, Math.round(num("max"))));
   k.sizeLow = g("low") === "1";
   // A scenario opened in the other mode switches the question. The
@@ -788,6 +790,7 @@ function applyLink() {
   el("bucketedges").value = k.edges;
   el("ratio").value = k.ratio != null ? k.ratio : "";
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) el("a-" + a.box).value = Number((k.assume[a.key] * a.scale).toPrecision(6));
+  el("a-lar").checked = !!k.assume.loadAwareRouter;
   showTyped();
   syncControls();
 }
@@ -835,6 +838,7 @@ function linkParams() {
   if (k.priceAs !== "mix") p.set("priceAs", k.priceAs);
   if (k.outputTokens != null) p.set("out", Math.round(k.outputTokens));
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) p.set(a.key, k.assume[a.key]);
+  if (k.assume.loadAwareRouter) p.set("loadAwareRouter", "1");
   if (k.perBucket) p.set("perBucket", "1");
   if (k.edges) p.set("edges", k.edges);
   return p;
@@ -2241,6 +2245,15 @@ function wire() {
       schedule(0);
     };
   }
+  // The router's balancing is stated, not typed: assume.loadAwareRouter,
+  // sent only when ticked, so the server's default (off) stands otherwise.
+  el("a-lar").onchange = () => {
+    if (!ready()) return;
+    if (el("a-lar").checked) k().assume.loadAwareRouter = true;
+    else delete k().assume.loadAwareRouter;
+    showTyped();
+    schedule(0);
+  };
   el("perbucket").onchange =() => { if (ready()) { k().perBucket = el("perbucket").checked; syncControls(); schedule(0); } };
   el("bucketedges").onchange = () => {
     if (!ready()) return;

@@ -46,6 +46,9 @@ type backtestFlags struct {
 	flowControl                          string
 	routerWaitInPrefill, priceRouterWait bool
 	set                                  map[string]bool
+	// loadAwareRouter is --load-aware-router, as answerFlags' (answer.go):
+	// assume.loadAwareRouter.
+	loadAwareRouter bool
 	// vpPlateau is --prefill-vp-plateau, as answerFlags' (vp_plateau.go):
 	// both sides are read with V_P from the occupancy plateau.
 	vpPlateau bool
@@ -79,6 +82,8 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.StringVar(&f.flowControl, "flow-control", "", "the router's flow control, on or off, in place of its inference from the fit's queue series (flagged as stated)")
 	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's, on by default: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0); =false for router v0.11.0")
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0); set, it turns the default --router-wait-in-prefill off")
+	fs.BoolVar(&f.loadAwareRouter, "load-aware-router", whatif.DefaultPlannerLoadAwareRouter, "as slo-to-rate's: state that the router "+
+		"balances prefill by load (llm-d's EPP queue scorer), so f is held to the load it was learned at, then falls to 1 at the pooled prefill knee; off by default")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTV2Usage)
@@ -295,7 +300,7 @@ func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
 // assume is the terms the --assume-* flags state, checked as an answer
 // checks them: V_P and a above 0, as before, and the rest where given.
 func (f *backtestFlags) assume() (whatifapi.Assume, error) {
-	a := whatifapi.Assume{FlowControl: f.flowControl}
+	a := whatifapi.Assume{FlowControl: f.flowControl, LoadAwareRouter: f.loadAwareRouter}
 	if err := a.CheckFlowControl(); err != nil {
 		return a, usagef("--flow-control %q, want on or off", f.flowControl)
 	}

@@ -231,6 +231,14 @@ prompt cv, the router hop, or decode's ITL B. The learned value, or the reason
 it is missing, is shown under each box. A typed value flags every figure that
 rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
 
+The same box holds **My router balances prefill by load**. Tick it when the
+router scores each prefill pod's queue (llm-d's EPP queue scorer): it is the
+CLI's `--load-aware-router` and the API's `assume.loadAwareRouter` (**A
+load-aware router** under [Check a fleet at N replicas](#check-a-fleet-at-n-replicas)
+says what it does). It is off by default, the link
+carries it, and with it ticked every figure reads outside the validated
+region.
+
 Decode refused with `PinnedDefaultB` is the common case on a real P/D window:
 the latency line's intercept B, the per-token latency with the cache empty,
 was never measured, because no window spread the decode Pods' KV fill far
@@ -704,7 +712,9 @@ It replays the recording once and answers, for each shape and load:
   fleets at f 1 and f 1.5 are priced the same way. A pod much busier than the
   rest still saturates first. With no load measured for f, f is held. The
   recording does not say what the router scores, so the flag is off by
-  default.
+  default. The API takes it as `assume.loadAwareRouter: true`, `backtest`
+  and `predict` as `--load-aware-router`, and the page as **My router
+  balances prefill by load** under **Assume a term**.
   Since no run measured it, the sentence also gives the fleet needed at f 1
   and at f 1.5 on every count above one prefill pod ("at f 1 needs 3 + 3,
   at f 1.5 needs 4 + 3", or "the same at f 1 to 1.5"), and `-o json` gives

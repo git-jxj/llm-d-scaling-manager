@@ -116,6 +116,12 @@ func TestTTFTGolden(t *testing.T) {
 		{"ttft-q32-assumed-spread", q32TTFT("replicas-to-slo", "--ttft-percentile", "90"), 0},
 		{"ttft-q32-as-priced", q32TTFT("replicas-to-slo", "--ttft-percentile", "90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1", "--flow-control", "off"), 0},
 		{"ttft-q32-as-priced-json", q32TTFT("replicas-to-slo", "--ttft-percentile", "90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1", "-o", "json"), 0},
+		// The same with --load-aware-router stated (the API's
+		// assume.loadAwareRouter, TestServeParity): f is 1 on the warm-up,
+		// so no figure moves, and every figure reads outside for the stated
+		// switch the run did not price.
+		{"ttft-q32-load-aware-json", q32TTFT("replicas-to-slo", "--ttft-percentile", "90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1",
+			"--load-aware-router", "-o", "json"), 0},
 		{"ttft-q32-rate-as-priced", q32TTFT("slo-to-rate", "--ttft", "7599.1ms@p90", "--assume-prompt-cv", "0.0577", "--arrival-cv2", "1", "--flow-control", "off"), 0},
 		{"ttft-q32-rate-assumed-spread", q32TTFT("slo-to-rate", "--ttft", "7599.1ms@p90"), 0},
 		// Bucket C (Ca^2 4) with flow control on, at its frozen p95 target:
