@@ -319,14 +319,17 @@ func TestRankMixture_StratifiedMoments(t *testing.T) {
 	require.True(t, ok)
 	es, cs2 := nlm.serviceMoments(hx, hl)
 	// The law's mean by a fine quadrature of its quantile function.
-	var want float64
+	var want, want2 float64
 	const n = 1 << 20
 	for i := range n {
-		want += 0.1 + hx.ppf((float64(i)+0.5)/n)/20000
+		v := 0.1 + hx.ppf((float64(i)+0.5)/n)/20000
+		want += v
+		want2 += v * v
 	}
 	want /= n
-	assert.InEpsilon(t, want, es, 0.005)
-	assert.Positive(t, cs2)
+	wantCS2 := want2/n/(want*want) - 1
+	assert.InEpsilon(t, want, es, 1e-3)
+	assert.InEpsilon(t, wantCS2, cs2, 0.06, "a random sample of the same size reads the tail's cs^2 off by more")
 	d, u := nlm.Draws(4, heavyTail(), pointHist(80000), DefaultMixtureDraws)
 	require.Nil(t, u)
 	for _, r := range d.Checks.Rho {
