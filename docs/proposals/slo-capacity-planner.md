@@ -818,6 +818,20 @@ UNDER-PROVISIONED verdict still grows decode to the point estimate and states
 the bound count beside it; where its fleet needed trades decode for prefill, it
 cuts decode no lower than the bound either.
 
+**A shape priced lighter than the load (#361).** Asked for the measured shape
+(`--shape measured`), `at-replicas` prices the load at the decode variant's last
+cycles; by default it prices the load at its own cycles' shape, and this rule
+does not apply. Where the measured shape is more than 20% shorter, in prompt or
+output, than the cycles the load was read from (the same tolerance, read against
+the load's shape, as `ShapeLoadMismatch`), the knee reads high for the load. An
+OVER-PROVISIONED or RIGHT-SIZED verdict on
+it can cut replicas the load needs, so neither is given: the verdict is NOT
+JUDGED, no fleet is sized, and the summary names both shapes and `--shape load`.
+An UNDER-PROVISIONED verdict stands, as a heavier load only makes it more true.
+This is the mirror of the rule that withholds an UNDER on a shape priced heavier
+than the load (#294, #297). A stated shape is the question's, and keeps every
+verdict.
+
 The rules the page leaves open, chosen here: the row is the unit, as `AvgITL` and
 `generation_tokens` are per pod; a line is asked at the row's fill, clamped to the
 band as an answer is; the knee is read at the row's own shape, on one replica, against
