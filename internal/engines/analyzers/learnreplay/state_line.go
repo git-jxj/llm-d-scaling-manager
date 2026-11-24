@@ -43,10 +43,11 @@ type lineSamples struct {
 	// busiest rank (saturation.SwitchMoEBusiestRank).
 	ratios map[string][]float64
 	// fit is each variant's steady rows, off a ramp, in the band and above
-	// it (an above-band line's are there), over a line's whole window (fitRowsAge) and not its latest shapeCycles cycles
-	// alone: the rows a line's fit rests on, and the batch it held
-	// (fitRows). ownFitAt is when each variant's line was last its own fit
-	// (noteOwnFit): a held line's fit was made then.
+	// it (an above-band line's are there), over a line's whole window
+	// (fitRowsAge) and not its latest shapeCycles cycles alone: the rows a
+	// line's fit rests on, and the batch it held (fitRows). ownFitAt is when
+	// each variant's line was last its own fit (noteOwnFit): a held line's
+	// fit was made then.
 	fit      map[string][]whatif.LineRow
 	ownFitAt map[string]time.Time
 }
