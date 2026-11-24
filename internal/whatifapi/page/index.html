@@ -310,7 +310,7 @@
         <div class="field"><label for="daystep">Bucket</label>
           <select id="daystep"><option>1m</option><option selected>5m</option><option>15m</option><option>1h</option></select></div>
         <div class="field"><label for="daysize">Size each bucket for its</label>
-          <select id="daysize"><option value="">p95 rate (the mean, less conservative, where a bucket holds fewer than 20 cycles)</option>
+          <select id="daysize"><option value="">p95 rate less counting noise (the mean, less conservative, where a bucket holds fewer than 20 cycles)</option>
             <option value="mean">mean rate</option><option value="p95">p95 rate</option><option value="p95-modulation">p95 rate less counting noise</option><option value="max">highest rate</option></select></div>
         <button type="button" id="dayrun" disabled>Plan the day</button>
       </div>
@@ -350,6 +350,8 @@
         <label class="check"><input type="checkbox" id="btallow"> Test another configuration anyway</label>
         <button type="button" id="btrun" disabled>Run</button>
       </div>
+      <p class="notice" id="btnotrun" role="note" hidden>Not checked yet: the page runs no check until you ask, as it takes seconds to a minute.
+        <button type="button" id="btstart" disabled>Check accuracy on this recording</button></p>
       <div id="btout" hidden>
         <div class="btverdict" id="btverdict" aria-live="polite"></div>
         <p class="notice" id="btnotice" role="note" hidden></p>
@@ -404,12 +406,12 @@
           <p class="hint" id="rgrowthhint">1.5 adds a column and a line for 50% more traffic; the verdict stays at the load seen.</p>
           <label for="rloadstat">Judge at the load seen as its</label>
           <select id="rloadstat" aria-describedby="rloadstathint">
-            <option value="p95" selected>p95 (its busy spells)</option>
+            <option value="p95-modulation" selected>p95 less counting noise (its busy spells)</option>
+            <option value="p95">p95</option>
             <option value="mean">mean</option>
             <option value="peak">peak</option>
-            <option value="p95-modulation">p95 less counting noise</option>
           </select>
-          <p class="hint" id="rloadstathint">The p95 of the per-cycle load: the fleet must carry its busy spells, not only the average.</p>
+          <p class="hint" id="rloadstathint">The p95 of the per-cycle load less the one-minute rate's counting noise, which the queueing model already prices: the fleet must carry its busy spells, not only the average.</p>
         </fieldset>
         <button type="button" id="rrun" disabled>Judge the fleet</button>
       </div>

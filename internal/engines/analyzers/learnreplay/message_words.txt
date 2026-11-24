@@ -721,6 +721,7 @@ backlogGrew
 backlogGrowth.fraction
 backlogGrowth.minRequests
 backlogRequests
+backtest-step-output-dispersion
 bad
 bad-band
 balanced
@@ -808,6 +809,7 @@ build
 built
 built-in
 busiest
+busiest-rank
 busiest-rank-max_over_time
 busiestPod
 busiestRankKvUsage
@@ -2165,6 +2167,7 @@ namespaces
 nan
 narrow
 near-k_sat
+nearest
 nearly
 need
 needGPUs

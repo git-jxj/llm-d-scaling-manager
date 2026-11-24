@@ -109,6 +109,7 @@ func TestBacktestFlags(t *testing.T) {
 		"bad target":       {[]string{"backtest", "--recording", "a", "--ttft-target", "fast"}, "--ttft-target"},
 		"bad output":       {[]string{"backtest", "--recording", "a", "-o", "yaml"}, "-o"},
 		"fit without test": {[]string{"backtest", "--fit", "a"}, "give --recording"},
+		"fit steps alone":  {[]string{"backtest", "--recording", "a", "--rank-mixture-fit-steps"}, "--experimental-ttft=v2"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var out strings.Builder

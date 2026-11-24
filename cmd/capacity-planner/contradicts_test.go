@@ -201,7 +201,8 @@ func TestReport_ContradictsOnlyAtTheShapePriced(t *testing.T) {
 	assert.Empty(t, r.contradicted(2, 2, base), "a second decode variant served")
 
 	// A cycle lighter than the shape priced, within 20%, has a knee higher
-	// by that much: 5.2 r/s at OL 820 is 4.3 r/s at OL 1000, under 1.25x 4.
+	// by at least that much: 5.2 r/s at OL 820 is under 4.3 r/s at OL 1000
+	// (4.0, with the shorter output's KV), under 1.25x 4.
 	r = contradictsReporter(cycles(10, 22), 5.2, 2, 2)
 	for _, i := range cycles(10, 22) {
 		r.st.Variants[1].ShapeSeries[i].OutputTokens = 820

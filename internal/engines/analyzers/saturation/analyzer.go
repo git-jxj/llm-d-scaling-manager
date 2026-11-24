@@ -572,6 +572,10 @@ type SaturationAnalyzer struct {
 	// decodeBurstFill is SwitchDecodeBurstFill: off from the constructor,
 	// and never read here (the planner prices the fill a request sees).
 	decodeBurstFill bool
+	// backtestStepOutputDispersion is SwitchBacktestStepOutputDispersion:
+	// off from the constructor, and never read here (the planner's backtest
+	// prices each step's output spread).
+	backtestStepOutputDispersion bool
 	// prefillVPFloorServed is SwitchPrefillVPFloorServed: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillVPFloorServed bool

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -325,6 +326,12 @@ type BacktestRequest struct {
 	// other (backtest_rank_mixture.go). Every TTFT it prices reads OUTSIDE
 	// VALIDATED REGION.
 	TTFTModel string `json:"ttftModel,omitempty"`
+	// RankMixtureFitSteps turns on the rank mixture's fit-step fixes: its
+	// KV-deferral lines and prompt slopes fitted on the steps under rho 0.9
+	// only, and the ranks' shares read at the priced load
+	// (whatif.RankMixtureOptions CleanFitSteps, SharesAtLoad). Off by
+	// default; read only with TTFTModel rank-mixture.
+	RankMixtureFitSteps bool `json:"rankMixtureFitSteps,omitempty"`
 	// RankMixtureStratified prices the rank mixture with stratified service
 	// moments (whatif.RankMixtureOptions.StratifiedMoments): each rank's
 	// mean service and cs^2 integrated over the computed-token law, not
@@ -1070,6 +1077,9 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	}
 	switch req.TTFTModel {
 	case "":
+		if req.RankMixtureFitSteps {
+			return nil, InputErrorf("rankMixtureFitSteps changes the fit of ttftModel %q: give it with that model", whatif.QueueRankMixture)
+		}
 	case string(whatif.QueueRankMixture):
 		// The model prices only where its identifiability checks pass;
 		// otherwise it abstains, and every TTFT is the planner's own.
@@ -1077,7 +1087,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		case len(test.mixture) != len(test.series):
 			q.mixture = abstainedMixture("the test source did not give the per-rank series")
 		default:
-			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots, req.RankMixtureStratified)
+			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots, rankMixtureSwitchesOf(req))
 			if ferr != nil {
 				q.mixture = abstainedMixture(ferr.Error())
 			} else {
@@ -1695,6 +1705,10 @@ type stepInputs struct {
 	// histograms bound (whatif.PromptSpread.MaxRatio), raised to
 	// promptCVGrid; 0 with none.
 	promptMaxRatio float64
+	// outputDispersion is the step's own output spread, D = E[O^2]/E[O]^2
+	// over its decode rows (outputDispersionOf), on outputDispersionGrid;
+	// 0 where a cycle of the step read none.
+	outputDispersion float64
 	// otherPods says variants other than the priced ones served in it.
 	otherPods bool
 }
@@ -1707,6 +1721,7 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 	in.prefill, in.decode = a.Prefill, a.Decode
 	in.prompt, in.output, _, in.hasShape = bucketShape(samples)
 	in.otherPods = slices.ContainsFunc(samples, func(x SeriesSample) bool { return x.OtherPods > 0 })
+	in.outputDispersion = outputDispersionOf(samples)
 	pooled := map[float64]float64{}
 	var computed, requests float64
 	for _, x := range samples {
@@ -1732,6 +1747,41 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 // steps of nearly one spread share a fleet.
 const promptCVGrid = 0.05
 
+// outputDispersionGrid is the grid a step's output spread is priced on, so
+// that steps of nearly one spread share a fleet.
+const outputDispersionGrid = 0.05
+
+// outputDispersionOf is the step's output spread, D = E[O^2]/E[O]^2 over
+// its cycles' decode rows, each cycle weighted by its rate as bucketShape
+// weights the lengths, rounded to outputDispersionGrid: 0 where a cycle
+// that read an output length read no E[O^2] (the two must be one reading of
+// the same rows), or none read a length. Pooled over the step, not the
+// mean of each cycle's D: lengths that vary from cycle to cycle are a
+// spread the step's requests hold too.
+func outputDispersionOf(samples []SeriesSample) float64 {
+	var w, ol, sq float64
+	for _, x := range samples {
+		if !x.HasShape {
+			continue
+		}
+		if !(x.OutputTokensSquared > 0) || !(x.OutputTokens > 0) {
+			return 0
+		}
+		wx := x.Rate
+		if !(wx > 0) {
+			wx = 1e-9
+		}
+		w += wx
+		ol += wx * x.OutputTokens
+		sq += wx * x.OutputTokensSquared
+	}
+	if !(w > 0) {
+		return 0
+	}
+	d := shape.Dispersion(ol/w, sq/w)
+	return math.Round(d/outputDispersionGrid) * outputDispersionGrid
+}
+
 // maxRatioOnGrid is a prompt bound raised to promptCVGrid, so that steps of
 // nearly one bound share a fleet: raised, as a higher bound prices more of
 // the gamma's tail, never less than the histogram allows. 0 stays 0.
@@ -1745,11 +1795,12 @@ func maxRatioOnGrid(r float64) float64 {
 
 // predictKey is one fleet a backtest prices.
 type predictKey struct {
-	np, nd         int
-	prompt, output float64
-	promptCV       float64
-	promptMaxRatio float64
-	q              float64
+	np, nd           int
+	prompt, output   float64
+	promptCV         float64
+	promptMaxRatio   float64
+	outputDispersion float64
+	q                float64
 }
 
 // predictor prices steps from the fit alone: the Pricer, and the inputs of
@@ -1793,7 +1844,7 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		return out, errors.New("no fleet to price")
 	}
 	for _, q := range backtestStats {
-		k := predictKey{np: in.prefill, nd: in.decode, q: q, promptCV: -1}
+		k := predictKey{np: in.prefill, nd: in.decode, q: q, promptCV: -1, outputDispersion: in.outputDispersion}
 		if in.hasShape {
 			k.prompt, k.output = shapeKnob(in.prompt), shapeKnob(in.output)
 		}
@@ -1819,6 +1870,7 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 			kn.Assume = p.assume
 			kn.Assume.PromptCV = cv
 			kn.PromptMaxRatio = k.promptMaxRatio
+			kn.OutputDispersion = k.outputDispersion
 			kn.CachedTokenCost = p.cachedCost
 			var err error
 			if fl, err = p.pricer.Fleet(kn); err != nil {

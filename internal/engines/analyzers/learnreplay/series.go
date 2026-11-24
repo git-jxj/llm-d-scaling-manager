@@ -37,6 +37,11 @@ type CycleSample struct {
 	// decode row read an output length.
 	PromptTokens, OutputTokens, PrefixHitRate float64
 	HasShape                                  bool
+	// OutputTokensSquared is the same rows' bound on E[O^2], weighted as
+	// OutputTokens is (domain.ReplicaMetrics.AvgOutputTokensSquared): 0
+	// unless every row that set OutputTokens read one, so that the two are
+	// one reading of the same rows (shape.Dispersion).
+	OutputTokensSquared float64
 	// OtherPods is the serving pods of prefill and decode variants other
 	// than the counted ones: the model's rate served by pods the counts
 	// leave out.
@@ -183,7 +188,8 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 			s.DecodeNotServing += notServing
 		}
 	}
-	var weight, il, ol, hit, modelRate, bothRate float64
+	var weight, il, ol, hit, squared, modelRate, bothRate float64
+	everySquared := true
 	var prompted []domain.ReplicaMetrics
 	for _, rm := range in.ReplicaMetrics {
 		role := domain.CanonicalRole(roles[rm.VariantName])
@@ -227,12 +233,20 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 		il += w * rm.AvgInputTokens
 		ol += w * rm.AvgOutputTokens
 		hit += w * rm.PrefixCacheHitRate
+		if rm.AvgOutputTokensSquaredKnown && whatif.Finite(rm.AvgOutputTokensSquared) && rm.AvgOutputTokensSquared > 0 {
+			squared += w * rm.AvgOutputTokensSquared
+		} else {
+			everySquared = false
+		}
 	}
 	if pooled := whatif.PoolComputedBuckets(nil, prompted); len(pooled) > 0 {
 		s.PromptBuckets = pooled
 	}
 	if weight > 0 {
 		s.PromptTokens, s.OutputTokens, s.PrefixHitRate, s.HasShape = il/weight, ol/weight, hit/weight, true
+		if everySquared {
+			s.OutputTokensSquared = squared / weight
+		}
 	}
 	s.EngineRate = modelRate + bothRate
 	s.RateKnown = in.ArrivalRate > 0 || modelRate == 0

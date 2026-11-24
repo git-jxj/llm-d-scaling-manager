@@ -139,7 +139,7 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	res, err := s.resolved(ctx, &f, st, data, info)
 	var serr error
 	if err == nil {
-		serr = s.experimentalSeries(data, res, req.TTFTModel != "")
+		serr = s.experimentalSeries(data, res, req.TTFTModel != "", req.TPOTModel != "")
 	}
 	// The series, and the experimental models' after it, are the last
 	// passes: a file changed under them is refused, and nothing is kept
@@ -162,17 +162,18 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 // experimental model (--experimental-ttft=v2, --experimental-tpot=v2), the
 // cycles that model reads and the engines' flags it takes, in a pass of
 // their own over data: the CLI's backtest reads the same (rankMixture,
-// tpotDistribution). Neither changes the inputs' content id. ttftModel
-// says the request asked for the experimental TTFT model
-// (whatifapi.InputsRequest.TTFTModel), which reads the same series.
-func (s *servedSources) experimentalSeries(data *recordingSource, res *whatifapi.Resolved, ttftModel bool) error {
+// tpotDistribution). Neither changes the inputs' content id. ttftModel and
+// tpotModel say the request asked for the experimental TTFT or TPOT model
+// (whatifapi.InputsRequest.TTFTModel, TPOTModel), which read the same
+// series.
+func (s *servedSources) experimentalSeries(data *recordingSource, res *whatifapi.Resolved, ttftModel, tpotModel bool) error {
 	if s.rankMixture || ttftModel {
 		if err := rankMixtureFrom(data.open, res); err != nil {
 			return err
 		}
 		res.Engine.PrefillSlots = prefillSlotsOf(res)
 	}
-	if s.tpotDistribution {
+	if s.tpotDistribution || tpotModel {
 		if err := decodeSeriesFrom(data.open, res); err != nil {
 			return err
 		}
@@ -497,6 +498,7 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 		f.outputTokens = k.OutputTokens
 		set("assume-output-tokens")
 	}
+	f.stepOutputDispersion = k.OutputDispersion
 	a := k.Assume
 	if a.VP != nil {
 		f.assumeVP = *a.VP
@@ -595,9 +597,26 @@ type servedFleet struct {
 	q     ttftQuestion
 	tpotQ float64
 	ratio resolvedRatio
+	// model is the experimental model's R_q priced in place of the fleet's
+	// own (WithTPOTRatio); nil prices the fleet's.
+	model *whatifapi.ModelRatio
 	// assumed is the fleet's assumed row as read, before any figure added to
 	// it.
 	assumed []string
+}
+
+// WithTPOTRatio is sf with its TPOT percentile priced at the experimental
+// model's R_q, as an assumed R_q is priced, flagged r.Flag where the
+// assumed one is flagged AssumedTPOTRatio: the percentile curve, its point
+// and decode's limit at the target. The host-bound refusal, a coarse
+// bucket's reading, does not apply: the model's spread is fitted on every
+// bucket.
+func (sf *servedFleet) WithTPOTRatio(r whatifapi.ModelRatio) whatifapi.Fleet {
+	c := *sf
+	c.ratio = resolvedRatio{ratio: whatif.TPOTRatio{Value: r.Value}, flags: []whatif.Flag{r.Flag}}
+	c.model = &r
+	c.assumed = append(slices.Clone(sf.assumed), r.Assumed)
+	return &c
 }
 
 // PrefillKnee is replicas-to-slo's prefill knee.
@@ -686,6 +705,8 @@ func (sf *servedFleet) TPOTRatio() whatifapi.Ratio {
 	r := sf.ratio.ratio.Value
 	out := whatifapi.Ratio{Value: &r, Source: sourceLearned, Flags: whatifapi.FlagNames(sf.ratio.flags)}
 	switch {
+	case sf.model != nil:
+		out.Source = sf.model.Source
 	case sf.ratio.ratio.Assumed:
 		out.Source = shapeAssumed
 		out.Flags = append(out.Flags, string(whatif.AssumedTPOTRatio))

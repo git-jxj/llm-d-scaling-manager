@@ -29,11 +29,15 @@ The page has four tabs:
 While a recording loads, a bar at the top of the page says so, with a
 **Cancel**; **Load** is off until it ends. After a load the page judges the
 fleet at your busiest load in the background, and the bar says what runs.
+It does not check the planner's accuracy on the recording: that check takes
+seconds to a minute, so it runs only when you press **Check accuracy on this
+recording**.
 
 The **Answer** tab, top down:
 
 1. **The header.** The model and variants, the source, the window it covers,
-   and a chip "Checked on your traffic" that opens the evidence. The
+   and a chip "Checked on your traffic" that opens the evidence ("Accuracy
+   not checked yet" until you run the check). The
    self-check in full and the TTFT model's validation figures sit closed
    under the source.
 2. **The answer panel.** Fleet today, the verdict, the right size, headroom,
@@ -160,8 +164,9 @@ planner's own terms:
   2. Type the loads, comma separated: `80%` of each shape's knee, `5r/s`, or
      `seen`. Set **Load seen times** to 1.5 to add a column and a line for 50%
      more traffic; the verdict stays at the load seen.
-  3. Pick the load seen to judge at: its p95 over the window (the default,
-     the busy spells), its mean, or its peak.
+  3. Pick the load seen to judge at: its p95 over the window less the
+     one-minute rate's counting noise (the default, the busy spells), its
+     p95, its mean, or its peak.
   4. Press **Judge the fleet**.
 
   The answer reads top down:
@@ -395,7 +400,9 @@ In a cluster, add both to the StatefulSet's `args`
   point A and the report's TTFT tables, also where the planner refuses
   them (a prefill that never queued). See
   [The v2 TTFT curve](#the-v2-ttft-curve). Sizes follow, from the model's
-  prefill limit. Day plans and predictions are the default's. `=v2` does not turn
+  prefill limit. With `--experimental-tpot=v2` the main view's TPOT p90
+  and p95 too: see [The v2 TPOT curve](#the-v2-tpot-curve). Day plans and
+  predictions are the default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
@@ -442,6 +449,59 @@ In a cluster, add both to the StatefulSet's `args`
 - **The CLI.** `at-replicas --experimental-ttft=v2` prices its tables' TTFT
   the same way, from a `--recording`. Its verdict and summary cells stay
   the planner's own.
+
+#### The v2 TPOT curve
+
+- **What it moves.** Only the TPOT p90 and p95. The mean TPOT is the
+  planner's own. The model places a per-request distribution around that
+  mean ([how it reads](accuracy.md#experimental-the-per-request-tpot-distribution)),
+  fitted on the loaded source, so each percentile is the mean times one
+  ratio: the source's decode spread and output lengths, the same at every
+  rate. The plan's `tpot.ratio` names it, with the source
+  "experimental TPOT model".
+- **What it prices.** The TPOT curve, point A, and decode's limit at a p90
+  or p95 target: the rate whose mean meets the target over that ratio. A
+  size at such a target sizes decode on it. The report's measured-shape
+  table prices its TPOT percentile the same way. The report's verdict,
+  capacity and summary cells stay the planner's own. Day plans do not use
+  it.
+- **Solid, then dashed.** As the TTFT curve: solid up to the highest load
+  the source served, per decode replica, and dashed beyond it. Each figure
+  past that load carries `extrapolated` true, a size's steps among them.
+  Such a figure is marked, not refused: the model's ratio is the source's,
+  and the planner's own ratio is read the same way.
+- **The evidence.** The caption names the "Experimental TPOT model" and its
+  score on the source's held-out folds, at the measured mean: in how many
+  steps the predicted p90 and p95 fell in the router histogram's bucket the
+  measured one fell in. Each fold fits the model on the steps before its
+  cut alone, so a source whose traffic changes over the window can score
+  low here while the curve still lands in the measured buckets (see
+  [Known issue](#known-issue-a-low-held-out-score)).
+- **Where it is not used.** A statistic other than p90 or p95, a stated
+  output length or a stated R_q (`assume.tpotRatio`): the planner's own
+  percentile stands. The same where it abstains (under 2 h of steps with the router's
+  TPOT histogram and the output lengths, max-num-seqs not read, more than
+  1 % of sequences waiting for a slot, or C at its bound).
+- **Other fleets.** At another decode count the ratio is the recorded one,
+  and the assumed lines say so.
+- **The self-check.** With the model on, the source's self-check prices its
+  TPOT p90 with it too, each fold fitted on the fold's own window.
+- **The CLI.** `at-replicas --experimental-tpot=v2` prices its tables' TPOT
+  percentile the same way, from a `--recording`, at `--shape measured`.
+  The default shape, the load's own, stays the planner's.
+
+##### Known issue: a low held-out score
+
+On the repo's Qwen3-32B staircase recording the held-out score reads "p90
+in the measured bucket on 0 of 22", while the curve at the rates served
+lands in it on 24 of 29 steps. The two folds fit on the window's early
+steps, whose outputs are long, so the renewal term barely moves their
+spread and C is poorly pinned there: it comes out 19.5 and 16.4, against
+7.6 on the whole window. Placed on the later short-output steps, that C
+puts the p90 at about 0.022 s, just past the router's 0.02 s bucket edge,
+while the measured p90 sits under it. The router's buckets there are 0.01
+to 0.02 s and 0.02 to 0.04 s, so a 10 % miss reads as a whole bucket. The
+score is shown as computed.
 
 ## Find the fleet a rate needs
 
@@ -519,7 +579,7 @@ bin/capacity-planner at-replicas --recording recordings/ttft-staircase-b-on.json
 It replays the recording once and answers, for each shape and load:
 
 - **Load judged.** The p95 of the arrival rate the window read, one reading
-  per cycle with traffic. The report prints the mean, p95 and peak, and the
+  per cycle with traffic, less its counting noise (below). The report prints the mean, p95 and peak, and the
   busiest 2 minutes (a rolling mean). `--load-statistic mean|p95|peak|p95-modulation` picks
   the one judged; `--load-seen` states a load instead. The mean hides a busy
   part: on the staircase sample it is 31.6 r/s, the p95 41.7 and the peak
@@ -527,9 +587,12 @@ It replays the recording once and answers, for each shape and load:
 - **Counting noise.** Each reading is a 1-minute rate, so even a steady
   Poisson stream reads above its rate at the p95 (about 21% at 1 r/s, 6% at
   12 r/s), and the queueing model already prices that noise. The report
-  prints the p95 less it, `p95 less counting noise`; `--load-statistic
-  p95-modulation` judges at it. A steady load is then judged near its mean,
-  a load that swings near its p95.
+  prints the p95 less it, `p95 less counting noise`, and judges at it
+  (`--load-statistic p95` judges at the p95 itself). A steady load is then
+  judged near its mean, a load that swings near its p95. Readings 15 s apart
+  overlap, so their spread holds only part of a minute's noise (about 0.86 of
+  it over 20 readings, a 5-minute `day-plan` bucket; 0.99 over the
+  staircase's 282); only that part is taken out.
 - **The load's shape.** Under each shape the report prints the shape of the
   cycles the load was read from (for the p95, every cycle at or above it).
   When the mix moved in the window, the measured shape (the last cycles')
@@ -550,16 +613,19 @@ It replays the recording once and answers, for each shape and load:
   very cycles, so it reads 0.84 of measured at worst. It reads closer on the
   Qwen3-32B warm-up (TTFT p90 941 ms at the load's 1k prompts, where the
   measured shape saturates; the run measured 287 ms at that rate).
-- **Not the default.** `p95-modulation` (here and in `day-plan --size-for`)
-  is opt-in. `p95-modulation` moved the judged load by at most 0.06 r/s
+- **The p95 less counting noise as the default.** `p95-modulation` is the
+  default here and in `day-plan --size-for`: the plain p95 counts the noise
+  the queueing model already prices. With a whole minute's noise taken out
+  (before the overlap share above), it moved the judged load by at most 0.06 r/s
   (0.2%) on every recording we hold, and no verdict or need. In `day-plan`
   it sizes for up to 23% less at a bucket and moved one bucket's need on
   three of seven recordings, by one replica (two Qwen3-32B warm-ups, sized
   for 0.38 against 0.48 r/s and 4.21 against 4.70 r/s, and the guide's
   sample, 1.68 against 2.00 r/s). Every recording we hold is
   a staircase or a sweep, whose loads swing; the case it is for, a steady
-  low rate on a slow model, needs a recording of its own, with its latency,
-  to show the fleet sized at the modulated load still holds the SLO.
+  low rate on a slow model, has no recording of its own yet, with its
+  latency, to show the fleet sized at the modulated load still holds the
+  SLO. `--load-statistic p95` and `--size-for p95` keep the old figure.
 - **Growth.** `--load "seen x1.5"` (also `seen×1.5`, `seen*1.5`) asks what
   50% more traffic does: a column of its own and a short `x1.5 (...)` line
   under the verdict. It never changes the verdict at the load seen.
@@ -625,7 +691,7 @@ It replays the recording once and answers, for each shape and load:
   mix of fewer GPUs when one holds. When no
   fleet within the bound holds, there is no `needed` line.
   Each role's standing is in the sentence ("decode: one fewer holds even
-  at the peak 43.2 r/s; prefill: no spare (1.9% under its operating
+  at the peak 43.2 r/s; prefill: no spare (2.0% under its operating
   point)"), with any prefill imbalance f that no run learned at that pod
   count. That f is read off the pod counts that were learned; with none
   learned, or with `--imbalance-across-counts=false`, it is assumed at
@@ -722,8 +788,25 @@ cases, and no fleet is sized:
   the 3 minutes are clock time. A recording with no per-cycle clock is
   counted at its mean cycle time, and the summary says so. The summary
   says how far and for how long; the knee reads low for that window.
+  An aggregated fleet, with no prefill pods, is one pool judged on its
+  own knee: the decode knee, whose line was fitted on pods that prefill
+  too. A cycle up to 20% lighter than the shape priced has a higher knee,
+  and its rate counts scaled down to the shape priced. Where decode sets
+  the knee, the scale is the cycle's output times the KV one request
+  holds, over the shape priced's: the prompt's KV sits on the decode pods
+  too, on a P/D fleet as on one pool. A longer prompt never scales a rate
+  up. One pool takes the prompt ratio
+  where that is lower, as it also prefills on the same pods.
 
 Only an UNDER is withheld: neither case shows the fleet holding.
+
+The reverse case withholds the other verdicts. Where the measured shape asked
+(`--shape measured`) is more than 20% shorter, in prompt or output, than the cycles the load was read
+from, its knee reads high for that load. A verdict that the fleet holds,
+RIGHT-SIZED or OVER-PROVISIONED, could then cut replicas the load needs. Such a
+verdict is NOT JUDGED instead, no fleet is sized, and the summary gives both
+shapes; `--shape load` prices the load at its own. An UNDER-PROVISIONED verdict
+on that knee stands: a heavier load only makes it more true.
 
 A prefill knee priced from a V_P that is only a lower bound (flag
 `VPLowerBound`: the prefill Pods never queued for compute under load) is
@@ -859,13 +942,14 @@ alone. A higher `--ttft` sizes them.
   prefill. Four buckets sized decode alone, so the need is a lower bound
   (`>=`). The `busiest` column is the busiest bucket's own fleet. The
   summary's need holds every bucket of the window the same way.
-- **Sized for.** Each bucket is sized for the p95 of its cycles' rates when it
-  holds 20 cycles or more (5 minutes at a 15 s cycle), else for their mean,
+- **Sized for.** Each bucket is sized for the p95 of its cycles' rates, less
+  its counting noise, when it holds 20 cycles or more (5 minutes at a 15 s cycle), else for their mean,
   which is less conservative, flagged `FewCyclesForP95`. `--size-for
   mean|p95|p95-modulation|max` sets it; the table and each bucket say which
   was used. `p95-modulation` is the p95 less the counting noise of a
   1-minute rate, as in `at-replicas`: a bucket of a steady stream is sized
-  near its mean. It is not the default; see "Not the default" under `at-replicas` above.
+  near its mean. It is the default; see "The p95 less counting noise as the default" under
+  `at-replicas` above.
   `--bucket 15m` sets the bucket.
 - **Scale-up lead.** A replica must be Ready when its bucket starts, so it
   starts one start time before. The plan takes each role's start time from

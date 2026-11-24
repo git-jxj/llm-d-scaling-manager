@@ -179,6 +179,15 @@ type RankMixture struct {
 	// chunked prefill, 1 without); 0 is not known, and each rank is priced
 	// as plain processor sharing.
 	Slots int
+	// ShareRows is the fit steps' share profiles at their rates where the
+	// profile is read at the priced load (RankMixtureOptions.SharesAtLoad);
+	// nil prices Shares.
+	ShareRows []ShareRow
+	// CleanSteps and OverloadedSteps are the fit steps under and at or over
+	// MaxCleanFitRho where the KV-deferral lines and the prompt slopes are
+	// fitted on the clean steps (RankMixtureOptions.CleanFitSteps); both 0
+	// without it.
+	CleanSteps, OverloadedSteps int
 	// Stratified reads each rank's mean service and cs^2 integrated over
 	// the computed-token law and draws the ranks stratified
 	// (rank_mixture_stratified.go); false reads them from each rank's own
@@ -352,18 +361,19 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 	if n <= 0 {
 		n = DefaultMixtureDraws
 	}
-	per := max(n/len(m.Shares), 50)
+	shares := m.sharesAt(rate)
+	per := max(n/len(shares), 50)
 	pooledES, pooledCS2 := 0.0, 0.0
 	if m.Stratified {
-		per = stratifiedPer(per, len(m.Shares))
+		per = stratifiedPer(per, len(shares))
 		pooledES, pooledCS2 = m.serviceMoments(hx)
 	}
-	rng := rand.New(rand.NewPCG(mixtureSeed, uint64(len(m.Shares))))
-	out := RankMixtureDraws{QP: make([]float64, 0, per*len(m.Shares)), L: make([]float64, 0, per*len(m.Shares)),
-		W: make([]float64, 0, per*len(m.Shares))}
+	rng := rand.New(rand.NewPCG(mixtureSeed, uint64(len(shares))))
+	out := RankMixtureDraws{QP: make([]float64, 0, per*len(shares)), L: make([]float64, 0, per*len(shares)),
+		W: make([]float64, 0, per*len(shares))}
 	s := make([]float64, per)
 	var rhoSum float64
-	for i, p := range m.Shares {
+	for i, p := range shares {
 		lam := rate * p
 		var es, es2 float64
 		for j := range s {
@@ -384,7 +394,7 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 		out.Checks.Rho = append(out.Checks.Rho, rho)
 		rhoSum += rho
 		if !(rho < 1) {
-			u := refuse(Saturated, fmt.Sprintf("rank %d of %d is saturated at %.4g r/s (utilization %.3g)", i+1, len(m.Shares), rate, rho))
+			u := refuse(Saturated, fmt.Sprintf("rank %d of %d is saturated at %.4g r/s (utilization %.3g)", i+1, len(shares), rate, rho))
 			return RankMixtureDraws{}, &u
 		}
 		pK, wait := 0.0, 0.0
@@ -437,7 +447,7 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 		}
 	}
 	if m.KV.Known {
-		mean := rhoSum / float64(len(m.Shares))
+		mean := rhoSum / float64(len(shares))
 		out.Checks.KVOutside = mean < m.KV.RhoLo || mean > m.KV.RhoHi
 	}
 	return out, nil
@@ -569,7 +579,7 @@ func (m RankMixture) Assumed() string {
 	}
 	return fmt.Sprintf("experimental TTFT model %s (OUTSIDE VALIDATED REGION): %s per rank on %d ranks "+
 		"(busiest share %.3g of the mean), S(x) = %.3g s + x / %.4g tok/s; %s; Z = %.3g s + %.3g x %.3g us x L "+
-		"(beta: overhead %.3g, decode %.3g, remainder %.3g us per prompt token)",
+		"(beta: overhead %.3g, decode %.3g, remainder %.3g us per prompt token)%s",
 		QueueRankMixture, queue, len(m.Shares), busiest, m.S0, m.V, kv, m.A0, m.Spread, m.Beta*1e6,
-		m.BetaOverhead*1e6, m.BetaDecode*1e6, m.BetaRemainder*1e6)
+		m.BetaOverhead*1e6, m.BetaDecode*1e6, m.BetaRemainder*1e6, m.fitStepsAssumed())
 }

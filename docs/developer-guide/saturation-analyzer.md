@@ -1009,6 +1009,35 @@ p90 TTFT on the B-off and B-on phases reads 15% to 23% under; the lift alone,
 on the steeper line the hold replaces, reads TPOT higher still (1.84 to
 2.06).
 
+**Why the fill reads low under the hold, and what is left on the A phases
+(#274).** The pods' fill is Little's law to within 5% on every step of the staircase:
+running requests equal rate x OL x mean ITL, and each holds about 8450 tokens
+(8000/200) or 1570 (1000/1000) of the 1.16M a decode pod has. So the KV per
+request and the requests in flight are right, and the gap is the line. The
+fill is the fixed point `k = x·B / (1 - x·A)`, `x = lambda·OL·KVreq/C`, and
+at the B-off phase's top rate `x·A` is about 0.75: an error in `B` reaches
+the fill four times over. The held `B`, 1.13 ms where the warm-up's own
+readings put it at 1.7 to 1.8 ms, reads ITL 10% under at the fill the pods
+held and the fill 32% under. Backtested against the decode pods'
+`KvUsageMean` over each step's window, the predicted fill reads 0.55 to
+0.62 of it on the first run's B and C phases with the hold alone, and 0.84
+to 0.95 with the lift (Qwen3-32B: 0.95 to 0.96).
+
+On the 1000/1000 A phases the lift reads the fill 1.57 times over. Two
+inputs of the backtest, not the line, do most of that. The warm-up ends on a
+few minutes of 8 to 26-token outputs whose histograms read an output spread
+`D` of 1.26 (`SwitchKVPerRequestOutputDispersion`), and the backtest priced
+every step at it, though it prices each step's own lengths: on 1000-token
+outputs that is 11% more KV per request than the A phases' pods held.
+`saturation.SwitchBacktestStepOutputDispersion`, planner-only and off,
+prices each step at the `D` its own decode rows read
+(`whatifapi.Knobs.OutputDispersion`, read from the series'
+`OutputTokensSquared`); with it the A phases read 1.26 (1.21 on the second
+warm-up), and no figure reads newly under what was measured with it alone.
+The rest is the backtest's 5% grid on the step's lengths (1000 is priced as
+1021, `shapeKnob`), worth another 10% of fill there, and a lifted line 4%
+over the A phases' ITL at their fill.
+
 Three more planner-only switches, all off, price the decode side; the analyzer
 accepts them and does not read them. `saturation.SwitchDecodeBurstFill`
 (issue llm-d-incubation/llm-d-scaling-manager#291) reads a decode's TPOT at
