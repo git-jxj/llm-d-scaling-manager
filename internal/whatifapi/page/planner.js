@@ -882,6 +882,18 @@ function planRequest() {
   return req;
 }
 
+// growthSizeRequest is the size the panel asks for a grown load: the plan's
+// scenario at that rate, the fleet the answer, the bound the size mode's.
+function growthSizeRequest(rate) {
+  const req = planRequest();
+  delete req.fleet;
+  delete req.views;
+  delete req.bucketEdges;
+  req.maxReplicas = {prefill: state.k.maxRep, decode: state.k.maxRep};
+  req.traffic = Object.assign({}, req.traffic, {classes: {critical: {rate}}});
+  return req;
+}
+
 // sizeRequest is the size the knobs ask: the plan's scenario but the fleet,
 // which is the answer, and the per-bucket view, with the bound searched.
 function sizeRequest() {
@@ -2264,8 +2276,16 @@ async function startExecutive() {
   // its own: the full one runs when Check the planner is opened.
   const held = state.inputs.ttftModel && state.inputs.ttftModel.heldOut;
   x.btPending = !!state.inputs.fleet.prefill && !(held && held.steps > 0);
+  // Growth is sized where prefill's limit is priced: by the default model,
+  // or the experimental one where it is on. Else the row says what is missing.
+  const pr = state.plan.limits.prefill;
+  const v2 = !!(state.plan.ttft.model && state.plan.ttft.model.priced);
+  const noPrefill = !v2 && !!state.inputs.fleet.prefill && !!pr && !!pr.refused && pr.refused.reason === "NoPrefillCapacity";
+  if (noPrefill) x.growthMissing = GROWTH_NO_PREFILL;
+  x.growthPending = !noPrefill;
   renderExec();
-  const steps = x.btPending ? 2 : 1;
+  const steps = 1 + (x.growthPending ? 1 : 0) + (x.btPending ? 1 : 0);
+  let step = 1;
   try {
     progress(`Judging the fleet at your busiest load (1 of ${steps})`, 1 / (steps + 1), () => x.abort && x.abort.abort());
     x.abort = new AbortController();
@@ -2283,9 +2303,33 @@ async function startExecutive() {
     renderTPOT();
   }
   renderExec();
+  // The fleet +25% and +50% of the busiest load needs, sized one after the
+  // other at the panel's SLO and shape.
+  const seen = x.report && x.report.load && x.report.load.rate ? x.report.load.rate.value : null;
+  if (x.growthPending && seen != null) {
+    step++;
+    x.growth = [];
+    for (const g of [1.25, 1.5]) {
+      progress(`Sizing the fleet for ${Math.round((g - 1) * 100)}% more traffic (${step} of ${steps})`, step / (steps + 1), () => x.abort && x.abort.abort());
+      let size = null, err = null;
+      try {
+        x.abort = new AbortController();
+        size = await api("POST", "v1/size", growthSizeRequest(g * seen), x.abort.signal);
+      } catch (e) {
+        err = e.message;
+      }
+      if (!mine()) return;
+      x.growth.push({x: g, rate: g * seen, need: growthNeed(size, err)});
+    }
+  } else if (x.growthPending) {
+    x.growthMissing = "Not sized: the busiest load was not judged.";
+  }
+  x.growthPending = false;
+  renderExec();
   if (x.btPending) {
+    step++;
     try {
-      progress(`Checking the planner on your held-out hours (2 of ${steps}): fitting, then pricing each step`, 2 / (steps + 1), () => x.abort && x.abort.abort());
+      progress(`Checking the planner on your held-out hours (${step} of ${steps}): fitting, then pricing each step`, step / (steps + 1), () => x.abort && x.abort.abort());
       x.abort = new AbortController();
       x.bt = await api("POST", "v1/backtest", {inputsId: id, split: "50%", step: "5m"}, x.abort.signal);
     } catch (e) {
@@ -2314,7 +2358,8 @@ function renderExec() {
   // The check on the Check tab, where it ran, is the one score the panel,
   // the header chip and the check view quote.
   const v = execView({inputs: state.inputs, plan: state.plan, report: x.report, bt: x.bt || state.bt, k: state.k,
-    reportPending: x.reportPending, btPending: x.btPending});
+    reportPending: x.reportPending, btPending: x.btPending,
+    growth: x.growth, growthPending: x.growthPending, growthMissing: x.growthMissing});
   const dl = el("execlines");
   dl.replaceChildren();
   for (const l of v.lines) {

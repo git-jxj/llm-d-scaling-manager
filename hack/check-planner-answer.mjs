@@ -61,7 +61,7 @@ try {
     tpot: [{statistic: "mean", value: 0.016}, {statistic: "p90", bucket: {lo: 0.01, hi: 0.02}}, {statistic: "p95", bucket: {lo: 0.01, hi: 0.02}}]};
   const withHour = Object.assign(copy(inputs), {measured: measuredHour,
     ttftModel: {heldOut: {statistic: "mean", within: 130, steps: 144, medianRatio: 0.94, rateFrom: 10, rateTo: 20, prefill: 3, decode: 6}}});
-  const v = execView({inputs: withHour, plan: refusedPlan, report, k});
+  const v = execView({inputs: withHour, plan: refusedPlan, report, k, growthPending: true});
   check("the panel opens on the fleet today", v.lines[0].label === "Fleet today" && v.lines[0].text.startsWith("3 prefill + 6 decode: 9 pods, 72 GPUs (8 per pod)."), v.lines[0].text);
   check("one busiest load, its statistic named, the peak small", /The busiest load \(p95 of 1-minute cycles\): [0-9.]+ r\/s\.$/.test(v.lines[0].text) && /^peak /.test(v.lines[0].small),
     v.lines[0].text + " | " + v.lines[0].small);
@@ -109,7 +109,30 @@ try {
   check("the accuracy is checked on your data", line("Accuracy").badge === EXEC_BADGES.checked);
   check("the quick check says where the SLO's percentile is scored", line("Accuracy").text.includes("The full check, at TTFT p90, is in Check the planner."), line("Accuracy").text);
   check("the SLO used says a default is the page's", v.slo.includes("the page's default: set yours"), v.slo);
-  check("growth not sized yet says pending", /^Pending/.test(line("+25% / +50% traffic").text));
+  check("growth being sized says so", line("+25% / +50% traffic").text === "Sizing the fleet for +25% and +50% of the busiest load...", line("+25% / +50% traffic").text);
+  // Under the default model, a prefill it cannot price: the row says what is
+  // missing, plainly, with no code.
+  const GROWTH_NO_PREFILL = vm.runInContext("GROWTH_NO_PREFILL", ctx);
+  const missing = execView({inputs, plan: refusedPlan, report, k, growthMissing: GROWTH_NO_PREFILL}).lines.find(l => l.label === "+25% / +50% traffic");
+  check("growth not sizable says what is missing", missing && missing.text.startsWith("Not sized: prefill's limit is not measured, so no fleet can be sized for more traffic.") &&
+    !/[A-Z][a-z]+[A-Z]|--/.test(missing.text), missing && missing.text);
+  // Each size in the panel's words.
+  const gn = ctx.growthNeed;
+  const answer = (lim, gpus) => ({rate: 30, maxReplicas: {prefill: 16, decode: 16}, answer: {fleet: {prefill: 6, decode: 12}, gpus, limit: lim}});
+  check("a size reads N prefill + M decode (G GPUs)", gn(answer({value: 31}, 288)) === "6 prefill + 12 decode (288 GPUs)", gn(answer({value: 31}, 288)));
+  check("no GPUs stated, none said", gn(answer({value: 31})) === "6 prefill + 12 decode");
+  check("an extrapolated limit is marked", gn(answer({value: 31, extrapolated: true}, 288)) === "6 prefill + 12 decode (288 GPUs), extrapolated past the tested range");
+  check("a lower-bound limit is marked, the right way round", gn(answer({value: 31, flags: ["VPLowerBound"]}, 288)) === "6 prefill + 12 decode (288 GPUs), prefill's limit is a lower bound, so fewer prefill may do");
+  check("both marks, in one line", gn(answer({value: 31, extrapolated: true, flags: ["VPLowerBound"]}, 288)) ===
+    "6 prefill + 12 decode (288 GPUs), prefill's limit is a lower bound, so fewer prefill may do; extrapolated past the tested range");
+  const unmet = (reason, role) => ({rate: 30, maxReplicas: {prefill: 16, decode: 16}, unmet: {refused: {reason, detail: "x"}, role}});
+  check("a size refused for prefill's capacity says so plainly", gn(unmet("NoPrefillCapacity", "prefill")) === "not sized: prefill's limit is not measured");
+  check("a size past the bound names the role and the bound", gn(unmet("ReplicaBoundReached", "decode")) === "no decode count up to 16 replicas a role serves it", gn(unmet("ReplicaBoundReached", "decode")));
+  check("a size under the floor says why, in words", gn(unmet("TargetBelowFloor", "fleet")) === "no fleet up to 16 replicas a role serves it (the target is under the floor)", gn(unmet("TargetBelowFloor", "fleet")));
+  check("a failed request says so", gn(null, "boom") === "not sized (the request failed)");
+  for (const s of [unmet("NoPrefillCapacity", "prefill"), unmet("TargetBelowFloor", "fleet"), unmet("ReplicaBoundReached", "decode")]) {
+    check(`no code in "${gn(s)}"`, !/NoPrefillCapacity|TargetBelowFloor|ReplicaBoundReached/.test(gn(s)));
+  }
   const grown = execView({inputs, plan: refusedPlan, report, k, growth: [{x: 1.25, rate: 25, need: "6 prefill + 12 decode"}, {x: 1.5, rate: 30, need: "at least 14 decode (prefill not sized)"}]});
   check("growth wired in reads each need", grown.lines.find(l => l.label === "+25% / +50% traffic").text.startsWith("+25% (25 r/s): 6 prefill + 12 decode; +50% (30 r/s): at least 14 decode"));
   // With the page's own check, the panel quotes its score at the SLO's
