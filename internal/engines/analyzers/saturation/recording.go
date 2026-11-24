@@ -133,7 +133,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchPrefillVPServedUnqueued, SwitchPrefillVPWindowBest,
 // SwitchPrefillVPAtServedWork, SwitchPrefillVPOccupancyPlateau,
 // SwitchPrefillVPPromptCoverage,
-// SwitchPrefillVPLoneRate, SwitchPrefillHitAtCount,
+// SwitchPrefillVPLoneRate, SwitchPrefillVPServiceLine, SwitchPrefillHitAtCount,
 // SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
 // SwitchITLAdaptiveBandFloor,
 // SwitchITLHoldSteadySlope, SwitchITLLineAtFloor, SwitchMoEBusiestRank,
@@ -302,6 +302,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// V_P from light load, the lone rate (prefill.Cycle.VPLoneRate).
 		// Off from the constructor.
 		SwitchPrefillVPLoneRate: &a.prefillVPLoneRate,
+		// Issues llm-d-incubation/llm-d-scaling-manager#368, #416: the
+		// planner's V_P from the prefill service line
+		// (prefill.Cycle.VPServiceLine). Off from the constructor.
+		SwitchPrefillVPServiceLine: &a.prefillVPServiceLine,
 		// Issue llm-d-incubation/llm-d-scaling-manager#384: the planner's
 		// prefix hit at another prefill count (prefill.HitAtCountOf). Off
 		// from the constructor.

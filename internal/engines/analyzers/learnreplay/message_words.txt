@@ -466,6 +466,7 @@ SetUsed
 Settings
 SingularFit
 Skipping
+SlopeUncertain
 SpreadBeyondProcessorSharing
 StartOptimizeLoop
 Starting
@@ -2525,6 +2526,7 @@ prefill-vp-lone-rate
 prefill-vp-occupancy-plateau
 prefill-vp-prompt-coverage
 prefill-vp-served-unqueued
+prefill-vp-service-line
 prefill-vp-window-best
 prefillBoundHeld
 prefillBounds
@@ -2979,6 +2981,7 @@ servedBound
 server
 serves
 service
+service-line
 serviceable
 serving
 servingSet
@@ -3602,6 +3605,11 @@ volume
 vp
 vpAboveSlopeBound
 vpFlooredAtServed
+vpLine
+vpLineMinutes
+vpLineRefused
+vpLineS0
+vpLineSlope
 vpLone
 vpLoneIsVP
 vpLoneMinutes

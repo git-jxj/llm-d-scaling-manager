@@ -1324,6 +1324,11 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// it off and off alone from all on moves nothing. Its unit tests hold
 	// it (heldBy).
 	saturation.SwitchPrefillVPLoneRate: nil,
+	// llm-d-incubation/llm-d-scaling-manager#368, #416: V_P from the
+	// prefill service line. Planner-only, off from the constructor, so every
+	// golden replay runs it off and off alone from all on moves nothing. Its
+	// unit tests hold it (heldBy).
+	saturation.SwitchPrefillVPServiceLine: nil,
 	// llm-d-incubation/llm-d-scaling-manager#384: the prefix hit at another
 	// prefill count. Planner-only, off from the constructor, so every golden
 	// replay runs it off and off alone from all on moves nothing. Its unit
@@ -1819,6 +1824,18 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestPromptNotCovered_PricesNoTTFTOutsideTheRange"},
 		{"../../../signals/whatif", "TestPromptNotCovered_InsideTheRangeIsPriced"},
 		{"../saturation", "TestPrefillVPPromptCoverage_ThroughAnalyze"},
+	},
+	saturation.SwitchPrefillVPServiceLine: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestServiceLine_FillsAFleetThatNeverQueued"},
+		{"../../../signals/prefill", "TestServiceLine_TheSharingIsTakenOut"},
+		{"../../../signals/prefill", "TestServiceLine_AbstainsWithTooFewMinutes"},
+		{"../../../signals/prefill", "TestServiceLine_RefusesPromptsThatDoNotSpread"},
+		{"../../../signals/prefill", "TestServiceLine_RefusesANegativeInterceptOrSlope"},
+		{"../../../signals/prefill", "TestServiceLine_RefusesAnUncertainSlope"},
+		{"../../../signals/prefill", "TestServiceLine_BusyMinutesWin"},
+		{"../../../signals/prefill", "TestServiceLine_ALowerBoundStandsOnlyAboveTheLine"},
+		{"../saturation", "TestPrefillVPServiceLine_ThroughAnalyze"},
 	},
 	saturation.SwitchPrefillVPLoneRate: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
