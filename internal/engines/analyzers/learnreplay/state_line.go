@@ -42,8 +42,8 @@ type lineSamples struct {
 	// the band's bottom; kept only for a variant whose line is read at its
 	// busiest rank (saturation.SwitchMoEBusiestRank).
 	ratios map[string][]float64
-	// fit is each variant's steady rows in the band, off a ramp, over a
-	// line's whole window (fitRowsAge) and not its latest shapeCycles cycles
+	// fit is each variant's steady rows, off a ramp, in the band and above
+	// it (an above-band line's are there), over a line's whole window (fitRowsAge) and not its latest shapeCycles cycles
 	// alone: the rows a line's fit rests on, and the batch it held
 	// (fitRows). ownFitAt is when each variant's line was last its own fit
 	// (noteOwnFit): a held line's fit was made then.
@@ -100,8 +100,10 @@ func (l *lineSamples) noteOwnFit(variant string, at time.Time) {
 
 // fitRows is the rows the line of vs was fitted on, for the batch its fit
 // held (VariantState.FitRows): a refitted line's, the rows of the cycles its
-// readings span (VariantState.ReadingsFrom to ReadingsTo); a held line's, the
-// rows of the window that ends at the cycle its line was last its own fit.
+// readings span (VariantState.ReadingsFrom to ReadingsTo), in the band, and
+// above it too for a line fitted there (whatif.TierAboveBand), whose
+// readings are all above it; a held line's, the rows in the band of the
+// window that ends at the cycle its line was last its own fit.
 // Nil for any other line, or with no such row: the planner then reads the
 // latest rows (VariantState.LineRows).
 func (l *lineSamples) fitRows(vs VariantState) []whatif.LineRow {
@@ -109,8 +111,9 @@ func (l *lineSamples) fitRows(vs VariantState) []whatif.LineRow {
 	var out []whatif.LineRow
 	switch {
 	case vs.Refitted && vs.ReadingsFrom > 0:
+		above := vs.Tier == whatif.TierAboveBand
 		for _, r := range rows {
-			if r.Cycle >= vs.ReadingsFrom && r.Cycle <= vs.ReadingsTo {
+			if r.Cycle >= vs.ReadingsFrom && r.Cycle <= vs.ReadingsTo && (above || !r.AboveBand) {
 				out = append(out, r)
 			}
 		}
@@ -120,7 +123,7 @@ func (l *lineSamples) fitRows(vs VariantState) []whatif.LineRow {
 			return nil
 		}
 		for _, r := range rows {
-			if !r.At.After(at) && !r.At.Before(at.Add(-fitRowsAge)) {
+			if !r.AboveBand && !r.At.After(at) && !r.At.Before(at.Add(-fitRowsAge)) {
 				out = append(out, r)
 			}
 		}
@@ -199,7 +202,7 @@ func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time, bus
 		row := whatif.LineRow{Cycle: cycle, At: at, K: k, KVPerRequest: rowResidentKV(rm, s),
 			TokenRate: rm.GenerationTokenRate, Sequences: rowSequences(rm), Ramp: ramp, AboveBand: k > top}
 		kept[rm.VariantName] = keepCycles(append(kept[rm.VariantName], row), shapeCycles)
-		if !ramp && k <= top {
+		if !ramp {
 			l.fit[rm.VariantName] = append(l.fit[rm.VariantName], row)
 		}
 	}

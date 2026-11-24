@@ -242,20 +242,24 @@ func (pv pricedVariant) mlaBinds() string {
 // held fit's for a held line), else on the latest rows the line is checked
 // on (LineRows); ok false with no such row. A row's batch is the sequences it
 // ran (whatif.LineRow.Sequences), else its fill over the KV a request held.
-// A row on a ramp or above the band says nothing of the line and is left out.
+// A row on a ramp is left out, and a latest row above the band: it says
+// nothing of the line (a fit row above it is an above-band line's own).
 func (pv pricedVariant) fitBatch() (seen int64, ok bool) {
 	c := pv.decode.CapacityTokens
 	if !(c > 0) {
 		return 0, false
 	}
-	rows := pv.state.FitRows
+	rows, fit := pv.state.FitRows, true
 	if len(rows) == 0 {
-		rows = pv.state.LineRows
+		rows, fit = pv.state.LineRows, false
 	}
 	ranks := float64(max(pv.state.Ranks, 1))
 	most := 0.0
 	for _, r := range rows {
-		if r.Ramp || r.AboveBand || !(r.K > 0) {
+		// The fit rows are the line's own, above the band only where
+		// it was fitted there; of the latest rows, one above the band
+		// says nothing of a line fitted in it.
+		if r.Ramp || (r.AboveBand && !fit) || !(r.K > 0) {
 			continue
 		}
 		switch {

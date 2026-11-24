@@ -99,16 +99,26 @@ func TestBatchBeyondFit_AHeldLineReadsTheHeldFit(t *testing.T) {
 	assert.Equal(t, whatif.BatchBeyondFit{Priced: 150, Fitted: 100}, *b)
 }
 
-// A row on a ramp or above the band says nothing of the line; a row that
-// read no sequences is its fill over its KV a request; the batch is an
+// A row on a ramp says nothing of the line, nor does a latest row above the
+// band; a fit row above it is an above-band line's own and is read; a row
+// that read no sequences is its fill over its KV a request; the batch is an
 // engine rank's.
 func TestBatchBeyondFit_TheRowsRead(t *testing.T) {
 	pv := fitVariant()
-	pv.state.FitRows = append(pv.state.FitRows, whatif.LineRow{K: 0.7, KVPerRequest: 3000, Sequences: 400, Ramp: true},
-		whatif.LineRow{K: 0.9, KVPerRequest: 3000, Sequences: 400, AboveBand: true})
+	pv.state.FitRows = append(pv.state.FitRows, whatif.LineRow{K: 0.7, KVPerRequest: 3000, Sequences: 400, Ramp: true})
 	seen, ok := pv.fitBatch()
 	require.True(t, ok)
-	assert.Equal(t, int64(200), seen, "the ramp and the row above the band are left out")
+	assert.Equal(t, int64(200), seen, "the ramp is left out")
+
+	pv.state.FitRows = append(pv.state.FitRows, whatif.LineRow{K: 0.9, KVPerRequest: 3000, Sequences: 300, AboveBand: true})
+	seen, ok = pv.fitBatch()
+	require.True(t, ok)
+	assert.Equal(t, int64(300), seen, "a fit row above the band: an above-band line's own")
+
+	pv.state.LineRows, pv.state.FitRows = pv.state.FitRows, nil
+	seen, ok = pv.fitBatch()
+	require.True(t, ok)
+	assert.Equal(t, int64(200), seen, "a latest row above the band is left out")
 
 	pv.state.FitRows = []whatif.LineRow{{K: 0.6, KVPerRequest: 3000}}
 	seen, ok = pv.fitBatch()

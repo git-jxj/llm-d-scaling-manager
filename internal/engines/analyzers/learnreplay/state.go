@@ -230,7 +230,8 @@ type VariantState struct {
 	// a ramp and on one, for the line check (state_line.go).
 	LineRows []whatif.LineRow
 	// FitRows is the variant's rows the line was fitted on, steady and in
-	// the band: a refitted line's over the cycles its readings span, a held
+	// the band (above it for an above-band line): a refitted line's over the
+	// cycles its readings span, a held
 	// line's over the window of its last own fit (lineSamples.fitRows). The
 	// planner reads the most sequences a rank they held, and flags a figure
 	// priced past it (BatchBeyondFit). Nil where they are not known: the

@@ -79,6 +79,34 @@ func TestFitRows_TheLineOwnOrTheHeldFits(t *testing.T) {
 	assert.Nil(t, l.fitRows(VariantState{Variant: "w", Tier: whatif.TierHeld}), "never its own fit: none")
 }
 
+// A line fitted above the band (whatif.TierAboveBand) was fitted on the rows
+// above it, and its fit rows are those too; any other line's are in the band
+// alone, even over the same cycles.
+func TestFitRows_AnAboveBandLineReadsTheRowsAboveIt(t *testing.T) {
+	// Cycles 1-12 in the band at 120 sequences, 13-40 above it at 250.
+	inputs := append(repeated(12, fitRowInput(0.4, 120)), repeated(28, fitRowInput(0.9, 250))...)
+	l := newLineSamples()
+	for i, in := range inputs {
+		l.note(in, i+1, lineT0.Add(time.Duration(i)*15*time.Second), nil)
+	}
+	above := l.fitRows(VariantState{Variant: "v", Tier: whatif.TierAboveBand, Refitted: true, ReadingsFrom: 9, ReadingsTo: 40})
+	require.NotEmpty(t, above)
+	most := 0.0
+	for _, r := range above {
+		most = max(most, r.Sequences)
+	}
+	assert.InDelta(t, 250, most, 1e-9, "the rows above the band the line was fitted on")
+
+	inBand := l.fitRows(VariantState{Variant: "v", Tier: whatif.TierOLS, Refitted: true, ReadingsFrom: 9, ReadingsTo: 40})
+	assert.Equal(t, []int{9, 10, 11, 12}, cyclesOf(inBand), "a line in the band: its rows in the band")
+	l.noteOwnFit("v", lineT0.Add(39*15*time.Second))
+	held := l.fitRows(VariantState{Variant: "v", Tier: whatif.TierHeld})
+	require.NotEmpty(t, held)
+	for _, r := range held {
+		assert.False(t, r.AboveBand, "a held line: its rows in the band, cycle %d", r.Cycle)
+	}
+}
+
 // The fit rows reach back fitRowsAge from the latest cycle, or from the last
 // own fit where the line has been held since: a hold outlives the window.
 func TestFitRows_AHoldKeepsItsFitsRows(t *testing.T) {
