@@ -396,7 +396,6 @@ PodMonitor
 Pods
 Poisson
 Pre-populated
-Predicted
 Preemptions
 PrefixHitAtCount
 PrefixHitHeld
@@ -443,6 +442,7 @@ SELECTOR
 SETTINGS_CONFIG_MAP_NAME
 SGLang
 SGLangNoComputedTokens
+SLO
 STOP
 Safety
 Saturated
@@ -1798,7 +1798,6 @@ larger
 last
 lastAccelerator
 lastKnown
-latency
 later
 latest
 launcher
@@ -3113,6 +3112,7 @@ slo-ttft-sizes-prefill
 slo-ttft-tier-kv-wait
 slo-ttft-tier-load
 slo-ttft-variant
+slo-v2-inputs
 slo-variant
 slo.Analyze
 slo.BeginCycle
@@ -3391,6 +3391,7 @@ total_kv_tokens_override
 tp
 tp_size
 tpot
+tpot-distribution
 tpot-ratio-censored
 tpot.percentile
 tpot.target
@@ -3414,6 +3415,7 @@ truncated
 trustFraction
 trying
 ttft
+ttft-mixture
 ttft.percentile
 ttft.target
 ttftExcluded
@@ -3502,6 +3504,7 @@ utilizationShare.weightClasses
 utilizations
 v
 v100
+v2
 vLLM
 va
 valid
