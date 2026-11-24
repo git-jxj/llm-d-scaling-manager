@@ -693,6 +693,15 @@ cases, and no fleet is sized:
   the 3 minutes are clock time. A recording with no per-cycle clock is
   counted at its mean cycle time, and the summary says so. The summary
   says how far and for how long; the knee reads low for that window.
+  An aggregated fleet, with no prefill pods, is one pool judged on its
+  own knee: the decode knee, whose line was fitted on pods that prefill
+  too. A cycle up to 20% lighter than the shape priced has a higher knee,
+  and its rate counts scaled down to the shape priced. Where decode sets
+  the knee, the scale is the cycle's output times the KV one request
+  holds, over the shape priced's: the prompt's KV sits on the decode pods
+  too, on a P/D fleet as on one pool. A longer prompt never scales a rate
+  up. One pool takes the prompt ratio
+  where that is lower, as it also prefills on the same pods.
 
 Only an UNDER is withheld: neither case shows the fleet holding.
 
