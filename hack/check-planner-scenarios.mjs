@@ -578,7 +578,7 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
     "Judged at the p95 load of 41.7 r/s; the source saw mean 31.6, p95 41.7, peak 43.2 r/s over 282 busy cycles.", vg.load);
   check("a missed-at-onset cell says so", S("REPORT_MARKS")["missed at onset"][1] === "MISS at onset");
   check("a cell past a lower-bound knee is not called saturated", S("REPORT_MARKS")["past a lower-bound knee"][0] === "unknown" &&
-    S("REPORT_MARKS")["past a lower-bound knee"][1] === "past a lower-bound knee");
+    S("REPORT_MARKS")["past a lower-bound knee"][1] === "past prefill's lower-bound limit");
   const lb = reportView({slo, load: {rate: {value: 12.48}}, loads: [], shapes: [{label: "measured", utilization: {decode: {}, prefill: {}}, table: [],
     capacity: Object.assign(knees(4.04, "prefill"), {prefillKnee: {value: 4.04, lowerBound: true}, fleetKnee: {value: 4.04, binds: "prefill", lowerBound: true}}),
     verdict: {verdict: "NOT JUDGED", scope: "fleet", summary: "NOT JUDGED: at the p95 load of 12.5 r/s, 3.1x a prefill knee of at least 4.0 r/s."}}]});
