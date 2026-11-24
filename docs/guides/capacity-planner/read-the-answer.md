@@ -12,7 +12,99 @@ replicas, under load that rises in steps. Every output below was printed by
 the planner at v0.12.3 on that sample; only the annotations are added. The
 page's **Judge the fleet** answers with the same report, in panels.
 
-## The answer, from the top
+## On the page: the answer first
+
+The page opens on the **Answer** tab. Its top panel is the answer in a few
+lines, small enough to paste on a slide (**Copy as image**). Each line has a
+badge that says how far to trust it:
+
+| Badge | Means |
+| --- | --- |
+| Measured | Read off the recording: the fleet, its busiest load, the latency it measured. |
+| Checked on your data | The planner predicted held-out hours of your own traffic, and this is how close it came. |
+| Estimate | The model's figure: sizing, headroom, the verdict. |
+
+The lines, top down:
+
+- **Fleet today**: the replicas and GPUs the source ran, its busiest two
+  minutes and its peak.
+- **Verdict**: whether the fleet saturates at its busiest load, and the TTFT
+  and TPOT it measured at the busiest held-out step against your targets.
+- **Right size**: the fleet judged at the traffic's own shape. Where prefill
+  was not sized it says so: "Decode only: 4-6 decode would hold TPOT.
+  Prefill was not sized, so this is not a fleet recommendation."
+- **Headroom**: how far the load can grow before each role's limit. "at
+  least" marks a limit known only as a lower bound.
+- **+25% / +50% traffic**: the fleet the grown load needs, at the same SLO.
+  It reads "Pending" until the server sizes those rates.
+- **Accuracy**: how many held-out five-minute steps the planner predicted
+  within 20%, which way it leans, and the rates and fleet that check
+  covers. Outside that range an answer is an extrapolation.
+- **SLO used**: the targets, and whether they are the page's defaults.
+
+The chip at the top, "Checked on your traffic: TTFT 130/144 within 20%",
+opens **Check the planner**, which holds the evidence.
+
+### When prefill capacity is unknown
+
+If the prefill pods never queued, the recording shows only that they handle
+at least the speed they ran at, not their limit. The page then shows one
+card instead of a refused figure:
+
+> **Prefill capacity unknown.** The prefill pods never queued, so they handle
+> at least 18,000 tokens/s per pod, but their limit is not observed. Decode
+> alone serves up to 40 r/s.
+
+It has two buttons:
+
+- **Use 18,000 tokens/s as the limit (conservative)** prices prefill at the
+  speed seen. Every figure on it is flagged as assumed, and the real limit
+  can only be higher.
+- **Load a busier window** opens the source. Pick a window where prefill ran
+  busy enough to queue.
+
+The code (`NoPrefillCapacity`) sits under the card in small type, and in the
+Flags drawer.
+
+### One notice a view
+
+How far to trust the figures is said once a view, never in every cell. A
+figure priced by an experimental model carries a dagger (†), and the view's
+notice says what it means: "Experimental model (checked on your data)". Which
+figures fall outside the validated region is in the **Flags** drawer. The
+TTFT model's validation figures are under **About the TTFT model**, below the
+source.
+
+### The other tabs
+
+- **Day plan**: a chart of the replicas each bucket needed against the
+  replicas the fleet ran, hours that missed the SLO in red, and "Peak needed
+  N at HH:MM" above it. The hourly table is closed below. Where prefill was
+  not sized, a spare decode replica is "decode only", never waste.
+- **Check the planner**: a three-line verdict card (TTFT and TPOT within 20%,
+  and the range tested), then the charts. A measured dot is coloured by how
+  it stands against the prediction: within 20%, more than 20% over, or more
+  than 20% under. A figure the histogram cannot place, at many steps, is one
+  grey band. The scores, every step and the method are closed below. In the
+  step table a cell reads "2.10 vs 2.20 s ✓ 5%": predicted against measured,
+  within 20%, 3% apart. **Failing steps only** keeps the steps more than 20%
+  off.
+- **Right-size**: the fleet judged at the traffic's own shape, with your
+  shapes and loads beside it, as described below for the CLI.
+
+Every result card has **Copy link**, **Download CSV** and **Download JSON**.
+
+### A figure the histogram cannot place
+
+A percentile is read from the measured histogram. When one bucket is too
+wide (10 ms to 20 ms is 2x wide), the measured p90 is somewhere in it, and
+the check cannot score a prediction against it. The Check tab draws that
+bucket as one band and says so under the charts. Finer edges measure it:
+the router's `metrics.requestTPOTBuckets` in the EndpointPickerConfig, or
+vLLM's `--custom-histogram-buckets`. Edges about 15% apart place p90 and p95
+within 20%.
+
+## The answer, from the CLI
 
 ### 1. The self-check: predicted against measured
 

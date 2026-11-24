@@ -302,13 +302,17 @@ func seriesAndLatencyOf(src learnreplay.Source, st *learnreplay.State, v learnre
 	if err != nil {
 		return nil, nil, err
 	}
-	out := seriesSamplesOf(cycles)
+	return seriesSamplesOf(cycles), latencySamplesOf(lat), nil
+}
+
+// latencySamplesOf is each cycle's measured latency as the planner API's.
+func latencySamplesOf(lat []learnreplay.CycleLatency) []whatifapi.LatencySample {
 	ls := make([]whatifapi.LatencySample, len(lat))
 	for i, l := range lat {
 		ls[i] = whatifapi.LatencySample{At: l.At, Router: l.Router, EngineTTFT: l.EngineTTFT, EngineTTFTMean: l.EngineTTFTMean,
 			EngineTPOT: l.EngineTPOT, EngineITLMean: l.EngineITLMean}
 	}
-	return out, ls, nil
+	return ls
 }
 
 // seriesSamplesOf is the cycles as the planner API's series.

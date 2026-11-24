@@ -54,7 +54,8 @@ func TestAtReplicas_JudgedAtTheBusyLoad(t *testing.T) {
 		assert.Equal(t, whatifapi.VerdictUnder, peak.Shapes[0].Verdict.Verdict, peak.Shapes[0].Verdict.Reason)
 	})
 	t.Run("throughput sweep, decode only", func(t *testing.T) {
-		args := []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms"}
+		// The measured shape, asked: the load's cycles ran at another.
+		args := []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms", "--shape", "measured"}
 		rep := atReplicasJSON(t, args...)
 		require.NotNil(t, rep.Load.P95)
 		assert.InDelta(t, 26.90, *rep.Load.P95, 0.005, "the sweep's p95")

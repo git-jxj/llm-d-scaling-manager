@@ -201,6 +201,11 @@ type SaturationAnalyzer struct {
 	// fit, which a fleet the router balances rarely spans -- dropped, a
 	// rollback priced the engine that measured it at the default intercept.
 	itlBaselineStash map[string]float64
+	// itlBaselineStashAt is when each put-aside baseline was last admitted,
+	// keyed like itlBaselineStash, for the baselines whose stamp is known: a
+	// rollback takes the stamp back with the baseline, so its age stays known.
+	// Not exported: a stash a snapshot brings back is of unknown age.
+	itlBaselineStashAt map[string]time.Time
 	// throughputHeld is the hold a put-aside throughput window had given when
 	// a rollback took it back, keyed like the stash (heldMark); a re-roll that
 	// sets the same window aside again resumes it. Not exported: a restart in
@@ -582,6 +587,9 @@ type SaturationAnalyzer struct {
 	// prefillVPOccupancyPlateau is SwitchPrefillVPOccupancyPlateau: off
 	// from the constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillVPOccupancyPlateau bool
+	// prefillVPLoneRate is SwitchPrefillVPLoneRate: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillVPLoneRate bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor
@@ -809,6 +817,7 @@ func NewSaturationAnalyzer(store *capacity.Store) *SaturationAnalyzer {
 		itlTracker:             itl.NewTracker(),
 		itlArgs:                make(map[string]string),
 		itlBaselineStash:       make(map[string]float64),
+		itlBaselineStashAt:     make(map[string]time.Time),
 		throughputHeld:         make(map[string]heldMark),
 		itlLines:               make(map[string]learnedLine),
 		startSeconds:           make(map[string]float64),
@@ -1276,6 +1285,11 @@ func (a *SaturationAnalyzer) evictStaleHistory() Evicted {
 	for key := range a.itlBaselineStash {
 		if base, _, _ := strings.Cut(key, "#"); a.variantIsStale(base, now, variantTimeout) {
 			delete(a.itlBaselineStash, key)
+		}
+	}
+	for key := range a.itlBaselineStashAt {
+		if _, stashed := a.itlBaselineStash[key]; !stashed {
+			delete(a.itlBaselineStashAt, key)
 		}
 	}
 	// Belt and braces, and deliberately kept as such. Today

@@ -17,19 +17,70 @@ The planner answers five questions about one model's prefill/decode fleet:
 
 ## Read the page
 
+The page has four tabs:
+
+- **Answer**: the answer first, then the figures behind it and the what-if
+  controls.
+- **Day plan**: the replicas each bucket of the window needed.
+- **Check the planner**: the planner predicting held-out hours of your
+  traffic, against what was measured.
+- **Right-size**: the fleet judged at the load the source saw.
+
+While a recording loads, a bar at the top of the page says so, with a
+**Cancel**; **Load** is off until it ends. After a load the page judges the
+fleet at your busiest load in the background, and the bar says what runs.
+
+The **Answer** tab, top down:
+
+1. **The header.** The model and variants, the source, the window it covers,
+   and a chip "Checked on your traffic" that opens the evidence. The
+   self-check in full and the TTFT model's validation figures sit closed
+   under the source.
+2. **The answer panel.** Fleet today, the verdict, the right size, headroom,
+   +25% and +50% traffic, accuracy and the SLO used, each with a badge:
+   Measured, Checked on your data, or Estimate.
+   [Read the answer](read-the-answer.md#on-the-page-the-answer-first) walks
+   it through. **Copy as image** puts it on the clipboard as a picture.
+3. **A card when prefill capacity is unknown**, with two buttons: use the
+   speed the pods were seen at as the limit, or load a busier window.
+4. **One notice** on how far to trust the figures. A dagger (†) marks a
+   figure an experimental model priced.
+5. **The figures**: the limits, then TTFT and TPOT against the rate, side by
+   side. **Download CSV** and **Download JSON** export the curves and the
+   plan.
+6. **What if**: fleet, traffic and SLO in one row (one column on a phone).
+7. Closed below: assumed terms, saved scenarios, the flags, the inputs and a
+   glossary of the planner's symbols.
+
+The page uses plain words; the symbols stay in tooltips and the glossary:
+
+| Symbol | The page says |
+| --- | --- |
+| V_P | prefill speed per pod (tokens/s) |
+| knee | the limit: the rate where latency takes off |
+| operating point, cap | safe load: the safety margin times the limit |
+| headroom | safety margin |
+| f | load imbalance across prefill pods |
+| cv | prompt-length spread |
+| Ca² | how bursty arrivals are |
+
+The rest of this section describes the controls and figures, in the
+planner's own terms:
+
 - **Fleet, traffic, SLO.** The page starts from now: the replica counts the
   source saw, and the policy's SLO and headroom. The source carries no request
   rate, so the rate starts at the operating point, headroom times the lower
   knee (or the one knee that priced: see "One knee refused" below). Move the rate slider, step the replicas, pick a statistic, set a target.
-  The critical rate is the total rate: regular and batch traffic are not
-  priced apart yet.
+  The request rate is the total rate: traffic classes are not priced apart
+  yet.
 - **Targets the policy does not set.** A TTFT target is needed to read a
   prefill limit. When the policy sets none, the page uses TTFT p90 1 s and
   TPOT mean 50 ms, and says "targets set by the page, not the policy" above
   the limits until you set your own.
-- **The banner.** Every TTFT figure rests on a model that is not validated. The
-  banner says how far off it read on the validation recordings, which are not
-  your fleet. Treat TTFT as an estimate, not a bound.
+- **About the TTFT model.** Every TTFT figure rests on a model that is not
+  validated. The notice says so once; **About the TTFT model**, under the
+  source, says how far off it read on the validation recordings, which are
+  not your fleet. Treat TTFT as an estimate, not a bound.
 - **The most the fleet serves.** The fleet limit is the lower of the prefill
   limit (from TTFT) and the decode limit (from TPOT), capped at headroom times
   the lower knee. When the cap is what sets it, the figure without headroom is
@@ -83,10 +134,12 @@ The planner answers five questions about one model's prefill/decode fleet:
   **Flags** drawer lists each once, in words, with what clears it. The
   **Inputs** drawer shows each term with its source, the terms the source
   refused, and how many you typed.
-- **Is this fleet the right size?** Below the graphs, judge the fleet the
-  knobs set at the load the source saw.
+- **Right-size: is this fleet the right size?** On the Right-size tab, judge
+  the fleet the knobs set at the load the source saw.
   1. Add a row per request shape: IL and OL in tokens (`k` for 1024) and,
-     optionally, the prefix hit rate. A blank row is the measured shape.
+     optionally, the prefix hit rate. A blank row is the shape the traffic
+     ran at when it was busiest (`load`), so the verdict prices the load at
+     the traffic that made it.
   2. Type the loads, comma separated: `80%` of each shape's knee, `5r/s`, or
      `seen`. Set **Load seen times** to 1.5 to add a column and a line for 50%
      more traffic; the verdict stays at the load seen.
@@ -296,8 +349,8 @@ In a cluster, add both to the StatefulSet's `args`
   the loaded source, and where it is identified it draws the TTFT curve,
   point A and the report's TTFT tables, also where the planner refuses
   them (a prefill that never queued). See
-  [The v2 TTFT curve](#the-v2-ttft-curve). Day plans and predictions are the
-  default's. `=v2` does not turn
+  [The v2 TTFT curve](#the-v2-ttft-curve). Sizes follow, from the model's
+  prefill limit. Day plans and predictions are the default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
@@ -334,6 +387,13 @@ In a cluster, add both to the StatefulSet's `args`
   spread, the ranks' own rates or max-num-seqs not recorded).
 - **Other fleets.** At another prefill count each replica's ranks take the
   recorded share profile at the rate per replica.
+- **Limits and sizes.** Where it prices a fleet's TTFT it also sets the
+  prefill limit (the highest rate whose TTFT meets the target, read off
+  its curve) and the fleet's (the lowest of the safety margin times the
+  curve's end, that rate and decode's limit), so a size works where the
+  planner refuses one. A limit set at the curve's end, where the prefill
+  knee is only a lower bound, is "at least" that rate (flagged
+  `VPLowerBound`). One above the highest load measured is `extrapolated`.
 - **The CLI.** `at-replicas --experimental-ttft=v2` prices its tables' TTFT
   the same way, from a `--recording`. Its verdict and summary cells stay
   the planner's own.
@@ -400,7 +460,7 @@ with `--prefill` and `--decode`; without them it judges the recorded counts.
 ```bash
 # On the staircase sample, downloaded as the first sample was: two prefill and two decode replicas, judged at the
 # load it saw, with what that load grown by a fifth does beside it, for its own shape and two it never saw. The
-# sample learned no prefill speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at
+# sample learned no prefill speed, so V_P and a are assumed. Leave out --shape and --load for the shape the load ran at,
 # 50%, 80% and 100% of the knee and the load seen.
 curl -fsSL -o recordings/ttft-staircase-b-on.jsonl.gz \
   https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz
@@ -431,22 +491,26 @@ It replays the recording once and answers, for each shape and load:
   cycles the load was read from (for the p95, every cycle at or above it).
   When the mix moved in the window, the measured shape (the last cycles')
   is not that traffic: a measured shape more than 20% off it in prompt or
-  output length is flagged `ShapeLoadMismatch`, and `--shape load` prices
-  the load at its own cycles' shape. On the guide's sample the p95, 29.7
-  r/s, ran at 1000/500 tokens while the measured shape is 4569/1855: the
-  report gives no verdict on the measured shape (NOT JUDGED, exit 3), and
-  `--shape load` needs 4 + 2, what `day-plan` sizes the same rate at.
-- **Not the default.** `--shape load` is opt-in. A model change becomes the default only
-  where the recordings show it moves no figure to read under what was
-  measured. `--shape load` fails that: on the decode-only sample
-  (`throughput-sweep`) it prices TPOT at the p95 load, 26.9 r/s, at 2.79 ms
-  against 3.14 ms at the measured shape, and the decode engines measured
-  3.34 to 3.65 ms in those very cycles. It does read closer on the Qwen3-32B
-  warm-up (TTFT p90 941 ms at the load's 1k prompts, where the measured
-  shape saturates; the run measured 287 ms at that rate). Before it can be
-  the default, decode's TPOT at the load's own shape must stop reading
-  under there. `p95-modulation` is the default since #295, here and in
-  `day-plan --size-for`; the p95 counted the noise twice. Before, it moved the judged load by at most 0.06 r/s
+  output length is flagged `ShapeLoadMismatch`. So the report prices the
+  load at its own cycles' shape by default (`load`), and the measured shape
+  only where no cycle of the load read one (a stated `--load-seen`).
+  `--shape measured` asks for the last cycles' shape. On the guide's sample
+  the p95, 29.7 r/s, ran at 1000/500 tokens while the measured shape is
+  4569/1855: asked at the measured shape the report gives no verdict (NOT
+  JUDGED, exit 3); at the load's own shape it needs 4 + 2, what `day-plan`
+  sizes the same rate at.
+- **The load's shape as the default.** A model change becomes the default
+  only where it moves no figure on the public recordings to under 0.8 of what
+  was measured. On the decode-only sample (`throughput-sweep`) the load's
+  shape prices TPOT at the p95 load, 26.9 r/s, at 2.79 ms against 3.14 ms at
+  the measured shape; the decode engines measured 3.34 to 3.65 ms in those
+  very cycles, so it reads 0.84 of measured at worst. It reads closer on the
+  Qwen3-32B warm-up (TTFT p90 941 ms at the load's 1k prompts, where the
+  measured shape saturates; the run measured 287 ms at that rate).
+- **The p95 less counting noise as the default.** `p95-modulation` is the
+  default here and in `day-plan --size-for`: the plain p95 counts the noise
+  the queueing model already prices. With a whole minute's noise taken out
+  (before the overlap share above), it moved the judged load by at most 0.06 r/s
   (0.2%) on every recording we hold, and no verdict or need. In `day-plan`
   it sizes for up to 23% less at a bucket and moved one bucket's need on
   three of seven recordings, by one replica (two Qwen3-32B warm-ups, sized
@@ -746,7 +810,8 @@ alone. A higher `--ttft` sizes them.
   mean|p95|p95-modulation|max` sets it; the table and each bucket say which
   was used. `p95-modulation` is the p95 less the counting noise of a
   1-minute rate, as in `at-replicas`: a bucket of a steady stream is sized
-  near its mean. It is the default since #295; see "Not the default" under `at-replicas` above.
+  near its mean. It is the default; see "The p95 less counting noise as the default" under
+  `at-replicas` above.
   `--bucket 15m` sets the bucket.
 - **Scale-up lead.** A replica must be Ready when its bucket starts, so it
   starts one start time before. The plan takes each role's start time from
@@ -812,6 +877,13 @@ alone. A higher `--ttft` sizes them.
   bucket's rate: UNDER (SLO risk) when its limit falls short, over (waste)
   when one replica fewer of either role would still serve it. An hour is
   UNDER when any of its buckets is, and over when every sized bucket is.
+  Where prefill was not sized, decode is judged alone: the verdict reads
+  "decode only", a spare decode replica is "decode only: a decode replica to
+  spare" (listed under "hours decode only had a replica to spare", never
+  under waste), and the summary says it is not a fleet recommendation. A
+  bucket the model calls over whose TTFT the router measured over its target
+  gets no verdict and the flag `MeasuredTTFTOverTarget`: a fleet that missed
+  its target has nothing to spare.
   Had counts what served. Replicas asked for and not serving, those that
   exist and are not ready (starting, unschedulable, or held by an admission
   gate such as Kueue's; a rolling update's surge pods count too), show
