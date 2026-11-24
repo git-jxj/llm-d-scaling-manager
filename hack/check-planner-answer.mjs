@@ -140,7 +140,11 @@ try {
   check("and no checked badge", !!notRun && notRun.badge === "", notRun && notRun.badge);
   check("and offers the check", !!notRun && JSON.stringify(notRun.actions) === JSON.stringify([{act: "check", label: "Check accuracy on this recording"}]), notRun && JSON.stringify(notRun.actions));
   check("the header chip says not checked", unchecked.trust === "Accuracy not checked yet", unchecked.trust);
-  const aggOnly = Object.assign(copy(inputs), {fleet: {decode: inputs.fleet.decode}});
+  const selfChecked = execView({inputs: Object.assign(copy(inputs), {selfCheck: {line: "Self-check: tested on the last 12 h of this recording."}}), plan: refusedPlan, report, k});
+  const sc = selfChecked.lines.find(l => l.label === "Accuracy");
+  check("the server's self-check shows, with the full check offered", !!sc && sc.text.startsWith("Self-check:") && (sc.actions || []).some(a => a.act === "check"), sc && sc.text);
+  check("and the chip says the full check has not run", selfChecked.trust === "Self-check only: full accuracy check not run yet", selfChecked.trust);
+  const aggOnly =Object.assign(copy(inputs), {fleet: {decode: inputs.fleet.decode}});
   check("a fleet with no prefill, which the check cannot price, is offered no check", !execView({inputs: aggOnly, plan: refusedPlan, report, k}).lines.some(l => l.label === "Accuracy"));
   // The first screen speaks plainly.
   for (const l of v.lines.concat(held.lines, unchecked.lines)) {

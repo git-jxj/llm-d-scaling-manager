@@ -47,7 +47,8 @@ The lines, top down:
 
 The chip at the top, "Checked on your traffic: TTFT 130/144 within 20%",
 opens **Check the planner**, which holds the evidence. Before a check it
-reads "Accuracy not checked yet".
+reads "Accuracy not checked yet", or "Self-check only: full accuracy check
+not run yet" where the server's self-check filled the Accuracy row.
 
 ### When prefill capacity is unknown
 

@@ -1328,6 +1328,7 @@ function execView(o) {
     lines.push({label: "Accuracy", text: "Checking the planner on your held-out hours...", badge: EXEC_BADGES.checked});
   } else if (inputs.selfCheck && inputs.selfCheck.line) {
     lines.push({label: "Accuracy", text: inputs.selfCheck.line, badge: EXEC_BADGES.checked, actions: ask});
+    if (f.prefill) trust = "Self-check only: full accuracy check not run yet";
   } else if (f.prefill) {
     // No badge: nothing was checked.
     lines.push({label: "Accuracy", badge: "", text: EXEC_NOT_CHECKED, actions: ask});
