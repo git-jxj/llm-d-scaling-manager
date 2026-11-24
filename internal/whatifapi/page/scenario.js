@@ -1295,7 +1295,11 @@ function execView(o) {
   // the server sized it (o.growth: [{x, rate, need}], need in words, from
   // growthNeed); or why it is not sized (o.growthMissing, in words).
   const growth = o.growth || [];
-  const grownText = growth.length ? growth.map(g => `+${Math.round((g.x - 1) * 100)}% (${roundRate(g.rate)} r/s): ${g.need}`).join("; ") + ", at the same SLO." :
+  // One refusal for both rates is said once.
+  const pct = g => `+${Math.round((g.x - 1) * 100)}% (${roundRate(g.rate)} r/s)`;
+  const same = growth.length > 1 && growth.every(g => g.need === growth[0].need) && /^(not sized|no )/.test(growth[0].need);
+  const grownText = same ? `${growth.map(pct).join(" and ")}: ${growth[0].need}.` :
+    growth.length ? growth.map(g => `${pct(g)}: ${g.need}`).join("; ") + ", at the same SLO." :
     o.growthMissing ? o.growthMissing : o.growthPending ? "Sizing the fleet for +25% and +50% of the busiest load..." : "";
   if (grownText) lines.push({label: "+25% / +50% traffic", badge: "", text: grownText});
 
@@ -1349,6 +1353,7 @@ function growthNeed(size, error) {
   if (!a) {
     const u = size.unmet || {}, r = u.refused;
     if (r && r.reason === "NoPrefillCapacity") return "not sized: prefill's limit is not measured";
+    if (r && r.reason === "TargetBelowFloor") return "not sized: the TTFT target is below this model's floor at any fleet";
     const n = size.maxReplicas ? Math.max(size.maxReplicas.prefill || 0, size.maxReplicas.decode || 0) : 0;
     const who = u.role && u.role !== "fleet" ? `no ${u.role} count` : "no fleet";
     return `${who}${n ? ` up to ${n} replicas a role` : ""} serves it` + (r && r.reason !== "ReplicaBoundReached" ? ` (${plainReasonWord(r)})` : "");

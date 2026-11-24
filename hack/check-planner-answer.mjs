@@ -128,7 +128,12 @@ try {
   const unmet = (reason, role) => ({rate: 30, maxReplicas: {prefill: 16, decode: 16}, unmet: {refused: {reason, detail: "x"}, role}});
   check("a size refused for prefill's capacity says so plainly", gn(unmet("NoPrefillCapacity", "prefill")) === "not sized: prefill's limit is not measured");
   check("a size past the bound names the role and the bound", gn(unmet("ReplicaBoundReached", "decode")) === "no decode count up to 16 replicas a role serves it", gn(unmet("ReplicaBoundReached", "decode")));
-  check("a size under the floor says why, in words", gn(unmet("TargetBelowFloor", "fleet")) === "no fleet up to 16 replicas a role serves it (the target is under the floor)", gn(unmet("TargetBelowFloor", "fleet")));
+  check("a size under the floor says why, in words", gn(unmet("TargetBelowFloor", "prefill")) === "not sized: the TTFT target is below this model's floor at any fleet", gn(unmet("TargetBelowFloor", "prefill")));
+  check("another refusal names the role and its reason", gn(unmet("Saturated", "fleet")) === "no fleet up to 16 replicas a role serves it (overloaded)", gn(unmet("Saturated", "fleet")));
+  // One refusal for both rates is said once, with no "at the same SLO".
+  const floorNeed = gn(unmet("TargetBelowFloor", "prefill"));
+  const both = execView({inputs, plan: refusedPlan, report, k, growth: [{x: 1.25, rate: 25, need: floorNeed}, {x: 1.5, rate: 30, need: floorNeed}]}).lines.find(l => l.label === "+25% / +50% traffic").text;
+  check("one refusal for both rates is said once", both === "+25% (25 r/s) and +50% (30 r/s): not sized: the TTFT target is below this model's floor at any fleet.", both);
   check("a failed request says so", gn(null, "boom") === "not sized (the request failed)");
   for (const s of [unmet("NoPrefillCapacity", "prefill"), unmet("TargetBelowFloor", "fleet"), unmet("ReplicaBoundReached", "decode")]) {
     check(`no code in "${gn(s)}"`, !/NoPrefillCapacity|TargetBelowFloor|ReplicaBoundReached/.test(gn(s)));
