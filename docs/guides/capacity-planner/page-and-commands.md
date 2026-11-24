@@ -487,7 +487,8 @@ It replays the recording once and answers, for each shape and load:
   (`--load-statistic p95` judges at the p95 itself). A steady load is then
   judged near its mean, a load that swings near its p95. Readings 15 s apart
   overlap, so their spread holds only part of a minute's noise (about 0.86 of
-  it over 20 readings); only that part is taken out.
+  it over 20 readings, a 5-minute `day-plan` bucket; 0.99 over the
+  staircase's 282); only that part is taken out.
 - **The load's shape.** Under each shape the report prints the shape of the
   cycles the load was read from (for the p95, every cycle at or above it).
   When the mix moved in the window, the measured shape (the last cycles')
