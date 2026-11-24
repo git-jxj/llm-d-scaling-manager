@@ -250,6 +250,8 @@ try {
   check("and says what is missing", row("+25% / +50% traffic").text === run("GROWTH_NO_PREFILL"), row("+25% / +50% traffic").text);
   state.k.ttftTarget = 2;
   knobs();
+  check("never reads as sizing what it will not size", row("+25% / +50% traffic").text === run("GROWTH_NO_PREFILL") && !row("+25% / +50% traffic").updating,
+    row("+25% / +50% traffic").text);
   await until(settled);
   check("nor after the SLO changes", !calls.some(c => c.path === "v1/size") && calls.filter(c => c.path === "v1/report").length === 2,
     calls.map(c => c.path).join(","));

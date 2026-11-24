@@ -2333,9 +2333,11 @@ function execKnobs() {
   if (x.ansAbort) x.ansAbort.abort();
   if (r) x.reportPending = true;
   if (g) x.growthPending = true;
+  // Growth that will not be sized says why at once, never "Sizing".
   if (x.growthPending) {
     x.growth = null;
-    x.growthMissing = null;
+    x.growthMissing = growthMissingFor(state.inputs, state.plan);
+    if (x.growthMissing) x.growthPending = false;
   }
   clearTimeout(execTimer);
   execTimer = setTimeout(() => execAnswers(x), 400);
