@@ -5,6 +5,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/logging"
@@ -14,11 +15,14 @@ import (
 )
 
 // The slo analyzer's v2 latency models' wiring (slo.SwitchV2Inputs,
-// docs/proposals/predicted-latency-in-controller.md). Off unless the
-// slo analyzer reads them (ReadsModelInputs). The collector issues them and
-// keeps them apart from the analyzers' rows; the engine hands them to the
-// slo analyzer, which owns the latency predictions. Nothing here reaches the
-// optimizer or a scaling decision.
+// docs/proposals/predicted-latency-in-controller.md). The v2 models run for
+// a model the controller moves nothing for -- a passive model, or every
+// model while the utilization share plans in shadow -- and, with the switch
+// on, for every model: there they cost queries and no risk, and their figures
+// are the live evidence the switch is turned on by. The collector issues
+// their inputs and keeps them apart from the analyzers' rows; the engine
+// hands them to the slo analyzer, which owns the latency predictions.
+// Nothing here reaches the optimizer or a scaling decision, in any mode.
 
 // modelInputsObserver is the slo analyzer's export point for the v2 models,
 // taken as an optional interface as TakeLearnerReports is: the engine holds
@@ -30,28 +34,44 @@ type modelInputsObserver interface {
 
 var _ modelInputsObserver = (*slo.Analyzer)(nil)
 
-// modelInputs is the slo analyzer as the v2 models' observer while it reads
-// their inputs (slo.SwitchV2Inputs), nil otherwise.
-func (e *Engine) modelInputs() modelInputsObserver {
+// modelInputs is the slo analyzer as the v2 models' observer when it runs
+// them for the model: the switch is on, the model is passive this cycle, or
+// the utilization share plans in shadow. Nil otherwise.
+func (e *Engine) modelInputs(namespace, modelID string) modelInputsObserver {
 	obs, ok := e.sloAnalyzer.(modelInputsObserver)
-	if !ok || !obs.ReadsModelInputs() {
+	if !ok {
 		return nil
 	}
-	return obs
+	if obs.ReadsModelInputs() || e.modelPassive(namespace, modelID) || e.shareInShadow() {
+		return obs
+	}
+	return nil
 }
 
-// predictionNamespaces is every namespace of modelGroups while the switch is
-// on, none while it is off: the collector issues the v2 models' queries
-// there (collector.ReadPredictionInputsIn).
-func (e *Engine) predictionNamespaces(modelGroups map[string][]llmdvariant.Variant) map[string]bool {
-	if e.modelInputs() == nil {
-		return nil
+// shareInShadow says the utilization share plans in shadow this cycle: it
+// moves nothing, and the controller's targets are its would-be figures.
+func (e *Engine) shareInShadow() bool {
+	if e.Config == nil {
+		return false
 	}
-	namespaces := map[string]bool{}
+	mode, err := e.Config.UtilizationShareMode()
+	return err == nil && mode == constants.UtilizationShareModeShadow
+}
+
+// predictionNamespaces is every namespace of modelGroups holding a model the
+// v2 models run for (modelInputs): the collector issues their queries there
+// (collector.ReadPredictionInputsIn). Run after observePassive, which fills
+// the cycle's passive models.
+func (e *Engine) predictionNamespaces(modelGroups map[string][]llmdvariant.Variant) map[string]bool {
+	var namespaces map[string]bool
 	for _, vas := range modelGroups {
-		if len(vas) > 0 {
-			namespaces[vas[0].Namespace] = true
+		if len(vas) == 0 || e.modelInputs(vas[0].Namespace, vas[0].Spec.ModelID) == nil {
+			continue
 		}
+		if namespaces == nil {
+			namespaces = map[string]bool{}
+		}
+		namespaces[vas[0].Namespace] = true
 	}
 	return namespaces
 }
@@ -61,8 +81,11 @@ func (e *Engine) predictionNamespaces(modelGroups map[string][]llmdvariant.Varia
 // analyzers read (routing drops a pod no InferencePool selects), the
 // model's variant states, and the router's latency as the models fit on it.
 func (e *Engine) observeModelInputs(ctx context.Context, data *modelData) {
-	obs := e.modelInputs()
-	if obs == nil || data == nil {
+	if data == nil {
+		return
+	}
+	obs := e.modelInputs(data.namespace, data.modelID)
+	if obs == nil {
 		return
 	}
 	rows, kept := e.ReplicaMetricsCollector.PredictionRows(data.namespace, data.modelID)

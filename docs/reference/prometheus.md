@@ -1592,12 +1592,16 @@ model reads all of them `0`, including the two marked "on every answer":
 
 ### SLO analyzer v2 latency models
 
-Shadow, and off: the slo analyzer's switch `slo-v2-inputs` is off from the
-constructor, as every shadow addition is until its evidence turns it on. The
-slo analyzer will price TTFT and TPOT with the capacity planner's v2 models
-(the rank-mixture TTFT, the renewal-lognormal TPOT) beside its own. It does
-not price with them yet: the models are still being validated. With the
-switch on, these series say which of the models' inputs your fleet exports.
+Shadow. The slo analyzer will price TTFT and TPOT with the capacity
+planner's v2 models (the rank-mixture TTFT, the renewal-lognormal TPOT) beside
+its own. It does not price with them yet: the models are still being
+validated. Today these series say which of the models' inputs your fleet
+exports. They are published for every passive model (`llmsm_passive_mode`
+not `active`) and, while the utilization share plans in shadow, for every
+model: the controller moves nothing for those, so the extra queries are the
+only cost. For an active model they need the slo analyzer's switch
+`slo-v2-inputs`, off from the constructor until the evidence from passive and
+shadow deployments turns it on. Active scaling decisions never read them.
 Design: [the proposal](../proposals/predicted-latency-in-controller.md).
 
 Labels are `namespace` (the model's, scraped as `exported_namespace`) and
@@ -1609,7 +1613,7 @@ longer reconciled, and every series when a cycle reconciles no model.
 | --- | --- | --- | --- |
 | `llmsm_slo_model_coverage` | gauge | `objective`, `reason` | `1` for the one reason that holds, `0` for the others: `priced`; `abstained` (the model refused the window, as the planner would); `signal-missing` (an input was not read this cycle); `window-short` (every input was read, too few steps to fit yet); `not-built` (every input was read, and the analyzer does not price with the model yet) |
 | `llmsm_slo_model_input_missing` | gauge | `objective`, `signal` | `1` for each input not read this cycle; absent for one that was |
-| `llmsm_slo_predicted_tpot_seconds` | gauge | `variant_name`, `statistic` (`mean`, `p90`, `p95`) | the TPOT predicted for a decode variant at its current load, beside `llmsm_slo_predicted_ttft_seconds`. Registered, never published yet |
+| `llmsm_slo_predicted_tpot_seconds` | gauge | `variant_name`, `statistic` (`mean`, `p90`, `p95`), `learner` (`slo`, the analyzer's own; `tpot-distribution`, the v2 model) | the TPOT predicted for a decode variant at its current load, both models side by side, beside `llmsm_slo_predicted_ttft_seconds`. Registered, never published yet |
 
 The `signal` values, by objective. A signal is read when at least one
 serving pod of its role reports it, or the router does:

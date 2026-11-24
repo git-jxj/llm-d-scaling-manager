@@ -79,3 +79,17 @@ func sloReadingModelInputs(t *testing.T) *slo.Analyzer {
 	require.NoError(t, a.SetSwitchesForReplay(map[string]bool{slo.SwitchV2Inputs: true}))
 	return a
 }
+
+// With the switch off, a passive model still runs the v2 models: the
+// controller moves nothing for it, so they cost queries and no risk. Its
+// namespace alone is named, and an active model's is not.
+func TestSLOV2Inputs_RunForAPassiveModelWithTheSwitchOff(t *testing.T) {
+	e := &Engine{sloAnalyzer: slo.New(nil, nil), cyclePassive: map[string]bool{"ns2/b": true}}
+	groups := map[string][]llmdvariant.Variant{
+		"a": {{ObjectMeta: metav1.ObjectMeta{Namespace: "ns1"}, Spec: llmdvariant.Spec{ModelID: "a"}}},
+		"b": {{ObjectMeta: metav1.ObjectMeta{Namespace: "ns2"}, Spec: llmdvariant.Spec{ModelID: "b"}}},
+	}
+	assert.Equal(t, map[string]bool{"ns2": true}, e.predictionNamespaces(groups))
+	assert.NotNil(t, e.modelInputs("ns2", "b"))
+	assert.Nil(t, e.modelInputs("ns1", "a"), "an active model with the switch off")
+}

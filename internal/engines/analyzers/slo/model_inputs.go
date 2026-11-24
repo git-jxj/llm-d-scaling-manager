@@ -22,15 +22,17 @@ import (
 // objective, and publishes where each model stands. Nothing here reaches a
 // sizing decision.
 
-// SwitchV2Inputs is the replay switch of the v2 models' inputs: on, the
-// engine has the collector issue them for every namespace with a model
-// (collector.ReadPredictionInputsIn) and hands them to ObserveModelInputs.
+// SwitchV2Inputs is the replay switch of the v2 models' inputs for an
+// active model. The engine runs the v2 models for every model it moves
+// nothing for (a passive model, or any while the utilization share plans in
+// shadow) whatever the switch; on, it runs them for active models too, and
+// has the collector issue their inputs in every namespace with a model.
 // Off from the constructor, like every shadow addition until its evidence
 // flips the default.
 const SwitchV2Inputs = "slo-v2-inputs"
 
 // ReadsModelInputs reports whether the analyzer reads its v2 models' inputs
-// (SwitchV2Inputs): the engine asks the collector for them only then.
+// for an active model (SwitchV2Inputs).
 func (a *Analyzer) ReadsModelInputs() bool { return a.v2Inputs }
 
 // modelLearner is one v2 latency learner as it is registered today: its
@@ -62,12 +64,9 @@ type ModelCoverage struct {
 // nil where the router reported none. It publishes and returns each
 // objective's coverage. Every prefill and decode variant of the model is
 // pooled; the planner prices one pair at a time, and the learners will key
-// by pair once they learn. With SwitchV2Inputs off it reads nothing and
-// returns nil.
-func (a *Analyzer) ObserveModelInputs(in domain.AnalyzerInput, router *domain.RouterLatency) map[string]ModelCoverage {
-	if !a.v2Inputs {
-		return nil
-	}
+// by pair once they learn. The engine decides which models it is called for
+// (the switch, and the controller's mode); it keeps no state.
+func (*Analyzer) ObserveModelInputs(in domain.AnalyzerInput, router *domain.RouterLatency) map[string]ModelCoverage {
 	missing := whatif.MissingModelInputs(in, router, "", "")
 	out := make(map[string]ModelCoverage, len(modelLearners))
 	for _, l := range modelLearners {

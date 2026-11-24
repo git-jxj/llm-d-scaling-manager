@@ -37,9 +37,11 @@ func registerSLOModelInputMetrics(registry prometheus.Registerer) error {
 	}
 	sloPredictedTPOT = gauge(constants.LLMSMSLOPredictedTPOTSeconds,
 		"SLO analyzer, shadow only: the TPOT predicted for a decode variant at its current load, in seconds, by "+
-			"statistic (mean, p90, p95). Not published yet: the TPOT model is priced in the analyzer after the "+
-			"models are frozen.",
-		withInstance(constants.LabelNamespace, constants.LabelModelName, constants.LabelVariantName, constants.LabelStatistic))
+			"statistic (mean, p90, p95) and by the learner that priced it (slo, the analyzer's own; "+
+			"tpot-distribution, the v2 model), side by side. Not published yet: the TPOT models are priced in the "+
+			"analyzer after the models are frozen.",
+		withInstance(constants.LabelNamespace, constants.LabelModelName, constants.LabelVariantName, constants.LabelStatistic,
+			constants.LabelLearner))
 	sloModelCoverage = gauge(constants.LLMSMSLOModelCoverage,
 		"SLO analyzer, shadow only (switch slo-v2-inputs): 1 for why an objective's v2 latency model stands where it "+
 			"does for a model, 0 for the others: priced, abstained, signal-missing, window-short, not-built.",

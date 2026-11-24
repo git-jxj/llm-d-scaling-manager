@@ -8,7 +8,8 @@ package constants
 const (
 	// LLMSMSLOPredictedTPOTSeconds is the TPOT the slo analyzer predicts
 	// for a decode variant at its current load, by statistic (mean, p90,
-	// p95). Registered; set once the TPOT model is priced in the analyzer
+	// p95) and learner (slo or tpot-distribution, side by side). Registered;
+	// set once the TPOT models are priced in the analyzer
 	// (after the models' freeze).
 	LLMSMSLOPredictedTPOTSeconds = "llmsm_slo_predicted_tpot_seconds"
 	// LLMSMSLOModelCoverage is 1 for why an objective's v2 model stands
