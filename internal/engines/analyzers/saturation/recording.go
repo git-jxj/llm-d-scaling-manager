@@ -139,7 +139,7 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchITLHoldSteadySlope, SwitchITLLineAtFloor, SwitchMoEBusiestRank,
 // SwitchITLBatchTerm, SwitchTPOTRatioCensored,
 // SwitchDecodeResidencePull, SwitchDecodeBurstFill,
-// SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
+// SwitchBacktestStepOutputDispersion, SwitchK2DecodeBudgetAtComputedPrompt, SwitchDecodeLandedNeedsABound,
 // SwitchK2BatchAtITLTarget,
 // SwitchITLBaselineFromFloor, SwitchITLFloorBaselineHeld,
 // SwitchITLOneSidedAtCap,
@@ -343,6 +343,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// (decode_burst_fill.go). Off from the constructor; the analyzer
 		// does not read it.
 		SwitchDecodeBurstFill: &a.decodeBurstFill,
+		// The planner's backtest prices each step at its own output spread
+		// (backtest_step_dispersion.go). Off from the constructor; the
+		// analyzer does not read it.
+		SwitchBacktestStepOutputDispersion: &a.backtestStepOutputDispersion,
 		// Issue llm-d-incubation/llm-d-scaling-manager#201: a decode's
 		// derived k2 charges its budget the prompt it computes
 		// (decode_budget.go), and a landed request is a decode's backlog

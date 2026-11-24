@@ -498,6 +498,7 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 		f.outputTokens = k.OutputTokens
 		set("assume-output-tokens")
 	}
+	f.stepOutputDispersion = k.OutputDispersion
 	a := k.Assume
 	if a.VP != nil {
 		f.assumeVP = *a.VP

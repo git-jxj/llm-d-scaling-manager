@@ -85,6 +85,11 @@ type answerFlags struct {
 	// read from (whatifapi.Knobs.PromptMaxRatio): a backtest's step. No
 	// flag sets it; 0 is none.
 	statedPromptMaxRatio float64
+	// stepOutputDispersion is a backtest step's own output spread
+	// (whatifapi.Knobs.OutputDispersion), priced in place of the fit's on
+	// saturation.SwitchBacktestStepOutputDispersion. No flag sets it; 0 is
+	// none.
+	stepOutputDispersion float64
 	assumeRouterHop      time.Duration
 	prefill              int
 	set                  map[string]bool
@@ -512,6 +517,10 @@ type pricedVariant struct {
 	cycles int
 	decode whatif.Decode
 	shape  shape.Shape
+	// outputDispersion is the output spread D the shape was priced at as
+	// read, 0 where none was (shape.Shape holds 1 there): the fit's, or a
+	// backtest step's own (saturation.SwitchBacktestStepOutputDispersion).
+	outputDispersion float64
 	// check is the line against the recording's rows, the zero value with no
 	// line.
 	check whatif.LineCheck
@@ -595,10 +604,12 @@ const (
 // That errs towards more replicas; a reading above shape.AboveContextFactor
 // times the context says so in its source.
 func (pv *pricedVariant) residentKV() float64 {
-	d := pv.shape.OutputDispersion
 	whole := pv.shape.Context()
 	r, m := pv.state.Resident, pv.state.Shape
-	measured := shape.New(m.InputTokens, m.OutputTokens, 0).WithOutputDispersion(d).KVreq
+	// The reading is of the fit's traffic, so its context is at the fit's
+	// spread, which a backtest step may price over with its own
+	// (saturation.SwitchBacktestStepOutputDispersion).
+	measured := shape.New(m.InputTokens, m.OutputTokens, 0).WithOutputDispersion(m.OutputDispersion).KVreq
 	var kv float64
 	switch {
 	case !r.Read() || !(measured > 0):
@@ -678,7 +689,14 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if f.prefixHit != nil {
 			hit, pv.assumedHit, pv.hitRead = *f.prefixHit, true, f.prefixHitRead
 		}
-		pv.shape = shape.New(il, ol, hit).WithOutputDispersion(vs.Shape.OutputDispersion)
+		d := vs.Shape.OutputDispersion
+		if st.StepOutputDispersion && f.stepOutputDispersion >= 1 {
+			// A backtest step's own spread, as its lengths are its own
+			// (saturation.SwitchBacktestStepOutputDispersion): the fit's
+			// last minutes may have carried other traffic.
+			d = f.stepOutputDispersion
+		}
+		pv.shape, pv.outputDispersion = shape.New(il, ol, hit).WithOutputDispersion(d), d
 		replicas := vs.Replicas
 		if f.decode > 0 {
 			replicas = f.decode
@@ -734,7 +752,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if pv.itlB.Applied {
 			pv.flags = append(pv.flags, assumedITLB)
 		}
-		if vs.Shape.OutputDispersion == 0 {
+		if d == 0 {
 			pv.flags = append(pv.flags, whatif.OutputSpreadUnread)
 		}
 		if vs.BusiestRankFill {
@@ -1210,7 +1228,7 @@ func footer(st *learnreplay.State, variants []pricedVariant) string {
 // shapeText is the shape a variant was priced at and where each length came
 // from, and the spread of its output lengths where one was read.
 func (pv pricedVariant) shapeText() string {
-	if d := pv.state.Shape.OutputDispersion; d > 0 {
+	if d := pv.outputDispersion; d > 0 {
 		return fmt.Sprintf("%s, output spread D %.3f (measured)", pv.lengthsText(), d)
 	}
 	return pv.lengthsText()
