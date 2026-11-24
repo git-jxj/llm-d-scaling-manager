@@ -522,6 +522,7 @@ VLLM_USE_V1
 VPAboveSlopeBound
 VPFromPlateau
 VPLowerBound
+VPPromptNotCovered
 VPScaledToPrompt
 VPShapeMoved
 V_P
@@ -1952,6 +1953,7 @@ longestQueuedRun
 loop
 lose
 lost
+low
 low-confirmed
 low-load
 lowHoldFor
@@ -2505,6 +2507,7 @@ prefill-vp-at-served-work
 prefill-vp-floor-served
 prefill-vp-lone-rate
 prefill-vp-occupancy-plateau
+prefill-vp-prompt-coverage
 prefill-vp-served-unqueued
 prefill-vp-window-best
 prefillBoundHeld
@@ -2569,6 +2572,7 @@ promisedOnNodes
 promisedUnplaced
 prompt
 prompt-length
+prompts
 property
 provided
 provider
@@ -3124,6 +3128,7 @@ speculative_draft_model_path
 speculative_eagle_topk
 speculative_num_draft_tokens
 speculative_num_steps
+speed
 spend
 spends
 spent
@@ -3587,6 +3592,8 @@ vpPlateau
 vpPlateauFlat
 vpPlateauMinutes
 vpPlateauSpan
+vpPromptHigh
+vpPromptLow
 vpPromptTokens
 vpRefused
 vpSamples

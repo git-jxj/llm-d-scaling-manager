@@ -732,6 +732,7 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		}
 		est.VP, est.VPRefused, est.VPLowerBound, est.VPAboveSlopeBound = f.assumeVP, "", false, false
 		est.VPPromptTokens, est.VPWholePromptTokens, est.VPPromptHitRate = 0, 0, 0
+		est.VPPromptLow, est.VPPromptHigh = 0, 0
 		pf.assumedVP = true
 		pf.in.VPSource = shapeAssumed
 		pf.assume("V_P %s tok/s (--assume-vp)", num(f.assumeVP))
