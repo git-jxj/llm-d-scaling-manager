@@ -470,7 +470,7 @@ type shapeSample struct {
 // --experimental-ttft, the two switches alone changed. No figure newly reads
 // under 0.8 of measured with either, on a time split, a load split or the
 // busiest hour of the test, and with the KV wait the median mean TTFT of
-// the 75% time split comes from 0.85 to 0.96 of measured. But at the 50%
+// the 75% time split comes closer to measured. But at the 50%
 // split, whose figures rest on a lower-bound V_P and read high, both raise
 // the median error of the mean and p90 TTFT and take figures from within
 // 20% of measured to more than 20% over, which the issue's rule forbids;

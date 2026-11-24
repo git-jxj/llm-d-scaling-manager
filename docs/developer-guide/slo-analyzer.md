@@ -194,7 +194,7 @@ price took that load as free.
 - **Not on by default (issue #386).** On a private production P/D recording
   with a host and a peer tier, neither this switch nor `slo-ttft-tier-kv-wait`
   reads a figure newly under 0.8 of measured, and the KV wait brings the 75%
-  time split's median mean TTFT from 0.85 to 0.96 of measured. At the 50%
+  time split's median mean TTFT closer to measured. At the 50%
   split, whose figures rest on a lower-bound V_P and read high, both raise
   the median error and take figures from within 20% to more than 20% over,
   which the issue's rule forbids. `learnreplay.PlannerSwitches` says when they
