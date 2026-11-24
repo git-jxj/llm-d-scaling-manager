@@ -169,6 +169,10 @@ type Engine struct {
 	// admitInFlight needs once the decisions are final. Set by decideV2.
 	cycleFitted  bool
 	cyclePlanned map[string]bool
+	// cycleGaps is what this cycle's decision step knew of each variant's
+	// suggestion (replica_gap.go): set by decideV2, read when the decisions
+	// are applied, nil in a cycle that decided nothing.
+	cycleGaps *replicaGapPlan
 	// cycleVariants is every variant this cycle enumerated, keyed
 	// namespace/name, decided or skipped (optimizeV2): a restored in-flight
 	// hold of a variant it skipped is kept (admitInFlight).
@@ -930,6 +934,7 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		e.beginSLOCycle()
 		logger.Info("No active Variants found, skipping optimization")
 		metrics.PublishUtilizationShare(nil) // no group to report: the share gauges go too
+		metrics.PublishReplicaGaps(nil, nil) // nothing decided: no suggestion either
 		// This cycle analyzes nothing, so no analyzer series gets refreshed and
 		// the per-model prune below is never reached. Absence is meaningful for
 		// those series: left alone they would hold their last busy-cycle values
@@ -1657,6 +1662,7 @@ func (e *Engine) optimizeV2(
 			e.cycleVariants[utils.GetNamespacedKey(modelVAs[i].Namespace, modelVAs[i].Name)] = true
 		}
 	}
+	e.cycleGaps = nil // set by decideV2; a cycle that returns before it decided nothing
 	e.pruneLastGoodAnalysis(activeKeys)
 	e.pruneAnalyzerSeries(activeKeys)
 	e.pruneBlockedModels(activeKeys)
@@ -2422,6 +2428,10 @@ func (e *Engine) applySaturationDecisions(
 	// only a utilization-share decision names one.
 	resolved := make([]string, 0, len(vaMap))
 	defer func() { e.Status.SetResolvedAccelerators(resolved) }()
+	// Each decided variant's suggestion against what it is provided, published
+	// once every decision is applied: a variant with no decision has none.
+	gaps := &replicaGapRecorder{plan: e.cycleGaps}
+	defer gaps.publish()
 
 	// Iterate over ALL active VAs to ensure we update status and trigger reconciliation for everyone
 	for vaName, va := range vaMap {
@@ -2483,10 +2493,12 @@ func (e *Engine) applySaturationDecisions(
 		var acceleratorName string
 		var reason string
 
+		var gap metrics.ReplicaGap
 		if hasDecision {
 			targetReplicas = decision.TargetReplicas
 			acceleratorName = decision.AcceleratorName
 			reason = decision.Reason()
+			gap = gaps.record(&decision, targetReplicas)
 		} else {
 			// No change/decision: Keep current target or default to current replicas
 			// We effectively explicitly "decide" to keep things as they are if no decision was made
@@ -2673,7 +2685,7 @@ func (e *Engine) applySaturationDecisions(
 				// Emit Kubernetes event for observability
 				e.recordScalingEvent(&updateVa, decision.Action, decision.TargetReplicas, decision.Reason())
 				if decision.WasLimited {
-					e.recordEvent(va, corev1.EventTypeWarning, constants.K8SEventResourceConstrained, constrainedMessage(&decision))
+					e.recordEvent(va, corev1.EventTypeWarning, constants.K8SEventResourceConstrained, constrainedEventMessage(&decision, gap))
 				}
 
 				logger.V(logging.VERBOSE).Info("Successfully emitted metrics",
