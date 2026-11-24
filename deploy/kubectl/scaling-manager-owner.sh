@@ -72,7 +72,9 @@ run() {
     eval "$line" || { printf 'scaling-manager-owner.sh: failed: %s\n' "$line" >&2; exit 1; }
 }
 
-note() { printf '# %s\n' "$1"; }
+# note <text>: a comment with --print; otherwise said on stderr, so whoever
+# runs the command reads it too.
+note() { if $PRINT; then printf '# %s\n' "$1"; else printf 'scaling-manager-owner.sh: %s\n' "$1" >&2; fi; }
 
 # need <file>...: each release file is in --dir, or exit 2 before any
 # command runs. --print checks nothing: it may run where the files are not.
@@ -122,7 +124,7 @@ case "$CMD" in
         run kubectl apply --server-side -n "$N" -f "$DIR/scaling-manager-monitoring.yaml" -l scaling-manager.llmd.ai/monitor=modelserver
         ;;
     network)
-        $PRINT && note "Only where a default-deny ingress policy is in place: this one selects every pod of $N."
+        note "Only where a default-deny ingress policy is in place: this one selects every pod of $N."
         run kubectl apply --server-side -n "$N" -f "$DIR/scaling-manager-monitoring.yaml" -l scaling-manager.llmd.ai/monitor=epp-networkpolicy
         ;;
     register)
@@ -140,7 +142,7 @@ case "$CMD" in
     policy)
         $PRINT || [ -f "$2" ] || usage "policy: no file $2"
         run kubectl apply -n "$N" -f "$2"
-        $PRINT && note "The label needs patch on the Namespace; without it, ask the cluster admin to run this line."
+        note "The label needs patch on the Namespace; without it, ask the cluster admin to run this line."
         run kubectl label namespace "$N" scaling-manager.llmd.ai/config-enabled=true --overwrite
         ;;
     grant)

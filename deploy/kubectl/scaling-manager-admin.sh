@@ -17,10 +17,13 @@
 #   upgrade [--keda-namespace NS]
 #       Apply the new release's files. The settings and ScaledObjects stay.
 #   move [--keda-namespace NS]
-#       Take a cluster-wide smt install over, once (--force-conflicts).
+#       Take a cluster-wide smt install over, once (--force-conflicts), and
+#       remove its cluster-wide DisaggregatedSet role writer grant: this
+#       install grants it per namespace (scaling-manager-owner.sh grant).
 #   namespaces NS,NS | --all
 #       Set watchNamespaces, live: the namespaces the controller manages.
-#       --all empties it: every namespace (see the open question in the guide).
+#       --all empties it: every namespace, as on every cluster-wide install.
+#       An install without --watch-namespaces manages every namespace too.
 #   set KEY=VALUE ...
 #       Set settings keys (passive, utilizationShare, limiter, quotas, ...).
 #   grant-epp NAMESPACE SERVICEACCOUNT
@@ -31,7 +34,10 @@
 #       The controller's status: ready, the managed namespaces, each
 #       namespace's readiness, the checks.
 #   uninstall [--keda-namespace NS]
-#       Remove everything this install made, in every namespace.
+#       Remove everything this install made, in every namespace, and what a
+#       moved smt install left (labelled with the same instance). The
+#       ScaledObjects an owner registered from their own file stay: each
+#       owner deletes theirs first.
 #
 # Exit codes: 0 done, 1 a kubectl command failed, 2 usage.
 
@@ -160,7 +166,11 @@ case "$CMD" in
     install)
         [[ "$PROM_URL" =~ ^https?://[^/]+ ]] || usage "install needs --prometheus-url http(s)://host:port"
         need scaling-manager.yaml scaling-manager-keda.yaml
-        if $WATCH_SET; then IFS=, read -ra list <<< "$WATCH"; for n in "${list[@]}"; do valid_ns "$n"; done; fi
+        if $WATCH_SET; then
+            IFS=, read -ra list <<< "$WATCH"
+            [ "${#list[@]}" -gt 0 ] || usage "--watch-namespaces: an empty list; leave it out to manage every namespace"
+            for n in "${list[@]}"; do valid_ns "$n"; done
+        fi
         $PRINT && note "The install: the manifest, KEDA's side in $KEDA_NS, the settings. Passive until: scaling-manager-admin.sh set passive=false"
         run kubectl apply --server-side -f "$DIR/scaling-manager.yaml"
         keda_side
@@ -185,6 +195,12 @@ case "$CMD" in
         run kubectl apply --server-side --force-conflicts -f "$DIR/scaling-manager.yaml"
         keda_side
         settings_patch "kedaNamespace=$KEDA_NS"
+        # smt's cluster-wide role writer grant (scaling-manager-dset-role-writer-cluster.yaml,
+        # smt --dset-role-writer). This install's writer acts only where the
+        # owner bound it per namespace.
+        $PRINT && note "smt's cluster-wide DisaggregatedSet role writer grant: this install grants it per namespace."
+        run kubectl delete clusterrolebinding scaling-manager-dset-role-writer-rolebinding --ignore-not-found
+        run kubectl delete clusterrole scaling-manager-dset-role-writer-role --ignore-not-found
         ;;
     namespaces)
         [ $# -eq 1 ] || usage "namespaces needs one list, NS,NS, or --all"
@@ -205,7 +221,7 @@ case "$CMD" in
         [ $# -eq 2 ] || usage "grant-epp needs NAMESPACE SERVICEACCOUNT"
         valid_ns "$1"
         [[ "$2" =~ ^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$ ]] || usage "'$2' is not a ServiceAccount name"
-        run kubectl create clusterrolebinding "scaling-manager-epp-tokenreview-$1-$2" \
+        run kubectl create clusterrolebinding "scaling-manager-epp-tokenreview.$1.$2" \
             --clusterrole="scaling-manager-epp-tokenreview-$NS" --serviceaccount="$1:$2" --dry-run=client -o yaml \
             "|" kubectl label --local -f - -o yaml "$INSTANCE" app.kubernetes.io/part-of=scaling-manager scaling-manager.llmd.ai/grant=epp-tokenreview \
             "|" kubectl apply --server-side --field-manager="$MANAGER" -f -
@@ -225,6 +241,9 @@ case "$CMD" in
         run kubectl delete -n "$KEDA_NS" -f "$DIR/scaling-manager-keda.yaml" --ignore-not-found
         try kubectl label namespace "$KEDA_NS" "$KEDA_LABEL-"
         run kubectl delete -f "$DIR/scaling-manager.yaml" --ignore-not-found --wait=true --timeout=300s
+        $PRINT && note "What a moved smt install left beside the manifest, labelled with the same instance."
+        run kubectl delete servicemonitor,serviceaccount,secret,configmap -A -l "$INSTANCE" --ignore-not-found
+        run kubectl delete clusterrolebinding,clusterrole,clustertriggerauthentication -l "$INSTANCE" --ignore-not-found
         ;;
     *) usage "unknown command $CMD" ;;
 esac

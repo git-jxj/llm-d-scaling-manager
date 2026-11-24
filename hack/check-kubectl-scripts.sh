@@ -145,6 +145,7 @@ refuse "install with a URL that is not http(s)" 2 "$ADMIN" install --prometheus-
 refuse "a KEDA namespace that is not a name" 2 "$ADMIN" upgrade --keda-namespace Keda_NS
 refuse "watchNamespaces with a bad name" 2 "$ADMIN" namespaces team-a,Team_B
 refuse "an empty namespace list (--all is explicit)" 2 "$ADMIN" namespaces ""
+refuse "install with an empty --watch-namespaces (leave it out for every namespace)" 2 "$ADMIN" install --prometheus-url https://p:9090 --watch-namespaces ""
 refuse "set with a quote in a value" 2 "$ADMIN" set 'limiter=a"b'
 refuse "set without =" 2 "$ADMIN" set passive
 refuse "an unknown admin command" 2 "$ADMIN" deploy
