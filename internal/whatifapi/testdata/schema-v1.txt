@@ -451,6 +451,7 @@ backtestRequest.assume.a number
 backtestRequest.assume.flowControl string
 backtestRequest.assume.itlB number
 backtestRequest.assume.itlBFromFloor boolean
+backtestRequest.assume.loadAwareRouter boolean
 backtestRequest.assume.promptCV number
 backtestRequest.assume.routerHop number
 backtestRequest.assume.routerWait string
@@ -864,6 +865,7 @@ plan.scenario.assume.a number
 plan.scenario.assume.flowControl string
 plan.scenario.assume.itlB number
 plan.scenario.assume.itlBFromFloor boolean
+plan.scenario.assume.loadAwareRouter boolean
 plan.scenario.assume.promptCV number
 plan.scenario.assume.routerHop number
 plan.scenario.assume.routerWait string
@@ -948,6 +950,7 @@ planRequest.assume.a number
 planRequest.assume.flowControl string
 planRequest.assume.itlB number
 planRequest.assume.itlBFromFloor boolean
+planRequest.assume.loadAwareRouter boolean
 planRequest.assume.promptCV number
 planRequest.assume.routerHop number
 planRequest.assume.routerWait string
@@ -996,6 +999,7 @@ predictRequest.assume.a number
 predictRequest.assume.flowControl string
 predictRequest.assume.itlB number
 predictRequest.assume.itlBFromFloor boolean
+predictRequest.assume.loadAwareRouter boolean
 predictRequest.assume.promptCV number
 predictRequest.assume.routerHop number
 predictRequest.assume.routerWait string
@@ -1640,6 +1644,7 @@ reportRequest.assume.a number
 reportRequest.assume.flowControl string
 reportRequest.assume.itlB number
 reportRequest.assume.itlBFromFloor boolean
+reportRequest.assume.loadAwareRouter boolean
 reportRequest.assume.promptCV number
 reportRequest.assume.routerHop number
 reportRequest.assume.routerWait string
@@ -1738,6 +1743,7 @@ sizeRequest.assume.a number
 sizeRequest.assume.flowControl string
 sizeRequest.assume.itlB number
 sizeRequest.assume.itlBFromFloor boolean
+sizeRequest.assume.loadAwareRouter boolean
 sizeRequest.assume.promptCV number
 sizeRequest.assume.routerHop number
 sizeRequest.assume.routerWait string

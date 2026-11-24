@@ -28,7 +28,7 @@ const LINK_NUMBERS = new Set(["cycle", "prefill", "decode", "rate", "ttft", "tpo
   "vp", "a", "promptCV", "routerHop", "itlB"]);
 const LINK_NAMES = new Set(["recording", "namespace", "model", "prefillVariant", "decodeVariant", "priceAs"]);
 const STAT_WORD = /^(mean|p[0-9]{1,2}(\.[0-9]{1,3})?)$/;
-const LINK_WORDS = {mode: /^size$/, low: /^1$/, perBucket: /^1$/, ttftStat: STAT_WORD, tpotStat: STAT_WORD,
+const LINK_WORDS = {mode: /^size$/, low: /^1$/, perBucket: /^1$/, loadAwareRouter: /^1$/, ttftStat: STAT_WORD, tpotStat: STAT_WORD,
   edges: {test: edgesInLink}};
 
 // MAX_EDGES and MAX_EDGE are the server's limits on bucketEdges
