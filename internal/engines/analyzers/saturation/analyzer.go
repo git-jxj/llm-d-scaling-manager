@@ -587,6 +587,9 @@ type SaturationAnalyzer struct {
 	// prefillVPOccupancyPlateau is SwitchPrefillVPOccupancyPlateau: off
 	// from the constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillVPOccupancyPlateau bool
+	// prefillVPPromptCoverage is SwitchPrefillVPPromptCoverage: off from
+	// the constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillVPPromptCoverage bool
 	// prefillVPLoneRate is SwitchPrefillVPLoneRate: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillVPLoneRate bool
