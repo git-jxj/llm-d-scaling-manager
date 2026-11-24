@@ -11,9 +11,10 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
-// The load of a cached prompt token from a tier outside the GPU, and the
-// attention over every tier's cached context, as slo.SwitchTTFTTierLoad
-// prices them (whatif.PromptWindow.TierLoad). Off, nothing here runs.
+// The load of a cached prompt token from a tier outside the GPU, as
+// slo.SwitchTTFTTierLoad prices it (whatif.PromptWindow.TierLoad), and the
+// attention over every tier's cached context, as
+// slo.SwitchTTFTPrefixAttention prices it. Both off, nothing here runs.
 
 // tierLoadUnmeasured is a fleet whose prefill pods served a material share
 // of the prompt from a tier outside the GPU with no transfer reading that
@@ -49,10 +50,8 @@ type wireTierTransfer struct {
 }
 
 // tierLoad prices the load of the question's cached tokens from outside
-// the GPU into the prefill side (whatif.Prefill.TierLoadSeconds), and with
-// slo.SwitchTTFTPrefixAttention on reads the attention span's cached
-// context from the whole prompt less the computed one. Nothing with the
-// switch off.
+// the GPU into the prefill side (whatif.Prefill.TierLoadSeconds). Nothing
+// with the switch off.
 //
 // The load at the traffic read is each transfer's seconds over the tokens
 // it moved, times a request's tokens of those tiers: the bytes a token
@@ -75,7 +74,6 @@ func (pf *pricedFleet) tierLoad(ps *learnreplay.PrefillState) {
 		return
 	}
 	p := &pf.fleet.Prefill
-	pf.cachedContext()
 	tl, ok := pf.promptWindow.TierLoad()
 	if !ok {
 		if hit, read := pf.promptWindow.ComputedHit(); read && hit > whatif.MaterialPrefixHitMove {
@@ -141,10 +139,14 @@ func (pf *pricedFleet) tierLoad(ps *learnreplay.PrefillState) {
 
 // cachedContext reads the attention span's cached context from the whole
 // prompt less the computed one, on both sides (whatif.Prefill
-// .CachedContextRead), with slo.SwitchTTFTPrefixAttention on: the
-// question's from the computed-token hit of the same rows and minutes, or
-// from a stated whole prompt and hit; V_P's from the whole and computed
-// prompts of its own minutes. Either unread leaves the hit rates to it.
+// .CachedContextRead), with slo.SwitchTTFTPrefixAttention on, whether
+// slo.SwitchTTFTTierLoad is on or not (issue
+// llm-d-incubation/llm-d-scaling-manager#383): the question's from the
+// computed-token hit of the same rows and minutes, or from a stated whole
+// prompt and hit; V_P's from the whole and computed prompts of its own
+// minutes. A token served from a host, disk or peer tier is a miss to the
+// GPU's prefix-cache hit rate, yet the prompt attends over it. Either side
+// unread leaves the hit rates to it.
 func (pf *pricedFleet) cachedContext() {
 	p := &pf.fleet.Prefill
 	if !p.PrefixAttention || !(p.VPWholePromptTokens > 0) || !(p.PromptTokens > 0) {

@@ -274,7 +274,33 @@ func TestTTFT_TierLoadAttentionSpanFromTheComputedHit(t *testing.T) {
 	assert.InDelta(t, p.PromptTokens*hit/(1-hit), p.CachedContextTokens, 1e-9)
 	assert.InDelta(t, max(p.VPWholePromptTokens-p.VPPromptTokens, 0), p.VPCachedContextTokens, 1e-9)
 
-	// Off, or with slo.SwitchTTFTPrefixAttention off, the hit rates stand.
-	assert.False(t, tierFleet(t, st, false, true, false, whatifapi.Knobs{Headroom: 0.8}).pf.fleet.Prefill.CachedContextRead)
+	// With slo.SwitchTTFTPrefixAttention off, the hit rates stand.
 	assert.False(t, tierFleet(t, st, true, false, false, whatifapi.Knobs{Headroom: 0.8}).pf.fleet.Prefill.CachedContextRead)
+}
+
+// The cached context is slo.SwitchTTFTPrefixAttention's, with
+// slo.SwitchTTFTTierLoad off too (issue
+// llm-d-incubation/llm-d-scaling-manager#383): the prefix-cache counter of
+// the fixture sees a third of the cached tokens (a GPU hit rate of 0.25
+// against a computed-token hit of 0.75), and the span reads them all, the
+// computed-token hit's, not the hit rate's. It needs no split by tier: the
+// recording with none reads the same.
+func TestTTFT_PrefixAttentionReadsEveryTiersCachedContext(t *testing.T) {
+	t.Parallel()
+	for name, rec := range map[string][]byte{
+		"tier split":    tierRecording(t, true),
+		"no tier split": hitRecording(t, tierWholeScale, 0.25),
+	} {
+		st := tierState(t, rec)
+		p := tierFleet(t, st, false, true, false, whatifapi.Knobs{Headroom: 0.8}).pf.fleet.Prefill
+		hit, ok := st.Prefill[0].PromptWindow.ComputedHit()
+		require.True(t, ok, name)
+		require.InDelta(t, 1-1/tierWholeScale, hit, 0.01, name)
+		require.Less(t, p.PromptHitRate, 0.5, "%s: the prefix-cache hit rate sees part of the cache", name)
+		require.True(t, p.CachedContextRead, name)
+		assert.InDelta(t, p.PromptTokens*hit/(1-hit), p.CachedContextTokens, 1e-9, name)
+		assert.Greater(t, p.CachedContextTokens, 2*p.PromptTokens*p.PromptHitRate/(1-p.PromptHitRate),
+			"%s: more than the hit rate's cached context", name)
+		assert.InDelta(t, max(p.VPWholePromptTokens-p.VPPromptTokens, 0), p.VPCachedContextTokens, 1e-9, name)
+	}
 }
