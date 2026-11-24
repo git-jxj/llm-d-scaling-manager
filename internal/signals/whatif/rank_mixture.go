@@ -179,6 +179,11 @@ type RankMixture struct {
 	// chunked prefill, 1 without); 0 is not known, and each rank is priced
 	// as plain processor sharing.
 	Slots int
+	// Stratified reads each rank's mean service and cs^2 integrated over
+	// the computed-token law and draws the ranks stratified
+	// (rank_mixture_stratified.go); false reads them from each rank's own
+	// draws.
+	Stratified bool
 }
 
 // MaxRelaxationShare is the largest relaxation time, as a share of the step
@@ -348,6 +353,11 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 		n = DefaultMixtureDraws
 	}
 	per := max(n/len(m.Shares), 50)
+	pooledES, pooledCS2 := 0.0, 0.0
+	if m.Stratified {
+		per = stratifiedPer(per, len(m.Shares))
+		pooledES, pooledCS2 = m.serviceMoments(hx)
+	}
 	rng := rand.New(rand.NewPCG(mixtureSeed, uint64(len(m.Shares))))
 	out := RankMixtureDraws{QP: make([]float64, 0, per*len(m.Shares)), L: make([]float64, 0, per*len(m.Shares)),
 		W: make([]float64, 0, per*len(m.Shares))}
@@ -357,12 +367,19 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 		lam := rate * p
 		var es, es2 float64
 		for j := range s {
-			s[j] = m.S0 + hx.ppf(rng.Float64())/m.V
+			u := rng.Float64()
+			if m.Stratified {
+				u = (float64(j) + u) / float64(per)
+			}
+			s[j] = m.S0 + hx.ppf(u)/m.V
 			es += s[j]
 			es2 += s[j] * s[j]
 		}
 		es /= float64(per)
 		cs2 := max(es2/float64(per)/(es*es)-1, 0)
+		if m.Stratified && pooledES > 0 {
+			es, cs2 = pooledES, pooledCS2
+		}
 		rho := lam * es
 		out.Checks.Rho = append(out.Checks.Rho, rho)
 		rhoSum += rho
