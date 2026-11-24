@@ -324,6 +324,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	doc := res.Inputs
 	doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
 	doc.InputsID = contentID("inputs", res.Content)
+	doc.Measured = BusiestHourMeasured(res.Series, res.Latency)
 	var mm *mainMixture
 	if model != "" {
 		// The same source priced with the model is another entry: its id
