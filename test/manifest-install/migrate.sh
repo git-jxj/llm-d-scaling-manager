@@ -3,8 +3,9 @@
 # A move from an smt install to the one manifest, and mutual TLS through it
 # (proposal PR #404, appendix G): `smt install --scope cluster` from the tools
 # image, a ScaledObject on the scaler over mutual TLS, then `kubectl apply
-# --server-side` of scaling-manager.yaml over it, the opt-in labels and the
-# selector. The controller must copy the smt CA into its new Opaque Secrets,
+# --server-side` of scaling-manager.yaml over it with scaling-manager-admin.sh
+# move, and watchNamespaces. The controller must copy the smt CA into its new
+# Opaque Secrets,
 # so KEDA keeps its connection with no restart of KEDA's operator.
 # `make test-e2e-manifest-migrate` runs it on the release-files e2e
 # prerequisites, on a cluster where neither install ran yet.
@@ -25,9 +26,8 @@ MONITORING_NS="${MONITORING_NS:-scaling-manager-monitoring}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-https://kube-prometheus-stack-prometheus.$MONITORING_NS.svc.cluster.local:9090}"
 PROMETHEUS_TLS_SECRET="${PROMETHEUS_TLS_SECRET:-prometheus-web-tls}"
 TOOLS_IMG="${TOOLS_IMG:?set TOOLS_IMG to the tools image built with the release files}"
-LABEL=scaling-manager.llmd.ai/managed
-ADMIT=e2e.scaling-manager.llmd.ai/admitted
 M=scaling-manager.yaml
+ADMIN="bash ./scaling-manager-admin.sh"
 STATUS_CM=scaling-manager-controller-status
 DEPLOY=scaling-manager-controller-manager
 SO=migrate-probe
@@ -101,24 +101,18 @@ copy_smt="$(secret_sha "$KEDA_NS" "$COPY")"
 keda_pod="$(kubectl get pods -n "$KEDA_NS" -l app.kubernetes.io/name=keda-operator -o jsonpath='{.items[0].metadata.uid}')"
 pass "smt install --scope cluster: mutual TLS; the probe ScaledObject is Ready with the scaler's metric (CA $ca_smt)"
 
-# --- 2. the move: the manifest over it, the selector, the labels -------------
+# --- 2. the move: the manifest over it, KEDA's side, watchNamespaces ---------
 
-cp "$DIST/$M" "$WORK/$M"
+for f in "$M" scaling-manager-keda.yaml scaling-manager-admin.sh; do cp "$DIST/$f" "$WORK/$f" || fail move "no $f in $DIST"; done
 cd "$WORK" || exit 1
-if [ "$KEDA_NS" != keda ]; then
-    sedline="$(sed -n '1,6{s/^# KEDA in another namespace than keda: //p}' "$M")"
-    eval "${sedline//<ns>/$KEDA_NS}" || fail move "the header's sed failed"
-fi
-# --force-conflicts: the manifest takes the controller Deployment over from
-# smt, whose client-side apply owns fields the manifest also sets. Only the
-# move needs it; a later apply of the manifest does not.
-kubectl apply --server-side --force-conflicts -f "$M" > "$LOGS/apply.log" 2>&1 || { cat "$LOGS/apply.log"; fail move "kubectl apply --server-side --force-conflicts -f $M over the smt install"; }
-kubectl apply --server-side -f "$M" > "$LOGS/apply-again.log" 2>&1 || { cat "$LOGS/apply-again.log"; fail move "a second apply, without --force-conflicts, after the move"; }
-kubectl patch configmap scaling-manager-settings -n "$NS" --type merge \
-    -p "{\"data\":{\"namespaceSelector\":\"$LABEL=true,$ADMIT=true\"}}" >/dev/null || fail move "patching namespaceSelector"
-kubectl label namespace "$MODEL_NS" "$LABEL=true" "$ADMIT=true" --overwrite >/dev/null || fail move "labelling $MODEL_NS"
+# move: --force-conflicts takes the controller Deployment over from smt, whose
+# client-side apply owns fields the manifest also sets. Only the move needs
+# it; the upgrade after it does not. Nothing is edited for KEDA in $KEDA_NS.
+$ADMIN move --keda-namespace "$KEDA_NS" > "$LOGS/apply.log" 2>&1 || { cat "$LOGS/apply.log"; fail move "scaling-manager-admin.sh move over the smt install"; }
+$ADMIN upgrade --keda-namespace "$KEDA_NS" > "$LOGS/apply-again.log" 2>&1 || { cat "$LOGS/apply-again.log"; fail move "scaling-manager-admin.sh upgrade, without --force-conflicts, after the move"; }
+$ADMIN namespaces "$MODEL_NS" > /dev/null || fail move "scaling-manager-admin.sh namespaces $MODEL_NS"
 kubectl rollout status "deployment/$DEPLOY" -n "$NS" --timeout=300s > "$LOGS/rollout.log" 2>&1 || fail move "the controller did not roll out"
-pass "the move: kubectl apply --server-side -f $M over the smt install ($(grep -c . "$LOGS/apply.log") objects), the selector, the labels"
+pass "the move: scaling-manager-admin.sh move over the smt install ($(grep -c . "$LOGS/apply.log") lines), then upgrade, and watchNamespaces $MODEL_NS"
 
 # --- 3. the CA moved, and KEDA stays connected -------------------------------
 
@@ -151,7 +145,8 @@ pass "KEDA presents its certificate to the moved controller (kedaConnection curr
 
 {
     kubectl delete -f "$WORK/probe.yaml" --ignore-not-found
-    kubectl label namespace "$MODEL_NS" "$LABEL-" "$ADMIT-"
+    kubectl delete -n "$KEDA_NS" -f scaling-manager-keda.yaml --ignore-not-found
+    kubectl label namespace "$KEDA_NS" scaling-manager.llmd.ai/keda-
     kubectl delete -f "$M" --ignore-not-found --wait=true --timeout=300s
     kubectl delete clusterrole,clusterrolebinding,clustertriggerauthentication -l app.kubernetes.io/part-of=scaling-manager --ignore-not-found
     kubectl delete rolebinding,role,podmonitor,servicemonitor,secret,configmap -n "$MODEL_NS" -l app.kubernetes.io/part-of=scaling-manager --ignore-not-found
