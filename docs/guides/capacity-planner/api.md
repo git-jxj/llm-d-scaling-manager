@@ -356,7 +356,7 @@ limit is that refusal, as in the plan's `limits`.
 ## The report
 
 `POST /v1/report` judges one fleet: is it under-provisioned, right-sized or
-over-provisioned at the load the source saw (its p95 by default)? Resolve
+over-provisioned at the load the source saw (its p95 less counting noise by default)? Resolve
 the source first, then:
 
 ```bash
@@ -375,7 +375,7 @@ Every field but `inputsId` has a default.
 | `fleet.prefill`, `fleet.decode` | the recorded counts | The fleet to judge. |
 | `shapes` | `["load"]`, or `["measured"]` where no cycle of the load read a shape (a stated `loadSeen`) | Request shapes, at most 6: `measured` (the decode variant's last cycles), `load` (the shape of the cycles the load judged at was read from), or `IL/OL[/hit]` in tokens, `k` for 1024 (`8k/200`, `1k/4k/0.3`). |
 | `loads` | `["50%", "80%", "100%", "seen"]` | The tables' rates, at most 8: a share of each shape's fleet knee (`80%`), a rate (`5r/s`), `seen`, or the load seen grown (`seen x1.5`, also `seen×1.5` or `seen*1.5`): a what-if with its own column and its own verdict in `shapes[].growth`. |
-| `loadStatistic` | `p95` | Which statistic of the source's per-cycle arrival rate to judge at: `mean`, `p95`, `peak`, or `p95-modulation`, the p95 with the 1-minute rate's counting noise taken out. Not with `loadSeen`. |
+| `loadStatistic` | `p95-modulation` | Which statistic of the source's per-cycle arrival rate to judge at: `mean`, `p95`, `peak`, or `p95-modulation`, the p95 with the 1-minute rate's counting noise taken out (the share of it that readings 15 s apart hold). Not with `loadSeen`. |
 | `loadSeen` | the source's rate at `loadStatistic` | The load to judge at, requests per second. |
 | `loadSeenX` | none | An alias that adds `seen xN` to `loads`. It never changes the load judged at. |
 | `arrivalCV2` | 1 (Poisson) | The arrivals' Ca^2, as a plan's `traffic.arrivalCV2`. |
@@ -429,7 +429,7 @@ decode is sized alone, and the missing target adds nothing to `refused`.
 | Key | Default | Notes |
 | --- | --- | --- |
 | `step` | `5m` | A bucket's length, a Go duration from `15s` to `24h`. Buckets start on the step in UTC. |
-| `sizeFor` | `p95` | The rate of a bucket's cycles to size for: `mean`, `p95`, `p95-modulation` (the p95 less the counting noise of a 1-minute rate; the bucket's `rate.p95Modulation`) or `max`. A bucket of fewer than 20 cycles asked for its `p95` or `p95-modulation` is sized for its `mean` and flagged `FewCyclesForP95`; each bucket's `sizedFor` says which. |
+| `sizeFor` | `p95-modulation` | The rate of a bucket's cycles to size for: `mean`, `p95`, `p95-modulation` (the p95 less the counting noise of a 1-minute rate; the bucket's `rate.p95Modulation`) or `max`. A bucket of fewer than 20 cycles asked for its `p95` or `p95-modulation` is sized for its `mean` and flagged `FewCyclesForP95`; each bucket's `sizedFor` says which. |
 | `lead` | the source's | Each role's scale-up lead time, seconds: `{"prefill": 180, "decode": 90}`. A role left out takes the start time the source learned (`fleet.<role>.startSeconds` in the inputs), else 0. |
 | `minRequests` | 30 | A bucket with fewer requests is `tooLittleData`, not sized. |
 

@@ -495,7 +495,7 @@ func (r *reporter) addAssumed(words ...string) {
 }
 
 // loadOf is the load the fleet is judged at: the query's, else the statistic
-// asked (p95 by default) of the per-cycle arrival rate over the window's
+// asked (the p95 less counting noise by default) of the per-cycle arrival rate over the window's
 // cycles that read one above 0, refused (WindowGapAtPeak) when a gap in the
 // window could hide its peak (gapAtPeak). A growth load is a what-if of
 // its own (shapeReport), never the load judged at. The mean, p95 and
@@ -518,7 +518,7 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 		stats = loadStats(rates)
 		mean, p95, peak := stats[whatifapi.LoadMean], stats[whatifapi.LoadP95], stats[whatifapi.LoadPeak]
 		l.Mean, l.P95, l.Peak = &mean, &p95, &peak
-		mod := whatifapi.ModulationP95(rates, mean, p95)
+		mod := whatifapi.ModulationP95Every(rates, mean, p95, cycleSeconds(r.st))
 		stats[whatifapi.LoadP95Modulation] = mod
 		l.P95Modulation = &mod
 		l.P95IsPeak = len(rates) < minP95Cycles
