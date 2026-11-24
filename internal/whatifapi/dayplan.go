@@ -40,6 +40,10 @@ type SeriesSample struct {
 	OutputTokens            float64
 	PrefixHitRate           float64
 	HasShape                bool
+	// OutputTokensSquared is the decode rows' bound on E[O^2], weighted as
+	// OutputTokens is (learnreplay.CycleSample); 0 unless every row read
+	// one. A backtest step's output spread is read from it.
+	OutputTokensSquared float64
 	// OtherPods is the serving pods of prefill and decode variants other
 	// than the priced ones.
 	OtherPods int

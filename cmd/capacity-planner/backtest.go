@@ -385,7 +385,7 @@ func seriesSamplesOf(cycles []learnreplay.CycleSample) []whatifapi.SeriesSample 
 	for i, c := range cycles {
 		out[i] = whatifapi.SeriesSample{At: c.At, Rate: c.ArrivalRate, RateKnown: c.RateKnown, Prefill: c.PrefillPods, Decode: c.DecodePods,
 			PrefillGPUs: c.PrefillGPUs, DecodeGPUs: c.DecodeGPUs, PromptTokens: c.PromptTokens, OutputTokens: c.OutputTokens,
-			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape, OtherPods: c.OtherPods,
+			PrefixHitRate: c.PrefixHitRate, HasShape: c.HasShape, OutputTokensSquared: c.OutputTokensSquared, OtherPods: c.OtherPods,
 			PromptComputedRate: c.PromptComputedRate, PromptRequestRate: c.PromptRequestRate, PromptBuckets: c.PromptBuckets,
 			FlowControlSeries: c.FlowControlSeries, EngineRate: c.EngineRate, PrefillReplicas: c.PrefillReplicas,
 			DecodeReplicas: c.DecodeReplicas, RouterQueued: c.RouterQueued,
