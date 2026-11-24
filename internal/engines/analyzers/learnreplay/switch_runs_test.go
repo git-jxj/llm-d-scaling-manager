@@ -1314,6 +1314,11 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// runs it off and off alone from all on moves nothing. Its unit tests
 	// hold it (heldBy).
 	saturation.SwitchPrefillVPPromptCoverage: nil,
+	// llm-d-incubation/llm-d-scaling-manager#406: V_P from the lone rate.
+	// Planner-only, off from the constructor, so every golden replay runs
+	// it off and off alone from all on moves nothing. Its unit tests hold
+	// it (heldBy).
+	saturation.SwitchPrefillVPLoneRate: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1790,9 +1795,22 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestPromptCoverage_BusyMinutesCarryTheirRange"},
 		{"../../../signals/prefill", "TestPromptCoverage_OffCarriesNone"},
 		{"../../../signals/prefill", "TestPromptCoverage_PlateauCarriesItsRange"},
+		{"../../../signals/prefill", "TestPromptCoverage_LoneRateCarriesItsRange"},
 		{"../../../signals/whatif", "TestPromptNotCovered_PricesNoTTFTOutsideTheRange"},
 		{"../../../signals/whatif", "TestPromptNotCovered_InsideTheRangeIsPriced"},
 		{"../saturation", "TestPrefillVPPromptCoverage_ThroughAnalyze"},
+	},
+	saturation.SwitchPrefillVPLoneRate: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestLoneRate_IsVPWhereTheServedPeakAgrees"},
+		{"../../../signals/prefill", "TestLoneRate_ABatchingGainLeavesItALowerBound"},
+		{"../../../signals/prefill", "TestLoneRate_AbstainsWithTooFewMinutes"},
+		{"../../../signals/prefill", "TestLoneRate_OnlyThePromptPricedCounts"},
+		{"../../../signals/prefill", "TestLoneRate_BusyMinutesWin"},
+		{"../../../signals/prefill", "TestLoneRate_ADataParallelRowCountsItsRanks"},
+		{"../../../signals/prefill", "TestLoneRate_AnAgedServedPeakStillBounds"},
+		{"../../../signals/prefill", "TestLoneRate_RaisesALowerBoundToTheLargerOfTheTwo"},
+		{"../saturation", "TestPrefillVPLoneRate_ThroughAnalyze"},
 	},
 	// The first holds it off from the constructor; the others run it on and
 	// off and assert both, in the window, through Analyze and in the

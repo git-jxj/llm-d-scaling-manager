@@ -52,7 +52,8 @@ func TestPlannerSwitches_TheTTFTModelStates(t *testing.T) {
 	assert.True(t, sw[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued])
 	assert.True(t, sw[PackageSLO][slo.SwitchTTFTDecodeSpeculatingHeld])
 	for _, name := range []string{saturation.SwitchPrefillVPWindowBest, saturation.SwitchPrefillVPAtServedWork,
-		saturation.SwitchPrefillVPOccupancyPlateau, saturation.SwitchPrefillVPPromptCoverage} {
+		saturation.SwitchPrefillVPOccupancyPlateau, saturation.SwitchPrefillVPPromptCoverage,
+		saturation.SwitchPrefillVPLoneRate} {
 		assert.NotContains(t, sw[PackageSaturation], name, "off in the planner by default")
 	}
 	for _, name := range []string{slo.SwitchTTFTComputedHit, slo.SwitchTTFTTierLoad, slo.SwitchTTFTTierKVWait,

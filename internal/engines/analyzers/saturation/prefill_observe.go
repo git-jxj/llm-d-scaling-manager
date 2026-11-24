@@ -176,6 +176,18 @@ const SwitchPrefillVPOccupancyPlateau = "prefill-vp-occupancy-plateau"
 // Planner-only, as SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillVPPromptCoverage = "prefill-vp-prompt-coverage"
 
+// SwitchPrefillVPLoneRate is the replay switch for V_P read from light
+// load (prefill.Cycle.VPLoneRate, prefill/lonerate.go). On, V_P refused for
+// want of a queue, or a lower bound, is read from the lone rate: one
+// request's computed tokens over its prefill time in minutes at under
+// prefill.LoneMaxOccupancy requests in prefill per engine, at the prompt
+// priced, from prefill.MinLoneMinutes such minutes; V_P only where the
+// served peak is at most prefill.LoneServedTolerance over it, else it is
+// recorded as a lower bound and not taken. Off, as before this switch
+// (issue llm-d-incubation/llm-d-scaling-manager#406). Planner-only, as
+// SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillVPLoneRate = "prefill-vp-lone-rate"
+
 // SwitchPrefillALowLoadByRate is the replay switch for which minutes the fit
 // of a reads as low load (prefill.Cycle.ALowLoadByRate). On, a quiet minute
 // (no queue) is low load when its request rate times its prompt cluster's
@@ -403,10 +415,16 @@ func (c *cycle) observePrefill() {
 			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming,
 			QueueByCapacity: a.prefillQueueByCapacity, FBusyMinutes: a.prefillFBusyMinutes,
 			VPFloorServed: a.prefillVPFloorServed, VPServedUnqueued: a.prefillVPServedUnqueued, VPWindowBest: a.prefillVPWindowBest,
-			VPOccupancyPlateau: a.prefillVPOccupancyPlateau, VPPromptCoverage: a.prefillVPPromptCoverage, ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
+			VPOccupancyPlateau: a.prefillVPOccupancyPlateau, VPPromptCoverage: a.prefillVPPromptCoverage, VPLoneRate: a.prefillVPLoneRate,
+			ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
 		})
 		a.stashPrefillEstimate(c.input.Namespace, c.input.ModelID, variant, est, now)
-		c.logger.V(perReplicaLogLevel).Info("prefill-capacity-observed",
+		logger := c.logger
+		if a.prefillVPLoneRate {
+			// Only with the switch on, so the line is unchanged off.
+			logger = logger.WithValues("vpLone", est.VPLone, "vpLoneMinutes", est.VPLoneMinutes, "vpLoneIsVP", est.VPLoneIsVP)
+		}
+		logger.V(perReplicaLogLevel).Info("prefill-capacity-observed",
 			"modelID", c.input.ModelID, "namespace", c.input.Namespace, "variant", variant, "key", key,
 			"engine", string(engine), "pods", len(rows[variant]),
 			"vp", est.VP, "vpSource", string(est.VPSource), "vpLowerBound", est.VPLowerBound,

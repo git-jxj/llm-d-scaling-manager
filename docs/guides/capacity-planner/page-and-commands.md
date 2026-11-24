@@ -296,8 +296,8 @@ In a cluster, add both to the StatefulSet's `args`
   the loaded source, and where it is identified it draws the TTFT curve,
   point A and the report's TTFT tables, also where the planner refuses
   them (a prefill that never queued). See
-  [The v2 TTFT curve](#the-v2-ttft-curve). Day plans and predictions are the
-  default's. `=v2` does not turn
+  [The v2 TTFT curve](#the-v2-ttft-curve). Sizes follow, from the model's
+  prefill limit. Day plans and predictions are the default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
@@ -334,6 +334,13 @@ In a cluster, add both to the StatefulSet's `args`
   spread, the ranks' own rates or max-num-seqs not recorded).
 - **Other fleets.** At another prefill count each replica's ranks take the
   recorded share profile at the rate per replica.
+- **Limits and sizes.** Where it prices a fleet's TTFT it also sets the
+  prefill limit (the highest rate whose TTFT meets the target, read off
+  its curve) and the fleet's (the lowest of the safety margin times the
+  curve's end, that rate and decode's limit), so a size works where the
+  planner refuses one. A limit set at the curve's end, where the prefill
+  knee is only a lower bound, is "at least" that rate (flagged
+  `VPLowerBound`). One above the highest load measured is `extrapolated`.
 - **The CLI.** `at-replicas --experimental-ttft=v2` prices its tables' TTFT
   the same way, from a `--recording`. Its verdict and summary cells stay
   the planner's own.

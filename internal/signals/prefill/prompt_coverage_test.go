@@ -85,3 +85,37 @@ func TestPromptCoverage_PlateauCarriesItsRange(t *testing.T) {
 	assert.InDelta(t, plateauPrompt, est.VPPromptLow, 1e-6)
 	assert.InDelta(t, plateauPrompt, est.VPPromptHigh, 1e-6)
 }
+
+// A lone-rate V_P carries the range of the lone minutes it was timed at,
+// not that of the source it replaced: three queued minutes at 8000-token
+// prompts give a lower bound of 10k tok/s, then thirteen lone minutes at
+// 1800 to 2350 tokens time 20k. V_P is the lone rate, and speaks for 1850
+// to 2300 (the nearest-rank 10th and 90th of the thirteen).
+func TestPromptCoverage_LoneRateCarriesItsRange(t *testing.T) {
+	var cs []Cycle
+	for range 3 {
+		rm := queued("p-0", 10000, 3)
+		rm.RequestRate = 10000.0 / 8000
+		cs = append(cs, cycle(time.Time{}, rm))
+	}
+	for i := range 12 {
+		cs = append(cs, cycle(time.Time{}, atOccupancy(1800+50*float64(i), 20000, 0.1, 1)))
+	}
+	cs = append(cs, cycle(time.Time{}, atOccupancy(2000, 20000, 0.1, 1)))
+	for i := range cs {
+		cs[i].VPLoneRate, cs[i].VPPromptCoverage = true, true
+	}
+	est := run(NewObserver(), cs...)
+	require.Equal(t, SourceLoneRate, est.VPSource, "%+v", est)
+	assert.InDelta(t, 20000.0, est.VP, 1e-6)
+	assert.InDelta(t, 1850.0, est.VPPromptLow, 1e-6)
+	assert.InDelta(t, 2300.0, est.VPPromptHigh, 1e-6)
+
+	for i := range cs {
+		cs[i].VPPromptCoverage = false
+	}
+	off := run(NewObserver(), cs...)
+	assert.Equal(t, SourceLoneRate, off.VPSource)
+	assert.Zero(t, off.VPPromptLow, "no range without the coverage switch")
+	assert.Zero(t, off.VPPromptHigh)
+}

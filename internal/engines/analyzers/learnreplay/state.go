@@ -417,6 +417,14 @@ type shapeSample struct {
 // (whatif.VPPromptNotCovered). It goes on once the public cross-validation
 // shows no figure newly under what was measured and no worse self-check.
 //
+// saturation.SwitchPrefillVPLoneRate is planner-only and not listed (issue
+// llm-d-incubation/llm-d-scaling-manager#406): it reads V_P from light load,
+// one request's computed tokens over its prefill time at the prompt priced,
+// where no queue gives one and the served peak agrees with it. It goes on
+// once the public cross-validation shows no figure newly under what was
+// measured, no worse self-check, and the prefill knee within 15% of the
+// measured one on the staircases whose knee was measured.
+//
 // saturation.SwitchPrefillVPWindowBest is planner-only and not listed: it
 // keeps the peak under a queue read anywhere in the recording, not only in
 // the last 6 hours, flagged with its age (VPFromEarlierInWindow). No public
