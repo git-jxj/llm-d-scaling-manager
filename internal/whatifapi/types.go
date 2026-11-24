@@ -367,9 +367,13 @@ type Classes struct {
 	Batch    *ClassRate `json:"batch,omitempty"`
 }
 
-// ClassRate is one class's rate, requests per second over the model.
+// ClassRate is one class's rate, requests per second over the model, or its
+// load as a concurrency, the mean number of requests in the system: a plan
+// translates it into the rate at which the scenario's fleet holds that many
+// (Little's law), below the fleet's knee. Give one of the two.
 type ClassRate struct {
-	Rate *float64 `json:"rate,omitempty"`
+	Rate        *float64 `json:"rate,omitempty"`
+	Concurrency *float64 `json:"concurrency,omitempty"`
 }
 
 // Mix is the traffic's lengths: "observed", or stated mean lengths, priced as
@@ -523,14 +527,18 @@ type Scenario struct {
 	Fleet    FleetCounts `json:"fleet"`
 	// Rate is the rate asked; absent, the chosen rate is the operating
 	// point, headroom times the lower knee (limits.chosen.rate).
-	Rate       *float64           `json:"rate,omitempty"`
-	Mix        Mix                `json:"mix"`
-	ArrivalCV2 *float64           `json:"arrivalCV2,omitempty"`
-	TTFT       ResolvedObjective  `json:"ttft"`
-	TPOT       *ResolvedObjective `json:"tpot,omitempty"`
-	Headroom   float64            `json:"headroom"`
-	Assume     Assume             `json:"assume"`
-	Views      ViewRequest        `json:"views"`
+	Rate *float64 `json:"rate,omitempty"`
+	// Concurrency is the concurrency asked in place of a rate: the rate is
+	// the one at which the fleet holds that many requests on average
+	// (limits.chosen.fromConcurrency).
+	Concurrency *float64           `json:"concurrency,omitempty"`
+	Mix         Mix                `json:"mix"`
+	ArrivalCV2  *float64           `json:"arrivalCV2,omitempty"`
+	TTFT        ResolvedObjective  `json:"ttft"`
+	TPOT        *ResolvedObjective `json:"tpot,omitempty"`
+	Headroom    float64            `json:"headroom"`
+	Assume      Assume             `json:"assume"`
+	Views       ViewRequest        `json:"views"`
 	// BucketEdges are the request's edges; absent with the default ones,
 	// asked or not, so that they hash to the same scenarioId.
 	BucketEdges []int `json:"bucketEdges,omitempty"`
@@ -671,12 +679,22 @@ type Chosen struct {
 	// RateSource is what set Rate: one of the RateSource constants.
 	RateSource string `json:"rateSource"`
 	Headroom   Figure `json:"headroom"`
+	// Concurrency is the mean number of requests in the system at Rate
+	// (Little's law), by role: unbounded at or past the knee.
+	Concurrency *Concurrency `json:"concurrency,omitempty"`
+	// FromConcurrency is the concurrency asked (scenario.concurrency) and
+	// the rate it translates into; AtKnee says the fleet holds fewer
+	// requests than that below its knee, so Rate is the knee's.
+	FromConcurrency *ConcurrencyRate `json:"fromConcurrency,omitempty"`
 }
 
 // The values of Chosen.RateSource.
 const (
 	// RateSourceRequest is a rate the scenario gave.
 	RateSourceRequest = "request"
+	// RateSourceConcurrency is the rate at which the fleet holds the
+	// concurrency the scenario gave (Chosen.FromConcurrency).
+	RateSourceConcurrency = "concurrency"
 	// RateSourceOperatingPoint is headroom times the lower of both knees,
 	// where the scenario gave no rate.
 	RateSourceOperatingPoint = "operating point"
