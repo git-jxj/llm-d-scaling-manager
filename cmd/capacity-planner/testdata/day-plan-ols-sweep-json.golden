@@ -597,6 +597,7 @@
         "decode": 1
       },
       "verdict": "match",
+      "scope": "decode only",
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -668,6 +669,7 @@
         "decode": 1
       },
       "verdict": "under",
+      "scope": "decode only",
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -740,6 +742,7 @@
         "decode": 1
       },
       "verdict": "under",
+      "scope": "decode only",
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -1003,6 +1006,7 @@
         "decode": 1
       },
       "verdict": "under",
+      "scope": "decode only",
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
@@ -1126,6 +1130,7 @@
       "2026-11-01T22:00:00Z"
     ],
     "overHours": [],
+    "decodeOverHours": [],
     "refusedHours": [],
     "counts": {
       "sized": 11,
@@ -1139,7 +1144,9 @@
       "sizedForMean": 0,
       "sizedForP95": 11,
       "sizedForMax": 0,
-      "prefillNotPriced": 4
+      "prefillNotPriced": 4,
+      "measuredTTFT": 0,
+      "measuredTTFTOver": 0
     }
   },
   "searched": 82,

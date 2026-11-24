@@ -8,8 +8,8 @@ REFUSED prefill's TTFT (NoFixedLatency), in 16 buckets: P1 refused a: TooFewLowL
 
 each hour: a fleet that holds every bucket in it (priced again at each), the busiest bucket's own fleet, the fewest pods it had, and the fleet it had judged whole at each bucket's rate
 hour (UTC)        rate mean  rate p95 need P need D busiest    held  had P  had D  
-2026-11-06 02:00      25.81     34.52      -    >=3    D>=3    D>=3      2      2  UNDER (SLO risk)
-2026-11-06 03:00      37.64     42.50      -    >=3    D>=3    D>=3      2      2  UNDER (SLO risk)
+2026-11-06 02:00      25.81     34.52      -    >=3    D>=3    D>=3      2      2  UNDER (SLO risk), decode only
+2026-11-06 03:00      37.64     42.50      -    >=3    D>=3    D>=3      2      2  UNDER (SLO risk), decode only
 
 buckets: 16 sized (10 under, 2 over, 4 match; 13 for the p95, 3 for the mean, 0 for the max), 0 beyond the bound, 0 refused, 0 too little data, 0 no data
 needed: to hold every bucket at least 3 decode (prefill not priced); the busiest bucket alone at least 3 decode (prefill not priced), the quietest at least 1 decode (prefill not priced) (each the fewest replicas in all; another mix may serve too)
@@ -18,6 +18,7 @@ replica-hours held with the scale-up lead, each scale-up's replicas from one lea
 had over every bucket with data: 2.67 prefill + 2.67 decode replica-hours, 5.33 GPU-hours (GPUs per replica: 1 prefill, 1 decode)
 hours under (SLO risk): 02:00, 03:00
 hours over (waste): none
+measured TTFT over its target (p95 190.0 ms): 16 of the 16 buckets the router measured
 flags: RateFromDecodeRows, FewCyclesForP95, PrefillNotPriced, AssumedShape, ExtrapolatedFill
 note: Steady state: each bucket is sized as if its rate held. A replica must be Ready when its bucket starts, so it starts one lead time before (prefill 122 s learned, decode 107 s learned): held is each role's most need over the bucket and every bucket that starts within its lead after it ends, and the held replica-hours count each scale-up's replicas from one lead before their bucket. The verdicts judge the need, not the held fleet.
 note: Each bucket is sized for the p95 of its cycles' rates. A p95 needs 20 cycles in the bucket; with fewer the bucket is sized for its mean, which is less conservative (FewCyclesForP95).

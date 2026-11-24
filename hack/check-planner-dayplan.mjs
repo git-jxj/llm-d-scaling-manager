@@ -157,7 +157,7 @@ try {
   check("decode-only draws no prefill needed", !hs.has("prefill-needed"));
   check("decode-only draws what prefill had", hs.has("prefill-actual"));
   check("the prefill panel says it is not sized", attrs(hg, "text").some(a => a["data-refused"] === "prefill") &&
-    texts(hg).some(t => t.includes("Prefill replicas not sized") && t.includes(half.refused[0].reason)));
+    texts(hg).some(t => t.includes("Prefill replicas not sized") && t.includes("not learned") && !t.includes(half.refused[0].reason)));
   check("the decode panel says its need is a lower bound", attrs(hg, "text").some(a => a["data-lower-bound"] === "decode") &&
     texts(hg).some(t => t.includes("needed is at least")));
   const priced = copy(plan);
@@ -172,11 +172,34 @@ try {
   // lower bound (prefill-vp-served-unqueued), and a is what it lacks.
   check("the decode-only golden lacks a", half.refused[0].reason === "NoFixedLatency", half.refused[0].reason);
   check("the refusals say what to do", dayRefusedHTML(half).includes("--assume-a"));
-  check("decode-only summary names no prefill figure", daySummaryText(half)[0].includes("prefill not priced"));
+  check("decode-only summary names no prefill figure", daySummaryText(half).some(l => l.startsWith("Needed to hold") && l.includes("prefill not sized")));
   const nothing = copy(half);
   nothing.buckets.forEach(b => { if (b.status === "sized") { b.status = "refused"; delete b.needed; b.verdict = "refused"; } });
   nothing.summary.peakNeeded = null;
-  check("a plan with nothing sized says so", daySummaryText(nothing)[0].startsWith("No bucket was sized"));
+  check("a plan with nothing sized says so", daySummaryText(nothing).some(l => l.startsWith("No bucket was sized")));
+  // Prefill was not sized: decode is judged alone, and nothing says waste.
+  // The golden's decode-only overs stand though their TTFT was measured over
+  // its target: decode has a replica to spare, which is no fleet's.
+  const spare = half;
+  const over = half.buckets.find(x => x.verdict === "over");
+  check("the decode-only golden has a decode-only over", !!over && over.scope === "decode only" && !(over.flags || []).includes("MeasuredTTFTOverTarget"),
+    JSON.stringify(over && [over.scope, over.flags]));
+  check("a decode-only over is a decode replica to spare", dayTip(spare, over).rows.some(r => r[0] === "verdict" && r[1] === "decode only: a decode replica to spare"));
+  const missed = copy(half);
+  const mb = missed.buckets.find(x => x.verdict === "over");
+  delete mb.verdict;
+  delete mb.scope;
+  mb.flags = (mb.flags || []).concat("MeasuredTTFTOverTarget");
+  check("a whole fleet's over withheld on a measured TTFT miss says so", dayTip(missed, mb).rows.some(r => r[0] === "verdict" && r[1] === "not judged: measured TTFT over target"));
+  check("the summary leads with the measured TTFT misses, as risk", /^SLO risk: measured TTFT p95 was over 0\.19 s in every interval measured \(prefill not sized\)\.$/.test(daySummaryText(half)[0]),
+    daySummaryText(half).join(" | "));
+  for (const [name, text] of [["the bucket table", dayBucketsTable(spare)], ["the hour table", dayHoursTable(spare)], ["the summary", daySummaryText(spare).join(" ")]]) {
+    check(`${name} of a decode-only plan says no waste`, !text.includes("waste"), text.slice(0, 160));
+  }
+  check("the decode-only summary is no fleet recommendation", daySummaryText(half).some(l => l.includes("Prefill was not sized, so this is not a fleet recommendation.")));
+  const fleetOver = copy(spare);
+  fleetOver.buckets.forEach(x => { delete x.scope; });
+  check("the same over on a whole fleet is waste", dayTip(fleetOver, fleetOver.buckets.find(x => x.verdict === "over")).rows.some(r => r[0] === "verdict" && r[1] === "over: waste"));
 
   // The tooltip names every value of the bucket under the pointer.
   const b = sized[0], t = Date.parse(b.start) / 1000 + plan.step / 2;
