@@ -325,8 +325,8 @@ function sameCurve(a, b) {
   return a.every((q, i) => near(q.x, b[i].x) && near(q.y, b[i].y));
 }
 
-// measuredSplit splits points ({x, y, extrapolated}) where the experimental
-// TTFT model's extrapolation starts: measured is drawn solid, up to and with
+// measuredSplit splits points ({x, y, extrapolated}) where an experimental
+// model's extrapolation starts: measured is drawn solid, up to and with
 // the last point at or under the highest load measured; beyond dashed, from
 // that point on, so that the two meet. With no point extrapolated beyond is
 // empty; with every point extrapolated measured is empty.
@@ -342,8 +342,20 @@ function measuredSplit(points) {
 // what the dashed part is; or, where the model did not price, why the
 // planner's own TTFT stands.
 function ttftModelNote(m) {
+  return modelNote(m, "TTFT");
+}
+
+// tpotModelNote is ttftModelNote for the TPOT figure (tpot.model): the
+// experimental TPOT model prices the percentile, never the mean.
+function tpotModelNote(m) {
+  return modelNote(m, "TPOT percentile");
+}
+
+// modelNote is an experimental model's note on the figure of what it
+// prices (ttftModelNote, tpotModelNote).
+function modelNote(m, what) {
   if (!m) return "";
-  if (!m.priced) return `${m.label}: not used here (${m.notPriced}); the planner's own TTFT is drawn.`;
+  if (!m.priced) return `${m.label}: not used here (${m.notPriced}); the planner's own ${what} is drawn.`;
   const parts = [m.label];
   // The evidence is the held-out score of the mean TTFT: it says so.
   if (m.evidence) parts.push("quick check, TTFT mean " + m.evidence);

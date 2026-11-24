@@ -215,6 +215,10 @@ type ReportResponse struct {
 	// with, as fitted on the source; absent unless asked
 	// (InputsRequest.TTFTModel, at-replicas --experimental-ttft=v2).
 	TTFTModel *TTFTModelInfo `json:"ttftModel,omitempty"`
+	// TPOTModel is the experimental TPOT model the tables' TPOT percentile
+	// is priced with, as fitted on the source; absent unless asked
+	// (InputsRequest.TPOTModel, at-replicas --experimental-tpot=v2).
+	TPOTModel *TPOTModelInfo `json:"tpotModel,omitempty"`
 }
 
 // ReportShape is the fleet's answer at one request shape.
@@ -633,6 +637,11 @@ func (s *Server) report(ctx context.Context, req ReportRequest) (*ReportResponse
 		info := e.ttftModel.info
 		out.TTFTModel = &info
 	}
+	if e.tpotModel != nil {
+		e.tpotModel.applyToReport(out, q)
+		info := e.tpotModel.info
+		out.TPOTModel = &info
+	}
 	// The source's self-check was read before this report stated anything.
 	out.SelfCheck = e.doc.SelfCheck.RanWithout(&Stated{Assume: q.Assume, ArrivalCV2: q.ArrivalCV2})
 	out.WithholdOverOnMeasured(e.series, e.latency)
@@ -779,7 +788,7 @@ func CheckLoadStatistic(s string) error {
 // ParseReportShape reads a shape: "measured", or "IL/OL[/hit]", lengths in
 // tokens with an optional k (1024 tokens), and hit a rate in [0, 1).
 func ParseReportShape(s string) (ReportShapeAsk, error) {
-	if s == "measured" {
+	if s == shapeMeasured {
 		return ReportShapeAsk{Measured: true, Label: s}, nil
 	}
 	if s == ShapeLoad {

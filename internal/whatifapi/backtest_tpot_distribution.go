@@ -111,6 +111,10 @@ type TPOTDistCheck struct {
 type tpotDistQ struct {
 	c      float64
 	report TPOTDistReport
+	// stepRates is each fit step's mean arrival rate over the cycles it
+	// holds that read one, beside the steps the fit read: the loads the
+	// fit window served (tpot_model_main.go).
+	stepRates []float64
 }
 
 // decodeWindow is the decode cycles of e at idx whose time is in (from, to].
@@ -159,6 +163,7 @@ func fitTPOTDist(fit *inputsEntry, fitIdx []int, step time.Duration, slots, spec
 	idx := slices.Clone(fitIdx)
 	slices.SortStableFunc(idx, func(a, b int) int { return fit.series[a].At.Compare(fit.series[b].At) })
 	anchors := map[time.Time]int{}
+	rates := map[time.Time][2]float64{}
 	var order []time.Time
 	for _, i := range idx {
 		k := fit.series[i].At.UTC().Truncate(step)
@@ -166,6 +171,10 @@ func fitTPOTDist(fit *inputsEntry, fitIdx []int, step time.Duration, slots, spec
 			order = append(order, k)
 		}
 		anchors[k] = i
+		if s := fit.series[i]; s.RateKnown {
+			r := rates[k]
+			rates[k] = [2]float64{r[0] + s.Rate, r[1] + 1}
+		}
 	}
 	var steps []whatif.TPOTDistStep
 	var accepted []float64
@@ -177,6 +186,9 @@ func fitTPOTDist(fit *inputsEntry, fitIdx []int, step time.Duration, slots, spec
 			continue
 		}
 		steps = append(steps, st)
+		if r := rates[k]; r[1] > 0 {
+			q.stepRates = append(q.stepRates, r[0]/r[1])
+		}
 		c := fit.decode[a]
 		busiest = max(busiest, c.MeanRunning)
 		var w, s float64

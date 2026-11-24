@@ -21,7 +21,7 @@ const FLAG_WORDS = {
   LimitedPSHeavyTraffic: ["A prefill rank's utilization is above 0.9, where the limited processor sharing approximation is not taken to hold.", "fewer requests a rank, or more ranks"],
   RelaxationLong: ["The busiest prefill rank takes more than a tenth of the step to settle, so the step's rate is not one it ran at steadily.", "a longer step, or a lighter load"],
   KVDeferralOutside: ["The ranks' utilization is outside the range the KV-deferral wait was fitted over.", "a fit window that covers this load"],
-  TPOTDistribution: ["Priced with the experimental per-request TPOT distribution (backtest --experimental-tpot=v2): lognormal around the planner's mean TPOT, spread by the decode replicas' differences and by how few speculative steps a short request takes. Not validated, so every figure reads outside the validated region.", "a validated run of the model"],
+  TPOTDistribution: ["Priced with the experimental per-request TPOT distribution (--experimental-tpot=v2): lognormal around the planner's mean TPOT, spread by the decode replicas' differences and by how few speculative steps a short request takes. Not validated, so every figure reads outside the validated region.", "a validated run of the model"],
   TPOTDistributionAbstained: ["The experimental TPOT distribution was asked for and did not price: max-num-seqs was not read, sequences would wait for a slot, the fit window was too short, or its spread was not identified. This percentile is the planner's own.", "a fit window of two hours or more with the router's TPOT histogram, the decode pods' output lengths and max-num-seqs recorded"],
   VPFromPlateau: ["V_P comes from the occupancy plateau, with no queue: experimental (prefillVPPlateau, --prefill-vp-plateau) and never validated, so every figure on it is outside the validated region.", "a window where a prefill pod queues for compute"],
   VPAboveSlopeBound: ["V_P is above what the low-load fit allows: one of the two readings is wrong.", "more low-load readings, or a busy-minutes reading of V_P"],
@@ -1601,8 +1601,12 @@ function renderTTFT() {
     `<div>Floor: ${figText(t.line.floor, fmtSec)}</div>`;
 }
 
+// TPOT_CAP is the TPOT figure's caption, as the page is served.
+const TPOT_CAP = "Time per output token on the decode replicas, for the mix.";
+
 function renderTPOT() {
   const p = state.plan, t = p.tpot;
+  el("tpotcap").textContent = TPOT_CAP + (t && t.model ? " " + tpotModelNote(t.model) : "");
   if (!t) {
     el("tpottitle").textContent = "TPOT";
     el("tpotchart").innerHTML = "";
@@ -1614,7 +1618,12 @@ function renderTPOT() {
   const lk = lowerKnee(p.ttft.markers);
   const xmax = Math.max(lk != null ? lk * 1.2 : 10, rate * 1.1, pinXmax());
   const floor = val(t.floor);
-  const series = [{cls: "c-mix", name: `TPOT ${t.statistic}`, pts: pts(t.curve), band: true}];
+  // Priced by the experimental TPOT model, the line is solid up to the
+  // highest load measured and dashed beyond it, as the TTFT line is.
+  const line = measuredSplit(pts(t.curve));
+  const label = t.model && t.model.priced ? t.model.label + ", " : "";
+  const series = [{cls: "c-mix", name: `${label}TPOT ${t.statistic}`, pts: line.measured, band: true}];
+  if (line.beyond.length) series.push({cls: "c-mix", extra: " extrap", pts: line.beyond, band: true, name: `extrapolated (${t.model.beyond})`});
   const dots = [];
   const a = state.pin && state.pin.plan.tpot;
   let pinTarget = null;
