@@ -21,18 +21,18 @@ utilization at the load judged
   KV pull       utilization 0.140 per decode pod, mean wait unpriced (TTFT refused)
   prefill       utilization pooled 2.99, worst pod 2.99 (f 1)
   verdict       NOT JUDGED: the load and the shape priced are of different traffic: the load's cycles ran at IL 1000 OL 1133, the shape priced is IL 8016 OL 26, so the knee is of other traffic and no verdict is priced on it; --shape load prices the load at its own shape.
-capacity            req/s     out tok/s   bound by
-  prefill knee      >=4.17    106         prefill work served: the 33370 computed tokens/s the prefill pods sustained over 2 min / 8007 tokens; at least: V_P is a lower bound
-  decode knee       134.15    3428        decode band top at fill 0.798
+capacity            req/s     out tok/s   in system   bound by
+  prefill knee      >=4.17    106         not known   prefill work served: the 33370 computed tokens/s the prefill pods sustained over 2 min / 8007 tokens; at least: V_P is a lower bound
+  decode knee       134.15    3428        unbounded   decode band top at fill 0.798
                     OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
-  fleet knee        >=4.17    106         prefill; at least: V_P is a lower bound
-  operating (0.85)  >=3.54    91          0.85 x fleet knee (scaleUpThreshold); at least: V_P is a lower bound
-  max at SLO        >=0.13    3           TTFT p90, end to end; at least: V_P is a lower bound
-SLO vs load         r/s    TTFT p50/90 ms           TPOT mean/p90 ms  e2e mean (sum)
-  50% of knee       2.08   <=886.9/<=5283.7         10.82/18.38       <=2.01 s
-  80% of knee       3.33   <=4395.1/<=16229.1       10.82/18.38       <=6.72 s
-  100% of knee      4.17   past a lower-bound knee  10.82/18.38       past a lower-bound knee
-  load seen (299%)  12.46  past a lower-bound knee  11.22/19.07       past a lower-bound knee
+  fleet knee        >=4.17    106         not known   prefill; at least: V_P is a lower bound
+  operating (0.85)  >=3.54    91          <=34        0.85 x fleet knee (scaleUpThreshold); at least: V_P is a lower bound
+  max at SLO        >=0.13    3           <=0.1       TTFT p90, end to end; at least: V_P is a lower bound
+SLO vs load         r/s    TTFT p50/90 ms           TPOT mean/p90 ms  e2e mean (sum)           in system (mean)
+  50% of knee       2.08   <=886.9/<=5283.7         10.82/18.38       <=2.01 s                 <=4.2
+  80% of knee       3.33   <=4395.1/<=16229.1       10.82/18.38       <=6.72 s                 <=22
+  100% of knee      4.17   past a lower-bound knee  10.82/18.38       past a lower-bound knee  not known
+  load seen (299%)  12.46  past a lower-bound knee  11.22/19.07       past a lower-bound knee  not known
 checks
   2 prefill + 2 decode  not judged: 12.46 r/s is 3.0x a prefill knee of at least 4.17 r/s (V_P is a lower bound): whether the fleet saturates is not priced; TTFT p90 not judged (past a lower-bound knee)
 assumed: prompt cv 2 (no computed-prompt histogram); flow control off (no queue series); Poisson arrivals
@@ -41,4 +41,4 @@ flags: UnvalidatedTTFT; VPLowerBound; VPScaledToPrompt; AssumedPromptSpread; Kne
 not validated:
   - decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 43% to 99% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)
   - TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it.
-  - e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile
+  - e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile; in system is the rate times it (Little's law), the requests in the system on average
