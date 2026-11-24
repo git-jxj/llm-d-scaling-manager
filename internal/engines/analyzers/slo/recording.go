@@ -100,7 +100,7 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchITLKeepsSettleThroughMissingRow, SwitchITLReadsFinitePodMean,
 // SwitchITLRestartUnderName, SwitchITLIdleOnEvidence and
 // SwitchITLForgetReachesTheLine, SwitchITLOneSidedAtCap, SwitchTTFTPrice,
-// SwitchTTFTMeasuredSpread, SwitchTTFTMeasuredTransfer,
+// SwitchTTFTMeasuredSpread, SwitchTTFTMeasuredTransfer, SwitchTTFTPullWork,
 // SwitchTTFTPrefixAttention, SwitchTTFTComputedHit, SwitchTTFTTierLoad,
 // SwitchTTFTTierKVWait, SwitchTTFTPSByEngine, SwitchTTFTCachedTokenCost,
 // SwitchTTFTProcessorSharing,
@@ -175,6 +175,9 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		SwitchTTFTPromptSupport:    &a.ttftPromptSupport,
 		SwitchTTFTMeasuredTransfer: &a.ttftMeasuredTransfer,
 		SwitchTTFTQuietTransfer:    &a.ttftQuietTransfer,
+		// The KV pull's work, not its stretched time, from each decode row
+		// (ttft.go; issue llm-d-incubation/llm-d-scaling-manager#301).
+		SwitchTTFTPullWork: &a.ttftPullWork,
 		// A prefix hit's cost in the planner, planner-only (ttft.go).
 		SwitchTTFTPrefixAttention: &a.ttftPrefixAttention,
 		// A stated prompt netted by the computed-token hit, planner-only

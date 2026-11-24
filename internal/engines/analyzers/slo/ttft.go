@@ -313,6 +313,21 @@ const SwitchTTFTMeasuredTransfer = "slo-ttft-measured-transfer"
 // no committed recording prices a line; its unit tests hold it.
 const SwitchTTFTQuietTransfer = "slo-ttft-quiet-transfer"
 
+// SwitchTTFTPullWork is the replay switch for what the transfer window reads of
+// each decode row (prefill.TransferWindow.PullWork): on, the KV pull's own work,
+// the row's measured NIXL transfer time with the processor-sharing stretch at the
+// row's request rate taken out, T/(1 + lambda T); off, the time as measured, as
+// before. The pull is priced as a processor-sharing stage on the decode pods, so
+// a time measured under load priced as the work stretches the pull twice: on the
+// public P/D staircase with flow control on, the window's last cycles read 60 ms
+// at 21 r/s a decode pod, the pull priced at utilization 0.93 at 30.8 r/s, and
+// 0.78 s of a mean TTFT of 1.02 s was that wait, where the router measured 0.17 s
+// and the rows' transfer read 40 ms (issue
+// llm-d-incubation/llm-d-scaling-manager#301). Read as work, the rows read
+// 25-28 ms at every load of that ladder. The analyzer reads it in the window it
+// prices from (noteTransfer); off from the constructor.
+const SwitchTTFTPullWork = "slo-ttft-pull-work"
+
 const (
 	// decodeBoundRatio is how far the prefill side's own rate must exceed
 	// the full rate for decode to count as setting it: any decode wait lowers

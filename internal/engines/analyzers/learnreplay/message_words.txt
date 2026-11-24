@@ -3098,6 +3098,7 @@ slo-ttft-processor-sharing
 slo-ttft-prompt-support
 slo-ttft-ps-by-engine
 slo-ttft-ps-onsets
+slo-ttft-pull-work
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
 slo-ttft-sizes-prefill
