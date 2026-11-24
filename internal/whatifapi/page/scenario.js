@@ -1225,7 +1225,11 @@ function execView(o) {
   const pk = m && m.prefillKnee ? m.prefillKnee : null;
   const ps = prefillAtLeastOf(plan, report);
   const pkv = ps.value, pkLB = ps.lb;
-  const shape = report && (report.shapes || [])[0];
+  // A report being asked again was for other targets: its verdict is not
+  // shown, and the row says it is updating.
+  const shape = !o.reportPending && report && (report.shapes || [])[0];
+  const rejudge = o.reportPending ? " Judging the fleet at these targets..." :
+    o.reportError ? ` The fleet was not judged at these targets (${o.reportError}).` : "";
 
   // The verdict: the constraint, in plain words, with the right size folded
   // in where it was judged.
@@ -1239,11 +1243,14 @@ function execView(o) {
     const v = shape && shape.verdict;
     if (v && v.verdict && v.verdict !== "NOT JUDGED") text += " " + execVerdict(f, v);
     else if (v && v.scope === "decode only") text += " " + execVerdict(f, v);
-    lines.push({label: "Verdict", badge: "", text});
+    else text += rejudge;
+    lines.push({label: "Verdict", badge: "", text, updating: !!o.reportPending});
   } else if (shape) {
     lines.push({label: "Verdict", badge: "", text: execVerdict(f, shape.verdict)});
   } else if (o.reportPending) {
-    lines.push({label: "Verdict", badge: "", text: "Judging the fleet at the busiest load..."});
+    lines.push({label: "Verdict", badge: "", text: "Judging the fleet at the busiest load...", updating: true});
+  } else if (o.reportError) {
+    lines.push({label: "Verdict", badge: "", text: rejudge.trim()});
   }
   if (dl != null) {
     lines.push({label: "Decode", badge: "",
@@ -1298,10 +1305,13 @@ function execView(o) {
   // One refusal for both rates is said once.
   const pct = g => `+${Math.round((g.x - 1) * 100)}% (${roundRate(g.rate)} r/s)`;
   const same = growth.length > 1 && growth.every(g => g.need === growth[0].need) && /^(not sized|no )/.test(growth[0].need);
-  const grownText = same ? `${growth.map(pct).join(" and ")}: ${growth[0].need}.` :
+  // Sizes being asked again were for other targets: the row says it is
+  // sizing, never shows them.
+  const grownText = o.growthPending ? "Sizing the fleet for +25% and +50% of the busiest load..." :
+    same ? `${growth.map(pct).join(" and ")}: ${growth[0].need}.` :
     growth.length ? growth.map(g => `${pct(g)}: ${g.need}${growthPast(g, testedTo)}`).join("; ") + ", at the same SLO." :
-    o.growthMissing ? o.growthMissing : o.growthPending ? "Sizing the fleet for +25% and +50% of the busiest load..." : "";
-  if (grownText) lines.push({label: "+25% / +50% traffic", badge: "", text: grownText});
+    o.growthMissing || "";
+  if (grownText) lines.push({label: "+25% / +50% traffic", badge: "", text: grownText, updating: !!o.growthPending});
 
   // Accuracy: the page's own check where it ran, the one score the check
   // view shows, at the SLO's statistic; else the server's held-out mean.
@@ -1381,6 +1391,10 @@ function growthPast(g, testedTo) {
 // default model cannot price, with no experimental model to price it.
 const GROWTH_NO_PREFILL = "Not sized: prefill's limit is not measured, so no fleet can be sized for more traffic. " +
   "Load a busier window, or use the speed the pods were seen at (the Prefill row).";
+
+// GROWTH_NO_PD says why the panel sizes no growth for a decode-only source:
+// POST /v1/size sizes a P/D fleet.
+const GROWTH_NO_PD = "Not sized: the page sizes a fleet with prefill and decode, and this source has no prefill variant.";
 
 // execTimes1 is a ratio to the busiest load: two decimals under 1, so 0.98
 // never reads as 1.0.

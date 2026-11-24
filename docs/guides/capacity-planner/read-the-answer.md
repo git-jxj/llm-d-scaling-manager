@@ -43,7 +43,11 @@ The lines, top down:
   bound says fewer prefill may do. Where no fleet serves the rate the row
   says why. Under the default model, where prefill's limit is not measured,
   the row says it cannot size more traffic and what to do: load a busier
-  window, or use the speed the pods were seen at.
+  window, or use the speed the pods were seen at. A source with no prefill
+  variant is not sized: the page sizes prefill and decode together.
+  Change the SLO targets, their percentiles or the shape and the page asks
+  the verdict and these sizes again; until the answers arrive those rows
+  read "Judging..." or "Sizing...", never the answer for the old targets.
 - **Accuracy**: how many held-out five-minute steps the planner predicted
   within 20%, which way it leans, and the rates and fleet that check
   covers. Outside that range an answer is an extrapolation.

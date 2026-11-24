@@ -538,7 +538,8 @@ function setInputs(inputs) {
   el("rstatus").textContent = "";
   state.inputs = inputs;
   // The executive panel's questions are asked again for every inputs loaded.
-  if (state.exec && state.exec.abort) state.exec.abort.abort();
+  execAbort(state.exec);
+  clearTimeout(execTimer);
   state.exec = {};
   progress("");
   el("exec").hidden = true;
@@ -994,6 +995,9 @@ async function plan() {
         renderRefusal();
         renderFlags();
         renderCompare();
+        // The panel's report and growth are the targets', not the fleet's.
+        execKnobs();
+        renderExec();
       }
       writeLink();
       clearInterval(ticker);
@@ -1135,6 +1139,7 @@ function render() {
   renderFlags();
   renderCompare();
   renderRefusal();
+  execKnobs();
   renderExec();
   startExecutive();
 }
@@ -2260,94 +2265,187 @@ function wire() {
 // ---- The answer: the executive panel and the refusal card ----
 
 // startExecutive runs, once per inputs loaded and after the first plan, the
-// two questions the executive panel needs beyond the plan: the fleet judged
-// at the traffic's own shape with the load grown (POST v1/report), then the
-// planner checked on the source's held-out last half (POST v1/backtest), each
-// in the background, with the progress bar saying which is running. An
-// answer for inputs since replaced is dropped.
+// questions the executive panel needs beyond the plan: the fleet judged at
+// the traffic's own shape (POST v1/report) and the fleet +25% and +50% of
+// its busiest load needs (POST v1/size, execAnswers), then the planner
+// checked on the source's held-out last half (POST v1/backtest), each in the
+// background, with the progress bar saying which is running. The report and
+// the sizes are asked again when the SLO, shape or assumed terms change
+// (execKnobs); the check is not, since no SLO enters it. An answer for
+// inputs since replaced, or for knobs since changed, is dropped.
 async function startExecutive() {
   const x = state.exec;
   if (!x || x.started || !state.inputs || !state.plan) return;
   x.started = true;
   const id = state.inputs.inputsId, mine = () => state.exec === x && state.inputs && state.inputs.inputsId === id;
-  const plan = planRequest();
-  x.reportPending = true;
   // With the server's held-out check at load, the headline needs no check of
   // its own: the full one runs when Check the planner is opened.
   const held = state.inputs.ttftModel && state.inputs.ttftModel.heldOut;
   x.btPending = !!state.inputs.fleet.prefill && !(held && held.steps > 0);
-  // Growth is sized where prefill's limit is priced: by the default model,
-  // or the experimental one where it is on. Else the row says what is missing.
-  const pr = state.plan.limits.prefill;
-  const v2 = !!(state.plan.ttft.model && state.plan.ttft.model.priced);
-  const noPrefill = !v2 && !!state.inputs.fleet.prefill && !!pr && !!pr.refused && pr.refused.reason === "NoPrefillCapacity";
-  if (noPrefill) x.growthMissing = GROWTH_NO_PREFILL;
-  x.growthPending = !noPrefill;
-  renderExec();
-  const steps = 1 + (x.growthPending ? 1 : 0) + (x.btPending ? 1 : 0);
-  let step = 1;
+  x.reportPending = true;
+  x.growthPending = true;
+  const sig = execSigs();
+  x.rSig = sig.r;
+  x.gSig = sig.g;
+  await execAnswers(x);
+  if (!mine() || !x.btPending) return;
   try {
-    progress(`Judging the fleet at your busiest load (1 of ${steps})`, 1 / (steps + 1), () => x.abort && x.abort.abort());
-    x.abort = new AbortController();
-    x.report = await api("POST", "v1/report", execReportRequest(id, plan), x.abort.signal);
+    x.btAbort = new AbortController();
+    execProgress(x, "bt", "Checking the planner on your held-out hours: fitting, then pricing each step");
+    x.bt = await api("POST", "v1/backtest", {inputsId: id, split: "50%", step: "5m"}, x.btAbort.signal);
   } catch (e) {
-    x.reportError = e.message;
+    x.btError = e.message;
   }
   if (!mine()) return;
-  x.reportPending = false;
-  // Prefill's bound may rise to the load the report judged at: the bars and
-  // the charts show it as the panel does.
-  if (x.report) {
-    renderLimits();
-    renderTTFT();
-    renderTPOT();
+  x.btAbort = null;
+  x.btPending = false;
+  execProgress(x, "bt", "");
+  // The check on the page's own tab shows the same run until you run another.
+  if (x.bt && !state.bt) {
+    state.bt = x.bt;
+    el("btsplit").value = "50";
+    el("btsplitout").textContent = "50%";
+    renderBacktest();
   }
   renderExec();
-  // The fleet +25% and +50% of the busiest load needs, sized one after the
-  // other at the panel's SLO and shape.
-  const seen = x.report && x.report.load && x.report.load.rate ? x.report.load.rate.value : null;
-  if (x.growthPending && seen != null) {
-    step++;
-    x.growth = [];
-    for (const g of [1.25, 1.5]) {
-      progress(`Sizing the fleet for ${Math.round((g - 1) * 100)}% more traffic (${step} of ${steps})`, step / (steps + 1), () => x.abort && x.abort.abort());
-      let size = null, err = null;
-      try {
-        x.abort = new AbortController();
-        size = await api("POST", "v1/size", growthSizeRequest(g * seen), x.abort.signal);
-      } catch (e) {
-        err = e.message;
-      }
-      if (!mine()) return;
-      x.growth.push({x: g, rate: g * seen, need: growthNeed(size, err)});
-    }
-  } else if (x.growthPending) {
-    x.growthMissing = "Not sized: the busiest load was not judged.";
+}
+
+// execSigs is what the panel's report (r) and growth sizes (g) ask beyond
+// the inputs: the SLO, headroom and assumed terms, and for the sizes the
+// shape and the bound too. Neither carries the rate or the fleet on screen.
+function execSigs() {
+  return {r: JSON.stringify(execReportRequest(state.inputs.inputsId, planRequest())), g: JSON.stringify(growthSizeRequest(0))};
+}
+
+// execKnobs re-asks, debounced, whichever of the report and the growth sizes
+// the knobs just changed. The rows it re-asks read as updating from now on:
+// an answer in flight for the old knobs is cancelled and dropped.
+let execTimer = null;
+function execKnobs() {
+  const x = state.exec;
+  if (!x || !x.started || !state.inputs || !state.plan) return;
+  const sig = execSigs();
+  const r = sig.r !== x.rSig, g = sig.g !== x.gSig;
+  if (!r && !g) return;
+  x.rSig = sig.r;
+  x.gSig = sig.g;
+  x.gen = (x.gen || 0) + 1;
+  if (x.ansAbort) x.ansAbort.abort();
+  if (r) x.reportPending = true;
+  if (g) x.growthPending = true;
+  if (x.growthPending) {
+    x.growth = null;
+    x.growthMissing = null;
   }
-  x.growthPending = false;
+  clearTimeout(execTimer);
+  execTimer = setTimeout(() => execAnswers(x), 400);
+}
+
+// execAnswers asks what the panel has pending: the report, then the growth
+// sizes, one after the other. A later call (execKnobs) or a load supersedes
+// it; its answers are then dropped.
+async function execAnswers(x) {
+  if (state.exec !== x || !state.inputs) return;
+  const gen = x.gen = (x.gen || 0) + 1;
+  if (x.ansAbort) x.ansAbort.abort();
+  const ctl = x.ansAbort = new AbortController();
+  const id = state.inputs.inputsId;
+  const live = () => state.exec === x && x.gen === gen && state.inputs && state.inputs.inputsId === id;
+  const plan = planRequest();
+  const askReport = !!x.reportPending;
+  // Growth is sized where prefill's limit is priced: by the default model,
+  // or the experimental one where it is on; and for a P/D fleet, the one
+  // POST /v1/size sizes. Else the row says what is missing, with no request.
+  if (x.growthPending) {
+    x.growth = null;
+    x.growthMissing = growthMissingFor(state.inputs, state.plan);
+    if (x.growthMissing) x.growthPending = false;
+  }
+  const askGrowth = !!x.growthPending;
   renderExec();
-  if (x.btPending) {
-    step++;
+  if (askReport) {
+    execProgress(x, "ans", "Judging the fleet at your busiest load");
+    x.reportError = null;
+    let report = null;
     try {
-      progress(`Checking the planner on your held-out hours (${step} of ${steps}): fitting, then pricing each step`, step / (steps + 1), () => x.abort && x.abort.abort());
-      x.abort = new AbortController();
-      x.bt = await api("POST", "v1/backtest", {inputsId: id, split: "50%", step: "5m"}, x.abort.signal);
+      report = await api("POST", "v1/report", execReportRequest(id, plan), ctl.signal);
     } catch (e) {
-      x.btError = e.message;
+      if (!live()) return;
+      x.reportError = e.name === "AbortError" ? "cancelled" : e.message;
     }
-    if (!mine()) return;
-    x.btPending = false;
-    // The check on the page's own tab shows the same run until you run another.
-    if (x.bt && !state.bt) {
-      state.bt = x.bt;
-      el("btsplit").value = "50";
-      el("btsplitout").textContent = "50%";
-      renderBacktest();
+    if (!live()) return;
+    // A report that failed keeps the busiest load the last one measured (no
+    // SLO enters it) but not its verdict, which was for other targets.
+    x.report = report || (x.report ? Object.assign({}, x.report, {shapes: []}) : null);
+    x.reportPending = false;
+    // Prefill's bound may rise to the load the report judged at: the bars and
+    // the charts show it as the panel does.
+    if (report) {
+      renderLimits();
+      renderTTFT();
+      renderTPOT();
     }
+    renderExec();
   }
-  x.abort = null;
-  progress("");
+  if (askGrowth) {
+    // The fleet +25% and +50% of the busiest load needs, sized one after the
+    // other at the panel's SLO and shape. A cancel stops both.
+    const seen = x.report && x.report.load && x.report.load.rate ? x.report.load.rate.value : null;
+    if (seen == null) {
+      x.growthMissing = "Not sized: the busiest load was not judged.";
+    } else {
+      const growth = [];
+      for (const g of [1.25, 1.5]) {
+        execProgress(x, "ans", `Sizing the fleet for ${Math.round((g - 1) * 100)}% more traffic`);
+        let size = null, err = null;
+        try {
+          size = await api("POST", "v1/size", growthSizeRequest(g * seen), ctl.signal);
+        } catch (e) {
+          if (!live()) return;
+          if (e.name === "AbortError") {
+            x.growthMissing = "Not sized: cancelled.";
+            break;
+          }
+          err = e.message;
+        }
+        if (!live()) return;
+        growth.push({x: g, rate: g * seen, need: growthNeed(size, err)});
+      }
+      if (!x.growthMissing) x.growth = growth;
+    }
+    x.growthPending = false;
+  }
+  x.ansAbort = null;
+  execProgress(x, "ans", "");
   renderExec();
+}
+
+// growthMissingFor is why the panel sizes no growth for these inputs and
+// plan, in words, or "" where it sizes it.
+function growthMissingFor(inputs, plan) {
+  if (!inputs.fleet.prefill) return GROWTH_NO_PD;
+  const pr = plan.limits.prefill;
+  const v2 = !!(plan.ttft && plan.ttft.model && plan.ttft.model.priced);
+  return !v2 && !!pr && !!pr.refused && pr.refused.reason === "NoPrefillCapacity" ? GROWTH_NO_PREFILL : "";
+}
+
+// execProgress shows what the panel is asking: the report and sizes (ans)
+// before the check (bt), which runs beside a re-ask. Cancel stops both.
+function execProgress(x, task, text) {
+  x.prog = Object.assign({}, x.prog, {[task]: text});
+  if (state.exec !== x) return;
+  const now = x.prog.ans || x.prog.bt || "";
+  progress(now, null, () => {
+    if (x.ansAbort) x.ansAbort.abort();
+    if (x.btAbort) x.btAbort.abort();
+  });
+}
+
+// execAbort cancels everything the panel is asking, on a new load.
+function execAbort(x) {
+  if (!x) return;
+  if (x.ansAbort) x.ansAbort.abort();
+  if (x.btAbort) x.btAbort.abort();
 }
 
 // renderExec draws the executive panel and the trust chip from execView, as
@@ -2358,7 +2456,7 @@ function renderExec() {
   // The check on the Check tab, where it ran, is the one score the panel,
   // the header chip and the check view quote.
   const v = execView({inputs: state.inputs, plan: state.plan, report: x.report, bt: x.bt || state.bt, k: state.k,
-    reportPending: x.reportPending, btPending: x.btPending,
+    reportPending: x.reportPending, reportError: x.reportError, btPending: x.btPending,
     growth: x.growth, growthPending: x.growthPending, growthMissing: x.growthMissing});
   const dl = el("execlines");
   dl.replaceChildren();
@@ -2367,7 +2465,8 @@ function renderExec() {
     // A badge only where a row is not an estimate: the note below says so.
     if (l.badge) dt.appendChild(textNode("span", l.badge, "badge " + (l.badge === EXEC_BADGES.measured ? "b-measured" : "b-checked")));
     dl.appendChild(dt);
-    const dd = textNode("dd", l.text);
+    // A row being asked again reads as updating, never as the answer.
+    const dd = textNode("dd", l.text, l.updating ? "updating" : "");
     if (l.small) dd.appendChild(textNode("span", " " + l.small, "hint"));
     // A row's detail sits in its drawer, closed.
     if (l.more && l.more.length) {
