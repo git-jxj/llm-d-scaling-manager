@@ -1030,6 +1030,8 @@ func (q *dayQuestion) group(ctx context.Context, k Knobs, refused *[]DayRefusal)
 	add := func(r DayRefusal) { addRefusal(refused, r) }
 	sc := q.sc
 	g := &dayGroup{limits: map[int]whatif.Result{}}
+	// The sizer has no experimental TTFT model: a day plan is the
+	// default's, as its decode-alone limits are.
 	newSizer := func() *sizer {
 		return &sizer{e: q.e, sc: sc, k: k, bound: q.bound, seen: map[FleetCounts]sizeEval{}, plain: map[FleetCounts]sizeEval{}}
 	}
