@@ -4,7 +4,8 @@
 # less what the controller already holds, and less create on
 # subjectaccessreviews, which would let the controller ask what any account
 # may do; rbac.controller is UNKNOWN without it. Plus list on rolebindings and
-# clusterrolebindings for the conflicts check: it shows the cluster's RBAC
+# clusterrolebindings for the conflicts check, which the role writer reads too,
+# to find the namespaces holding its per-namespace grant: it shows the cluster's RBAC
 # layout to whoever can act as the controller, the cluster admin alone here
 # (appendix C of the kubectl install proposal).
 apiVersion: rbac.authorization.k8s.io/v1

@@ -395,7 +395,7 @@ jobs:
         run: |
           set -euo pipefail
           n=0
-          for f in dist/*.yaml dist/scaling-manager-tools-*.tar.gz dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/capacity-planner-v*.exe dist/SHA256SUMS; do
+          for f in dist/*.yaml dist/scaling-manager-*.sh dist/scaling-manager-tools-*.tar.gz dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/capacity-planner-v*.exe dist/SHA256SUMS; do
             [ -f "$f" ] && [ -f "$f.sigstore.json" ] || { echo "::error::$f or its bundle is missing from the artifact"; exit 1; }
             cosign verify-blob "$f" --bundle "$f.sigstore.json" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -1154,7 +1154,7 @@ jobs:
         run: |
           set -euo pipefail
           n=0
-          for f in dist/*.yaml dist/scaling-manager-tools-*.tar.gz dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/capacity-planner-v*.exe dist/SHA256SUMS; do
+          for f in dist/*.yaml dist/scaling-manager-*.sh dist/scaling-manager-tools-*.tar.gz dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/capacity-planner-v*.exe dist/SHA256SUMS; do
             [ -f "$f" ] || { echo "::error::$f was not rendered"; exit 1; }
             cosign sign-blob --yes --bundle "$f.sigstore.json" "$f" >/dev/null
             n=$((n + 1))
@@ -1267,7 +1267,7 @@ jobs:
             echo "release $VERSION is published with these exact files; nothing to upload"
             exit 0
           fi
-          gh release upload "$VERSION" --clobber dist/*.yaml dist/scaling-manager-tools-*.tar.gz \
+          gh release upload "$VERSION" --clobber dist/*.yaml dist/scaling-manager-*.sh dist/scaling-manager-tools-*.tar.gz \
             dist/capacity-planner-v*-amd64 dist/capacity-planner-v*-arm64 dist/capacity-planner-v*.exe dist/SHA256SUMS dist/*.sigstore.json
           gh release view "$VERSION" --json assets --jq '.assets[].name'
 

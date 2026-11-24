@@ -13,9 +13,12 @@
 #   a Secret read without resourceNames reads every Secret in reach
 #   create on Secrets                   a service-account token under our name
 #   a switch missing on the Deployment  the install runs as another path
-#   a keda mention the guide's sed      KEDA elsewhere is half wired
-#   misses
+#   not passive at start                it scales before anyone said so
+#   a namespace other than its own      a file to edit before applying it
+#                                       (KEDA's side is a file of its own,
+#                                       applied with -n)
 #   a placeholder                       nothing fills it on this path
+#   a release script not summed         an unsigned script runs kubectl
 #
 # Then it runs the same assertions on broken copies, one fault each, and
 # requires each to fail with the message of the rule it breaks.
@@ -43,23 +46,12 @@ DIGEST="sha256:$(printf 'manifest-install-check' | sha256sum | cut -c1-64)"
 VERSION="v0.13.0-check.1"
 M=scaling-manager.yaml
 NS=scaling-manager-system
-FLAGS="--namespace-opt-in=label --keda-namespace=keda --self-check-interval=1m --restart-on-settings-change=true --external-scaler-tls-secrets=opaque --wait-for-settings=true --external-scaler-tls-live=true --external-scaler-tls-bootstrap=true"
+FLAGS="--watch-namespaces-live=true --keda-namespace=keda --self-check-interval=1m --restart-on-settings-change=true --external-scaler-tls-secrets=opaque --wait-for-settings=true --external-scaler-tls-live=true --external-scaler-tls-bootstrap=true"
 
 GOOD="$WORK/good"
 if ! bash "$ROOT/deploy/release-manifests.sh" --image "$REPO@$DIGEST" --version "$VERSION" --out "$GOOD" > "$WORK/render.log" 2>&1; then
     echo "FAIL: the render failed:"; tail -5 "$WORK/render.log"; exit 1
 fi
-
-# keda_sed <file> <namespace>: the KEDA namespace edit as the file's own
-# header gives it, with <ns> filled in, run on <file>.
-keda_sed() {
-    local line prog
-    line="$(sed -n '1,6{s/^# KEDA in another namespace than keda: //p}' "$1")"
-    [ -n "$line" ] || return 2
-    prog="${line//<ns>/$2}"
-    prog="${prog% $M}"
-    (cd "$(dirname "$1")" && eval "$prog $(basename "$1")")
-}
 
 # check <dir>: every rule on <dir>/scaling-manager.yaml. Prints a line per
 # failure; returns how many.
@@ -85,10 +77,11 @@ check() {
         [ "$(jq -r --arg k "$k" --arg ns "$NS" '[.[] | select(.kind == "Secret" and .metadata.name == $k and .metadata.namespace == $ns)] | length' "$js")" = 1 ] \
             || say "the scaler TLS Secret $k is not in $NS"
     done
-    [ "$(jq -r '[.[] | select(.kind == "Secret" and .metadata.namespace == "keda" and .metadata.name == "scaling-manager-external-scaler-scaling-manager-system")] | length' "$js")" = 1 ] \
-        || say "KEDA's copy is not pre-created in namespace keda"
-    n="$(q '.[] | select(.kind == "Role" and .metadata.namespace == "keda") | .rules[] | select((.resources != ["secrets"]) or (.resourceNames != ["scaling-manager-external-scaler-scaling-manager-system"]) or ((.verbs | sort) != ["get", "update"])) | tostring')"
-    [ -z "$n" ] || say "the Role in KEDA's namespace grants more than get and update on KEDA's copy by name: $n"
+    n="$(q '[.[] | select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "manager") | .env[]? | select(.name == "LLMSM_PASSIVE") | .value] | join(",")')"
+    [ "$n" = true ] || say "the controller does not start passive (LLMSM_PASSIVE '$n', want true): it would scale before anyone set passive false"
+    n="$(q '[.[] | select(.kind == "NetworkPolicy" and .metadata.name == "scaling-manager-external-scaler") | .spec.ingress[] | select(has("from")) | .from[] | .namespaceSelector.matchLabels | tostring] | join(" ")')"
+    [ "$n" = '{"scaling-manager.llmd.ai/keda":"true"}' ] \
+        || say "the scaler NetworkPolicy does not admit KEDA by the namespace label scaling-manager.llmd.ai/keda=true, so KEDA elsewhere needs an edit: $n"
     n="$(q '.[] | select(.kind == "Role" or .kind == "ClusterRole") | select(any(.rules[]?; ((.resources // []) | (index("secrets") or index("*"))) and ((.verbs // []) | (index("get") or index("list") or index("watch") or index("*"))) and ((.resourceNames // []) | length) == 0)) | .kind + "/" + .metadata.name')"
     [ -z "$n" ] || say "reads Secrets with no resourceNames: $n"
     n="$(q '.[] | select(.kind == "Role" or .kind == "ClusterRole") | select(any(.rules[]?; ((.resources // []) | (index("secrets") or index("*"))) and ((.verbs // []) | (index("create") or index("*"))))) | .kind + "/" + .metadata.name')"
@@ -99,8 +92,16 @@ check() {
     done
     n="$(q '.[] | select(.metadata.labels["app.kubernetes.io/part-of"] != "scaling-manager" or .metadata.labels["app.kubernetes.io/instance"] != $ns or .metadata.labels["app.kubernetes.io/version"] != $v) | .kind + "/" + .metadata.name')"
     [ -z "$n" ] || say "objects missing part-of, instance $NS or version (the uninstall selects by them): $n"
-    n="$(q '.[] | select(.metadata.namespace != null and .metadata.namespace != $ns and .metadata.namespace != "keda") | .kind + "/" + .metadata.namespace + "/" + .metadata.name')"
-    [ -z "$n" ] || say "an object outside $NS and KEDA's namespace: $n"
+    n="$(q '.[] | select(.metadata.namespace != null and .metadata.namespace != $ns) | .kind + "/" + .metadata.namespace + "/" + .metadata.name')"
+    [ -z "$n" ] || say "an object outside $NS, which a KEDA or model namespace elsewhere would make an operator edit: $n"
+    n="$(grep -nE '(namespace|metadata\.name): keda$' "$f" || true)"
+    [ -z "$n" ] || say "$M names KEDA's namespace: $(echo "$n" | head -2 | tr '\n' ' ')"
+    grep -q '^# .*sed ' "$f" && say "$M's header gives an edit to make before applying it"
+    local sc
+    for sc in scaling-manager-admin.sh scaling-manager-owner.sh; do
+        [ -s "$d/$sc" ] || say "$sc was not written beside the manifests"
+        grep -q "  $sc\$" "$d/SHA256SUMS" || say "SHA256SUMS does not list $sc, so it is not signed"
+    done
     grep -nE '__[A-Z_]+__' "$f" >/dev/null && say "$M holds a placeholder nothing fills: $(grep -oE '__[A-Z_]+__' "$f" | sort -u | tr '\n' ' ')"
 
     # The plan ConfigMap: there, so the controller needs no create, and with
@@ -112,7 +113,8 @@ check() {
     # nothing names a namespace; selected by a label each; found by the
     # uninstall's instance selector.
     local g gj
-    for g in scaling-manager-grants.yaml scaling-manager-monitoring.yaml scaling-manager-label-guard.yaml; do
+    [ ! -e "$d/scaling-manager-label-guard.yaml" ] || say "scaling-manager-label-guard.yaml is written; watchNamespaces replaced the label opt-in it guarded"
+    for g in scaling-manager-grants.yaml scaling-manager-monitoring.yaml scaling-manager-keda.yaml; do
         gj="$WORK/$g.json"
         [ -s "$d/$g" ] || { say "$g was not written"; continue; }
         grep -q "  $g\$" "$d/SHA256SUMS" || say "SHA256SUMS does not list $g"
@@ -138,21 +140,25 @@ check() {
     if [ -s "$gj" ]; then
         n="$(jq -r '.[] | select(.metadata.labels["scaling-manager.llmd.ai/monitor"] == null) | .kind + "/" + .metadata.name' "$gj")"
         [ -z "$n" ] || say "a monitoring object has no scaling-manager.llmd.ai/monitor label to select it by: $n"
+        [ "$(jq -r '[.[] | .kind + "=" + .metadata.labels["scaling-manager.llmd.ai/monitor"]] | sort | join(",")' "$gj")" = "NetworkPolicy=epp-networkpolicy,PodMonitor=modelserver" ] \
+            || say "the monitoring file does not hold the PodMonitor (modelserver) and the EPP NetworkPolicy (epp-networkpolicy): $(jq -r '[.[] | .kind] | join(",")' "$gj")"
+        n="$(jq -c --arg ns "$NS" '.[] | select(.kind == "NetworkPolicy") | [(.spec.ingress[].from[] | {ns: .namespaceSelector.matchLabels["kubernetes.io/metadata.name"], pod: .podSelector.matchLabels["control-plane"]}), .spec.ingress[].ports[].port]' "$gj")"
+        [ "$n" = '[{"ns":"'"$NS"'","pod":"controller-manager"},9090]' ] || say "the EPP NetworkPolicy admits more than the controller in $NS on port 9090: $n"
+    fi
+    # KEDA's side: the copy (Opaque, no data) and a Role to get and update it
+    # by name, bound to the controller in $NS; no namespace in the file.
+    gj="$WORK/scaling-manager-keda.yaml.json"
+    if [ -s "$gj" ]; then
+        [ "$(jq -r '[.[] | .kind] | sort | join(",")' "$gj")" = "Role,RoleBinding,Secret" ] \
+            || say "scaling-manager-keda.yaml does not hold KEDA's copy, its Role and RoleBinding: $(jq -r '[.[] | .kind] | join(",")' "$gj")"
+        n="$(jq -r '.[] | select(.kind == "Secret") | select(.type != "Opaque" or has("data") or has("stringData") or .metadata.name != "scaling-manager-external-scaler-scaling-manager-system") | .metadata.name' "$gj")"
+        [ -z "$n" ] || say "KEDA's copy is not the Opaque Secret scaling-manager-external-scaler-$NS with no data: $n"
+        n="$(jq -r '.[] | select(.kind == "Role") | .rules[] | select((.resources != ["secrets"]) or (.resourceNames != ["scaling-manager-external-scaler-scaling-manager-system"]) or ((.verbs | sort) != ["get", "update"])) | tostring' "$gj")"
+        [ -z "$n" ] || say "the Role in KEDA's namespace grants more than get and update on KEDA's copy by name: $n"
+        n="$(jq -r --arg ns "$NS" '.[] | select(.kind == "RoleBinding") | select(.subjects != [{"kind": "ServiceAccount", "name": "scaling-manager-controller-manager", "namespace": $ns}]) | .metadata.name' "$gj")"
+        [ -z "$n" ] || say "the RoleBinding in KEDA's namespace binds another subject than the controller in $NS: $n"
     fi
 
-    # KEDA elsewhere: the header's sed must reach every mention of keda.
-    local moved="$WORK/moved"
-    rm -rf "$moved"; mkdir -p "$moved"; cp "$f" "$moved/$M"
-    if ! keda_sed "$moved/$M" keda-system 2>"$WORK/sederr"; then
-        say "the KEDA namespace sed in the header did not run: $(head -1 "$WORK/sederr")"
-    else
-        n="$(grep -nE '(^|[ :=/])keda$' "$moved/$M" | grep -v '^[0-9]*:#' || true)"
-        [ -z "$n" ] || say "after the KEDA namespace sed, keda is still named: $(echo "$n" | head -3 | tr '\n' ' ')"
-        local before after
-        before="$(grep -cE '(^|[ :=/])keda$' "$f")"
-        after="$(grep -cE '(^|[ :=/])keda-system$' "$moved/$M")"
-        [ "$before" -ge 4 ] && [ "$before" = "$after" ] || say "the KEDA namespace sed moved $after of $before mentions of keda"
-    fi
     return "$bad"
 }
 
@@ -182,7 +188,7 @@ mutate() {
             printf -- '---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: scaling-manager-settings\n  namespace: %s\ndata:\n  passive: "true"\n' "$NS" >> "$d/$M" ;;
         *) yq -i "$expr" "$d/$file" ;;
     esac
-    (cd "$d" && sha256sum scaling-manager*.yaml > SHA256SUMS)
+    (cd "$d" && sha256sum scaling-manager*.yaml scaling-manager-admin.sh scaling-manager-owner.sh > SHA256SUMS)
     if check "$d" > "$WORK/m-$name.log" 2>&1; then
         fail "negative control '$name' was not caught"
     elif grep -q -- "$expect" "$WORK/m-$name.log"; then
@@ -196,21 +202,29 @@ mutate image-by-tag "not pinned" \
     '(select(.kind == "Deployment") | .spec.template.spec.containers[0].image) = "ghcr.io/llm-d-incubation/llm-d-scaling-manager:main"'
 mutate tls-secret-data "Opaque with no data" \
     '(select(.kind == "Secret" and .metadata.name == "scaling-manager-scaler-ca") | .data) = {"tls.crt": ""}'
-mutate keda-copy-typed "Opaque with no data" \
-    '(select(.kind == "Secret" and .metadata.namespace == "keda") | .type) = "kubernetes.io/tls"'
+mutate keda-copy-typed "KEDA's copy is not the Opaque Secret" \
+    '(select(.kind == "Secret") | .type) = "kubernetes.io/tls"' scaling-manager-keda.yaml
 mutate settings-in-file "what an operator owns" append-settings
-mutate no-opt-in "does not pass --namespace-opt-in=label" \
-    '(select(.kind == "Deployment") | .spec.template.spec.containers[0].args) |= map(select(. != "--namespace-opt-in=label"))'
+mutate no-live-watch "does not pass --watch-namespaces-live=true" \
+    '(select(.kind == "Deployment") | .spec.template.spec.containers[0].args) |= map(select(. != "--watch-namespaces-live=true"))'
+mutate not-passive "does not start passive" \
+    '(select(.kind == "Deployment") | .spec.template.spec.containers[0].env) |= map(select(.name != "LLMSM_PASSIVE"))'
+mutate keda-by-name "does not admit KEDA by the namespace label" \
+    '(select(.kind == "NetworkPolicy") | .spec.ingress[] | select(has("from")) | .from[0].namespaceSelector.matchLabels) = {"kubernetes.io/metadata.name": "keda"}'
+mutate keda-object-in-manifest "an object outside" \
+    '(select(.kind == "Role" and .metadata.name == "scaling-manager-scaledobjects-plan") | .metadata.namespace) = "keda"'
 mutate no-keda-copy "does not pass --keda-namespace=keda" \
     '(select(.kind == "Deployment") | .spec.template.spec.containers[0].args) |= map(select(. != "--keda-namespace=keda"))'
 mutate keda-role-wider "more than get and update" \
-    '(select(.kind == "Role" and .metadata.namespace == "keda") | .rules[0].verbs) += ["list"]'
+    '(select(.kind == "Role") | .rules[0].verbs) += ["list"]' scaling-manager-keda.yaml
+mutate keda-file-namespaced "does not move" \
+    '(select(.kind == "Secret") | .metadata.namespace) = "keda"' scaling-manager-keda.yaml
+mutate keda-other-subject "binds another subject" \
+    '(select(.kind == "RoleBinding") | .subjects[0].namespace) = "team-a"' scaling-manager-keda.yaml
 mutate secret-read-unscoped "no resourceNames" \
     '(select(.kind == "Role" and .metadata.name == "scaling-manager-scaler-tls-opaque") | .rules[0]) |= del(.resourceNames)'
-mutate keda-unmoved "keda is still named" \
-    '(select(.kind == "Deployment") | .spec.template.spec.containers[0].env) += [{"name": "KEDA_NS", "value": "keda"}]'
 mutate placeholder-left "placeholder" \
-    '(select(.kind == "Role" and .metadata.namespace == "keda") | .rules[0].resourceNames) = ["scaling-manager-external-scaler-__NAMESPACE__"]'
+    '(select(.kind == "Role" and .metadata.name == "scaling-manager-scaler-tls-opaque") | .rules[0].resourceNames) = ["scaling-manager-scaler-ca-__NAMESPACE__"]'
 mutate unlabelled "missing part-of" \
     'del(select(.kind == "ClusterTriggerAuthentication") | .metadata.labels["app.kubernetes.io/instance"])'
 
@@ -224,8 +238,8 @@ mutate grant-wider "more than patch on pods" \
     '(select(.kind == "Role" and .metadata.labels["scaling-manager.llmd.ai/grant"] == "pod-writer") | .rules[0].verbs) += ["delete"]' scaling-manager-grants.yaml
 mutate grant-other-subject "another subject" \
     '(select(.kind == "RoleBinding" and .metadata.labels["scaling-manager.llmd.ai/grant"] == "pod-writer") | .subjects[0].namespace) = "team-a"' scaling-manager-grants.yaml
-mutate guard-unselected "does not select" \
-    'del(select(.kind == "ValidatingAdmissionPolicyBinding") | .metadata.labels["app.kubernetes.io/instance"])' scaling-manager-label-guard.yaml
+mutate epp-policy-wider "admits more than the controller" \
+    '(select(.kind == "NetworkPolicy") | .spec.ingress[0].ports) += [{"port": 8080, "protocol": "TCP"}]' scaling-manager-monitoring.yaml
 mutate monitor-unselected "does not select" \
     'del(select(.kind == "PodMonitor") | .metadata.labels["app.kubernetes.io/instance"])' scaling-manager-monitoring.yaml
 
