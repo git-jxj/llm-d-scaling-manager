@@ -925,6 +925,14 @@ func (pl prefillPlan) fAt(rate float64) float64 {
 	if !(rho > rm) {
 		return f
 	}
+	return loadAwareFall(f, rho, rm)
+}
+
+// loadAwareFall is f past rho_m (fAt): 1 + (f - 1)(1 - rho)/(1 - rho_m), at
+// least 1. It is a variable only so a test can put a non-monotone f(rho) in
+// its place and show the TTFT sweeps catch it (ttft_load_aware_test.go):
+// nothing else assigns it.
+var loadAwareFall = func(f, rho, rm float64) float64 {
 	return max(1, 1+(f-1)*(1-rho)/(1-rm))
 }
 

@@ -1,7 +1,9 @@
 package whatif
 
 import (
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
@@ -67,24 +69,122 @@ func TestLoadAware_FIsHeldBelowWhereItWasRead(t *testing.T) {
 	}
 }
 
-// Past rho_m the price is never above the held one, and it still rises with
-// the rate up to the knee, so RateForTTFT's bisection holds.
-func TestLoadAware_TTFTRisesWithTheRate(t *testing.T) {
-	on, off := loadAwarePrefill(true, DefaultVPMargin), loadAwarePrefill(false, DefaultVPMargin)
-	k := kneeOf(t, on)
+// riseProblem sweeps fleet on's TTFT p90 over 199 rates up to its prefill
+// knee and says where it first falls with the rate, or reads above off's,
+// the same fleet with f held: "" where it does neither.
+func riseProblem(t *testing.T, on, off TTFTFleet) string {
+	t.Helper()
+	k := kneeOf(t, on.Prefill)
 	prev := 0.0
 	for i := 1; i < 200; i++ {
 		rate := k * float64(i) / 200
-		a := mustTTFT(t, TTFTAt(TTFTFleet{Prefill: on}, rate, 0.9)).Seconds
+		a := mustTTFT(t, TTFTAt(on, rate, 0.9)).Seconds
 		if !(a >= prev) {
-			t.Fatalf("TTFT p90 falls at %.4g r/s: %.6g after %.6g", rate, a, prev)
+			return fmt.Sprintf("TTFT p90 falls at %.4g r/s: %.6g after %.6g", rate, a, prev)
 		}
 		prev = a
-		if b, ok := TTFTAt(TTFTFleet{Prefill: off}, rate, 0.9).(TTFT); ok && a > b.Seconds*(1+1e-12) {
-			t.Errorf("at %.4g r/s load-aware %.6g above held %.6g", rate, a, b.Seconds)
+		if b, ok := TTFTAt(off, rate, 0.9).(TTFT); ok && a > b.Seconds*(1+1e-12) {
+			return fmt.Sprintf("at %.4g r/s load-aware %.6g above held %.6g", rate, a, b.Seconds)
+		}
+	}
+	return ""
+}
+
+// sweepFleets are the fleets riseProblem sweeps, load-aware and held, by
+// queue: the first-come queue; processor sharing by the model's rule at a
+// spread it prices alone (cv 0.1) and one past MaxPSPromptCV, where the
+// price is the larger of the two queues (cv 1); and processor sharing by the
+// engine's word on 4 slots, alone below them and the larger of the two past
+// them (PSSlotsExceeded) on the way to the knee.
+func sweepFleets() map[string][2]TTFTFleet {
+	out := map[string][2]TTFTFleet{}
+	for name, c := range map[string]struct {
+		ps    bool
+		cv    float64
+		queue QueueChoice
+	}{
+		"first come":                     {false, 1, QueueChoice{}},
+		"processor sharing, cv 0.1":      {true, 0.1, QueueChoice{}},
+		"processor sharing, cv 1":        {true, 1, QueueChoice{}},
+		"processor sharing, by 4 slots":  {true, 1, QueueChoice{Model: QueueProcessorSharing, Slots: 4}},
+		"processor sharing, by 64 slots": {true, 1, QueueChoice{Model: QueueProcessorSharing, Slots: 64}},
+	} {
+		var pair [2]TTFTFleet
+		for i, on := range []bool{true, false} {
+			p := loadAwarePrefill(on, DefaultVPMargin)
+			p.PromptCV, p.Queue = c.cv, c.queue
+			pair[i] = TTFTFleet{Prefill: p, ProcessorSharing: c.ps}
+		}
+		out[name] = pair
+	}
+	return out
+}
+
+// Past rho_m the price is never above the held one, and it still rises with
+// the rate up to the knee, so RateForTTFT's bisection holds: with the
+// first-come queue and with processor sharing, alone and capped by the
+// first-come queue.
+func TestLoadAware_TTFTRisesWithTheRate(t *testing.T) {
+	for name, c := range sweepFleets() {
+		if why := riseProblem(t, c[0], c[1]); why != "" {
+			t.Errorf("%s: %s", name, why)
 		}
 	}
 }
+
+// The processor-sharing sweeps price processor sharing: alone (cv 0.1, 64
+// slots, 4 slots at a fifth of the knee) another figure than the first-come
+// queue's, capped (cv 1) at least it, and on 4 slots near the knee the
+// larger of the two, flagged PSSlotsExceeded.
+func TestLoadAware_TheSweepsPriceProcessorSharing(t *testing.T) {
+	fleets := sweepFleets()
+	k := kneeOf(t, fleets["first come"][0].Prefill)
+	firstCome := func(fl TTFTFleet, rate float64) TTFT {
+		fl.ProcessorSharing, fl.Prefill.Queue = false, QueueChoice{}
+		return mustTTFT(t, TTFTAt(fl, rate, 0.9))
+	}
+	for _, c := range []struct {
+		name  string
+		share float64
+		alone bool
+	}{
+		{"processor sharing, cv 0.1", 0.5, true}, {"processor sharing, by 64 slots", 0.5, true},
+		{"processor sharing, by 4 slots", 0.2, true}, {"processor sharing, cv 1", 0.5, false},
+	} {
+		fl, rate := fleets[c.name][0], c.share*k
+		ps, fc := mustTTFT(t, TTFTAt(fl, rate, 0.9)), firstCome(fl, rate)
+		if c.alone && ps.Seconds == fc.Seconds {
+			t.Errorf("%s: %.6g s at %.4g r/s is the first-come price", c.name, ps.Seconds, rate)
+		}
+		if !c.alone && ps.Seconds < fc.Seconds {
+			t.Errorf("%s: %.6g s at %.4g r/s, under the first-come %.6g s", c.name, ps.Seconds, rate, fc.Seconds)
+		}
+	}
+	slots := fleets["processor sharing, by 4 slots"][0]
+	if r := mustTTFT(t, TTFTAt(slots, 0.99*kneeOf(t, slots.Prefill), 0.9)); !r.HasFlag(PSSlotsExceeded) {
+		t.Errorf("4 slots near the knee: flags %v, want PSSlotsExceeded", r.Flags)
+	}
+}
+
+// Every sweep fails on an f(rho) that does not fall smoothly: f held at even
+// twentieths of the pooled utilization and 1 at odd ones. It is never above
+// the held f, so it is the fall with the rate the sweeps catch.
+func TestLoadAware_TheSweepsCatchANonMonotoneF(t *testing.T) {
+	saved := loadAwareFall
+	t.Cleanup(func() { loadAwareFall = saved })
+	loadAwareFall = func(f, rho, _ float64) float64 {
+		if int(rho*20)%2 == 1 {
+			return 1
+		}
+		return f
+	}
+	for name, c := range sweepFleets() {
+		if why := riseProblem(t, c[0], c[1]); !strings.Contains(why, "falls") {
+			t.Errorf("%s: the sweep passed a non-monotone f (%q)", name, why)
+		}
+	}
+}
+
 
 // A pod hotter than the router can steer away from: f 1.8 read at 0.5 has
 // an excess of 0.8 against 0.5 of idle capacity, and saturates first, at
