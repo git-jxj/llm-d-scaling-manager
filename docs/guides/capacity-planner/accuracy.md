@@ -82,9 +82,9 @@ planner says the same 43% to 99%. `at-replicas` prints the label under the decod
 in its capacity table, says the 0.6B range under `not validated` only when
 the knee is outside, and sizes decode at the label's upper error inside the
 region, or at 99.1% outside it, beside the point answer
-(`needed.decodeAtErrorBound`, at most the search's `maxReplicas`). An
-OVER-PROVISIONED verdict never cuts decode below that count: decode has a
-replica to spare only where one fewer still meets it. The
+(`needed.decodeAtErrorBound`, at most the search's `maxReplicas`). The
+fleet needed never cuts decode below that count, whatever the verdict:
+decode has a replica to spare only where one fewer still meets it. The
 label's `n=` gives the independent load levels first, then the raw
 readings.
 
