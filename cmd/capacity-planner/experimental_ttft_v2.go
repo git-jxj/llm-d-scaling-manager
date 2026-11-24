@@ -104,15 +104,7 @@ func prefillSlotsOf(res *whatifapi.Resolved) int {
 	if !ok || res.Inputs.Fleet.Prefill == nil {
 		return 0
 	}
-	params := variantParams(s.st, res.Inputs.Fleet.Prefill.Variant)
-	if params == nil {
-		return 0
-	}
-	k := int(params.ExplicitMaxNumSeqs())
-	if k > 0 && !params.ChunkedPrefillEnabled {
-		return 1
-	}
-	return k
+	return variantParams(s.st, res.Inputs.Fleet.Prefill.Variant).PrefillSlots()
 }
 
 // experimentalReport prices rep's tables with the experimental models

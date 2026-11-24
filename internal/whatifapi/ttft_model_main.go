@@ -5,7 +5,6 @@ import (
 	"math"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -190,27 +189,25 @@ func fitMainMixture(e *inputsEntry) *mainMixture {
 			idx = append(idx, i)
 		}
 	}
-	rq, steps, err := fitRankMixtureSteps(e, idx, DefaultBacktestStep, e.engine.PrefillSlots)
-	if err != nil {
-		return abstain(err.Error())
+	// The slo analyzer's v2 TTFT learner fits and prices its own cycles with
+	// the same call.
+	w := whatif.FitMixtureWindow(fitCycles(e, idx), DefaultBacktestStep, e.engine.PrefillSlots, BacktestTolerance)
+	if w.FitErr != nil {
+		return abstain(w.FitErr.Error())
 	}
-	mm.rq = rq.identified()
+	mm.rq = &rankMixtureQ{m: w.Fitted.M, report: w.Fitted.Report}
 	r := mm.rq.report
 	mm.info.Fit = &r
 	if r.Abstained != "" {
 		mm.info.Abstained = r.Abstained
 		return mm
 	}
-	for _, st := range steps {
-		mm.top = max(mm.top, st.Rate)
-	}
+	mm.top = w.Top
 	if mm.top > 0 {
 		mm.info.MeasuredUpTo = ptr(mm.top)
 	}
-	first := e.series[idx[0]].At
-	mm.pooled = whatif.MixtureStepOf(mixtureWindow(e, idx, first.Add(-time.Nanosecond), answered), answered)
-	o := whatif.RankMixtureOptions{Slots: rq.m.Slots, MinSpreadSpan: whatif.MinSpreadFitWindow, SpreadFloor: whatif.MinSpread}
-	if h := whatif.RankMixtureHeldOut(steps, o, rq.m.Spread, BacktestTolerance); h.Steps > 0 {
+	mm.pooled = w.Pooled
+	if h := w.HeldOut; h.Steps > 0 {
 		mm.info.HeldOut = &HeldOutScore{Statistic: statisticMean, Within: h.Within, Low: h.Low, Steps: h.Steps, MedianRatio: h.MedianRatio,
 			RateFrom: h.RateLo, RateTo: h.RateHi, Prefill: mm.prefill, Decode: e.doc.Fleet.Decode.Replicas}
 		mm.info.Evidence = heldOutWords(h.Within, h.Steps)

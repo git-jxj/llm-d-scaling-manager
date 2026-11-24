@@ -3,7 +3,6 @@ package whatifapi
 import (
 	"fmt"
 	"slices"
-	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
@@ -144,22 +143,18 @@ func fitMainTPOT(e *inputsEntry) *mainTPOT {
 			idx = append(idx, i)
 		}
 	}
-	tq := fitTPOTDist(e, idx, DefaultBacktestStep, e.engine.DecodeSlots, e.engine.SpecTokens)
+	// The slo analyzer's v2 TPOT learner fits and prices its own cycles with
+	// the same call.
+	w := whatif.FitTPOTWindow(fitCycles(e, idx), DefaultBacktestStep, e.engine.DecodeSlots, e.engine.SpecTokens)
+	tq := &tpotDistQ{c: w.Fitted.C, report: w.Fitted.Report, stepRates: w.Fitted.StepRates}
 	r := tq.report
 	mt.info.Fit = &r
-	if r.Abstained != "" {
-		return abstain(r.Abstained)
+	if w.Abstained != "" {
+		return abstain(w.Abstained)
 	}
-	first := e.series[idx[0]].At
-	inv, g2, ok := whatif.DecodeWindow(decodeWindow(e, idx, first.Add(-time.Nanosecond), answered))
-	if !ok {
-		return abstain("the source's decode pods read no output-length histogram")
-	}
-	mt.tq, mt.inv, mt.dist = tq, inv, whatif.TPOTDist{GroupCV2: g2, C: tq.c, Renewal: r.Renewal}
+	mt.tq, mt.inv, mt.dist = tq, w.Inv, w.Dist
 	mt.info.P90Ratio, mt.info.P95Ratio = ptr(mt.ratio(0.9)), ptr(mt.ratio(0.95))
-	for _, rate := range tq.stepRates {
-		mt.top = max(mt.top, rate)
-	}
+	mt.top = w.Top
 	if mt.top > 0 {
 		mt.info.MeasuredUpTo = ptr(mt.top)
 	}

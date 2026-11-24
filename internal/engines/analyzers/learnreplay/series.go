@@ -188,17 +188,11 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 			s.DecodeNotServing += notServing
 		}
 	}
-	var weight, il, ol, hit, squared, modelRate, bothRate float64
+	var weight, il, ol, hit, squared float64
 	everySquared := true
 	var prompted []domain.ReplicaMetrics
 	for _, rm := range in.ReplicaMetrics {
 		role := domain.CanonicalRole(roles[rm.VariantName])
-		if role == domain.RoleDecode && rm.RequestRateKnown && rm.RequestRate > 0 {
-			modelRate += rm.RequestRate
-		}
-		if role == domain.RoleBoth && rm.RequestRateKnown && rm.RequestRate > 0 {
-			bothRate += rm.RequestRate
-		}
 		if !counted(rm.VariantName, role) {
 			if (role == domain.RolePrefill || role == domain.RoleDecode) && prefill.Serving(rm) {
 				s.OtherPods++
@@ -248,11 +242,9 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 			s.OutputTokensSquared = squared / weight
 		}
 	}
-	s.EngineRate = modelRate + bothRate
-	s.RateKnown = in.ArrivalRate > 0 || modelRate == 0
-	if !s.RateKnown {
-		s.ArrivalRate = modelRate
-	}
+	// The rates as the experimental models' fits read them, in the planner
+	// and in the slo analyzer alike.
+	s.ArrivalRate, s.RateKnown, s.EngineRate = whatif.ArrivalOf(in)
 	return s
 }
 
