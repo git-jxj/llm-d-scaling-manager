@@ -156,7 +156,7 @@ const (
 	// planner's prefill-hit-at-count switch): the hit, and so the computed
 	// tokens a request, are extrapolated, by the floor hit x N'/N or the
 	// reuse-gap rule. The floor reads the computed tokens at or over the
-	// truth wherever the prefixes do not fit one pod's cache.
+	// truth where the router keeps each prefix on one pod at both counts.
 	PrefixHitAtCount Flag = "PrefixHitAtCount"
 	// PrefixHitHeld is a prefill figure priced at more prefill pods than the
 	// prefix hit was read on, with the hit above MaterialPrefixHitMove/2:

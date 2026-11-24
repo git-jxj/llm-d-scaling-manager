@@ -192,8 +192,9 @@ const SwitchPrefillVPLoneRate = "prefill-vp-lone-rate"
 // prefill count other than the one the hit was read on
 // (prefill.HitAtCountOf; issue llm-d-incubation/llm-d-scaling-manager#384).
 // On, a planner question priced at fewer prefill pods than the fit's prices
-// the floor hit x N'/N, or the reuse-gap rule where the KV residency
-// histograms are read, and the computed prompt tokens a request with it,
+// the floor hit x N'/N (the reuse-gap rule needs the KV residency
+// histograms, which the planner does not read yet), and the computed
+// prompt tokens a request with it,
 // flagged PrefixHitAtCount; one at more pods holds the fit's hit, flagged
 // PrefixHitHeld. Off, as before: the fit's hit at every count. The saturation
 // analyzer reads nothing with it; it holds it for the name. Planner-only, as

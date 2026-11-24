@@ -26,14 +26,18 @@ import (
 //     the fit; at N' a pod takes N/N' times the block accesses with the same
 //     reuse gaps (affinity keeps a prefix on one pod), so the cache horizon
 //     T' solves the occupancy at N', and the hits priced are those whose gap
-//     is under T'. Never above h.
+//     is under T'. Never above h, but not a floor: in the lab simulation it
+//     read over the truth from 4 pods to 2, where duplication changes
+//     between the counts. Untested on real data, and no caller passes the
+//     histograms yet.
 //   - N' < N without them: the floor h x N'/N. The hit is concave in each
 //     pod's cache over its working set, so it is at least that; on every
 //     measured and simulated pair of the lab run it read at or under the
 //     truth, at the cost of 13% to 28% more computed tokens than measured.
-//   - N' > N: h, held. That is safe for capacity, since the hit rises with N
-//     under affinity, so the computed tokens read high; the bracket's upper
-//     edge, min(1, h x N'/N), is how high the hit may rise.
+//   - N' > N: h, held. Under affinity the hit rises with N, so the computed
+//     tokens read high; where the working set fits one pod it stays near
+//     flat, less the cold copies a prefix sent to a second pod makes. The
+//     bracket's upper edge, min(1, h x N'/N), is how high the hit may rise.
 //
 // The computed tokens a request scale by (1 - h')/(1 - h): the whole prompt
 // does not move with the count, only the share of it the cache serves.

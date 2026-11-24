@@ -285,6 +285,12 @@ the count you ask for:
   is likely higher, so capacity reads low);
 - the recorded count: nothing changes.
 
+The floor assumes the router keeps each shared prefix on one pod at both
+counts. Where load breaks that at fewer pods, the hit can fall below the
+floor. The recorded count is the most prefill pods in the 20 cycles (five
+minutes at the default cycle) the hit was read over, so a recording made just after a scale-down is priced
+from the larger count.
+
 The assumed line names the rule and the range the real hit lies in, and
 `-o json` carries it as `hitAtCount`. It is off by default; `slo-to-rate`,
 `replicas-to-slo`, `at-replicas`, `backtest`, `predict` and `day-plan` take

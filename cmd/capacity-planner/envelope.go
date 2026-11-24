@@ -57,10 +57,11 @@ var (
 		// each figure priced from it is then flagged VPFromPlateau, which
 		// no envelope row allows, so it, and it alone, reads outside.
 		vpPlateauFlag,
-		// Set, it moves nothing at the recorded prefill count, where the
-		// run priced; at another count every prefill and TTFT figure it
-		// moves is flagged PrefixHitAtCount or PrefixHitHeld, which no
-		// envelope row allows, and carries the priced hit in its class.
+		// Set, it moves nothing at the prefill count the hit was read on;
+		// at another count a figure whose hit it moves by more than
+		// MaterialPrefixHitMove/2, or holds, is flagged PrefixHitAtCount or
+		// PrefixHitHeld, which no envelope row allows, and a figure whose
+		// hit it moves at all carries the priced hit in its class.
 		hitAtCountFlag,
 		// The same: every prefill and TTFT figure it prices is flagged
 		// ExperimentalTTFT, which no envelope row allows.
