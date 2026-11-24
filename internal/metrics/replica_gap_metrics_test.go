@@ -68,6 +68,14 @@ func TestPublishReplicaGaps_ReplacesTheSet(t *testing.T) {
 	require.Equal(t, map[string]float64{"a/": 0}, gapRows(t, reg, constants.LLMSMReplicasBorrowed, constants.LabelVariantName))
 	require.Empty(t, gapRows(t, reg, constants.LLMSMQuotaRemainingAfterSuggestedGPUs, constants.LabelLimiterName))
 
+	// a's mode changes: its series under the old mode go.
+	PublishReplicaGaps([]ReplicaGap{
+		{Namespace: "ns", ModelName: "m", VariantName: "a", Role: "both", Mode: constants.ReplicasModeShadow,
+			Suggested: 3, Provided: 3},
+	}, nil)
+	require.Equal(t, map[string]float64{"a/shadow/": 3},
+		gapRows(t, reg, constants.LLMSMReplicasProvided, constants.LabelVariantName, constants.LabelMode))
+
 	PublishReplicaGaps(nil, nil)
 	for _, name := range []string{constants.LLMSMReplicasSuggested, constants.LLMSMReplicasProvided,
 		constants.LLMSMReplicasShort, constants.LLMSMReplicasBorrowed} {

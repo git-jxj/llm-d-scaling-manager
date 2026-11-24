@@ -29,7 +29,8 @@ func registerReplicaGapMetrics(registry prometheus.Registerer) error {
 		}
 		return labels
 	}
-	variantLabels := []string{constants.LabelNamespace, constants.LabelModelName, constants.LabelVariantName, constants.LabelRole}
+	variantLabels := []string{constants.LabelNamespace, constants.LabelModelName, constants.LabelVariantName, constants.LabelRole,
+		constants.LabelMode}
 	gauge := func(name, help string, labels []string) *prometheus.GaugeVec {
 		return prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: name, Help: help}, withInstance(labels...))
 	}
@@ -37,8 +38,9 @@ func registerReplicaGapMetrics(registry prometheus.Registerer) error {
 		"Replicas the analyzers ask for (X), before the limiters, the variant's maxReplicas ceiling and "+
 			"the utilization share.", variantLabels)
 	replicasProvided = gauge(constants.LLMSMReplicasProvided,
-		"Replicas the controller provides (Y), after the limiters and the utilization share: the value of "+
-			"llmsm_desired_replicas. For a passive model, what it would set.", variantLabels)
+		"Replicas the variant gets (Y), after the limiters and the utilization share. With mode active, the "+
+			"value of llmsm_desired_replicas; with mode passive or shadow nothing is applied and it is what "+
+			"the controller would provide.", variantLabels)
 	replicasShort = gauge(constants.LLMSMReplicasShort,
 		"Replicas suggested and not provided, by reason (quota, gpu, node-fit, max-replicas, share-lent). "+
 			"limiter_name names the quota entry for reason quota. Present only while positive.",
@@ -78,6 +80,8 @@ type ReplicaShort struct {
 // ReplicaGap is one variant's suggestion against what it is provided.
 type ReplicaGap struct {
 	Namespace, ModelName, VariantName, Role string
+	// Mode is a constants.ReplicasMode* value: whether Provided is applied.
+	Mode string
 	// Suggested is X, Provided is Y. Suggested - Provided is the sum of Short
 	// less Borrowed.
 	Suggested, Provided int
@@ -120,6 +124,7 @@ func PublishReplicaGaps(gaps []ReplicaGap, quotas []QuotaAfterSuggested) {
 			constants.LabelModelName:   gap.ModelName,
 			constants.LabelVariantName: gap.VariantName,
 			constants.LabelRole:        gap.Role,
+			constants.LabelMode:        gap.Mode,
 		}
 		set(replicasSuggested, maps.Clone(vl), float64(gap.Suggested))
 		set(replicasProvided, maps.Clone(vl), float64(gap.Provided))

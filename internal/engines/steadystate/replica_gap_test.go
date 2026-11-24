@@ -85,6 +85,16 @@ func gapSeries(t *testing.T, r *prometheus.Registry, name string) map[string]flo
 	return out
 }
 
+// gapModesOf is the mode label of each variant's llmsm_replicas_provided.
+func gapModesOf(t *testing.T, r *prometheus.Registry) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, m := range family(t, r, constants.LLMSMReplicasProvided) {
+		out[label(m, constants.LabelVariantName)] = label(m, constants.LabelMode)
+	}
+	return out
+}
+
 // limiterCase is one limiter reason: a model asking for one more 8-GPU
 // replica, the constraints that refuse it, and what the short series say.
 type limiterCase struct {
@@ -152,20 +162,27 @@ func TestReplicaGap_EachLimiterReasonInEachMode(t *testing.T) {
 				ds := e.decideV2(t.Context(), o, []allocation.ModelScalingRequest{req}, lc.cons(), nil)
 				require.Len(t, ds, 1)
 				gaps := applyGaps(t, e, ds)
-				nodeFitPassive := mode.passive && lc.reason == constants.ReplicasShortReasonNodeFit
-				wantY, wantShort := 1.0, lc.short
-				if nodeFitPassive {
-					wantY, wantShort = 2, map[string]float64{}
+				// No decision changed: a passive model's would-be target is
+				// not fitted to nodes, so node fit leaves it at the 2 it asks
+				// for; only its series are fitted.
+				wantTarget := 1
+				if mode.passive && lc.reason == constants.ReplicasShortReasonNodeFit {
+					wantTarget = 2
 				}
-				require.EqualValues(t, wantY, ds[0].TargetReplicas, "setup: the cycle's target")
+				require.Equal(t, wantTarget, ds[0].TargetReplicas, "the cycle's target")
 				require.Equal(t, map[string]float64{"m-v": 2}, gapSeries(t, reg, constants.LLMSMReplicasSuggested))
-				require.Equal(t, map[string]float64{"m-v": wantY}, gapSeries(t, reg, constants.LLMSMReplicasProvided))
-				require.Equal(t, wantShort, gapSeries(t, reg, constants.LLMSMReplicasShort))
+				require.Equal(t, map[string]float64{"m-v": 1}, gapSeries(t, reg, constants.LLMSMReplicasProvided))
+				require.Equal(t, lc.short, gapSeries(t, reg, constants.LLMSMReplicasShort))
 				require.Equal(t, map[string]float64{"m-v": 0}, gapSeries(t, reg, constants.LLMSMReplicasBorrowed))
 				require.Equal(t, lc.quota, gapSeries(t, reg, constants.LLMSMQuotaRemainingAfterSuggestedGPUs))
 				require.Equal(t, "both", gaps["m-v"].Role)
-				// No decision changed: WasLimited stays off a passive model's
-				// would-be decision (the sticky hold reads it).
+				wantMode := constants.ReplicasModeActive
+				if mode.passive {
+					wantMode = constants.ReplicasModePassive
+				}
+				require.Equal(t, map[string]string{"m-v": wantMode}, gapModesOf(t, reg))
+				// WasLimited stays off a passive model's would-be decision
+				// (the sticky hold reads it).
 				if mode.passive {
 					require.False(t, ds[0].WasLimited, "a passive would-be decision must not be marked limited")
 				}
@@ -252,7 +269,8 @@ func shareStub(f *shareFleet) modelStub {
 // it lowers A to give B its GPUs: A is short by share-lent; once A has
 // released, B is raised past what today's optimizer gives it: borrowed. In
 // shadow mode, or with a model passive (its group plans in shadow), the share
-// sets nothing: X and Y agree for every variant.
+// sets nothing, and its series say what it would set, under mode shadow (and
+// passive for the passive model).
 func TestReplicaGap_ShareLentAndBorrowedInEachMode(t *testing.T) {
 	for _, mode := range []struct {
 		name, policy string
@@ -291,12 +309,31 @@ func TestReplicaGap_ShareLentAndBorrowedInEachMode(t *testing.T) {
 				}
 			}
 			if mode.name != "active" {
-				require.Zero(t, lowered, "the share lowered A in %s mode", mode.name)
-				require.Empty(t, gapSeries(t, reg, constants.LLMSMReplicasShort))
-				require.Equal(t, map[string]float64{"A-v": 0, "B-v": 0, "C-v": 0}, gapSeries(t, reg, constants.LLMSMReplicasBorrowed))
-				require.Equal(t, gapSeries(t, reg, constants.LLMSMReplicasProvided), gapSeries(t, reg, constants.LLMSMReplicasSuggested))
+				// The share sets nothing: every decision is today's
+				// optimizer's. Its series say what it would set, in one
+				// cycle: where its transfers would end, A lowered and B
+				// raised by what A gives, as the active share gets there.
+				ds := e.decideV2(ctx, shareStub(f), requests(), fullQuota(), f.scaleTargets())
+				for _, d := range ds {
+					require.Equal(t, f.current[d.ModelID], d.TargetReplicas, "the share changed %s's decision", d.VariantName)
+				}
+				gaps = applyGaps(t, e, ds)
+				lowered = 9 - gaps["A-v"].Provided
+				require.Positive(t, lowered, "the share would lower A")
+				require.Equal(t, map[string]float64{"A-v": 9, "B-v": 5, "C-v": 2}, gapSeries(t, reg, constants.LLMSMReplicasSuggested))
+				require.Equal(t, map[string]float64{"A-v/share-lent/": float64(lowered)}, gapSeries(t, reg, constants.LLMSMReplicasShort))
+				require.Equal(t, map[string]float64{"A-v": 0, "B-v": float64(lowered), "C-v": 0},
+					gapSeries(t, reg, constants.LLMSMReplicasBorrowed))
+				want := map[string]string{"A-v": constants.ReplicasModeShadow, "B-v": constants.ReplicasModeShadow,
+					"C-v": constants.ReplicasModeShadow}
+				if mode.passive != "" {
+					want[mode.passive+"-v"] = constants.ReplicasModePassive
+				}
+				require.Equal(t, want, gapModesOf(t, reg))
 				return
 			}
+			require.Equal(t, map[string]string{"A-v": constants.ReplicasModeActive, "B-v": constants.ReplicasModeActive,
+				"C-v": constants.ReplicasModeActive}, gapModesOf(t, reg))
 			require.Positive(t, lowered, "setup: the share never lowered A")
 			require.Equal(t, 9.0, gapSeries(t, reg, constants.LLMSMReplicasSuggested)["A-v"])
 			require.Equal(t, map[string]float64{"A-v/share-lent/": float64(lowered)}, gapSeries(t, reg, constants.LLMSMReplicasShort))
@@ -333,19 +370,19 @@ func TestReplicaGap_ShareOffsetsTheLimitersFirst(t *testing.T) {
 		wantBorrowed int
 	}{
 		{"share fills part of a quota shortfall",
-			replicaGapEntry{ask: 5, pass: 2, limited: true, limitedBy: "q", shared: true, shareTarget: 4}, 4,
+			replicaGapEntry{ask: 5, pass: 2, limitShort: 3, limitedBy: "q", shared: true, shareTarget: 4}, 4,
 			5, []metrics.ReplicaShort{{Reason: "quota", LimiterName: "q", Replicas: 1}}, 0},
 		{"share fills past it",
-			replicaGapEntry{ask: 5, pass: 2, limited: true, limitedBy: "q", shared: true, shareTarget: 7}, 7,
+			replicaGapEntry{ask: 5, pass: 2, limitShort: 3, limitedBy: "q", shared: true, shareTarget: 7}, 7,
 			5, nil, 2},
 		{"share lowers a limited variant further",
-			replicaGapEntry{ask: 5, pass: 2, limited: true, limitedBy: "gpu-limiter", shared: true, shareTarget: 1}, 1,
+			replicaGapEntry{ask: 5, pass: 2, limitShort: 3, limitedBy: "gpu-limiter", shared: true, shareTarget: 1}, 1,
 			5, []metrics.ReplicaShort{{Reason: "gpu", Replicas: 3}, {Reason: "share-lent", Replicas: 1}}, 0},
-		{"ceiling and quota", replicaGapEntry{ask: 3, overCap: 2, pass: 1, limited: true, limitedBy: "q"}, 1,
+		{"ceiling and quota", replicaGapEntry{ask: 3, overCap: 2, pass: 1, limitShort: 2, limitedBy: "q"}, 1,
 			5, []metrics.ReplicaShort{{Reason: "quota", LimiterName: "q", Replicas: 2}, {Reason: "max-replicas", Replicas: 2}}, 0},
-		{"a later stage moves X with Y", replicaGapEntry{ask: 3, pass: 1, limited: true, limitedBy: "q"}, 2,
+		{"a later stage moves X with Y", replicaGapEntry{ask: 3, pass: 1, limitShort: 2, limitedBy: "q"}, 2,
 			4, []metrics.ReplicaShort{{Reason: "quota", LimiterName: "q", Replicas: 2}}, 0},
-		{"held unrouted: nothing moves it", replicaGapEntry{ask: 3, pass: 1, limited: true, held: true}, 1,
+		{"held unrouted: nothing moves it", replicaGapEntry{ask: 3, pass: 1, limitShort: 2, held: true}, 1,
 			1, nil, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -368,7 +405,7 @@ func TestReplicaGap_ResourceConstrainedEventCarriesXAndY(t *testing.T) {
 	d := wiringDecision(2, 2, 0)
 	d.WasLimited, d.LimitedBy = true, "team-quota"
 	e.cycleGaps = &replicaGapPlan{entries: map[string]replicaGapEntry{
-		utils.GetNamespacedKey(wiringNS, wiringTarget): {ask: 3, pass: 2, limited: true, limitedBy: "team-quota"}}}
+		utils.GetNamespacedKey(wiringNS, wiringTarget): {ask: 3, pass: 2, limitShort: 1, limitedBy: "team-quota"}}}
 	va := wiringVA()
 	e.applySaturationDecisions(context.Background(), []domain.VariantDecision{d},
 		map[string]*variant.Variant{utils.GetNamespacedKey(wiringNS, wiringTarget): va}, map[string]*domain.Allocation{})
@@ -396,7 +433,7 @@ func TestReplicaGap_ApplyPassPublishesAndReplaces(t *testing.T) {
 	require.NoError(t, metrics.InitMetrics(reg))
 	vaMap := map[string]*variant.Variant{utils.GetNamespacedKey(wiringNS, wiringTarget): wiringVA()}
 	e.cycleGaps = &replicaGapPlan{entries: map[string]replicaGapEntry{
-		utils.GetNamespacedKey(wiringNS, wiringTarget): {ask: 3, pass: 2, limited: true, limitedBy: "team-quota"}}}
+		utils.GetNamespacedKey(wiringNS, wiringTarget): {ask: 3, pass: 2, limitShort: 1, limitedBy: "team-quota"}}}
 	d := wiringDecision(2, 2, 0)
 	e.applySaturationDecisions(context.Background(), []domain.VariantDecision{d}, vaMap, map[string]*domain.Allocation{})
 	require.Equal(t, map[string]float64{wiringTarget: 3}, gapSeries(t, reg, constants.LLMSMReplicasSuggested))
@@ -422,4 +459,43 @@ func TestReplicaGap_QuotaRemainingPerNamespace(t *testing.T) {
 		{namespace: "b", accelerator: "A100", current: 1, gpusPerReplica: 2, x: 9},
 	})
 	require.Equal(t, []metrics.QuotaAfterSuggested{{LimiterName: "ns-quota", Scope: "a", Accelerator: "A100", GPUs: 8 - 4 - 3*2}}, got)
+}
+
+// A limiter holds the cheaper variant to one replica of the two it asks for,
+// and the pass grows a sibling of the same role in its place: the role gets
+// the three replicas it asks for, so nothing is short. Negative control for
+// charging a limiter's shortfall per role (planReplicaGaps).
+func TestReplicaGap_ASiblingCoversALimitedVariant(t *testing.T) {
+	reg := freshMetrics(t)
+	e := &Engine{Config: config.NewTestConfig()}
+	req := growingA100("ns", "m", 1)
+	req.CompositeSignal.Remaining = 2000
+	req.CompositeSignal.Result.TotalDemand = 3000
+	req.CompositeSignal.Result.VariantCapacities = append(req.CompositeSignal.Result.VariantCapacities,
+		domain.VariantCapacity{VariantName: "m-w", PerReplicaCapacity: 1000})
+	req.Variants = append(req.Variants, domain.VariantMetadata{VariantName: "m-w", AcceleratorName: "H100", Cost: 10})
+	req.VariantStates = append(req.VariantStates, domain.VariantReplicaState{VariantName: "m-w", GPUsPerReplica: 1})
+	cons := []*allocation.ResourceConstraints{{ProviderName: "team-quota",
+		Pools: map[string]allocation.ResourcePool{"A100": {Limit: 2, Used: 1}, "H100": {Limit: 8}}}}
+	ds := e.decideV2(t.Context(), allocation.NewGreedyByScoreOptimizer(), []allocation.ModelScalingRequest{req}, cons, nil)
+	targets := map[string]int{}
+	for _, d := range ds {
+		targets[d.VariantName] = d.TargetReplicas
+		if d.VariantName == "m-v" {
+			require.True(t, d.WasLimited, "setup: the quota holds m-v")
+		}
+	}
+	require.Equal(t, map[string]int{"m-v": 2, "m-w": 1}, targets, "setup: m-w grows in m-v's place")
+	applyGaps(t, e, ds)
+	require.Equal(t, map[string]float64{"m-v": 2, "m-w": 1}, gapSeries(t, reg, constants.LLMSMReplicasSuggested))
+	require.Empty(t, gapSeries(t, reg, constants.LLMSMReplicasShort))
+}
+
+// The asks are computed on copies: the requests the cycle decides with are
+// exactly as they were.
+func TestReplicaGap_AsksLeaveTheRequestsAlone(t *testing.T) {
+	reqs := []allocation.ModelScalingRequest{maxCapped(true), growingA100("ns", "n", 8)}
+	before := []allocation.ModelScalingRequest{maxCapped(true), growingA100("ns", "n", 8)}
+	replicaAsks(t.Context(), reqs)
+	require.Equal(t, before, reqs)
 }

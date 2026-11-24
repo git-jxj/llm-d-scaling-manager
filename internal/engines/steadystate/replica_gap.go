@@ -21,8 +21,15 @@ import (
 // share -- against Y, the target the controller sets (llmsm_desired_replicas),
 // and the reasons between them. Nothing here changes a decision: the figures
 // come from a cost-aware pass over copies of the requests, which the engine
-// runs anyway when no limiter is declared, and from what the decision step
-// already recorded on each decision.
+// runs anyway when no limiter is declared, from a passive model's would-be
+// pass fitted to the nodes (allocation.PassiveWouldBeFitted), from the targets
+// a share planning in shadow would set (shareWouldBe), and from what the
+// decision step already recorded on each decision.
+//
+// Where nothing is applied, Y is a would-be figure, and the series' mode label
+// says so (replicaGapMode): a passive model's Y is its would-be target fitted
+// to the nodes, and a variant a share plans in shadow has the share's would-be
+// target as its Y. Only an active variant's Y is llmsm_desired_replicas.
 //
 // X is built from Y and what each stage took away, so the identity
 // X - Y = sum(short) - borrowed holds by construction, and a stage after the
@@ -36,15 +43,23 @@ type replicaGapEntry struct {
 	// role, charged to the variants they held (replicaAsks).
 	ask, overCap int
 	// pass is the optimizer pass's target: after the limiters, before the
-	// utilization share.
+	// utilization share. For a passive model it is fitted to the nodes.
 	pass int
-	// limited says a limiter held the pass below its ask, and limitedBy which
-	// (LimitedBy, or ShadowLimitedBy for a passive model's would-be pass).
-	limited   bool
-	limitedBy string
-	// shared says the utilization share set the target, shareTarget to what.
-	shared      bool
-	shareTarget int
+	// limitShort is what the limiters held the variant below its ask, and
+	// limitedBy which (LimitedBy, or ShadowLimitedBy for a passive model's
+	// would-be pass): a role's shortfall, charged to the variants a limiter
+	// held (planReplicaGaps).
+	limitShort int
+	limitedBy  string
+	// shared says the utilization share set the target, shareTarget to what;
+	// wouldBe that the share planned it in shadow, so set nothing.
+	shared, wouldBe bool
+	shareTarget     int
+	// passive is a passive model's variant, and fitCut what node fit takes
+	// from its would-be target (the decision's TargetReplicas, which is not
+	// fitted to nodes).
+	passive bool
+	fitCut  int
 	// held is a variant no InferencePool selects: nothing moves it.
 	held bool
 }
@@ -56,13 +71,36 @@ type replicaGapPlan struct {
 	quotas  []*allocation.ResourceConstraints
 }
 
+// roleKey is the namespace/model/role a variant serves.
+func roleKey(namespace, model, role string) string {
+	return namespace + "/" + model + "/" + normalizeRole(role)
+}
+
 // planReplicaGaps records, after the optimizer pass and before the
 // utilization share, each decision's pass target and what bound it, beside
-// its ask.
+// its ask. fitted is the passive models' would-be pass fitted to the nodes.
+//
+// A limiter's shortfall is counted per role: what the role's variants ask for
+// less what the pass gave them, charged to the variants a limiter held, in
+// name order, each at most its own ask less its pass. A sibling the pass grew
+// in a held variant's place covers it: the role is not short by it.
 func planReplicaGaps(ctx context.Context, requests []allocation.ModelScalingRequest,
-	decisions []domain.VariantDecision, constraints []*allocation.ResourceConstraints) *replicaGapPlan {
+	decisions, fitted []domain.VariantDecision, constraints []*allocation.ResourceConstraints) *replicaGapPlan {
 	asks, overCap := replicaAsks(ctx, requests)
+	passive := map[string]bool{}
+	for _, r := range requests {
+		if r.Passive {
+			passive[utils.GetNamespacedKey(r.Namespace, r.ModelID)] = true
+		}
+	}
+	fit := make(map[string]*domain.VariantDecision, len(fitted))
+	for i := range fitted {
+		fit[utils.GetNamespacedKey(fitted[i].Namespace, fitted[i].VariantName)] = &fitted[i]
+	}
 	p := &replicaGapPlan{entries: make(map[string]replicaGapEntry, len(decisions))}
+	roleShort := map[string]int{} // per role: asked less given
+	roleOf := map[string]string{}
+	var limited []string
 	for i := range decisions {
 		d := &decisions[i]
 		k := utils.GetNamespacedKey(d.Namespace, d.VariantName)
@@ -70,14 +108,38 @@ func planReplicaGaps(ctx context.Context, requests []allocation.ModelScalingRequ
 		if !ok {
 			ask = d.TargetReplicas
 		}
-		en := replicaGapEntry{ask: ask, overCap: overCap[k], pass: d.TargetReplicas, held: d.HeldUnrouted}
+		en := replicaGapEntry{ask: ask, overCap: overCap[k], pass: d.TargetReplicas, held: d.HeldUnrouted,
+			passive: passive[utils.GetNamespacedKey(d.Namespace, d.ModelID)]}
+		isLimited := false
 		switch {
 		case d.WasLimited:
-			en.limited, en.limitedBy = true, d.LimitedBy
+			isLimited, en.limitedBy = true, d.LimitedBy
 		case d.ShadowLimitedBy != "":
-			en.limited, en.limitedBy = true, d.ShadowLimitedBy
+			isLimited, en.limitedBy = true, d.ShadowLimitedBy
+		}
+		if f, ok := fit[k]; ok && f.TargetReplicas < en.pass {
+			en.fitCut, en.pass = en.pass-f.TargetReplicas, f.TargetReplicas
+			isLimited, en.limitedBy = true, f.ShadowLimitedBy
+			if en.limitedBy == "" {
+				en.limitedBy = allocation.NodeFitLimiterName
+			}
+		}
+		role := roleKey(d.Namespace, d.ModelID, d.Role)
+		roleOf[k] = role
+		roleShort[role] += en.ask - en.pass
+		if isLimited && !en.held {
+			limited = append(limited, k)
 		}
 		p.entries[k] = en
+	}
+	slices.Sort(limited)
+	for _, k := range limited {
+		en := p.entries[k]
+		if n := min(en.ask-en.pass, roleShort[roleOf[k]]); n > 0 {
+			en.limitShort = n
+			roleShort[roleOf[k]] -= n
+			p.entries[k] = en
+		}
 	}
 	for _, c := range constraints {
 		if c != nil && c.ProviderName != allocation.PhysicalLimiterName {
@@ -99,7 +161,21 @@ func (p *replicaGapPlan) noteShare(decisions []domain.VariantDecision) {
 		}
 		k := utils.GetNamespacedKey(d.Namespace, d.VariantName)
 		if en, ok := p.entries[k]; ok {
-			en.shared, en.shareTarget = true, d.TargetReplicas
+			en.shared, en.wouldBe, en.shareTarget = true, false, d.TargetReplicas
+			p.entries[k] = en
+		}
+	}
+}
+
+// noteShareWouldBe records the targets a share planning in shadow would set
+// (utilizationShareState.wouldBe), keyed namespace/variant.
+func (p *replicaGapPlan) noteShareWouldBe(targets map[string]int) {
+	if p == nil {
+		return
+	}
+	for k, t := range targets {
+		if en, ok := p.entries[k]; ok {
+			en.shared, en.wouldBe, en.shareTarget = true, true, t
 			p.entries[k] = en
 		}
 	}
@@ -136,7 +212,7 @@ func replicaAsks(ctx context.Context, requests []allocation.ModelScalingRequest)
 	for _, d := range pass(false) {
 		k := utils.GetNamespacedKey(d.Namespace, d.VariantName)
 		asks[k] = d.TargetReplicas
-		role := d.Namespace + "/" + d.ModelID + "/" + normalizeRole(d.Role)
+		role := roleKey(d.Namespace, d.ModelID, d.Role)
 		roleOf[k] = role
 		capped[role] += d.TargetReplicas
 	}
@@ -144,8 +220,7 @@ func replicaAsks(ctx context.Context, requests []allocation.ModelScalingRequest)
 	over := map[string]int{} // per variant: the uncapped ask above the capped one
 	for _, d := range pass(true) {
 		k := utils.GetNamespacedKey(d.Namespace, d.VariantName)
-		role := d.Namespace + "/" + d.ModelID + "/" + normalizeRole(d.Role)
-		uncapped[role] += d.TargetReplicas
+		uncapped[roleKey(d.Namespace, d.ModelID, d.Role)] += d.TargetReplicas
 		if extra := d.TargetReplicas - asks[k]; extra > 0 {
 			over[k] = extra
 		}
@@ -184,27 +259,49 @@ func shortReason(limitedBy string) (string, string) {
 	}
 }
 
+// replicaGapMode is the mode label of a variant's series: whether its Y is
+// applied (active) or would-be (passive, shadow).
+func replicaGapMode(en replicaGapEntry) string {
+	switch {
+	case en.passive:
+		return constants.ReplicasModePassive
+	case en.wouldBe:
+		return constants.ReplicasModeShadow
+	}
+	return constants.ReplicasModeActive
+}
+
 // gap is one variant's suggestion against provided, the target the decision
 // is applied with. A variant the decision step did not record -- or one held
 // unrouted, which nothing moves -- is provided what it is suggested.
+//
+// Y is provided, unless nothing is applied: a passive model's Y is provided
+// fitted to the nodes, and a share planning in shadow moves Y by what it would
+// move the pass's target.
 func (p *replicaGapPlan) gap(d *domain.VariantDecision, provided int) metrics.ReplicaGap {
 	g := metrics.ReplicaGap{Namespace: d.Namespace, ModelName: d.ModelID, VariantName: d.VariantName,
-		Role: normalizeRole(d.Role), Suggested: provided, Provided: provided}
+		Role: normalizeRole(d.Role), Mode: constants.ReplicasModeActive, Suggested: provided, Provided: provided}
 	if p == nil {
 		return g
 	}
 	en, ok := p.entries[utils.GetNamespacedKey(d.Namespace, d.VariantName)]
-	if !ok || en.held {
+	if !ok {
 		return g
 	}
-	limitShort := 0
-	if en.limited {
-		limitShort = max(0, en.ask-en.pass)
+	g.Mode = replicaGapMode(en)
+	if en.held {
+		return g
 	}
+	y := max(0, provided-en.fitCut)
+	limitShort := en.limitShort
 	maxShort := en.overCap
 	lent, borrowed := 0, 0
 	if en.shared {
-		switch delta := en.shareTarget - en.pass; {
+		delta := en.shareTarget - en.pass
+		if en.wouldBe {
+			y = max(0, y+delta)
+		}
+		switch {
 		case delta < 0:
 			lent = -delta
 		case delta > 0:
@@ -218,6 +315,7 @@ func (p *replicaGapPlan) gap(d *domain.VariantDecision, provided int) metrics.Re
 			borrowed = delta - take
 		}
 	}
+	g.Suggested, g.Provided = y, y
 	reason, limiter := shortReason(en.limitedBy)
 	for _, s := range []metrics.ReplicaShort{
 		{Reason: reason, LimiterName: limiter, Replicas: limitShort},
