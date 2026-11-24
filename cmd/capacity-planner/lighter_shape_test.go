@@ -43,14 +43,24 @@ func heavierLoadState(t *testing.T, inX, outX float64) *learnreplay.State {
 // keeps its verdict: a heavier load only makes it more true. The guard is
 // on the measured shape asked (--shape measured): the default prices the
 // load at its own cycles' shape, and judges.
+// cycleP95Query is stairQuery judged at the p95 of the load's cycles, the
+// statistic this test was written at: the #361 rule is about the shape
+// priced, not the load statistic, so the test pins it (#430 moved the
+// default to the p95 less its counting noise).
+func cycleP95Query(np, nd int, load float64) whatifapi.ReportQuery {
+	q := stairQuery(np, nd, load)
+	q.LoadStatistic = whatifapi.LoadP95
+	return q
+}
+
 func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
 	measured := func(q whatifapi.ReportQuery) whatifapi.ReportQuery {
 		q.Shapes = []whatifapi.ReportShapeAsk{{Measured: true, Label: "measured"}}
 		return q
 	}
-	own := stairReport(t, stairQuery(4, 4, 0)).Shapes[0]
+	own := stairReport(t, cycleP95Query(4, 4, 0)).Shapes[0]
 	require.Equal(t, whatifapi.VerdictOver, own.Verdict.Verdict, own.Verdict.Summary)
-	require.Equal(t, whatifapi.VerdictRight, stairReport(t, stairQuery(3, 3, 0)).Shapes[0].Verdict.Verdict)
+	require.Equal(t, whatifapi.VerdictRight, stairReport(t, cycleP95Query(3, 3, 0)).Shapes[0].Verdict.Verdict)
 	for _, c := range []struct {
 		name      string
 		inX, outX float64
@@ -58,7 +68,7 @@ func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			st := heavierLoadState(t, c.inX, c.outX)
 			for _, f := range [][2]int{{4, 4}, {3, 3}} {
-				s := priceReport(t, st, measured(stairQuery(f[0], f[1], 0))).Shapes[0]
+				s := priceReport(t, st, measured(cycleP95Query(f[0], f[1], 0))).Shapes[0]
 				require.NotNil(t, s.LoadShape)
 				assert.True(t, s.LoadShape.Mismatch, "the load's cycles ran at another shape")
 				v := s.Verdict
@@ -68,7 +78,7 @@ func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
 				assert.Empty(t, v.Shrink, v.Summary)
 				assert.Nil(t, v.Needed, "no fleet is sized on a knee that reads high: %s", v.Summary)
 				// A growth line is of the same traffic: no shrink there either.
-				gq := measured(stairQuery(f[0], f[1], 0))
+				gq := measured(cycleP95Query(f[0], f[1], 0))
 				gq.LoadSeenX = 1.1
 				grown := priceReport(t, st, gq).Shapes[0].Growth
 				require.NotEmpty(t, grown)
@@ -77,18 +87,18 @@ func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
 				}
 				// Asked for no shape, the report prices the load at its own
 				// cycles' shape: no mismatch, and a verdict.
-				d := priceReport(t, st, stairQuery(f[0], f[1], 0)).Shapes[0].Verdict
+				d := priceReport(t, st, cycleP95Query(f[0], f[1], 0)).Shapes[0].Verdict
 				assert.NotEqual(t, whatifapi.VerdictNotJudged, d.Verdict, "%d + %d at the load's shape: %s", f[0], f[1], d.Summary)
 				assert.NotContains(t, d.Summary, phasesWords, d.Summary)
 			}
 			// Under-provisioned at its own shape, and still so at a heavier
 			// load.
-			v := priceReport(t, st, measured(stairQuery(2, 2, 0))).Shapes[0].Verdict
+			v := priceReport(t, st, measured(cycleP95Query(2, 2, 0))).Shapes[0].Verdict
 			assert.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Summary)
 		})
 	}
 	// Within the tolerance the verdict stands.
-	v := priceReport(t, heavierLoadState(t, 1.1, 1.1), measured(stairQuery(4, 4, 0))).Shapes[0].Verdict
+	v := priceReport(t, heavierLoadState(t, 1.1, 1.1), measured(cycleP95Query(4, 4, 0))).Shapes[0].Verdict
 	assert.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
 
 	// Decode alone holding sizes a decode-only need on the same knee, which
