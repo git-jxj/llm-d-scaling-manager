@@ -287,9 +287,16 @@ func TestAtReplicas_Q32HotCyclesOfAnotherShapeDoNotContradict(t *testing.T) {
 // priced is the last cycles' 4569/1855: v0.12.2 called the window's own
 // 1 + 1 UNDER-PROVISIONED at 14.8x that shape's knee, needing 18 decode.
 // The verdict is NOT JUDGED and says the load and the shape priced are of
-// different traffic, and the command exits refused (#294, #297).
+// different traffic, and the command exits refused (#294, #297). Asked for
+// no shape, the report prices the load at its own cycles' shape and judges.
 func TestAtReplicas_TheOLSSweepLoadIsOfAnotherShape(t *testing.T) {
-	out, code := runCmd(t, "at-replicas", "--recording", olsSweep, "-o", "json")
+	def := atReplicasJSON(t, "at-replicas", "--recording", olsSweep)
+	require.NotEmpty(t, def.Shapes)
+	assert.Equal(t, whatifapi.ShapeLoad, def.Shapes[0].Label, "the default shape is the load's own")
+	assert.NotEqual(t, whatifapi.VerdictNotJudged, def.Shapes[0].Verdict.Verdict, def.Shapes[0].Verdict.Summary)
+	assert.NotContains(t, def.Shapes[0].Verdict.Summary, phasesWords)
+
+	out, code := runCmd(t, "at-replicas", "--recording", olsSweep, "--shape", "measured", "-o", "json")
 	require.Equal(t, whatif.ExitRefused, code, out)
 	var rep whatifapi.ReportResponse
 	require.NoError(t, json.Unmarshal([]byte(out), &rep))

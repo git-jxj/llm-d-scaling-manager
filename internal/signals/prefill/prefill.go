@@ -232,6 +232,12 @@ type Cycle struct {
 	// a queue or is a lower bound under it (plateau.go;
 	// saturation.SwitchPrefillVPOccupancyPlateau).
 	VPOccupancyPlateau bool
+	// VPLoneRate reads V_P from light load, the lone rate: one request's
+	// computed tokens over its prefill time at under LoneMaxOccupancy
+	// requests in prefill per engine, at the prompt the cycle's rows carry,
+	// where V_P is refused for want of a queue or is a lower bound
+	// (lonerate.go; saturation.SwitchPrefillVPLoneRate).
+	VPLoneRate bool
 	// ALowLoadByRate reads a minute as low load, for the fit of a, by its
 	// request rate against its prompt cluster's service time
 	// (lowLoadByRate), not against its own: a minute whose prefill ran slow
@@ -294,6 +300,15 @@ type Estimate struct {
 	VPPlateauMinutes      int
 	VPPlateauSpan         float64
 	VPPlateauMaxOccupancy float64
+	// VPLone is the lone rate (lonerate.go), read with Cycle.VPLoneRate,
+	// whether or not V_P is taken from it; zero with fewer than
+	// MinLoneMinutes lone minutes at the prompt priced. VPLoneMinutes is how
+	// many such minutes were read, and VPLoneIsVP says the served peak is at
+	// most LoneServedTolerance over the lone rate, so it is V_P, not a lower
+	// bound.
+	VPLone        float64
+	VPLoneMinutes int
+	VPLoneIsVP    bool
 	// VPQueuedMinutes, VPLongestQueuedRun and VPBusyMinutes say why V_P was
 	// refused or where it stands: the samples kept that held a queue on
 	// some sample, the longest run of them (a peak needs PeakRun), and the
@@ -453,6 +468,10 @@ type sample struct {
 	// Cycle.VPOccupancyPlateau.
 	occ   float64
 	occOK bool
+	// lone is the minute's lone speed (loneSpeed), valid when loneOK; read
+	// only with Cycle.VPLoneRate.
+	lone   float64
+	loneOK bool
 }
 
 // promptPoint is one row's effective prompt length, for the steady gate.
@@ -493,6 +512,11 @@ type keyState struct {
 	// Cycle.VPWindowBest; bestQueuedOK says one was read.
 	bestQueued   busy
 	bestQueuedOK bool
+	// bestServed is the highest served peak the key has read since its
+	// first cycle, kept past Retention for Cycle.VPLoneRate: a lone rate is
+	// V_P only where no pod was ever seen to serve more than
+	// LoneServedTolerance over it (loneFill).
+	bestServed float64
 }
 
 // Observer is the learned state of every key. Safe for concurrent use.
@@ -618,8 +642,11 @@ func (o *Observer) Observe(c Cycle) Estimate {
 				ttft: rm.AvgTTFT, ttftKnown: rm.AvgTTFTKnown, queue: rm.AvgQueueTime, queueKnown: rm.AvgQueueTimeKnown,
 				ranks: rm.Ranks()}, ieff, rr)
 		}
-		if c.VPOccupancyPlateau && c.Disaggregated {
+		if (c.VPOccupancyPlateau || c.VPLoneRate) && c.Disaggregated {
 			s.occ, s.occOK = rowOccupancy(rm)
+		}
+		if c.VPLoneRate && c.Disaggregated && ieffOK {
+			s.lone, s.loneOK = loneSpeed(rm, ieff)
 		}
 		ps.add(s)
 		shares = append(shares, share{rate: s.rate, rateOK: s.rateOK, requests: rr, requestsOK: rrOK, multiRank: s.multiRank})
@@ -629,6 +656,10 @@ func (o *Observer) Observe(c Cycle) Estimate {
 	ks.noteImbalance(shares, allAdmitted, c.Now)
 	est.capacity(ks, c, sglang)
 	est.plateauFill(ks, c)
+	if c.VPLoneRate {
+		ref, _ := MeanEffectivePrompt(c.Rows, sglang)
+		est.loneFill(ks, c, ref)
+	}
 	est.fixed(ks, c)
 	if c.AFromTiming {
 		switch est.ARefused {
