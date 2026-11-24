@@ -103,10 +103,11 @@ func TestHitAtCount_TheFloor(t *testing.T) {
 	assert.InDelta(t, 0.45, a.Hit, 1e-12)
 }
 
-// uniformGaps is a reuse-gap histogram of hits gaps spread evenly over
+// uniformGaps is a reuse-gap histogram of 1000 hits' gaps spread evenly over
 // [0, 100] s, in ten buckets, and an idle histogram of misses evictions
 // whose median is 100 s.
-func uniformGaps(hits, misses float64) *ReuseHistograms {
+func uniformGaps(misses float64) *ReuseHistograms {
+	const hits = 1000.0
 	r := &ReuseHistograms{GapSum: hits * 50}
 	for i := 1; i <= 10; i++ {
 		r.Gap = append(r.Gap, ReuseBucket{UpperEdge: float64(10 * i), Count: hits * float64(i) / 10})
@@ -121,7 +122,7 @@ func uniformGaps(hits, misses float64) *ReuseHistograms {
 // T'^2 - 400 T' + 15000 = 0, so T' = 200 - 50 sqrt(10) and the hits under it
 // are T'/100 of them.
 func TestHitAtCount_TheReuseGapRule(t *testing.T) {
-	a, ok := HitAtCountOf(0.5, 4000, 2, 1, uniformGaps(1000, 1000))
+	a, ok := HitAtCountOf(0.5, 4000, 2, 1, uniformGaps(1000))
 	require.True(t, ok)
 	assert.Equal(t, HitReuseGap, a.Rule)
 	tp := 200 - 50*math.Sqrt(10)
@@ -131,7 +132,7 @@ func TestHitAtCount_TheReuseGapRule(t *testing.T) {
 	assert.Equal(t, 0.5, a.Hi)
 
 	// More pods hold the hit, whatever the histograms say.
-	up, ok := HitAtCountOf(0.5, 4000, 2, 3, uniformGaps(1000, 1000))
+	up, ok := HitAtCountOf(0.5, 4000, 2, 3, uniformGaps(1000))
 	require.True(t, ok)
 	assert.Equal(t, HitHeld, up.Rule)
 	assert.Equal(t, 0.5, up.Hit)
@@ -150,7 +151,7 @@ func TestHitAtCount_TheReuseGapRuleFallsBackToTheFloor(t *testing.T) {
 		"a NaN count":         func(r *ReuseHistograms) { r.Idle[1].Count = math.NaN() },
 		"only an +Inf edge":   func(r *ReuseHistograms) { r.Idle = []ReuseBucket{{math.Inf(1), 10}} },
 	} {
-		r := uniformGaps(1000, 1000)
+		r := uniformGaps(1000)
 		edit(r)
 		a, ok := HitAtCountOf(0.5, 4000, 2, 1, r)
 		require.True(t, ok, name)
@@ -159,7 +160,7 @@ func TestHitAtCount_TheReuseGapRuleFallsBackToTheFloor(t *testing.T) {
 	}
 	// With the gaps far shorter than the horizon, the rule would keep
 	// every hit: capped at the fit's.
-	short := uniformGaps(1000, 10)
+	short := uniformGaps(10)
 	for i := range short.Gap {
 		short.Gap[i].UpperEdge /= 100
 	}
