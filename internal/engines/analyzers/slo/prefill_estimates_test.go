@@ -188,9 +188,12 @@ func TestPrefillEstimates_ConcurrentReadsAndSaturationCycles(t *testing.T) {
 	// readers start before any cycle runs, and each model's cycles go on past
 	// minCycles until some read has found an estimate. On a slow or one-CPU
 	// runner the scheduler may otherwise run every cycle before a reader is
-	// scheduled at all. maxCycles bounds the wait, so a stash no read can
-	// find fails that assertion rather than the deadlock guard.
-	const minCycles, maxCycles = 25, 10000
+	// scheduled at all. overlapWait bounds the wait in wall time, well inside
+	// the deadlock guard, so a stash no read can find fails that assertion
+	// rather than the guard. A cycle count cannot: under -race, 10000 cycles
+	// per model ran past the two minutes on one CPU.
+	const minCycles, overlapWait = 25, 30 * time.Second
+	overlapDeadline := time.Now().Add(overlapWait)
 	var reads atomic.Int64
 	done := make(chan struct{})
 	var readersStarted, readers sync.WaitGroup
@@ -225,7 +228,7 @@ func TestPrefillEstimates_ConcurrentReadsAndSaturationCycles(t *testing.T) {
 			defer wg.Done()
 			readersStarted.Wait()
 			model := fmt.Sprintf("m%d", m)
-			for i := 0; i < minCycles || (reads.Load() == 0 && i < maxCycles); i++ {
+			for i := 0; i < minCycles || (reads.Load() == 0 && time.Now().Before(overlapDeadline)); i++ {
 				if _, err := p.sat.Analyze(context.Background(), stashInput(model)); err != nil {
 					t.Error(err)
 					return
