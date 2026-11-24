@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -49,10 +48,10 @@ const (
 	SettingScaleToZero                  = "scaleToZero"
 	SettingWatchNamespaces              = "watchNamespaces"
 	SettingLogVerbosity                 = "logVerbosity"
-	// SettingNamespaceSelector is a label selector the namespaces this
-	// controller manages must match, on an install that opts namespaces in
-	// by label (--namespace-opt-in=label). live.
-	SettingNamespaceSelector = "namespaceSelector"
+	// SettingKEDANamespace is the namespace KEDA runs in, where the
+	// controller writes KEDA's copy of the scaler's client certificate
+	// (--keda-namespace). restart.
+	SettingKEDANamespace = "kedaNamespace"
 	// SettingCAFromSecret, "true", reads Prometheus's CA from Secret
 	// PrometheusCASecret, which the release manifest mounts at
 	// PrometheusCAFromSecretPath. restart.
@@ -71,14 +70,10 @@ const PrometheusCASecret = "scaling-manager-prometheus-ca"
 // PrometheusCASecret's ca.crt: the CA path caFromSecret "true" sets.
 const PrometheusCAFromSecretPath = "/etc/scaling-manager-prometheus-ca/ca.crt"
 
-// NamespaceOptInLabel is the label a namespace carries, "true", to opt in to
-// an install that manages namespaces by label (--namespace-opt-in=label).
-const NamespaceOptInLabel = "scaling-manager.llmd.ai/managed"
-
 // LiveSettingKeys are the settings that take effect within a cycle of a change.
 var LiveSettingKeys = []string{
 	SettingPassive, SettingUtilizationShare, SettingLimiter, SettingQuotas, SettingQuotaScope,
-	SettingKueue, SettingKueueBorrow, SettingKueueNamespace, SettingNamespaceSelector,
+	SettingKueue, SettingKueueBorrow, SettingKueueNamespace,
 }
 
 // limiterSettingKeys are the live keys that together build the limiters list.
@@ -100,6 +95,7 @@ var restartSettingKeys = map[string]string{
 	SettingWatchNamespaces:              "WATCH_NAMESPACE",
 	SettingLogVerbosity:                 "V",
 	SettingDSetRoleWriter:               "DSET_ROLE_WRITER",
+	SettingKEDANamespace:                "LLMSM_KEDA_NAMESPACE",
 }
 
 // RestartSettingKeys are the settings read only at start, sorted.
@@ -175,11 +171,10 @@ type Settings struct {
 	// limiter key is unset.
 	Limiters []QuotaLimiterConfig
 	// Restart holds the settings read only at start, and the advanced keys,
-	// by loader key (PROMETHEUS_BASE_URL, V, ...), as written.
+	// by loader key (PROMETHEUS_BASE_URL, V, ...), as written. With
+	// watchNamespaces live (Config.WatchNamespacesLive), its WATCH_NAMESPACE
+	// is read from here on every change instead.
 	Restart map[string]string
-	// NamespaceSelector is the namespaceSelector setting as written; nil
-	// when unset.
-	NamespaceSelector *string
 }
 
 // LimiterTypes is the limiter set the settings' limiters list selects; empty
@@ -221,6 +216,8 @@ var legacySettingNames = map[string]string{
 	"LLMSM_QUOTA_KUEUE":                   SettingKueue,
 	"LLMSM_QUOTA_KUEUE_BORROW":            SettingKueueBorrow,
 	"KUEUE_NAMESPACE":                     SettingKueueNamespace,
+	// The label opt-in of the first draft of the one-manifest install.
+	"namespaceSelector": SettingWatchNamespaces,
 }
 
 // UnknownSettingHint says what an unknown key probably meant: the setting a
@@ -279,14 +276,6 @@ func ParseSettings(data map[string]string, quotaKey string) (Settings, SettingsR
 			s.UtilizationShare = v
 		default:
 			reject(SettingUtilizationShare, "%q is not off, shadow or active", v)
-		}
-	}
-	if v := get(SettingNamespaceSelector); v != "" {
-		if _, err := labels.Parse(v); err != nil {
-			reject(SettingNamespaceSelector, "%q is not a label selector such as %s=true,kubernetes.io/metadata.name in (team-a): %v",
-				v, NamespaceOptInLabel, err)
-		} else {
-			s.NamespaceSelector = &v
 		}
 	}
 	parseRestartSettings(data, s.Restart, reject)
@@ -409,6 +398,10 @@ func validateRestartSetting(key, v string) error {
 			if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
 				return fmt.Errorf("%q is not a namespace name: %s", ns, strings.Join(errs, "; "))
 			}
+		}
+	case SettingKEDANamespace:
+		if errs := validation.IsDNS1123Label(v); len(errs) > 0 {
+			return fmt.Errorf("%q is not a namespace name: %s", v, strings.Join(errs, "; "))
 		}
 	case SettingLogVerbosity:
 		n, err := strconv.Atoi(v)
@@ -647,9 +640,6 @@ func (s Settings) KeepRejected(prev Settings, rejected map[string]string) Settin
 	if _, bad := rejected[SettingUtilizationShare]; bad {
 		out.UtilizationShare = prev.UtilizationShare
 	}
-	if _, bad := rejected[SettingNamespaceSelector]; bad {
-		out.NamespaceSelector = prev.NamespaceSelector
-	}
 	for _, k := range limiterSettingKeys {
 		if _, bad := rejected[k]; bad {
 			out.Limiters = prev.Limiters
@@ -711,10 +701,6 @@ func (s Settings) clone() Settings {
 		}
 	}
 	out.Restart = maps.Clone(s.Restart)
-	if s.NamespaceSelector != nil {
-		v := *s.NamespaceSelector
-		out.NamespaceSelector = &v
-	}
 	return out
 }
 

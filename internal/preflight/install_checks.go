@@ -103,20 +103,16 @@ func checkConflicts(ctx context.Context, s *state) ([]Result, string) {
 		if s.env.Scope != ScopeCluster {
 			continue
 		}
-		switch in, err := optedIn(ctx, s, mns); {
-		case err != nil:
-			fails = append(fails, fmt.Sprintf("namespace %s is managed by the scaling manager in %s, and may be opted in here: "+
-				"its labels could not be read (%s)", mns, others, firstLine(err.Error())))
-		case in:
-			fails = append(fails, fmt.Sprintf("namespace %s is opted in here and managed by the scaling manager in %s", mns, others))
-		default:
-			warns = append(warns, fmt.Sprintf("the scaling manager in %s manages %s: do not opt %s in here", others, mns, mns))
+		if s.env.manages(mns) {
+			fails = append(fails, fmt.Sprintf("namespace %s is managed here and by the scaling manager in %s", mns, others))
+		} else {
+			warns = append(warns, fmt.Sprintf("the scaling manager in %s manages %s: do not add %s to %s here", others, mns, mns, config.SettingWatchNamespaces))
 		}
 	}
 	switch {
 	case len(fails) > 0:
 		return []Result{{Status: Fail, Detail: strings.Join(append(fails, warns...), "; "),
-			Fix: "remove the label " + config.NamespaceOptInLabel + " from the shared namespace, or uninstall one of the two"}}, ""
+			Fix: "list only the namespaces this install manages in its " + config.SettingWatchNamespaces + " setting, or uninstall one of the two"}}, ""
 	case len(warns) > 0:
 		return []Result{{Status: Warn, Detail: strings.Join(warns, "; ")}}, ""
 	}
@@ -124,15 +120,15 @@ func checkConflicts(ctx context.Context, s *state) ([]Result, string) {
 		len(crbs.Items), len(rbs.Items))}}, ""
 }
 
-// optedIn reports whether namespace carries the opt-in label; a read that
-// fails counts as opted in, so a conflict is never hidden by it; err says
-// why, so the report does not claim a label nobody read.
-func optedIn(ctx context.Context, s *state, namespace string) (bool, error) {
-	n, err := s.env.Kube.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-	if err != nil {
-		return true, fmt.Errorf("reading namespace %s: %w", namespace, err)
+// manages reports whether the checked cluster-scoped controller manages
+// namespace: Manages when set, else WatchNamespace, where empty is every
+// namespace.
+func (e *Env) manages(namespace string) bool {
+	if e.Manages != nil {
+		return e.Manages(namespace)
 	}
-	return n.Labels[config.NamespaceOptInLabel] == "true", nil
+	list := config.ParseWatchNamespaces(e.WatchNamespace)
+	return len(list) == 0 || slices.Contains(list, namespace)
 }
 
 type rbacSubject struct{ kind, name, namespace string }

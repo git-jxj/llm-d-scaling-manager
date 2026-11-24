@@ -43,22 +43,22 @@ func TestConflicts(t *testing.T) {
 		{"another one in a namespace this one does not manage", func(f *fixture) {
 			f.add(managerRoleBinding("team-y", "theirs", "team-z"))
 		}, Pass, "no other scaling manager"},
-		{"cluster scope, theirs in an unlabelled namespace", func(f *fixture) {
+		{"cluster scope, theirs in a namespace watchNamespaces leaves out", func(f *fixture) {
 			f.scope = ScopeCluster
-			f.add(namespace("team-y", nil), managerRoleBinding("team-y", "theirs", "team-y"))
-		}, Warn, "do not opt team-y in"},
-		{"cluster scope, theirs in an opted-in namespace", func(f *fixture) {
+			f.manages = func(ns string) bool { return ns == "team-a" }
+			f.add(managerRoleBinding("team-y", "theirs", "team-y"))
+		}, Warn, "do not add team-y to watchNamespaces here"},
+		{"cluster scope, theirs in a namespace watchNamespaces lists", func(f *fixture) {
 			f.scope = ScopeCluster
-			f.add(namespace("team-y", map[string]string{"scaling-manager.llmd.ai/managed": "true"}), managerRoleBinding("team-y", "theirs", "team-y"))
-		}, Fail, "opted in here and managed by the scaling manager in team-y"},
-		// A namespace read that fails still fails the check, so a conflict is
-		// never hidden, but says it could not read the label rather than
-		// claiming it.
-		{"cluster scope, theirs in a namespace that cannot be read", func(f *fixture) {
+			f.manages = func(ns string) bool { return ns == "team-y" }
+			f.add(managerRoleBinding("team-y", "theirs", "team-y"))
+		}, Fail, "managed here and by the scaling manager in team-y"},
+		// An empty watchNamespaces manages every namespace, so another
+		// install's namespace is a conflict.
+		{"cluster scope, every namespace managed", func(f *fixture) {
 			f.scope = ScopeCluster
 			f.add(managerRoleBinding("team-y", "theirs", "team-y"))
-			f.kubeReact = append(f.kubeReact, forbidden("get", "namespaces"))
-		}, Fail, "may be opted in here: its labels could not be read"},
+		}, Fail, "managed here and by the scaling manager in team-y"},
 		{"bindings forbidden", func(f *fixture) {
 			f.kubeReact = append(f.kubeReact, forbidden("list", "rolebindings"))
 		}, Unknown, "needs list on rolebindings"},

@@ -259,6 +259,7 @@ LEARNED_STATE_BUCKET_RETENTION
 LEARNED_STATE_EPISODE_GAP
 LEARNED_STATE_SNAPSHOT
 LEARNED_STATE_VARIANT_TIMEOUT
+LLMSM_KEDA_NAMESPACE
 LLMSM_LIMITED_MODE
 LLMSM_LIMITER
 LLMSM_PASSIVE
@@ -534,6 +535,7 @@ Variant
 Variants
 WARNING
 WATCH_NAMESPACE
+WATCH_NAMESPACES_LIVE
 WEBHOOK_CERT_KEY
 WEBHOOK_CERT_NAME
 WEBHOOK_CERT_PATH
@@ -1704,6 +1706,8 @@ kPrice
 kSpread
 kSpreadOverThreshold
 kSpreadThreshold
+keda-namespace
+kedaNamespace
 keep
 keeping
 keeps
@@ -1738,7 +1742,6 @@ kube_pod_status_ready
 kube_pod_status_ready_time
 kube_replicaset_owner
 kubelet
-kubernetes.io/metadata.name
 kueue
 kueue-gate
 kueue-lender-release
@@ -2929,7 +2932,6 @@ scaling-manager-scaling-policy-config
 scaling-manager-settings
 scaling-manager-system
 scaling-manager-utilization-share-history
-scaling-manager.llmd.ai/managed
 scaling-policy
 scalingModifiers
 scheduled
@@ -3262,7 +3264,6 @@ targetReduce
 targetReplicas
 target_model_name
 targets
-team-a
 tell
 template
 tenants
@@ -3629,6 +3630,7 @@ was
 wasLifted
 watch
 watch-namespace
+watch-namespaces-live
 watchNamespace
 watchNamespaces
 way

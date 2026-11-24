@@ -5,188 +5,232 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"k8s.io/client-go/tools/record"
 
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/registry"
+	poolutil "github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils/pool"
 )
 
-func namespace(name string, labelled bool, extra map[string]string) *corev1.Namespace {
-	l := map[string]string{"kubernetes.io/metadata.name": name}
-	if labelled {
-		l[config.NamespaceOptInLabel] = "true"
-	}
-	for k, v := range extra {
-		l[k] = v
-	}
-	return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: l}}
+// setting is a watchNamespaces setting that a test changes while the
+// Admission runs, as the settings reconciler does: no restart in between.
+type setting struct {
+	mu    sync.Mutex
+	names []string
+	all   bool
 }
 
-func newReader(t *testing.T, funcs interceptor.Funcs, objs ...client.Object) client.WithWatch {
-	t.Helper()
-	scheme := runtime.NewScheme()
-	if err := corev1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
-	}
-	return interceptor.NewClient(fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build(), funcs)
+func (s *setting) get() ([]string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.names), s.all
 }
 
-func selector(s string) func() string { return func() string { return s } }
-
-// The label is required; the selector narrows the labelled set, never widens
-// it; an unparsable selector admits nothing.
-func TestReason(t *testing.T) {
-	cases := []struct {
-		name     string
-		labels   map[string]string
-		selector string
-		admitted bool
-		says     string
-	}{
-		{"labelled, no selector", namespace("team-a", true, nil).Labels, "", true, ""},
-		{"unlabelled, no selector", namespace("team-a", false, nil).Labels, "", false, "not labelled"},
-		{"label false", map[string]string{config.NamespaceOptInLabel: "false"}, "", false, "not labelled"},
-		{"labelled, selector by name admits", namespace("team-a", true, nil).Labels,
-			config.NamespaceOptInLabel + "=true,kubernetes.io/metadata.name in (team-a,team-b)", true, ""},
-		{"labelled, selector by name refuses", namespace("team-c", true, nil).Labels,
-			config.NamespaceOptInLabel + "=true,kubernetes.io/metadata.name in (team-a,team-b)", false, "does not admit"},
-		{"unlabelled, selector by name names it", namespace("team-a", false, nil).Labels,
-			"kubernetes.io/metadata.name in (team-a)", false, "not labelled"},
-		{"labelled, admin label required, absent", namespace("team-a", true, nil).Labels, "admin.example/ok=yes", false, "does not admit"},
-		{"labelled, admin label required, present", namespace("team-a", true, map[string]string{"admin.example/ok": "yes"}).Labels,
-			"admin.example/ok=yes", true, ""},
-		{"labelled, selector unparsable", namespace("team-a", true, nil).Labels, "in (", false, "does not parse"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			a := &Admission{Selector: selector(c.selector)}
-			why := a.Reason(c.labels)
-			if (why == "") != c.admitted {
-				t.Fatalf("admitted %v, want %v (reason %q)", why == "", c.admitted, why)
-			}
-			if !strings.Contains(why, c.says) {
-				t.Fatalf("reason %q does not say %q", why, c.says)
-			}
-		})
-	}
+func (s *setting) set(all bool, names ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.names, s.all = names, all
 }
 
-// Admit reads the Namespace: a missing one is refused, a failed read is
-// neither admitted nor refused.
-func TestAdmit(t *testing.T) {
-	boom := errors.New("apiserver blip")
-	cl := newReader(t, interceptor.Funcs{
-		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-			if key.Name == "flaky" {
-				return boom
-			}
-			return c.Get(ctx, key, obj, opts...)
-		},
-	}, namespace("team-a", true, nil), namespace("team-b", false, nil))
-	a := &Admission{Reader: cl, Selector: selector("")}
+// The watchNamespaces setting decides, and a change takes effect on the next
+// call: a namespace refused a moment ago is admitted once it is listed.
+func TestAdmissionFollowsTheSettingLive(t *testing.T) {
+	ws := &setting{}
+	ws.set(false, "team-a")
+	a := &Admission{Namespaces: ws.get}
 	ctx := context.Background()
-	if why, err := a.Admit(ctx, "team-a"); why != "" || err != nil {
-		t.Fatalf("team-a: %q, %v", why, err)
+
+	if why, err := a.Admit(ctx, "team-a", "so-a"); err != nil || why != "" {
+		t.Fatalf("team-a refused (%q, %v); it is listed", why, err)
 	}
-	if why, err := a.Admit(ctx, "team-b"); why == "" || err != nil {
-		t.Fatalf("team-b (unlabelled) admitted: %q, %v", why, err)
+	why, _ := a.Admit(ctx, "team-b", "so-b")
+	if !strings.Contains(why, "not in the watchNamespaces setting (team-a)") {
+		t.Fatalf("team-b: %q", why)
 	}
-	if why, err := a.Admit(ctx, "gone"); why != "no such namespace" || err != nil {
-		t.Fatalf("gone: %q, %v", why, err)
+	if got := a.Refused(); len(got) != 1 || !slices.Equal(got["team-b"].ScaledObjects, []string{"so-b"}) {
+		t.Fatalf("Refused %+v", got)
 	}
-	if why, err := a.Admit(ctx, "flaky"); why != "" || !errors.Is(err, boom) {
-		t.Fatalf("flaky: %q, %v", why, err)
+
+	ws.set(false, "team-a", "team-b")
+	if why, _ := a.Admit(ctx, "team-b", "so-b"); why != "" {
+		t.Fatalf("team-b still refused after the setting listed it: %q", why)
+	}
+	if got := a.Refused(); len(got) != 0 {
+		t.Fatalf("a namespace managed since is still listed as refused: %+v", got)
+	}
+
+	ws.set(true)
+	if !a.Manages("anything") {
+		t.Fatal("an empty watchNamespaces must manage every namespace")
 	}
 }
 
-// Report lists the managed namespaces and the refused ones: labelled ones
-// the selector refuses, and unlabelled ones KEDA called for, the latter only
-// for RefusedTTL.
-func TestReport(t *testing.T) {
-	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
-	cl := newReader(t, interceptor.Funcs{},
-		namespace("team-a", true, nil), namespace("team-b", true, nil), namespace("team-c", true, nil),
-		namespace("tenant-x", false, nil))
-	a := &Admission{Reader: cl, Selector: selector("kubernetes.io/metadata.name in (team-a,team-b)"),
+// A rejected watchNamespaces with no value before it manages nothing: a typo
+// in the first list never widens the install to every namespace.
+func TestAdmissionRejectedSettingManagesNothing(t *testing.T) {
+	a := &Admission{Namespaces: func() ([]string, bool) { return nil, false }}
+	if why := a.Reason("team-a"); !strings.Contains(why, "was rejected") {
+		t.Fatalf("Reason %q", why)
+	}
+}
+
+// A refusal is forgotten after RefusedTTL.
+func TestRefusedExpires(t *testing.T) {
+	now := time.Unix(1000, 0)
+	a := &Admission{Namespaces: func() ([]string, bool) { return []string{"team-a"}, false },
 		Now: func() time.Time { return now }}
-	ctx := context.Background()
-	if why, _ := a.Admit(ctx, "tenant-x"); why == "" {
-		t.Fatal("tenant-x admitted")
-	}
-	managed, refused, err := a.Report(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(managed, []string{"team-a", "team-b"}) {
-		t.Fatalf("managed %v", managed)
-	}
-	if !strings.Contains(refused["team-c"], "does not admit") {
-		t.Fatalf("team-c: %q", refused["team-c"])
-	}
-	if !strings.Contains(refused["tenant-x"], "KEDA called the scaler") {
-		t.Fatalf("tenant-x: %q", refused["tenant-x"])
-	}
+	_, _ = a.Admit(context.Background(), "team-b", "so")
 	now = now.Add(RefusedTTL + time.Second)
-	if _, refused, _ = a.Report(ctx); refused["tenant-x"] != "" {
-		t.Fatalf("tenant-x still refused after RefusedTTL: %q", refused["tenant-x"])
+	if got := a.Refused(); len(got) != 0 {
+		t.Fatalf("Refused after the TTL: %+v", got)
 	}
 }
 
-type sink struct {
-	managed []string
-	refused map[string]string
+type fakeRegistry struct{ entries []registry.Entry }
+
+func (f *fakeRegistry) Snapshot() []registry.Entry { return slices.Clone(f.entries) }
+func (f *fakeRegistry) Forget(ns, name string) {
+	f.entries = slices.DeleteFunc(f.entries, func(e registry.Entry) bool { return e.Namespace == ns && e.Name == name })
 }
 
-func (s *sink) SetNamespaces(managed []string, refused map[string]string) {
-	s.managed, s.refused = managed, refused
+type fakePools struct{ pools []*poolutil.EndpointPool }
+
+func (f *fakePools) PoolList() []*poolutil.EndpointPool { return slices.Clone(f.pools) }
+func (f *fakePools) PoolDelete(n string) {
+	f.pools = slices.DeleteFunc(f.pools, func(p *poolutil.EndpointPool) bool { return p.Namespace+"/"+p.Name == n })
 }
 
-// The Reporter forgets a workload registered in a namespace that is no longer
-// managed (its label removed after KEDA registered it) and keeps the rest.
-func TestReporterForgetsUnmanaged(t *testing.T) {
-	cl := newReader(t, interceptor.Funcs{}, namespace("team-a", true, nil), namespace("team-b", false, nil))
-	reg := registry.New(time.Hour)
-	reg.Observe("team-a", "model-a", nil)
-	reg.Observe("team-b", "model-b", nil)
-	s := &sink{}
-	r := &Reporter{Admission: &Admission{Reader: cl, Selector: selector("")}, Sink: s, Registry: reg, Log: logr.Discard()}
-	r.Once(context.Background())
-	if _, ok := reg.Get("team-b", "model-b"); ok {
-		t.Fatal("kept a workload in an unlabelled namespace")
-	}
-	if _, ok := reg.Get("team-a", "model-a"); !ok {
-		t.Fatal("forgot a workload in a managed namespace")
-	}
-	if !slices.Equal(s.managed, []string{"team-a"}) {
-		t.Fatalf("published managed %v", s.managed)
+type fakeSink struct {
+	managed   []string
+	all       bool
+	refused   map[string]string
+	readiness map[string]string
+}
+
+func (s *fakeSink) SetNamespaces(managed []string, all bool, refused map[string]string) {
+	s.managed, s.all, s.refused = managed, all, refused
+}
+func (s *fakeSink) SetNamespaceReadiness(r map[string]string) { s.readiness = r }
+
+func drain(r *record.FakeRecorder) []string {
+	var out []string
+	for {
+		select {
+		case e := <-r.Events:
+			out = append(out, e)
+		default:
+			return out
+		}
 	}
 }
 
-// A failed list publishes nothing and forgets nothing.
-func TestReporterKeepsEverythingOnAFailedList(t *testing.T) {
-	cl := newReader(t, interceptor.Funcs{
-		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-			return errors.New("apiserver blip")
+// One report: a namespace not listed loses its workloads and InferencePools,
+// every namespace gets a readiness line, and each line reaches the objects
+// in that namespace as an Event once, not on every report.
+func TestReporterReadinessAndEvents(t *testing.T) {
+	ws := &setting{}
+	ws.set(false, "team-a", "team-c")
+	reg := &fakeRegistry{entries: []registry.Entry{
+		{Namespace: "team-a", Name: "so-a"},
+		{Namespace: "team-b", Name: "so-b"},
+	}}
+	pools := &fakePools{pools: []*poolutil.EndpointPool{
+		{Namespace: "team-a", Name: "pool-a"}, {Namespace: "team-b", Name: "pool-b"},
+	}}
+	sink := &fakeSink{}
+	rec := record.NewFakeRecorder(50)
+	changes := 0
+	r := &Reporter{Admission: &Admission{Namespaces: ws.get}, Sink: sink, Registry: reg, Pools: pools,
+		PoolAPIVersion: "inference.networking.k8s.io/v1", Recorder: rec, Log: logr.Discard(),
+		OnChange: func(context.Context) { changes++ }}
+	ctx := context.Background()
+	r.Once(ctx)
+
+	if len(reg.entries) != 1 || reg.entries[0].Namespace != "team-a" {
+		t.Fatalf("registry %+v: team-b's workload must be forgotten", reg.entries)
+	}
+	if len(pools.pools) != 1 || pools.pools[0].Namespace != "team-a" {
+		t.Fatalf("pools %+v: team-b's InferencePool must be dropped", pools.pools)
+	}
+	if !slices.Equal(sink.managed, []string{"team-a", "team-c"}) || sink.all {
+		t.Fatalf("managed %v all %v", sink.managed, sink.all)
+	}
+	if got := sink.readiness["team-a"]; got != "ok: 1 ScaledObjects registered, 1 InferencePools" {
+		t.Errorf("team-a %q", got)
+	}
+	if got := sink.readiness["team-b"]; !strings.HasPrefix(got, "not managed: it is not in the watchNamespaces setting") ||
+		!strings.Contains(got, "so-b") {
+		t.Errorf("team-b %q", got)
+	}
+	if got := sink.readiness["team-c"]; !strings.HasPrefix(got, "waiting: no ScaledObject here has called the scaler yet") {
+		t.Errorf("team-c %q", got)
+	}
+	ev := drain(rec)
+	want := []string{
+		"Normal " + EventNamespaceReady + " ok: 1 ScaledObjects registered, 1 InferencePools",
+		"Warning " + EventNamespaceNotManaged + " not managed: ",
+	}
+	for _, w := range want {
+		if !slices.ContainsFunc(ev, func(e string) bool { return strings.HasPrefix(e, w) }) {
+			t.Errorf("no Event %q in %q", w, ev)
+		}
+	}
+	if len(ev) != 3 { // so-a and pool-a in team-a, so-b in team-b
+		t.Errorf("%d Events, want 3: %q", len(ev), ev)
+	}
+
+	r.Once(ctx)
+	if ev := drain(rec); len(ev) != 0 {
+		t.Errorf("an unchanged readiness was recorded again: %q", ev)
+	}
+	if changes != 0 {
+		t.Errorf("OnChange called %d times with no change", changes)
+	}
+
+	ws.set(true)
+	r.Once(ctx)
+	if changes != 1 || !sink.all {
+		t.Errorf("after watchNamespaces emptied: OnChange %d, all %v", changes, sink.all)
+	}
+}
+
+// A grant a switch needs that the controller lacks makes the namespace not
+// ready, with the command that grants it; an optional one is a note.
+func TestReporterGrants(t *testing.T) {
+	reg := &fakeRegistry{entries: []registry.Entry{{Namespace: "team-a", Name: "so-a"}}}
+	sink := &fakeSink{}
+	rec := record.NewFakeRecorder(10)
+	held := map[string]bool{}
+	r := &Reporter{Admission: &Admission{Namespaces: func() ([]string, bool) { return []string{"team-a"}, false }},
+		Sink: sink, Registry: reg, Recorder: rec, Log: logr.Discard(),
+		Grants: func() []Grant {
+			return []Grant{
+				{Name: "pod-writer", Resource: "pods", Verb: "patch", Why: "utilizationShare is active", Required: true},
+				{Name: "dset-role-writer", Group: "disaggregatedset.x-k8s.io", Resource: "disaggregatedsets", Verb: "patch", Why: "dsetRoleWriter is on"},
+			}
 		},
-	})
-	reg := registry.New(time.Hour)
-	reg.Observe("team-a", "model-a", nil)
-	s := &sink{}
-	r := &Reporter{Admission: &Admission{Reader: cl}, Sink: s, Registry: reg, Log: logr.Discard()}
+		Access: func(_ context.Context, ns string, g Grant) (bool, error) {
+			if g.Name == "explode" {
+				return false, errors.New("boom")
+			}
+			return held[ns+"/"+g.Name], nil
+		}}
 	r.Once(context.Background())
-	if _, ok := reg.Get("team-a", "model-a"); !ok {
-		t.Fatal("forgot a workload on a failed list")
+	got := sink.readiness["team-a"]
+	if !strings.HasPrefix(got, "not ready: grant pod-writer missing (utilizationShare is active): scaling-manager-owner.sh grant pod-writer team-a") ||
+		!strings.Contains(got, "no dset-role-writer grant") {
+		t.Fatalf("team-a %q", got)
 	}
-	if s.managed != nil || s.refused != nil {
-		t.Fatal("published on a failed list")
+	if ev := drain(rec); len(ev) != 1 || !strings.HasPrefix(ev[0], "Warning "+EventNamespaceNotReady) {
+		t.Fatalf("Events %q", ev)
+	}
+	held["team-a/pod-writer"] = true
+	r.Once(context.Background())
+	if got := sink.readiness["team-a"]; !strings.HasPrefix(got, "ok: ") {
+		t.Fatalf("with the grant, team-a %q", got)
 	}
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -15,21 +16,13 @@ func TestSettingsInstallKeys(t *testing.T) {
 		rejected string
 		check    func(t *testing.T, s Settings)
 	}{
-		{name: "namespaceSelector valid", data: map[string]string{
-			SettingNamespaceSelector: NamespaceOptInLabel + "=true,kubernetes.io/metadata.name in (team-a,team-b)"},
+		{name: "kedaNamespace", data: map[string]string{SettingKEDANamespace: "keda-system"},
 			check: func(t *testing.T, s Settings) {
-				if s.NamespaceSelector == nil || !strings.Contains(*s.NamespaceSelector, "team-b") {
-					t.Fatalf("NamespaceSelector %v", s.NamespaceSelector)
+				if got := s.Restart["LLMSM_KEDA_NAMESPACE"]; got != "keda-system" {
+					t.Fatalf("LLMSM_KEDA_NAMESPACE %q", got)
 				}
 			}},
-		{name: "namespaceSelector unset", data: map[string]string{},
-			check: func(t *testing.T, s Settings) {
-				if s.NamespaceSelector != nil {
-					t.Fatalf("NamespaceSelector %q", *s.NamespaceSelector)
-				}
-			}},
-		{name: "namespaceSelector not a selector", data: map[string]string{SettingNamespaceSelector: "name in (team-a"},
-			rejected: SettingNamespaceSelector},
+		{name: "kedaNamespace not a name", data: map[string]string{SettingKEDANamespace: "Keda_NS"}, rejected: SettingKEDANamespace},
 		{name: "caFromSecret true", data: map[string]string{SettingCAFromSecret: enabled},
 			check: func(t *testing.T, s Settings) {
 				if got := s.Restart["PROMETHEUS_CA_CERT_PATH"]; got != PrometheusCAFromSecretPath {
@@ -86,37 +79,146 @@ func TestSettingsInstallKeys(t *testing.T) {
 	}
 }
 
-// A rejected namespaceSelector keeps the one in force before, so a typo
-// never widens what the controller manages to every labelled namespace.
-func TestNamespaceSelectorRejectedKeepsPrevious(t *testing.T) {
-	prevText := "kubernetes.io/metadata.name in (team-a)"
-	prev, _ := ParseSettings(map[string]string{SettingNamespaceSelector: prevText}, "team-a")
-	next, rep := ParseSettings(map[string]string{SettingNamespaceSelector: "kubernetes.io/metadata.name in (team-a"}, "team-a")
-	kept := next.KeepRejected(prev, rep.Rejected)
-	if kept.NamespaceSelector == nil || *kept.NamespaceSelector != prevText {
-		t.Fatalf("NamespaceSelector %v, want the previous %q", kept.NamespaceSelector, prevText)
-	}
-	c := NewTestConfig()
-	c.ApplySettings(kept, true, "2", rep)
-	if got := c.NamespaceSelector(); got != prevText {
-		t.Fatalf("Config.NamespaceSelector %q", got)
-	}
-}
-
-// The live keys include namespaceSelector; the restart keys include
-// dsetRoleWriter; caFromSecret is known but has no loader key of its own.
+// The restart keys include dsetRoleWriter and kedaNamespace; caFromSecret is
+// known but has no loader key of its own; namespaceSelector, the label opt-in
+// of the first draft, is gone and points at watchNamespaces.
 func TestInstallKeysClassified(t *testing.T) {
-	live := false
-	for _, k := range LiveSettingKeys {
-		live = live || k == SettingNamespaceSelector
-	}
-	if !live {
-		t.Error("namespaceSelector is not a live key")
-	}
 	if k, ok := SettingLoaderKey(SettingDSetRoleWriter); !ok || k != "DSET_ROLE_WRITER" {
 		t.Errorf("dsetRoleWriter loader key %q, %v", k, ok)
 	}
+	if k, ok := SettingLoaderKey(SettingKEDANamespace); !ok || k != "LLMSM_KEDA_NAMESPACE" {
+		t.Errorf("kedaNamespace loader key %q, %v", k, ok)
+	}
 	if _, ok := SettingLoaderKey(SettingCAFromSecret); ok {
 		t.Error("caFromSecret has a loader key of its own; it sets PROMETHEUS_CA_CERT_PATH")
+	}
+	_, rep := ParseSettings(map[string]string{"namespaceSelector": "x=y"}, "team-a")
+	if !slices.Equal(rep.Unknown, []string{"namespaceSelector"}) ||
+		!strings.Contains(UnknownSettingHint("namespaceSelector"), SettingWatchNamespaces) {
+		t.Errorf("namespaceSelector: unknown %v, hint %q", rep.Unknown, UnknownSettingHint("namespaceSelector"))
+	}
+}
+
+// liveConfig loads a cluster-scoped controller with watchNamespaces live
+// (--watch-namespaces-live, here its environment variable) and the settings
+// data.
+func liveConfig(t *testing.T, data map[string]string) *Config {
+	t.Helper()
+	t.Setenv("WATCH_NAMESPACE", "")
+	t.Setenv("WATCH_NAMESPACES_LIVE", "true")
+	t.Setenv("PROMETHEUS_BASE_URL", "https://p:9090")
+	c, err := LoadWithSettings(nil, "", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// apply reads data as the settings reconciler does and puts it in force.
+func apply(c *Config, prev Settings, data map[string]string, rv string) Settings {
+	s, rep := ParseSettings(data, c.SettingsQuotaKey())
+	c.RestrictSettings(&s, &rep)
+	s = s.KeepRejected(prev, rep.Rejected)
+	c.ApplySettings(s, true, rv, rep)
+	return s
+}
+
+// With watchNamespaces live, the setting selects the managed namespaces on
+// every change, with no restart: the cache stays cluster-wide, a change is
+// never a restart setting, and an empty value manages every namespace.
+func TestWatchNamespacesLive(t *testing.T) {
+	c := liveConfig(t, map[string]string{SettingWatchNamespaces: "team-a"})
+	if c.WatchNamespace() != "" {
+		t.Fatalf("the cache was narrowed to %q; it must stay cluster-wide", c.WatchNamespace())
+	}
+	if names, all := c.ManagedNamespaces(); !slices.Equal(names, []string{"team-a"}) || all {
+		t.Fatalf("at start: %v all %v", names, all)
+	}
+
+	s := apply(c, Settings{}, map[string]string{SettingWatchNamespaces: "team-a,team-b"}, "2")
+	if !c.Manages("team-b") || c.Manages("team-c") {
+		t.Fatalf("after the change: team-b %v team-c %v", c.Manages("team-b"), c.Manages("team-c"))
+	}
+	if changed := c.SettingsRestartChanged(s); slices.Contains(changed, SettingWatchNamespaces) {
+		t.Fatalf("watchNamespaces is a restart change while live: %v", changed)
+	}
+	if src := c.SettingsSources()[SettingWatchNamespaces]; src != SettingSourceSettings {
+		t.Errorf("source %q", src)
+	}
+
+	// A typo keeps the list in force; it never widens to every namespace.
+	s = apply(c, s, map[string]string{SettingWatchNamespaces: "team-a,Team_B"}, "3")
+	if !c.Manages("team-b") || c.Manages("team-c") {
+		t.Fatalf("a rejected value changed what is managed: team-b %v team-c %v", c.Manages("team-b"), c.Manages("team-c"))
+	}
+
+	apply(c, s, map[string]string{}, "4")
+	if names, all := c.ManagedNamespaces(); len(names) != 0 || !all || !c.Manages("team-c") {
+		t.Fatalf("empty watchNamespaces: %v all %v; it must manage every namespace", names, all)
+	}
+}
+
+// A rejected first value, with nothing in force before it, manages nothing:
+// it fails closed rather than to every namespace.
+func TestWatchNamespacesLiveRejectedFirstValue(t *testing.T) {
+	c := liveConfig(t, nil)
+	apply(c, Settings{}, map[string]string{SettingWatchNamespaces: "Team_A"}, "2")
+	if names, all := c.ManagedNamespaces(); len(names) != 0 || all || c.Manages("team-a") {
+		t.Fatalf("rejected first value: %v all %v", names, all)
+	}
+}
+
+// Without --watch-namespaces-live, watchNamespaces stays a restart setting:
+// the existing installs are unchanged.
+func TestWatchNamespacesNotLive(t *testing.T) {
+	t.Setenv("WATCH_NAMESPACE", "")
+	t.Setenv("WATCH_NAMESPACES_LIVE", "")
+	t.Setenv("PROMETHEUS_BASE_URL", "https://p:9090")
+	c, err := LoadWithSettings(nil, "", map[string]string{SettingWatchNamespaces: "team-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.WatchNamespacesLive() || c.WatchNamespace() != "team-a" {
+		t.Fatalf("live %v watchNamespace %q", c.WatchNamespacesLive(), c.WatchNamespace())
+	}
+	s, _ := ParseSettings(map[string]string{SettingWatchNamespaces: "team-a,team-b"}, "team-a")
+	if !slices.Contains(c.SettingsRestartChanged(s), SettingWatchNamespaces) {
+		t.Fatal("watchNamespaces must stay a restart setting on every other install")
+	}
+}
+
+// --watch-namespaces-live on a Deployment that names namespaces is not live:
+// the setting may only narrow those, at start, as before.
+func TestWatchNamespacesLiveNeedsClusterScope(t *testing.T) {
+	t.Setenv("WATCH_NAMESPACE", "team-a,team-b")
+	t.Setenv("WATCH_NAMESPACES_LIVE", "true")
+	t.Setenv("PROMETHEUS_BASE_URL", "https://p:9090")
+	c, err := LoadWithSettings(nil, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.WatchNamespacesLive() {
+		t.Fatal("live on a namespaced Deployment")
+	}
+}
+
+// kedaNamespace overrides --keda-namespace, as every restart setting
+// overrides its flag.
+func TestKEDANamespaceSetting(t *testing.T) {
+	t.Setenv("LLMSM_KEDA_NAMESPACE", "keda")
+	t.Setenv("PROMETHEUS_BASE_URL", "https://p:9090")
+	c, err := LoadWithSettings(nil, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.KEDANamespace() != "keda" {
+		t.Fatalf("without the setting %q", c.KEDANamespace())
+	}
+	c, err = LoadWithSettings(nil, "", map[string]string{SettingKEDANamespace: "keda-system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.KEDANamespace() != "keda-system" {
+		t.Fatalf("with the setting %q", c.KEDANamespace())
 	}
 }

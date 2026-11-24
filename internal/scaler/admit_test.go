@@ -40,7 +40,7 @@ var _ = Describe("Server namespace admission", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		reg := registry.New(time.Minute)
-		srv := &scaler.Server{Registry: reg, Admit: func(_ context.Context, ns string) (string, error) {
+		srv := &scaler.Server{Registry: reg, Admit: func(_ context.Context, ns, _ string) (string, error) {
 			if ns == refusedNS {
 				return "it is not labelled", nil
 			}
@@ -80,7 +80,7 @@ var _ = Describe("Server namespace admission", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		reg := registry.New(time.Minute)
-		srv := &scaler.Server{Registry: reg, Admit: func(context.Context, string) (string, error) {
+		srv := &scaler.Server{Registry: reg, Admit: func(context.Context, string, string) (string, error) {
 			return "", errors.New("apiserver blip")
 		}}
 		cli, done, closeConn := dial(ctx, srv)

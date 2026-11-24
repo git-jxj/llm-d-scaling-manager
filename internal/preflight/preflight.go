@@ -120,6 +120,10 @@ type Env struct {
 	// to manage (WatchNamespaceEnv on the Job); empty, what its Deployment
 	// names. Namespace scope only.
 	WatchNamespace string
+	// Manages, when set, says whether the running controller manages a
+	// namespace: its live watchNamespaces setting, on the in-controller run.
+	// Nil: every namespace at cluster scope, unless WatchNamespace names some.
+	Manages func(namespace string) bool
 	// ControllerWritesKEDACopy: the controller writes KEDA's copy of the
 	// client certificate itself (--keda-namespace), so keda.mtls reads its
 	// status rather than the marker a person writes.

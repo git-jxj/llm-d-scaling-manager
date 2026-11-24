@@ -25,6 +25,8 @@ var flagBindings = map[string]string{
 	"REST_CLIENT_TIMEOUT":            "rest-client-timeout",
 	"METRICS_SECURE":                 "metrics-secure",
 	"WATCH_NAMESPACE":                "watch-namespace",
+	"WATCH_NAMESPACES_LIVE":          "watch-namespaces-live",
+	"LLMSM_KEDA_NAMESPACE":           "keda-namespace",
 	"V":                              "v",
 	"WEBHOOK_CERT_PATH":              "webhook-cert-path",
 	"WEBHOOK_CERT_NAME":              "webhook-cert-name",
@@ -141,6 +143,8 @@ func setLoaderDefaults(v *viper.Viper) {
 	v.SetDefault("REST_CLIENT_TIMEOUT", 60*time.Second)
 	v.SetDefault("METRICS_SECURE", true)
 	v.SetDefault("WATCH_NAMESPACE", "")
+	v.SetDefault("WATCH_NAMESPACES_LIVE", false)
+	v.SetDefault("LLMSM_KEDA_NAMESPACE", "")
 	v.SetDefault("V", 0)
 	v.SetDefault("WEBHOOK_CERT_PATH", "")
 	v.SetDefault("WEBHOOK_CERT_NAME", "tls.crt")
@@ -248,6 +252,7 @@ func loadConfig(cfg *Config, flagSet *flag.FlagSet, configFilePath string, setti
 		learnedStateSnapshot: v.GetBool("LEARNED_STATE_SNAPSHOT"),
 		kedaHPARepair:        v.GetBool("KEDA_HPA_REPAIR"),
 		dsetRoleWriter:       v.GetBool("DSET_ROLE_WRITER"),
+		kedaNamespace:        v.GetString("LLMSM_KEDA_NAMESPACE"),
 	}
 
 	cfg.tls = tlsConfig{

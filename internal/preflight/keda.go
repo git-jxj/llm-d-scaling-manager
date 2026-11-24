@@ -178,8 +178,22 @@ func checkKEDANetworkPolicy(ctx context.Context, s *state) ([]Result, string) {
 				ScalerNetworkPolicy, shipped, keda),
 			Fix: fmt.Sprintf(`sed -i "s#kubernetes.io/metadata.name: %s\$#kubernetes.io/metadata.name: %s#" %s   # before applying it`, shipped, keda, files)}}, ""
 	}
-	admitted, rule := scalerAdmits(np)
 	source := "NetworkPolicy " + ScalerNetworkPolicy
+	if scalerAdmitsByLabel(np) {
+		// The one manifest names no KEDA namespace: it admits the namespace
+		// labelled KEDANamespaceLabel=true, which the admin labels.
+		n, err := s.env.Kube.CoreV1().Namespaces().Get(ctx, keda, metav1.GetOptions{})
+		if err != nil {
+			return []Result{unknown("namespace "+keda, err)}, ""
+		}
+		if n.Labels[KEDANamespaceLabel] == valueTrue {
+			return []Result{{Status: Pass, Detail: fmt.Sprintf("%s admits the namespace labelled %s=true, and %s, where KEDA runs, is", source, KEDANamespaceLabel, keda)}}, ""
+		}
+		return []Result{{Status: Fail,
+			Detail: fmt.Sprintf("%s admits port 9090 from the namespace labelled %s=true, and %s, where KEDA runs, is not: KEDA's calls are dropped and no ScaledObject scales", source, KEDANamespaceLabel, keda),
+			Fix:    fmt.Sprintf("kubectl label namespace %s %s=true   # scaling-manager-admin.sh upgrade --keda-namespace %s does it", keda, KEDANamespaceLabel, keda)}}, ""
+	}
+	admitted, rule := scalerAdmits(np)
 	switch {
 	case rule < 0:
 		return []Result{{Status: Unknown, Detail: source + " in " + ns + " admits port 9090 by no namespace name; what it lets in is not known here"}}, ""
@@ -195,6 +209,30 @@ func checkKEDANetworkPolicy(ctx context.Context, s *state) ([]Result, string) {
 	return []Result{{Status: Fail,
 		Detail: fmt.Sprintf("%s admits port 9090 from %s, but KEDA runs in %s: KEDA's calls are dropped and no ScaledObject scales", source, strings.Join(admitted, ", "), keda),
 		Fix:    fix}}, ""
+}
+
+// KEDANamespaceLabel marks the namespace KEDA runs in, on the one-manifest
+// install: its scaler NetworkPolicy admits port 9090 from the namespace
+// carrying it, "true", so the manifest names no KEDA namespace.
+const KEDANamespaceLabel = "scaling-manager.llmd.ai/keda"
+
+// scalerAdmitsByLabel reports whether the rule for port 9090 admits the
+// namespaces labelled KEDANamespaceLabel=true.
+func scalerAdmitsByLabel(np *networkingv1.NetworkPolicy) bool {
+	for _, rule := range np.Spec.Ingress {
+		for _, p := range rule.Ports {
+			if p.Port == nil || p.Port.IntValue() != 9090 {
+				continue
+			}
+			for _, peer := range rule.From {
+				if peer.NamespaceSelector != nil && peer.PodSelector == nil &&
+					peer.NamespaceSelector.MatchLabels[KEDANamespaceLabel] == valueTrue {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // scalerAdmits returns the namespaces the policy admits to port 9090 by name,

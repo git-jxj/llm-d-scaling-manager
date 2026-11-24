@@ -1,13 +1,18 @@
-// Package managedns decides which namespaces a controller installed from the
-// one release manifest manages: those labelled
-// scaling-manager.llmd.ai/managed=true that the namespaceSelector setting also
-// admits (proposal PR #404).
+// Package managedns decides which namespaces a cluster-scoped controller
+// installed from the one release manifest manages, and reports, per
+// namespace, whether it is ready to be scaled.
 //
-// A label is not consent: a tenant who can create a namespace can label it.
-// The selector is what the admin narrows it with, to names or to a label only
-// the admin sets. The scaler refuses every KEDA call from a namespace this
-// does not admit, so a workload there is never registered, and the Reporter
-// forgets what was registered in a namespace that stopped being admitted.
+// The cluster admin decides with the existing watchNamespaces setting, which
+// on this install takes effect without a restart (--watch-namespaces-live):
+// the controller's cache stays cluster-wide, and the setting selects the
+// namespaces it acts in. Empty manages every namespace, as it always has on a
+// cluster-wide install.
+//
+// The scaler refuses every KEDA call from a namespace this does not admit, so
+// a workload there is never registered; the Reporter forgets what was
+// registered in a namespace that stopped being managed, drops its
+// InferencePools, and tells the namespace why, in Events a namespace owner
+// reads in their own namespace.
 package managedns
 
 import (
@@ -15,20 +20,12 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/labels"
-	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
-
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 )
-
-// ModeLabel is the --namespace-opt-in value that manages labelled namespaces
-// only. The flag's empty default keeps every other install as it is.
-const ModeLabel = "label"
 
 // RefusedTTL is how long a namespace refused at the scaler stays listed as
 // refused after its last refused call.
@@ -36,13 +33,9 @@ const RefusedTTL = 10 * time.Minute
 
 // Admission admits or refuses namespaces. Safe for concurrent use.
 type Admission struct {
-	// Reader reads Namespaces. The manager's cached client is right: the
-	// controller already lists and watches namespaces cluster-wide, and the
-	// scaler asks on every KEDA call.
-	Reader ctrl.Reader
-	// Selector returns the namespaceSelector setting in force, "" when unset
-	// (config.Config.NamespaceSelector).
-	Selector func() string
+	// Namespaces returns the managed namespaces, and all when every
+	// namespace is managed (config.Config.ManagedNamespaces).
+	Namespaces func() (namespaces []string, all bool)
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 
@@ -50,10 +43,20 @@ type Admission struct {
 	refused map[string]refusal
 }
 
-// refusal is the latest refused call from one namespace.
+// refusal is the latest refused call from one namespace, and the
+// ScaledObjects KEDA called the scaler for there.
 type refusal struct {
-	reason string
-	at     time.Time
+	reason        string
+	at            time.Time
+	scaledObjects map[string]time.Time
+}
+
+// Refused is a namespace the scaler refused calls from.
+type Refused struct {
+	// Reason is why the namespace is not managed.
+	Reason string
+	// ScaledObjects are the ones KEDA called the scaler for, sorted.
+	ScaledObjects []string
 }
 
 func (a *Admission) now() time.Time {
@@ -63,90 +66,84 @@ func (a *Admission) now() time.Time {
 	return time.Now()
 }
 
-// Reason says why a namespace with these labels is not managed, "" when it
-// is. An unparsable selector refuses everything: the settings reader rejects
-// one and keeps the selector in force before, so this is a guard, not a path.
-func (a *Admission) Reason(nsLabels map[string]string) string {
-	if nsLabels[config.NamespaceOptInLabel] != "true" {
-		return "it is not labelled " + config.NamespaceOptInLabel + "=true"
-	}
-	text := ""
-	if a.Selector != nil {
-		text = a.Selector()
-	}
-	if text == "" {
-		return ""
-	}
-	sel, err := labels.Parse(text)
-	if err != nil {
-		return fmt.Sprintf("the %s setting %q does not parse: %v", config.SettingNamespaceSelector, text, err)
-	}
-	if !sel.Matches(labels.Set(nsLabels)) {
-		return fmt.Sprintf("the %s setting %q does not admit it", config.SettingNamespaceSelector, text)
-	}
-	return ""
+// Manages reports whether namespace is managed.
+func (a *Admission) Manages(namespace string) bool {
+	return a.Reason(namespace) == ""
 }
 
-// Admit says whether namespace is managed. refusal is why not, "" when it is.
-// err is a Namespace read that failed for another reason than NotFound: the
-// caller must neither admit nor refuse on it.
-func (a *Admission) Admit(ctx context.Context, namespace string) (refusal string, err error) {
-	var ns corev1.Namespace
-	switch err := a.Reader.Get(ctx, ctrl.ObjectKey{Name: namespace}, &ns); {
-	case apierrors.IsNotFound(err):
-		refusal = "no such namespace"
-	case err != nil:
-		return "", fmt.Errorf("reading namespace %s: %w", namespace, err)
-	default:
-		refusal = a.Reason(ns.Labels)
+// Reason says why namespace is not managed, "" when it is.
+func (a *Admission) Reason(namespace string) string {
+	if a.Namespaces == nil {
+		return ""
 	}
+	names, all := a.Namespaces()
+	if all || slices.Contains(names, namespace) {
+		return ""
+	}
+	if len(names) == 0 {
+		return fmt.Sprintf("the %s setting was rejected, so no namespace is managed until it is fixed", config.SettingWatchNamespaces)
+	}
+	return fmt.Sprintf("it is not in the %s setting (%s)", config.SettingWatchNamespaces, strings.Join(names, ","))
+}
+
+// Admit says whether a ScaledObject in namespace is served. refusal is why
+// not, "" when it is. It never fails: the setting is in memory. The error is
+// for the scaler's AdmitFunc, whose other implementations read the cluster.
+func (a *Admission) Admit(_ context.Context, namespace, scaledObject string) (refusal string, err error) {
+	refusal = a.Reason(namespace)
 	if refusal != "" {
-		a.noteRefused(namespace, refusal)
+		a.noteRefused(namespace, scaledObject, refusal)
 	}
 	return refusal, nil
 }
 
-func (a *Admission) noteRefused(namespace, reason string) {
+func (a *Admission) noteRefused(namespace, scaledObject, reason string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.refused == nil {
 		a.refused = map[string]refusal{}
 	}
-	a.refused[namespace] = refusal{reason: reason, at: a.now()}
+	now := a.now()
+	r := a.refused[namespace]
+	r.reason, r.at = reason, now
+	if r.scaledObjects == nil {
+		r.scaledObjects = map[string]time.Time{}
+	}
+	if scaledObject != "" {
+		r.scaledObjects[scaledObject] = now
+	}
+	a.refused[namespace] = r
 }
 
-// Report lists the managed namespaces, sorted, and the refused ones with
-// why: each labelled namespace the selector does not admit, and each
-// namespace the scaler refused a call from within RefusedTTL that is not
-// managed now.
-func (a *Admission) Report(ctx context.Context) (managed []string, refused map[string]string, err error) {
-	var list corev1.NamespaceList
-	if err := a.Reader.List(ctx, &list, ctrl.MatchingLabels{config.NamespaceOptInLabel: "true"}); err != nil {
-		return nil, nil, fmt.Errorf("listing namespaces labelled %s=true: %w", config.NamespaceOptInLabel, err)
-	}
-	refused = map[string]string{}
-	for i := range list.Items {
-		ns := &list.Items[i]
-		if why := a.Reason(ns.Labels); why != "" {
-			refused[ns.Name] = why
-			continue
-		}
-		managed = append(managed, ns.Name)
-	}
-	sort.Strings(managed)
-	cutoff := a.now().Add(-RefusedTTL)
+// Refused returns each namespace the scaler refused a call from within
+// RefusedTTL that is not managed now, with why and the ScaledObjects KEDA
+// called for. Older refusals, and those of a namespace managed since, are
+// forgotten.
+func (a *Admission) Refused() map[string]Refused {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	cutoff := a.now().Add(-RefusedTTL)
+	out := map[string]Refused{}
 	for ns, r := range a.refused {
-		switch {
-		case r.at.Before(cutoff):
+		if r.at.Before(cutoff) {
 			delete(a.refused, ns)
-		case slices.Contains(managed, ns):
-		default:
-			if _, listed := refused[ns]; !listed {
-				refused[ns] = r.reason + " (KEDA called the scaler for it)"
-			}
+			continue
 		}
+		why := a.Reason(ns)
+		if why == "" {
+			delete(a.refused, ns)
+			continue
+		}
+		var names []string
+		for so, at := range r.scaledObjects {
+			if at.Before(cutoff) {
+				delete(r.scaledObjects, so)
+				continue
+			}
+			names = append(names, so)
+		}
+		sort.Strings(names)
+		out[ns] = Refused{Reason: why, ScaledObjects: names}
 	}
-	return managed, refused, nil
+	return out
 }

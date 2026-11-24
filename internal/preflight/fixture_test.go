@@ -69,6 +69,8 @@ type fixture struct {
 	lwsDiscovery []string
 	// watchNamespace is Env.WatchNamespace: smt install about to apply a new list.
 	watchNamespace string
+	// manages is Env.Manages: the live watchNamespaces of the controller.
+	manages func(string) bool
 }
 
 type reaction struct {
@@ -440,6 +442,7 @@ func (f *fixture) env(t *testing.T) *Env {
 		CheckTimeout:     5 * time.Second,
 		TokenPathEmptied: f.tokenPathEmptied,
 		WatchNamespace:   f.watchNamespace,
+		Manages:          f.manages,
 		Now: func() time.Time {
 			if !f.now.IsZero() {
 				return f.now

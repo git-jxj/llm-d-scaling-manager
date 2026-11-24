@@ -306,14 +306,19 @@ const (
 	// why. Absent when none.
 	KeyReplicasNotArriving = "replicasNotArriving"
 	// KeyNamespacesManaged lists, comma-separated and sorted, the namespaces
-	// an install that opts namespaces in by label manages. Absent on every
-	// other install.
+	// the watchNamespaces setting names, on an install where it is live
+	// (--watch-namespaces-live); "*" when it is empty and every namespace is
+	// managed. Absent on every other install.
 	KeyNamespacesManaged = "namespacesManaged"
-	// KeyNamespacesRefused lists the namespaces such an install refuses, one
-	// "<namespace>: <why>" per line: labelled ones the namespaceSelector
-	// setting does not admit, and ones KEDA called the scaler for. Absent
+	// KeyNamespacesRefused lists the namespaces such an install refuses that
+	// KEDA called the scaler for, one "<namespace>: <why>" per line. Absent
 	// when none.
 	KeyNamespacesRefused = "namespacesRefused"
+	// KeyNamespacePrefix prefixes one key per namespace on such an install,
+	// "namespace.<name>": its readiness, starting with ok, waiting, not ready
+	// or not managed, then what was found and what to do. The same line is
+	// an Event on the namespace's ScaledObjects and InferencePools.
+	KeyNamespacePrefix = "namespace."
 	// KeyReady is "ok" when no in-controller preflight check fails, else
 	// "not ready: " and the failing checks. Absent when the controller runs
 	// no checks (--self-check-interval 0).
@@ -927,9 +932,9 @@ func (p *Publisher) SetReplicasNotArriving(lines []string) {
 	p.update(func(d map[string]string) { setOrDelete(d, KeyReplicasNotArriving, strings.Join(sorted, "\n")) })
 }
 
-// SetNamespaces records the namespaces an install that opts namespaces in by
-// label manages, and the refused ones with why.
-func (p *Publisher) SetNamespaces(managed []string, refused map[string]string) {
+// SetNamespaces records the namespaces the live watchNamespaces setting
+// manages ("*" when all), and the refused ones with why.
+func (p *Publisher) SetNamespaces(managed []string, all bool, refused map[string]string) {
 	if p == nil {
 		return
 	}
@@ -937,9 +942,34 @@ func (p *Publisher) SetNamespaces(managed []string, refused map[string]string) {
 	for _, ns := range slices.Sorted(maps.Keys(refused)) {
 		lines = append(lines, ns+": "+refused[ns])
 	}
+	value := strings.Join(slices.Sorted(slices.Values(managed)), ",")
+	if all {
+		value = "*"
+	}
 	p.update(func(d map[string]string) {
-		d[KeyNamespacesManaged] = strings.Join(slices.Sorted(slices.Values(managed)), ",")
+		d[KeyNamespacesManaged] = value
 		setOrDelete(d, KeyNamespacesRefused, strings.Join(lines, "\n"))
+	})
+}
+
+// SetNamespaceReadiness records each namespace's readiness under
+// KeyNamespacePrefix + name; a namespace no longer in readiness loses its
+// key.
+func (p *Publisher) SetNamespaceReadiness(readiness map[string]string) {
+	if p == nil {
+		return
+	}
+	p.update(func(d map[string]string) {
+		for k := range d {
+			if ns, ok := strings.CutPrefix(k, KeyNamespacePrefix); ok {
+				if _, keep := readiness[ns]; !keep {
+					delete(d, k)
+				}
+			}
+		}
+		for ns, v := range readiness {
+			d[KeyNamespacePrefix+ns] = v
+		}
 	})
 }
 

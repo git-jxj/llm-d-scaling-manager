@@ -9,11 +9,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// AdmitFunc says whether the scaler serves a ScaledObject in namespace.
-// refusal is why it does not, "" when it does. err is a check that could not
-// be made; the call is then refused as Unavailable, which KEDA retries, and
-// never served.
-type AdmitFunc func(ctx context.Context, namespace string) (refusal string, err error)
+// AdmitFunc says whether the scaler serves ScaledObject scaledObject in
+// namespace. refusal is why it does not, "" when it does. err is a check that
+// could not be made; the call is then refused as Unavailable, which KEDA
+// retries, and never served.
+type AdmitFunc func(ctx context.Context, namespace, scaledObject string) (refusal string, err error)
 
 // admitting refuses every call from a namespace admit refuses, before the
 // call reaches the handler: a refused ScaledObject is never registered, so
@@ -38,7 +38,7 @@ func (a *admitting) check(ctx context.Context, ref *pb.ScaledObjectRef, call str
 	if ref == nil {
 		return nil
 	}
-	refusal, err := a.admit(ctx, ref.GetNamespace())
+	refusal, err := a.admit(ctx, ref.GetNamespace(), ref.GetName())
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "cannot tell whether namespace %s is managed: %v", ref.GetNamespace(), err)
 	}
