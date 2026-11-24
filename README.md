@@ -61,23 +61,98 @@ the scaler answers with the current replica count, so nothing moves.
 
 ## Install
 
-From a release, with docker; no checkout and no `make`. It installs
-**passive**: it works out what it would do and changes nothing, until you
-switch it on.
+Both ways install **passive**: it works out what it would do and changes
+nothing, until you switch it on.
 
-**You need:**
+- **With kubectl, from one manifest.** One controller for the cluster, three
+  `kubectl` commands, no docker and no checkout. **Draft:** no release
+  carries `scaling-manager.yaml` yet, and it is tested on kind only. Until a
+  release carries it, use the `smt` tools image.
+- **With the `smt` tools image.** In every release today. Also the way to run
+  one controller per namespace, which the one manifest does not do.
+
+**You need, either way:**
 
 - llm-d model servers in one or more namespaces, KEDA, and the Prometheus
   Operator.
-- A cluster admin and a namespace owner, each with their own kubeconfig. The
-  lines marked `# admin` need the cluster admin.
 - Your GPU product and how many GPUs the models may hold together. The product
   is the `GPU.PRODUCT` column of `kubectl get nodes -L nvidia.com/gpu.product`.
 - For P/D on a DisaggregatedSet: LeaderWorkerSet v0.10.0 or later
   (`kubectl api-resources --api-group=disaggregatedset.x-k8s.io` lists
   `disaggregatedsetrolescalers`).
 
-### 1. Get the `smt` command
+### With kubectl, from one manifest
+
+You also need cluster-admin rights, and KEDA 2.18 or later in namespace `keda`.
+If KEDA runs elsewhere, or to verify the download's signature, see
+[install with kubectl](docs/guides/kubectl-install/).
+
+1. Apply the manifest. It holds the namespace, the RBAC, the controller and
+   KEDA's side.
+
+   ```bash
+   V=<a release that carries scaling-manager.yaml>
+   curl -fsSLO https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V/scaling-manager.yaml
+   kubectl apply --server-side -f scaling-manager.yaml
+   ```
+
+2. Write the settings, with the quota, and apply them. `namespaceSelector`
+   names the namespaces it may manage.
+
+   ```yaml
+   # settings.yaml
+   apiVersion: v1
+   kind: ConfigMap
+   metadata:
+     name: scaling-manager-settings
+     namespace: scaling-manager-system
+   data:
+     prometheusURL: https://<prometheus>:9090
+     namespaceSelector: "scaling-manager.llmd.ai/managed=true,kubernetes.io/metadata.name in (<ns1>,<ns2>)"
+     limiter: quota
+     quotas: "<gpu product>=<gpus>"
+     quotaScope: cluster
+   ```
+
+   ```bash
+   kubectl apply --server-side -f settings.yaml
+   ```
+
+3. Opt the model namespaces in, and turn sharing on in shadow:
+
+   ```bash
+   export CTRL=scaling-manager-system MODEL_NAMESPACES="<ns1> <ns2>"
+   for ns in $MODEL_NAMESPACES; do
+     kubectl label namespace $ns scaling-manager.llmd.ai/managed=true
+   done
+   kubectl patch configmap scaling-manager-settings -n $CTRL --type merge \
+     -p '{"data":{"utilizationShare":"shadow"}}'
+   ```
+
+4. Check it, then register the models. `ready` is `ok` once every check
+   passes. The controller suggests one ScaledObject per model server. Review
+   min and max, then apply them:
+
+   ```bash
+   kubectl get configmap scaling-manager-controller-status -n $CTRL -o jsonpath='{.data.ready}{"\n"}'
+   for ns in $MODEL_NAMESPACES; do
+     kubectl get configmap scaling-manager-scaledobjects-plan -n $CTRL -o jsonpath="{.data.$ns}" > so-$ns.yaml
+     kubectl apply -n $ns -f so-$ns.yaml
+   done
+   ```
+
+   LeaderWorkerSets and DisaggregatedSets are not suggested yet. Where nothing
+   scrapes the model servers, apply the monitoring file too
+   ([monitoring, grants and the label guard](docs/guides/kubectl-install/README.md#monitoring-grants-and-the-label-guard)).
+
+Then [watch what it would do](#watch-what-it-would-do).
+
+### With the `smt` tools image
+
+You also need a cluster admin and a namespace owner, each with their own
+kubeconfig. The lines marked `# admin` need the cluster admin.
+
+#### 1. Get the `smt` command
 
 Once per machine. The image carries the release files, signed with it
 ([verify it](docs/reference/tools-install.md#set-up-smt)). Use a token
@@ -97,7 +172,7 @@ kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/k
 The owner needs only the stock `admin` ClusterRole, bound in the namespace
 the scaling manager runs in.
 
-### 2. Install it passive, sharing in shadow
+#### 2. Install it passive, sharing in shadow
 
 Pick the block for your layout. Each command checks before it writes, stops on
 a problem with the fix, and can be run again.
@@ -135,7 +210,7 @@ SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-finish -n $CTRL                
 - `admin-setup` adds the monitors that scrape the model servers and each
   router's endpoint picker, where nothing scrapes them yet.
 
-### 3. Register the models
+#### 3. Register the models
 
 One ScaledObject per model server. On a DisaggregatedSet, there is one per
 role, prefill and decode.
@@ -154,9 +229,9 @@ KEDA. Add `--dset-role-writer` to `admin-setup` and `install`, and annotate
 the set ([P/D in passive mode](docs/guides/try-in-passive-mode/README.md#on-a-disaggregatedset)).
 In passive mode it still writes nothing.
 
-### 4. Watch what it would do
+### Watch what it would do
 
-Leave it through each model's busy period. First check it is in shadow:
+Either install. Leave it through each model's busy period. First check it is in shadow:
 
 ```bash
 kubectl get configmap scaling-manager-controller-status -n $CTRL \
@@ -184,11 +259,23 @@ its would-be count differs from what it runs. Per model, and what each metric
 means: [verification](docs/guides/try-in-passive-mode/README.md#verification)
 and [utilization share in passive mode](docs/guides/try-in-passive-mode/README.md#utilization-share-in-passive-mode).
 
-### 5. Go active, when you are ready
+### Go active, when you are ready
 
-Sharing scales a donor down, so each model server must drain on termination.
-`smt workload-patch -n <ns>` reports what each one still needs
-([prepare model servers](docs/guides/prepare-workloads/)).
+Sharing scales a donor down, so each model server must drain on termination
+([prepare model servers](docs/guides/prepare-workloads/); with the tools
+image, `smt workload-patch -n <ns>` reports what each one still needs).
+
+First give the controller patch on pods in each model namespace. Installed
+with kubectl, the grant is in the release's grants file:
+
+```bash
+curl -fsSLO https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V/scaling-manager-grants.yaml
+for ns in $MODEL_NAMESPACES; do
+  kubectl apply -n $ns -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=pod-writer
+done
+```
+
+Installed with `smt`, it is the activation file the image carries:
 
 ```bash
 smt release-files --out release
@@ -196,6 +283,11 @@ for ns in $MODEL_NAMESPACES; do                                       # admin: t
   sed -e "s/__NAMESPACE__/$CTRL/g" -e "s/__MODEL_NAMESPACE__/$ns/g" \
     release/scaling-manager-activate.yaml | kubectl apply -f -
 done
+```
+
+Then switch both on:
+
+```bash
 kubectl patch configmap scaling-manager-settings -n $CTRL --type merge \
   -p '{"data":{"passive":"false","utilizationShare":"active"}}'
 ```
@@ -212,8 +304,10 @@ kubectl patch configmap scaling-manager-settings -n $CTRL --type merge \
   -p '{"data":{"utilizationShare":"off"}}'                            # sharing off; the budget stays
 ```
 
-To remove it completely, follow the cleanup in
-[install in a namespace](docs/guides/install-in-namespace/#cleanup). With
+To remove it completely: installed with kubectl, follow
+[uninstall](docs/guides/kubectl-install/README.md#uninstall). Installed with
+`smt`, follow the cleanup in
+[install in a namespace](docs/guides/install-in-namespace/#cleanup); with
 several namespaces, first run
 `SMT_KUBECONFIG=~/.smt/admin.kubeconfig smt admin-setup -n $CTRL --single-namespace`
 (admin), which takes the model namespaces back. Your models keep serving
@@ -222,13 +316,16 @@ throughout.
 ### More
 
 - Every step with its checks:
+  - [install with kubectl, from one manifest](docs/guides/kubectl-install/)
+    (draft), including a move from a cluster-wide `smt` install;
   - [install in a namespace](docs/guides/install-in-namespace/);
   - [several namespaces, one budget](docs/guides/utilization-share-namespaced/);
   - [for the whole cluster](docs/guides/install-cluster-wide/);
   - [try it in passive mode](docs/guides/try-in-passive-mode/).
 - Flags and exit codes: [install commands](docs/reference/tools-install.md).
-- Without a GPU quota, leave out `--quota` and `--utilization-share`, and each
-  model is scaled on its own.
+- Without a GPU quota, leave out `limiter`, `quotas`, `quotaScope` and the
+  `utilizationShare` patch (kubectl), or `--quota` and `--utilization-share`
+  (`smt`), and each model is scaled on its own.
 - From a checkout instead: `make deploy-scaling-manager`
   ([installer options](docs/reference/install-options.md)).
 

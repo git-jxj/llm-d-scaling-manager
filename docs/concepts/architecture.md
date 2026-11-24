@@ -244,6 +244,13 @@ namespace](../guides/install-in-namespace/). A [cluster-wide
 install](../guides/install-cluster-wide/) runs one controller for every
 namespace.
 
+The [one-manifest install](../guides/kubectl-install/) (a draft, not in a
+release yet) is cluster-wide too, with one difference: the controller
+manages only the namespaces labelled `scaling-manager.llmd.ai/managed=true`
+that the `namespaceSelector` setting admits. It also runs its preflight
+checks itself, fills its own scaler certificates and KEDA's copy, and writes
+a suggested ScaledObject per model server for you to review and apply.
+
 A cluster admin can also publish one policy in the `scaling-manager-policy` namespace.
 Self-managed controllers read it in place of their own. Two kinds do not:
 
