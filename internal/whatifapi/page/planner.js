@@ -235,7 +235,7 @@ function flagChips(f) {
 function flagTitle(n, f) {
   const words = (FLAG_WORDS[n] || [n])[0], b = f && f.batchBeyondFit;
   if (n !== "BatchBeyondFit" || !b) return words;
-  return `The decode line was fitted on up to ${b.fitted} sequences a pod; this load runs about ${b.priced}. ` + words;
+  return batchFitWords(b, "this load") + ". " + words;
 }
 
 // setStatus writes the status line, which a screen reader announces. While

@@ -155,10 +155,13 @@ func TestBatchBeyondFit_TheWords(t *testing.T) {
 	b.Reset()
 	flagsLine(&b, pv, pv.qualify(atFill(0.9)))
 	assert.Contains(t, b.String(), "up to 100 sequences an engine rank; this load runs about 112")
-
-	raw, err := json.Marshal(toWire(fitVariant().qualify(atFill(0.9)), unitSeconds))
+	raw, err := json.Marshal(toWire(pv.qualify(atFill(0.9)), unitSeconds))
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"batchBeyondFit":{"priced":225,"fitted":200}`)
+	assert.Contains(t, string(raw), `"batchBeyondFit":{"priced":112,"fitted":100,"ranks":2}`, "a rank's batches say so")
+
+	raw, err = json.Marshal(toWire(fitVariant().qualify(atFill(0.9)), unitSeconds))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"batchBeyondFit":{"priced":225,"fitted":200}`, "one rank: no ranks key")
 	raw, err = json.Marshal(toWire(fitVariant().qualify(atFill(0.5)), unitSeconds))
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "batchBeyondFit", "inside the fit: no key")

@@ -297,7 +297,11 @@ func (pv pricedVariant) beyondFit(k float64) (whatif.BatchBeyondFit, bool) {
 		return whatif.BatchBeyondFit{}, false
 	}
 	if n := pv.batchAt(k); n > seen {
-		return whatif.BatchBeyondFit{Priced: n, Fitted: seen}, true
+		b := whatif.BatchBeyondFit{Priced: n, Fitted: seen}
+		if pv.state.Ranks > 1 {
+			b.Ranks = pv.state.Ranks
+		}
+		return b, true
 	}
 	return whatif.BatchBeyondFit{}, false
 }
@@ -305,12 +309,8 @@ func (pv pricedVariant) beyondFit(k float64) (whatif.BatchBeyondFit, bool) {
 // batchBeyondFitText is what a batchBeyondFit flag rests on, in plain words:
 // the batch the line was fitted on and the most the figures flagged run.
 func (pv pricedVariant) batchBeyondFitText(b whatif.BatchBeyondFit) string {
-	unit := "a pod"
-	if pv.state.Ranks > 1 {
-		unit = "an engine rank"
-	}
 	return fmt.Sprintf("the decode line was fitted on up to %d sequences %s; this load runs about %d, so TPOT may read low and the decode knee high",
-		b.Fitted, unit, b.Priced)
+		b.Fitted, whatif.BatchUnit(b.Ranks), b.Priced)
 }
 
 // hostBound reports whether pv's per-token latency with an empty cache, its

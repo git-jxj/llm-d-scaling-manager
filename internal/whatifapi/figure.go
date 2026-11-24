@@ -41,7 +41,7 @@ func figureOf(r whatif.Result, unit string, worseIsHigh bool) Figure {
 			}
 		}
 		if b := v.Basis.Batch; b != nil {
-			f.BatchBeyondFit = &BatchBeyondFit{Priced: b.Priced, Fitted: b.Fitted}
+			f.BatchBeyondFit = &BatchBeyondFit{Priced: b.Priced, Fitted: b.Fitted, Ranks: b.Ranks}
 		}
 		return f
 	case whatif.TTFT:

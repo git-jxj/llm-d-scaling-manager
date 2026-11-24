@@ -26,7 +26,7 @@ func TestFigureOf_CarriesTheBatchBeyondFit(t *testing.T) {
 // the decode knee, the knee's; and none inside the fit, or under a knee whose
 // TPOT is refused for another reason.
 func TestStepBeyondFit(t *testing.T) {
-	knee := whatif.Answer{Value: 15.1, Basis: whatif.Basis{Batch: &whatif.BatchBeyondFit{Priced: 256, Fitted: 210}}}
+	knee := whatif.Answer{Value: 15.1, Basis: whatif.Basis{Batch: &whatif.BatchBeyondFit{Priced: 256, Fitted: 210, Ranks: 2}}}
 	priced := Figure{Value: ptr(0.03), BatchBeyondFit: &BatchBeyondFit{Priced: 248, Fitted: 210}}
 	refused := Figure{Refused: &Refusal{Reason: string(whatif.Saturated)}}
 
@@ -36,7 +36,7 @@ func TestStepBeyondFit(t *testing.T) {
 
 	got = stepBeyondFit(refused, knee, 15.9)
 	require.NotNil(t, got)
-	assert.Equal(t, BatchBeyondFit{Priced: 256, Fitted: 210}, *got, "past the knee: the knee's")
+	assert.Equal(t, BatchBeyondFit{Priced: 256, Fitted: 210, Ranks: 2}, *got, "past the knee: the knee's, ranks and all")
 
 	assert.Nil(t, stepBeyondFit(Figure{Value: ptr(0.02)}, knee, 12), "inside the fit")
 	assert.Nil(t, stepBeyondFit(refused, knee, 14), "refused under the knee: not the knee's batch")
@@ -63,4 +63,8 @@ func TestBatchBeyondFitNote(t *testing.T) {
 		"these steps run about 216 to 256, so TPOT may read low and the decode knee high. The figures are priced all the same.",
 		batchBeyondFitNote(steps))
 	assert.Empty(t, batchBeyondFitNote(steps[:1]))
+
+	ranked := []BacktestStep{{Start: at("12:30"), BatchBeyondFit: &BatchBeyondFit{Priced: 31, Fitted: 26, Ranks: 8}}}
+	assert.Contains(t, batchBeyondFitNote(ranked), "fitted on up to 26 sequences an engine rank; these steps run about 31",
+		"a pod of 8 ranks: the batches are a rank's")
 }

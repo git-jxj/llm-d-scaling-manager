@@ -305,10 +305,13 @@ type Figure struct {
 
 // BatchBeyondFit is a decode figure's batch against its line's fit, in
 // sequences an engine rank: Priced at the figure's fill, Fitted the most the
-// rows the line was fitted on held (the held fit's for a held line).
+// rows the line was fitted on held (the held fit's for a held line). Ranks
+// is the data-parallel engine ranks a pod runs, where more than one: the
+// batches are then a rank's, not the pod's; absent for one.
 type BatchBeyondFit struct {
 	Priced int64 `json:"priced"`
 	Fitted int64 `json:"fitted"`
+	Ranks  int   `json:"ranks,omitempty"`
 }
 
 // Band is a bootstrap band, Lo to Hi.

@@ -1966,13 +1966,15 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 // the fit's batch.
 func stepBeyondFit(mean Figure, knee whatif.Result, rate float64) *BatchBeyondFit {
 	if b := mean.BatchBeyondFit; b != nil {
-		return &BatchBeyondFit{Priced: b.Priced, Fitted: b.Fitted}
+		c := *b
+		return &c
 	}
 	k, ok := knee.(whatif.Answer)
 	if !ok || mean.Refused == nil || k.Basis.Batch == nil || rate < k.Value {
 		return nil
 	}
-	return &BatchBeyondFit{Priced: k.Basis.Batch.Priced, Fitted: k.Basis.Batch.Fitted}
+	b := k.Basis.Batch
+	return &BatchBeyondFit{Priced: b.Priced, Fitted: b.Fitted, Ranks: b.Ranks}
 }
 
 // batchBeyondFitNote is the note a backtest adds where steps ran past the
@@ -1981,13 +1983,14 @@ func stepBeyondFit(mean Figure, knee whatif.Result, rate float64) *BatchBeyondFi
 func batchBeyondFitNote(steps []BacktestStep) string {
 	var at []string
 	var fitted, lo, hi int64
+	ranks := 0
 	for _, s := range steps {
 		b := s.BatchBeyondFit
 		if b == nil || s.Excluded != "" {
 			continue
 		}
 		at = append(at, s.Start.UTC().Format("15:04"))
-		fitted = b.Fitted
+		fitted, ranks = b.Fitted, b.Ranks
 		if lo == 0 || b.Priced < lo {
 			lo = b.Priced
 		}
@@ -2000,8 +2003,9 @@ func batchBeyondFitNote(steps []BacktestStep) string {
 	if hi != lo {
 		runs = fmt.Sprintf("about %d to %d", lo, hi)
 	}
-	return fmt.Sprintf("BatchBeyondFit on %d judged steps (%s): the decode line was fitted on up to %d sequences a pod; these steps run %s, "+
-		"so TPOT may read low and the decode knee high. The figures are priced all the same.", len(at), strings.Join(at, ", "), fitted, runs)
+	return fmt.Sprintf("BatchBeyondFit on %d judged steps (%s): the decode line was fitted on up to %d sequences %s; these steps run %s, "+
+		"so TPOT may read low and the decode knee high. The figures are priced all the same.", len(at), strings.Join(at, ", "), fitted,
+		whatif.BatchUnit(ranks), runs)
 }
 
 // measured is one step's measured figures at each statistic of

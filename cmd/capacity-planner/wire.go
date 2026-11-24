@@ -482,10 +482,12 @@ type wireBasis struct {
 }
 
 // wireBatchBeyondFit is whatif.BatchBeyondFit on the wire, in sequences an
-// engine rank.
+// engine rank: a pod's with one rank, and Ranks, absent then, says how many
+// a pod runs otherwise.
 type wireBatchBeyondFit struct {
 	Priced int64 `json:"priced"`
 	Fitted int64 `json:"fitted"`
+	Ranks  int   `json:"ranks,omitempty"`
 }
 
 // wireRefusal is whatif.Unanswerable on the wire.
@@ -537,7 +539,7 @@ func toWire(r whatif.Result, unit string) *wireResult {
 			a.Basis.Floor, a.Basis.KneeRate, a.Basis.PrefillOnlyRate = t.Floor, t.KneeRate, t.PrefillOnlyRate
 		}
 		if b := v.Basis.Batch; b != nil {
-			a.Basis.BatchBeyondFit = &wireBatchBeyondFit{Priced: b.Priced, Fitted: b.Fitted}
+			a.Basis.BatchBeyondFit = &wireBatchBeyondFit{Priced: b.Priced, Fitted: b.Fitted, Ranks: b.Ranks}
 		}
 		for _, f := range v.Flags {
 			a.Flags = append(a.Flags, string(f))

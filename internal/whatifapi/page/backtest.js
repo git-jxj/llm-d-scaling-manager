@@ -425,14 +425,21 @@ function btStepTable(bt, failingOnly) {
   return h + "</tbody></table>";
 }
 
+// batchFitWords is a BatchBeyondFit figure's two batches in words, of what
+// (this load, this step): a pod's, or an engine rank's on a pod of several
+// (batchBeyondFit.ranks).
+function batchFitWords(b, what) {
+  const unit = b.ranks > 1 ? "an engine rank" : "a pod";
+  return `The decode line was fitted on up to ${b.fitted} sequences ${unit}; ${what} runs about ${b.priced}`;
+}
+
 // btBatchChip is the warning a step whose decode runs more sequences than
 // the fit's ITL line was fitted on carries beside its time (BatchBeyondFit),
 // "" for any other.
 function btBatchChip(s) {
   const b = s.batchBeyondFit;
   if (!b) return "";
-  const words = `The decode line was fitted on up to ${b.fitted} sequences a pod; this step runs about ${b.priced}, ` +
-    "so its TPOT may read low and the decode knee high.";
+  const words = batchFitWords(b, "this step") + ", so its TPOT may read low and the decode knee high.";
   return ` <span class="chip flagged" title="${esc(words)}">BatchBeyondFit</span>`;
 }
 

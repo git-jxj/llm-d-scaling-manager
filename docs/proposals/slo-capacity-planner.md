@@ -1851,6 +1851,7 @@ roles[].results.knee.answer.basis object
 roles[].results.knee.answer.basis.batchBeyondFit object
 roles[].results.knee.answer.basis.batchBeyondFit.fitted number
 roles[].results.knee.answer.basis.batchBeyondFit.priced number
+roles[].results.knee.answer.basis.batchBeyondFit.ranks number
 roles[].results.knee.answer.basis.boundBy array
 roles[].results.knee.answer.basis.boundBy[] string
 roles[].results.knee.answer.basis.fill number
@@ -1894,6 +1895,7 @@ roles[].results.meanTPOT.answer.basis object
 roles[].results.meanTPOT.answer.basis.batchBeyondFit object
 roles[].results.meanTPOT.answer.basis.batchBeyondFit.fitted number
 roles[].results.meanTPOT.answer.basis.batchBeyondFit.priced number
+roles[].results.meanTPOT.answer.basis.batchBeyondFit.ranks number
 roles[].results.meanTPOT.answer.basis.boundBy array
 roles[].results.meanTPOT.answer.basis.boundBy[] string
 roles[].results.meanTPOT.answer.basis.fill number
@@ -1937,6 +1939,7 @@ roles[].results.operatingRate.answer.basis object
 roles[].results.operatingRate.answer.basis.batchBeyondFit object
 roles[].results.operatingRate.answer.basis.batchBeyondFit.fitted number
 roles[].results.operatingRate.answer.basis.batchBeyondFit.priced number
+roles[].results.operatingRate.answer.basis.batchBeyondFit.ranks number
 roles[].results.operatingRate.answer.basis.boundBy array
 roles[].results.operatingRate.answer.basis.boundBy[] string
 roles[].results.operatingRate.answer.basis.fill number
@@ -1980,6 +1983,7 @@ roles[].results.percentileTPOT.answer.basis object
 roles[].results.percentileTPOT.answer.basis.batchBeyondFit object
 roles[].results.percentileTPOT.answer.basis.batchBeyondFit.fitted number
 roles[].results.percentileTPOT.answer.basis.batchBeyondFit.priced number
+roles[].results.percentileTPOT.answer.basis.batchBeyondFit.ranks number
 roles[].results.percentileTPOT.answer.basis.boundBy array
 roles[].results.percentileTPOT.answer.basis.boundBy[] string
 roles[].results.percentileTPOT.answer.basis.fill number
@@ -2023,6 +2027,7 @@ roles[].results.rate.answer.basis object
 roles[].results.rate.answer.basis.batchBeyondFit object
 roles[].results.rate.answer.basis.batchBeyondFit.fitted number
 roles[].results.rate.answer.basis.batchBeyondFit.priced number
+roles[].results.rate.answer.basis.batchBeyondFit.ranks number
 roles[].results.rate.answer.basis.boundBy array
 roles[].results.rate.answer.basis.boundBy[] string
 roles[].results.rate.answer.basis.fill number
@@ -2063,6 +2068,7 @@ roles[].results.ttft.answer.basis object
 roles[].results.ttft.answer.basis.batchBeyondFit object
 roles[].results.ttft.answer.basis.batchBeyondFit.fitted number
 roles[].results.ttft.answer.basis.batchBeyondFit.priced number
+roles[].results.ttft.answer.basis.batchBeyondFit.ranks number
 roles[].results.ttft.answer.basis.boundBy array
 roles[].results.ttft.answer.basis.boundBy[] string
 roles[].results.ttft.answer.basis.fill number
