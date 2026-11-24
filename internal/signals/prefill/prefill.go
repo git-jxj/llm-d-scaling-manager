@@ -232,6 +232,11 @@ type Cycle struct {
 	// a queue or is a lower bound under it (plateau.go;
 	// saturation.SwitchPrefillVPOccupancyPlateau).
 	VPOccupancyPlateau bool
+	// VPPromptCoverage records the prompt lengths the minutes V_P rests on
+	// cover (Estimate.VPPromptLow, VPPromptHigh), so a price at a prompt
+	// outside them is flagged out of region and prices no TTFT
+	// (whatif.Prefill.VPPromptLow; saturation.SwitchPrefillVPPromptCoverage).
+	VPPromptCoverage bool
 	// VPLoneRate reads V_P from light load, the lone rate: one request's
 	// computed tokens over its prefill time at under LoneMaxOccupancy
 	// requests in prefill per engine, at the prompt the cycle's rows carry,
@@ -341,6 +346,15 @@ type Estimate struct {
 	// (whatif.Prefill.VPWholePromptTokens). Both zero where VPPromptTokens
 	// is, or where one of the minutes read no whole prompt.
 	VPWholePromptTokens, VPPromptHitRate float64
+	// VPPromptLow and VPPromptHigh are the 10th and 90th percentiles of the
+	// effective prompt lengths of the minutes V_P rests on (promptRange): the
+	// prompts V_P was read over, where VPPromptTokens is their mean. Set only
+	// with Cycle.VPPromptCoverage and a V_P whose minutes all read a prompt;
+	// zero otherwise (the back-pressure bound records none). A V_P of busy
+	// minutes speaks for the prompts it was read at: priced at a mean prompt
+	// outside them it is not the capacity there, in either direction (issue
+	// llm-d-incubation/llm-d-scaling-manager#405).
+	VPPromptLow, VPPromptHigh float64
 
 	// A is the fixed latency in seconds: the low-load fit's intercept plus
 	// the least overhead (AvgTTFT - AvgServiceTime) seen at low load, the
@@ -671,6 +685,9 @@ func (o *Observer) Observe(c Cycle) Estimate {
 	}
 	est.curveBound()
 	est.imbalance(ks, shares, serving, c.FBusyMinutes)
+	if !c.VPPromptCoverage || est.VPRefused != "" {
+		est.VPPromptLow, est.VPPromptHigh = 0, 0
+	}
 	return est
 }
 
