@@ -17,12 +17,12 @@ func TestRankMixture_FitStepsAndStratifiedCompose(t *testing.T) {
 	for range nearShareSteps {
 		atLoad.ShareRows = append(atLoad.ShareRows, ShareRow{Rate: 1.5, Shares: []float64{0.5, 0.5}})
 	}
-	strat, both := base, atLoad
-	strat.Stratified, both.Stratified = true, true
+	stratOn, both := base, atLoad
+	stratOn.Stratified, both.Stratified = true, true
 
 	const rate = 1.5
 	draws := map[string]RankMixtureDraws{}
-	for name, m := range map[string]RankMixture{"base": base, "atLoad": atLoad, "stratified": strat, "both": both} {
+	for name, m := range map[string]RankMixture{"base": base, "atLoad": atLoad, "stratified": stratOn, "both": both} {
 		d, u := m.Draws(rate, expHist(2000), pointHist(40000), 4000)
 		require.Nil(t, u, name)
 		require.NotEmpty(t, d.QP, name)
@@ -30,7 +30,7 @@ func TestRankMixture_FitStepsAndStratifiedCompose(t *testing.T) {
 	}
 	hx, ok := newCumHist(expHist(2000))
 	require.True(t, ok)
-	es, _ := strat.serviceMoments(hx)
+	es, _ := stratOn.serviceMoments(hx)
 	require.Positive(t, es)
 	// Stratified reads the law's mean service at the share it prices: the
 	// window's profile alone, the profile at the load with both.
