@@ -125,6 +125,9 @@ func wantOf(r *wireResult) whatifapi.Figure {
 	if a.Basis.PrefillOnlyRate > 0 {
 		f.PrefillOnlyRate = fp(a.Basis.PrefillOnlyRate)
 	}
+	if b := a.Basis.BatchBeyondFit; b != nil {
+		f.BatchBeyondFit = &whatifapi.BatchBeyondFit{Priced: b.Priced, Fitted: b.Fitted}
+	}
 	return f
 }
 
