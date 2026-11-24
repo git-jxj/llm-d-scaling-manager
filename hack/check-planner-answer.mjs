@@ -144,7 +144,9 @@ try {
   const sc = selfChecked.lines.find(l => l.label === "Accuracy");
   check("the server's self-check shows, with the full check offered", !!sc && sc.text.startsWith("Self-check:") && (sc.actions || []).some(a => a.act === "check"), sc && sc.text);
   check("and the chip says the full check has not run", selfChecked.trust === "Self-check only: full accuracy check not run yet", selfChecked.trust);
-  const aggOnly =Object.assign(copy(inputs), {fleet: {decode: inputs.fleet.decode}});
+  const running = execView({inputs: withHour, plan: refusedPlan, report, k, btPending: true}).lines.find(l => l.label === "Accuracy");
+  check("with the server's quick check, a check running says so, not that none ran", running.text.includes("The full check, at TTFT p90, is running.") && !running.text.includes("has not been run"), running.text);
+  const aggOnly = Object.assign(copy(inputs), {fleet: {decode: inputs.fleet.decode}});
   check("a fleet with no prefill, which the check cannot price, is offered no check", !execView({inputs: aggOnly, plan: refusedPlan, report, k}).lines.some(l => l.label === "Accuracy"));
   // The first screen speaks plainly.
   for (const l of v.lines.concat(held.lines, unchecked.lines)) {

@@ -486,7 +486,11 @@ func TestPageChecksThePlannerOnlyWhenAsked(t *testing.T) {
 		assert.True(t, strings.Contains(c, "if (!el(\"btrun\").disabled) runBacktest();") || strings.Contains(c, "async function runBacktest()"),
 			"runBacktest is called from checkAccuracy alone: %s", strings.TrimSpace(c))
 	}
-	assert.Contains(t, js, `el("btrun").onclick = el("btstart").onclick = runBacktest;`)
+	assert.Contains(t, js, `el("btrun").onclick = runBacktest;`)
+	// "Check accuracy on this recording" checks this recording, whichever
+	// test Check the planner had picked.
+	assert.Contains(t, js, `el("btstart").onclick = checkAccuracy;`)
+	assert.Contains(t, between(t, js, "function checkAccuracy(", "\n}\n"), `el("btsplitmode").checked = true;`)
 	assert.Contains(t, between(t, js, "function renderExec(", "\n}\n"), `a.act === "check" ? checkAccuracy`)
 	assert.Contains(t, html, `<button type="button" id="btstart" disabled>Check accuracy on this recording</button>`)
 }

@@ -39,16 +39,18 @@ The lines, top down:
   It reads "Pending" until the server sizes those rates.
 - **Accuracy**: how many held-out five-minute steps the planner predicted
   within 20%, which way it leans, and the rates and fleet that check
-  covers. Outside that range an answer is an extrapolation. Nothing is
-  checked when the page loads: until you run the check the row reads "Not
-  checked yet", with a **Check accuracy on this recording** button that runs
-  it.
+  covers. Outside that range an answer is an extrapolation. The page runs
+  no check when it loads: until you run one, the row shows the server's
+  quick check or self-check where there is one, else "Not checked yet",
+  with a **Check accuracy on this recording** button that runs it.
 - **SLO used**: the targets, and whether they are the page's defaults.
 
 The chip at the top, "Checked on your traffic: TTFT 130/144 within 20%",
 opens **Check the planner**, which holds the evidence. Before a check it
-reads "Accuracy not checked yet", or "Self-check only: full accuracy check
-not run yet" where the server's self-check filled the Accuracy row.
+quotes the server's quick check where there is one ("Quick check on your
+traffic: ..."), reads "Self-check only: full accuracy check not run yet"
+where the server's self-check filled the Accuracy row, and "Accuracy not
+checked yet" otherwise.
 
 ### When prefill capacity is unknown
 

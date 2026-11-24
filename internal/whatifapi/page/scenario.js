@@ -1319,7 +1319,7 @@ function execView(o) {
     const range = held.rateFrom != null ? ` Tested range: ${fleet} at ${roundRate(held.rateFrom)}-${roundRate(held.rateTo)} r/s; outside that is an extrapolation.` : "";
     // The server's quick check is not the page's: its folds refit at 50%
     // and 75% of the window and score their own steps. Each is named.
-    const other = k.ttftStat !== st ? " " + fullCheckNotRun(k.ttftStat) : "";
+    const other = k.ttftStat === st ? "" : o.btPending ? ` The full check, at TTFT ${k.ttftStat}, is running.` : " " + fullCheckNotRun(k.ttftStat);
     lines.push({label: "Accuracy", badge: EXEC_BADGES.checked,
       text: `Quick check on held-out steps of your traffic: TTFT ${st} within 20% in ${n} of ${held.steps} five-minute steps${lean}.${other}${range}`,
       actions: ask});

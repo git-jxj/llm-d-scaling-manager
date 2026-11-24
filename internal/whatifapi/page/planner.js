@@ -553,7 +553,7 @@ function setInputs(inputs) {
   el("btrun").disabled = el("btstart").disabled = !inputs.fleet.prefill;
   // Nothing is checked at load: the check view says so and offers the check.
   el("btnotrun").hidden = !inputs.fleet.prefill;
-  el("btrun").title =inputs.fleet.prefill ? "" : "A backtest prices a P/D fleet: the source has no prefill variant";
+  el("btrun").title = inputs.fleet.prefill ? "" : "A backtest prices a P/D fleet: the source has no prefill variant";
   const loaded = inputs.source && inputs.source.name;
   const others = (state.sources ? state.sources.recordings : []).filter(n => n !== loaded).map(n => `<option>${esc(n)}</option>`).join("");
   el("bttest").innerHTML = others;
@@ -2234,7 +2234,8 @@ function wire() {
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
-  el("btrun").onclick = el("btstart").onclick = runBacktest;
+  el("btrun").onclick = runBacktest;
+  el("btstart").onclick = checkAccuracy;
   el("bprun").onclick = runPredict;
   el("bcrun").onclick = runCompare;
   const btStale = () => { if (state.bt) el("btout").classList.add("stale"); };
@@ -2286,11 +2287,16 @@ async function startExecutive() {
   renderExec();
 }
 
-// checkAccuracy is the panel's "Check accuracy on this recording": it opens
-// Check the planner and runs the check there, on the split set (half, unless
-// changed).
+// checkAccuracy is "Check accuracy on this recording", on the panel and on
+// Check the planner: it opens Check the planner and runs the check there on
+// this recording, at the split set (half, unless changed), whichever test
+// the tab had picked.
 function checkAccuracy() {
   showView("check");
+  if (el("btothermode").checked) {
+    el("btsplitmode").checked = true;
+    el("btsplitmode").onchange();
+  }
   if (!el("btrun").disabled) runBacktest();
 }
 
@@ -2504,6 +2510,9 @@ function progress(text, share, cancel) {
 async function runBacktest() {
   if (!state.inputs) return;
   const inputsId = state.inputs.inputsId, t0 = performance.now(), x = state.exec;
+  // A run for inputs since replaced can end while a newer run is on: it then
+  // leaves the buttons and the stale mark to the newer one.
+  const run = state.btRun = (state.btRun || 0) + 1;
   el("btrun").disabled = el("btstart").disabled = true;
   el("btout").classList.add("stale");
   // The panel's Accuracy row says the check is running, not that none ran.
@@ -2530,8 +2539,10 @@ async function runBacktest() {
   } catch (e) {
     setStatus("Could not check the planner: " + e.message, true);
   } finally {
-    el("btrun").disabled = el("btstart").disabled = !(state.inputs && state.inputs.fleet.prefill);
-    el("btout").classList.remove("stale");
+    if (state.btRun === run) {
+      el("btrun").disabled = el("btstart").disabled = !(state.inputs && state.inputs.fleet.prefill);
+      el("btout").classList.remove("stale");
+    }
     if (x) { x.btPending = false; if (state.exec === x) renderExec(); }
   }
 }
