@@ -2,7 +2,6 @@ package whatifapi
 
 import (
 	"fmt"
-	"math"
 	"slices"
 	"time"
 
@@ -23,9 +22,13 @@ import (
 // the window's pooled output lengths, so a percentile is the mean times a
 // ratio that does not move with the rate: the fleet prices its percentile
 // curve, its point and decode's limit at a TPOT percentile target at that
-// ratio in place of its own R_q (TPOTRatioFleet). Only p90 and p95 are
-// priced: the two the self-check folds score. A rate above the highest
-// step rate the fit window served, per decode replica, is marked
+// ratio in place of its own R_q (TPOTRatioFleet). Only p90 is priced. The
+// folds score p95 too, but on a recording the model's p95 read under 0.8 of
+// the measured p95 on a tenth of its steps where the planner's own never
+// did, and an under-read p95 undersizes decode at a p95 target: the p95 is
+// the planner's own (tpotPricedPercentile), its ratio and score reported
+// and not priced (TPOTModelInfo.NotUsedForPricing). A rate above the
+// highest step rate the fit window served, per decode replica, is marked
 // Figure.Extrapolated.
 
 // TPOTModelLabel names the experimental TPOT model on the TPOT figure and
@@ -34,6 +37,12 @@ const TPOTModelLabel = "Experimental TPOT model"
 
 // tpotModelSource is the plan's TPOT ratio's source where the model sets it.
 const tpotModelSource = "experimental TPOT model"
+
+// tpotPricedPercentile is the one TPOT percentile the model prices.
+const tpotPricedPercentile = 0.9
+
+// tpotP95NotUsed is TPOTModelInfo.NotUsedForPricing.
+const tpotP95NotUsed = "p95Ratio and heldOut.p95Inside are reported, not used for pricing: a TPOT p95 is the planner's own"
 
 // TPOTModelInfo is the experimental TPOT model as fitted on a source
 // (InputsResponse.TPOTModel).
@@ -52,10 +61,13 @@ type TPOTModelInfo struct {
 	// MeasuredUpTo is the highest step rate the fit window served,
 	// requests a second, at the recorded fleet.
 	MeasuredUpTo *float64 `json:"measuredUpTo,omitempty"`
-	// P90Ratio and P95Ratio are the p90 and p95 over the mean the model
-	// prices at every rate; absent where it abstained.
-	P90Ratio *float64 `json:"p90Ratio,omitempty"`
-	P95Ratio *float64 `json:"p95Ratio,omitempty"`
+	// P90Ratio and P95Ratio are the model's p90 and p95 over the mean, the
+	// same at every rate; absent where it abstained. P90Ratio is priced;
+	// P95Ratio is reported and not, as NotUsedForPricing says wherever the
+	// model fitted.
+	P90Ratio          *float64 `json:"p90Ratio,omitempty"`
+	P95Ratio          *float64 `json:"p95Ratio,omitempty"`
+	NotUsedForPricing string   `json:"notUsedForPricing,omitempty"`
 	// Fit is the model's fit, as a backtest's answer carries it.
 	Fit *TPOTDistReport `json:"fit,omitempty"`
 }
@@ -157,7 +169,8 @@ func fitMainTPOT(e *inputsEntry) *mainTPOT {
 		return abstain("the source's decode pods read no output-length histogram")
 	}
 	mt.tq, mt.inv, mt.dist = tq, inv, whatif.TPOTDist{GroupCV2: g2, C: tq.c, Renewal: r.Renewal}
-	mt.info.P90Ratio, mt.info.P95Ratio = ptr(mt.ratio(0.9)), ptr(mt.ratio(0.95))
+	mt.info.P90Ratio, mt.info.P95Ratio = ptr(mt.ratio(tpotPricedPercentile)), ptr(mt.ratio(0.95))
+	mt.info.NotUsedForPricing = tpotP95NotUsed
 	for _, rate := range tq.stepRates {
 		mt.top = max(mt.top, rate)
 	}
@@ -180,8 +193,8 @@ func fitMainTPOT(e *inputsEntry) *mainTPOT {
 
 // tpotHeldOutWords is a held-out score in the page's words.
 func tpotHeldOutWords(h TPOTHeldOut) string {
-	return fmt.Sprintf("held-out steps, at the measured mean: p90 in the measured bucket on %d of %d, p95 on %d", h.P90Inside, h.Steps,
-		h.P95Inside)
+	return fmt.Sprintf("held-out steps, at the measured mean: p90 in the measured bucket on %d of %d, p95 on %d (p95 not priced)",
+		h.P90Inside, h.Steps, h.P95Inside)
 }
 
 // priced says the model prices.
@@ -190,15 +203,17 @@ func (mt *mainTPOT) priced() bool {
 }
 
 // notPricedAt is why the model does not price the fleet at k, "" where it
-// does: it prices p90 and p95, the statistics its folds score, at the
-// source's own output lengths, so a stated output length or a stated R_q
-// is the planner's alone.
+// does: it prices p90 alone (tpotPricedPercentile), at the source's own
+// output lengths, so a stated output length or a stated R_q is the
+// planner's alone.
 func (mt *mainTPOT) notPricedAt(k Knobs) string {
 	switch {
 	case !mt.priced():
 		return "the model abstained: " + mt.info.Abstained
-	case k.TPOTPercentile != 0.9 && k.TPOTPercentile != 0.95:
-		return "the model prices p90 and p95, not " + statisticName(k.TPOTPercentile)
+	case k.TPOTPercentile == 0.95:
+		return "the model prices p90 only: its p95 can read under the measured one, so the p95 is the planner's own"
+	case k.TPOTPercentile != tpotPricedPercentile:
+		return "the model prices p90 only, not " + statisticName(k.TPOTPercentile)
 	case k.Decode <= 0:
 		return "the fleet has no decode replica"
 	case k.OutputTokens != 0:
@@ -295,7 +310,8 @@ func (mt *mainTPOT) view(fl Fleet, k Knobs) *TPOTModelView {
 
 // applyToReport prices the report's TPOT percentiles with the model, where
 // it prices: the measured shape's rows at the recorded or asked fleet, each
-// row's p90 or p95 the model's ratio times the row's own mean. The verdict,
+// row's p90 the model's ratio times the row's own mean (a p95 row is the
+// planner's, as notPricedAt says). The verdict,
 // the capacity and the summary cells are the planner's own, and the
 // shape's assumed lines say so.
 func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
@@ -324,7 +340,7 @@ func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
 				continue
 			}
 			v := mt.ratio(p) * *mean
-			if !whatif.Finite(v) || math.IsNaN(v) {
+			if !whatif.Finite(v) {
 				continue
 			}
 			st.Figure = Figure{Value: ptr(v), Unit: unitSeconds, Flags: []string{string(whatif.TPOTDistribution)},
@@ -353,6 +369,13 @@ func ApplyTPOTModel(res *Resolved, out *ReportResponse, q ReportQuery) *TPOTMode
 	mt.applyToReport(out, q)
 	info := mt.info
 	return &info
+}
+
+// markLimit is markExtrapolatedRate for a limit fl priced at k, with the
+// experimental TPOT model's mark beside the TTFT model's: a size's step and
+// a plan's one-more-replica step are marked as the plan's own limits are.
+func (e *inputsEntry) markLimit(fl Fleet, k Knobs, f Figure) Figure {
+	return e.tpotModel.mark(k, 0, markExtrapolatedRate(fl, f))
 }
 
 // modelFleet is fl with the experimental models e was resolved with: the

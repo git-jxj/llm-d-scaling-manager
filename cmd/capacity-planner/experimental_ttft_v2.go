@@ -116,7 +116,7 @@ func prefillSlotsOf(res *whatifapi.Resolved) int {
 
 // experimentalReport prices rep's tables with the experimental models
 // asked: the TTFT with the rank-mixture model (--experimental-ttft=v2), the
-// TPOT p90 and p95 with the per-request TPOT distribution
+// TPOT p90 with the per-request TPOT distribution
 // (--experimental-tpot=v2), each fitted on the recording read again with
 // the series it reads, as serve's POST /v1/report does.
 func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.ReportResponse, q whatifapi.ReportQuery) error {

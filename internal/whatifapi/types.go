@@ -45,7 +45,7 @@ type InputsRequest struct {
 	// source's window and abstains where it is not identified; the
 	// planner's TTFT then stands.
 	TTFTModel string `json:"ttftModel,omitempty"`
-	// TPOTModel prices the main view's TPOT p90 and p95 with an
+	// TPOTModel prices the main view's TPOT p90 (not its p95) with an
 	// experimental per-request TPOT distribution: "" is the server's
 	// default (serve --experimental-tpot=v2), and
 	// whatif.TPOTRenewalLognormal the only other. It is fitted on the

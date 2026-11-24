@@ -112,6 +112,20 @@ func TestMainViewTPOTV2_ServedPricesTheQ32Curve(t *testing.T) {
 	assert.Equal(t, own.TTFT, got.TTFT, "the TTFT is the planner's")
 	assert.Equal(t, own.Limits.Prefill, got.Limits.Prefill)
 
+	// The p95 is the planner's own with the model on: its curve, point A,
+	// ratio and limits are the flag-off plan's, the view saying why. (The
+	// p90 above, which the model prices, is the negative control.)
+	own95 := q32TPOTPlan(t, h, plain.InputsID, "p95", target)
+	got95 := q32TPOTPlan(t, h, v2.InputsID, "p95", target)
+	require.NotNil(t, got95.TPOT.Model)
+	assert.False(t, got95.TPOT.Model.Priced)
+	assert.Contains(t, got95.TPOT.Model.NotPriced, "p90 only")
+	got95.TPOT.Model = nil
+	assert.Equal(t, own95.TPOT, got95.TPOT, "the p95 is the planner's")
+	assert.Equal(t, own95.Limits, got95.Limits)
+	require.NotNil(t, m.P95Ratio, "the model's p95 ratio is still reported")
+	assert.NotEmpty(t, m.NotUsedForPricing)
+
 	code, body := loopbackPost(t, h, "/v1/inputs", whatifapi.InputsRequest{Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording,
 		Name: filepath.Base(q32Recording)}, TPOTModel: "ratio"})
 	assert.Equal(t, 400, code, "%s", body)

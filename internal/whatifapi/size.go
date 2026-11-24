@@ -299,8 +299,8 @@ type sizer struct {
 // refused, and then the fleet's too), the prefill role's, and the fleet's.
 type sizeEval struct {
 	decode, prefill, fleet whatif.Result
-	// extrapolated says the fleet limit is one the experimental TTFT model
-	// set past the highest load served (markExtrapolatedRate).
+	// extrapolated says the fleet limit is one the experimental TTFT or TPOT
+	// model set past the highest load served (inputsEntry.markLimit).
 	extrapolated bool
 }
 
@@ -356,7 +356,7 @@ func (z *sizer) priced(ctx context.Context, cache map[FleetCounts]sizeEval, n Fl
 	} else {
 		v.decode, v.prefill, v.fleet = fl.PlainLimits(z.sc.TTFT.Target, tpot, z.sc.Headroom)
 	}
-	v.extrapolated = markExtrapolatedRate(fl, figureOf(v.fleet, unitRate, false)).Extrapolated
+	v.extrapolated = z.e.markLimit(fl, k, figureOf(v.fleet, unitRate, false)).Extrapolated
 	cache[n] = v
 	return v, nil
 }

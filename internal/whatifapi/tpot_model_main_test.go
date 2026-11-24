@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -89,7 +90,10 @@ func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
 	assert.LessOrEqual(t, h.P90Inside, h.Steps)
 	assert.LessOrEqual(t, h.P95Inside, h.Steps)
 	assert.Equal(t, 2, h.Decode)
-	assert.Regexp(t, `^held-out steps, at the measured mean: p90 in the measured bucket on \d+ of \d+, p95 on \d+$`, mt.info.Evidence)
+	assert.Regexp(t, `^held-out steps, at the measured mean: p90 in the measured bucket on \d+ of \d+, p95 on \d+ \(p95 not priced\)$`,
+		mt.info.Evidence)
+	require.NotNil(t, mt.info.P95Ratio, "the p95 ratio is reported")
+	assert.Equal(t, tpotP95NotUsed, mt.info.NotUsedForPricing, "and labelled as not used for pricing")
 	top := *mt.info.MeasuredUpTo
 	assert.InDelta(t, 13.5, top, 0.5, "the highest step rate the window served")
 
@@ -143,25 +147,33 @@ func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
 	assert.Contains(t, strings.Join(out.Assumed, "; "), "experimental TPOT distribution")
 }
 
-// The p95 is priced at its own ratio; any other percentile, and the mean,
-// stay the planner's, the view saying why.
-func TestMainViewTPOT_PricesP90AndP95Only(t *testing.T) {
+// Only the p90 is priced. With the model on, a p95 (an under-read p95
+// would undersize decode at a p95 target), any other percentile and the
+// mean are the planner's: the plan's TPOT view, limits and sizes are the
+// flag-off plan's, but for the view saying why. The negative control: the
+// p90 on the same entry is the model's, not the planner's.
+func TestMainViewTPOT_PricesP90Only(t *testing.T) {
 	s, e := tpotEntry(t, true, 64)
-	p95, _ := tpotPlan(t, s, e.id, "p95", nil)
-	require.True(t, p95.TPOT.Model.Priced)
-	p := p95.TPOT.Curve[3]
-	assert.InEpsilon(t, e.tpotModel.ratio(0.95)*(0.005+p.Rate/1000), *p.Figure.Value, 1e-9)
-
 	s0, e0 := tpotEntry(t, false, 64)
-	for _, st := range []string{"p50", "p99", "mean"} {
+	for _, st := range []string{"p95", "p50", "p99", "mean"} {
 		base, _ := tpotPlan(t, s0, e0.id, st, nil)
 		got, _ := tpotPlan(t, s, e.id, st, nil)
 		require.NotNil(t, got.TPOT.Model, st)
 		assert.False(t, got.TPOT.Model.Priced, st)
-		assert.Contains(t, got.TPOT.Model.NotPriced, "p90 and p95", st)
-		assert.Equal(t, base.TPOT.Curve, got.TPOT.Curve, "%s: the planner's curve stands", st)
-		assert.Equal(t, base.TPOT.AtTarget, got.TPOT.AtTarget, st)
+		assert.Contains(t, got.TPOT.Model.NotPriced, "p90 only", st)
+		got.TPOT.Model = nil
+		assert.Equal(t, base.TPOT, got.TPOT, "%s: the planner's TPOT view stands", st)
+		assert.Equal(t, base.Limits, got.Limits, "%s: the planner's limits stand", st)
+		assert.Equal(t, base.Marginal, got.Marginal, st)
+		assert.NotContains(t, strings.Join(got.Assumed, "; "), "experimental TPOT distribution", st)
 	}
+	p95, _ := tpotPlan(t, s, e.id, "p95", nil)
+	assert.Contains(t, p95.TPOT.Model.NotPriced, "planner's own")
+
+	base, _ := tpotPlan(t, s0, e0.id, "p90", nil)
+	got, _ := tpotPlan(t, s, e.id, "p90", nil)
+	assert.True(t, got.TPOT.Model.Priced, "the control: the p90 is the model's")
+	assert.NotEqual(t, base.TPOT.Curve, got.TPOT.Curve)
 }
 
 // Negative controls: a stated output length, or a stated R_q, is the
@@ -241,18 +253,20 @@ func TestMainViewTPOT_InputsRequest(t *testing.T) {
 // is the model's inversion, flagged, and the plan the answer carries reads
 // the same.
 func TestMainViewTPOT_SizesWhereThePlannerRefuses(t *testing.T) {
-	size := func(s *Server, id string) SizeResponse {
+	sizeAt := func(s *Server, id, statistic string) SizeResponse {
 		body, err := s.size(context.Background(), SizeRequest{InputsID: id, Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(3)}}},
-			SLO: &SLORequest{TPOT: &Objective{Statistic: "p90", Target: f64(0.02)}}})
+			SLO: &SLORequest{TPOT: &Objective{Statistic: statistic, Target: f64(0.02)}}})
 		require.NoError(t, err)
 		var out SizeResponse
 		require.NoError(t, json.Unmarshal(body, &out))
 		return out
 	}
+	size := func(s *Server, id string) SizeResponse { return sizeAt(s, id, "p90") }
 	s0, e0 := tpotEntry(t, false, 64)
 	assert.Nil(t, size(s0, e0.id).Answer, "the planner sizes no fleet without R_q")
 
 	s, e := tpotEntry(t, true, 64)
+	assert.Nil(t, sizeAt(s, e.id, "p95").Answer, "at a p95 target the model sizes nothing: the p95 is the planner's")
 	out := size(s, e.id)
 	require.NotNil(t, out.Answer, "%+v", out.Unmet)
 	d := out.Answer.Plan.Limits.Decode
@@ -275,8 +289,10 @@ func TestMainViewTPOT_Report(t *testing.T) {
 			TPOTPercentile: &ReportStat{Statistic: "p90", Figure: Figure{Refused: &Refusal{Reason: string(whatif.NoTPOTHistogram)}}}}
 	}
 	rep := func() *ReportResponse {
+		p95 := row(top / 2)
+		p95.TPOTPercentile.Statistic = "p95"
 		return &ReportResponse{Fleet: ReportFleet{Decode: 2}, Shapes: []ReportShape{
-			{Label: "measured", Table: []ReportRow{row(top / 2), row(top * 1.2)}},
+			{Label: "measured", Table: []ReportRow{row(top / 2), row(top * 1.2), p95}},
 			{Label: "long", Table: []ReportRow{row(top / 2)}}}}
 	}
 	out := rep()
@@ -291,6 +307,7 @@ func TestMainViewTPOT_Report(t *testing.T) {
 	}
 	assert.Contains(t, m.Flags, string(whatif.TPOTDistribution))
 	assert.Contains(t, strings.Join(m.Assumed, "; "), "summary cells are the planner's own")
+	assert.Equal(t, rep().Shapes[0].Table[2], m.Table[2], "a p95 row is the planner's")
 	assert.NotNil(t, out.Shapes[1].Table[0].TPOTPercentile.Refused, "another shape is the planner's")
 
 	stated := rep()
@@ -324,6 +341,67 @@ func TestMainViewTPOT_MeasuredScalesWithDecodeReplicas(t *testing.T) {
 	}
 	assert.Positive(t, beyond)
 	assert.Contains(t, strings.Join(out.Assumed, "; "), "read at 2 decode replicas and taken at 4")
+}
+
+// A limit the model set past the load served, per decode replica, is
+// marked extrapolated wherever it is shown, as the plan's own limits are:
+// the plan's one-more-replica steps and a size's one-fewer steps too. Each
+// is marked exactly where it is the model's and past the load served.
+func TestMainViewTPOT_LimitsPastTheLoadServedAreMarked(t *testing.T) {
+	s, e := tpotEntry(t, true, 64)
+	top := *e.tpotModel.info.MeasuredUpTo
+	// The stub's mean is 0.005 + rate/1000 at any decode count: at this
+	// target decode's TPOT limit is 25 r/s, past the load served at 3
+	// decode replicas (25*2/3 > top) and under 4 prefill replicas' limit at
+	// a loose TTFT target.
+	loose := e.tpotModel.ratio(0.9) * (0.005 + 0.025)
+	require.Less(t, top, 25*2/3.0)
+	past := func(f Figure, decode int) bool {
+		return f.Value != nil && slices.Contains(f.Flags, string(whatif.TPOTDistribution)) && *f.Value*2/float64(decode) > top*(1+1e-9)
+	}
+	// A loose TTFT target, so that prefill does not bind first.
+	slo := &SLORequest{TTFT: &Objective{Statistic: "mean", Target: f64(10)}, TPOT: &Objective{Statistic: "p90", Target: f64(loose)}}
+	marked := map[string]bool{}
+	check := func(name string, f Figure, decode int) {
+		assert.Equal(t, past(f, decode), f.Extrapolated, "%s at %d decode (measured up to %g at 2): %+v", name, decode, top, f)
+		marked[name] = f.Extrapolated
+	}
+	out, _ := planBody(t, s, PlanRequest{InputsID: e.id, Fleet: &FleetKnob{Prefill: intp(4), Decode: intp(2)},
+		SLO: slo})
+	require.NotNil(t, out.Limits.Decode)
+	check("limits.decode", *out.Limits.Decode, 2)
+	check("limits.fleet", out.Limits.Fleet.Figure, 2)
+	check("marginal.prefillPlusOne", out.Marginal.PrefillPlusOne.Limit, out.Marginal.PrefillPlusOne.Fleet.Decode)
+	check("marginal.decodePlusOne", out.Marginal.DecodePlusOne.Limit, out.Marginal.DecodePlusOne.Fleet.Decode)
+	assert.True(t, marked["marginal.decodePlusOne"], "the one-more-decode step is past the load served")
+
+	body, err := s.size(context.Background(), SizeRequest{InputsID: e.id, Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(20)}}},
+		SLO: slo})
+	require.NoError(t, err)
+	var sz SizeResponse
+	require.NoError(t, json.Unmarshal(body, &sz))
+	require.NotNil(t, sz.Answer, "%s", body)
+	a := sz.Answer
+	check("size.limit", a.Limit, a.Fleet.Decode)
+	for name, st := range map[string]*SizeStep{"size.fewerPrefill": a.FewerPrefill, "size.fewerDecode": a.FewerDecode} {
+		if st != nil {
+			check(name, st.Limit, st.Fleet.Decode)
+		}
+	}
+
+	// A size's step at 4 prefill and 3 decode, as the search prices it
+	// (sizer.step): its limit is decode's TPOT limit, past the load served.
+	req := SizeRequest{InputsID: e.id, Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(20)}}}, SLO: slo}
+	sc, err := scenarioOf(&e.doc, req.planAt(FleetCounts{Prefill: 1, Decode: 1}))
+	require.NoError(t, err)
+	k, err := sc.knobs()
+	require.NoError(t, err)
+	z := &sizer{e: e, sc: sc, k: k, rate: *sc.Rate, bound: FleetCounts{Prefill: 32, Decode: 32}, seen: map[FleetCounts]sizeEval{},
+		plain: map[FleetCounts]sizeEval{}}
+	st, err := z.step(t.Context(), FleetCounts{Prefill: 4, Decode: 3})
+	require.NoError(t, err)
+	check("size.step", st.Limit, 3)
+	assert.True(t, marked["size.step"], "the size's step is past the load served")
 }
 
 // With the model on, the self-check prices its TPOT percentiles as the
