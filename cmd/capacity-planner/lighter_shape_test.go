@@ -36,7 +36,7 @@ func heavierLoadState(t *testing.T, inX, outX float64) *learnreplay.State {
 // A measured shape priced lighter than the load's cycles reads the knee
 // high for that load: an OVER-PROVISIONED or RIGHT-SIZED verdict on it can
 // cut replicas the load needs, so neither is given (#361). Four prefill and
-// four decode replicas are over-provisioned at the staircase's p95 at its
+// seven decode replicas are over-provisioned at the staircase's p95 at its
 // own shape; with the load's cycles 1.5x longer in output, or in prompt,
 // than the shape priced the verdict is NOT JUDGED and names --shape load.
 // Three + three, right-sized at its own shape, is NOT JUDGED too. An UNDER
@@ -48,7 +48,7 @@ func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
 		q.Shapes = []whatifapi.ReportShapeAsk{{Measured: true, Label: "measured"}}
 		return q
 	}
-	own := stairReport(t, stairQuery(4, 4, 0)).Shapes[0]
+	own := stairReport(t, stairQuery(4, 7, 0)).Shapes[0]
 	require.Equal(t, whatifapi.VerdictOver, own.Verdict.Verdict, own.Verdict.Summary)
 	require.Equal(t, whatifapi.VerdictRight, stairReport(t, stairQuery(3, 3, 0)).Shapes[0].Verdict.Verdict)
 	for _, c := range []struct {
@@ -57,7 +57,7 @@ func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
 	}{{"output", 1, 1.5}, {"prompt", 1.5, 1}} {
 		t.Run(c.name, func(t *testing.T) {
 			st := heavierLoadState(t, c.inX, c.outX)
-			for _, f := range [][2]int{{4, 4}, {3, 3}} {
+			for _, f := range [][2]int{{4, 7}, {3, 3}} {
 				s := priceReport(t, st, measured(stairQuery(f[0], f[1], 0))).Shapes[0]
 				require.NotNil(t, s.LoadShape)
 				assert.True(t, s.LoadShape.Mismatch, "the load's cycles ran at another shape")
@@ -88,7 +88,7 @@ func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
 		})
 	}
 	// Within the tolerance the verdict stands.
-	v := priceReport(t, heavierLoadState(t, 1.1, 1.1), measured(stairQuery(4, 4, 0))).Shapes[0].Verdict
+	v := priceReport(t, heavierLoadState(t, 1.1, 1.1), measured(stairQuery(4, 7, 0))).Shapes[0].Verdict
 	assert.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
 
 	// Decode alone holding sizes a decode-only need on the same knee, which
