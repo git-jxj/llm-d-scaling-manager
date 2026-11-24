@@ -349,7 +349,7 @@ limit is that refusal, as in the plan's `limits`.
 ## The report
 
 `POST /v1/report` judges one fleet: is it under-provisioned, right-sized or
-over-provisioned at the load the source saw (its p95 by default)? Resolve
+over-provisioned at the load the source saw (its p95 less counting noise by default)? Resolve
 the source first, then:
 
 ```bash

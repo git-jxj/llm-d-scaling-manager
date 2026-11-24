@@ -143,8 +143,9 @@ planner's own terms:
   2. Type the loads, comma separated: `80%` of each shape's knee, `5r/s`, or
      `seen`. Set **Load seen times** to 1.5 to add a column and a line for 50%
      more traffic; the verdict stays at the load seen.
-  3. Pick the load seen to judge at: its p95 over the window (the default,
-     the busy spells), its mean, or its peak.
+  3. Pick the load seen to judge at: its p95 over the window less the
+     one-minute rate's counting noise (the default, the busy spells), its
+     p95, its mean, or its peak.
   4. Press **Judge the fleet**.
 
   The answer reads top down:
