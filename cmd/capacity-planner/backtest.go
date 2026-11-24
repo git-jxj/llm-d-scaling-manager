@@ -86,7 +86,7 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag,
-		experimentalTTFTV2Usage+"; =v2nl-line prices with its variant that measures the non-queue part part by part, calibrates nothing "+
+		experimentalTTFTV2Usage+"; =v2nl-line prices with its variant that measures each part of the non-queue time on its own, calibrates nothing "+
 			"to the router and abstains unless its fit window prices itself (flagged the same)")
 	fs.BoolVar(&f.rankMixtureStratified, "rank-mixture-stratified", false, "with --experimental-ttft=v2, read each prefill rank's "+
 		"mean service and its spread from the computed-token histogram itself, not from the rank's own random draws, "+
