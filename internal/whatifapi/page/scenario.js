@@ -1375,7 +1375,9 @@ function growthNeed(size, error) {
   const notes = [];
   // A size whose limit is only a lower bound may need fewer prefill: the
   // true limit is higher. One past the highest load measured is extrapolated.
-  if ((lim.flags || []).includes("VPLowerBound")) notes.push("prefill's limit is a lower bound, so fewer prefill may do");
+  // A V_P the user stated (AssumedVP) is priced as given, as the server's
+  // TTFTUpperBound reads it.
+  if ((lim.flags || []).includes("VPLowerBound") && !(lim.flags || []).includes("AssumedVP")) notes.push("prefill's limit is a lower bound, so fewer prefill may do");
   if (lim.extrapolated) notes.push("extrapolated past the tested range");
   return s + (notes.length ? `, ${notes.join("; ")}` : "");
 }

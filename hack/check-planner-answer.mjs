@@ -125,6 +125,7 @@ try {
   check("a lower-bound limit is marked, the right way round", gn(answer({value: 31, flags: ["VPLowerBound"]}, 288)) === "6 prefill + 12 decode (288 GPUs), prefill's limit is a lower bound, so fewer prefill may do");
   check("both marks, in one line", gn(answer({value: 31, extrapolated: true, flags: ["VPLowerBound"]}, 288)) ===
     "6 prefill + 12 decode (288 GPUs), prefill's limit is a lower bound, so fewer prefill may do; extrapolated past the tested range");
+  check("a V_P the user stated is priced as given, unmarked", gn(answer({value: 31, flags: ["VPLowerBound", "AssumedVP"]}, 288)) === "6 prefill + 12 decode (288 GPUs)");
   const unmet = (reason, role) => ({rate: 30, maxReplicas: {prefill: 16, decode: 16}, unmet: {refused: {reason, detail: "x"}, role}});
   check("a size refused for prefill's capacity says so plainly", gn(unmet("NoPrefillCapacity", "prefill")) === "not sized: prefill's limit is not measured");
   check("a size past the bound names the role and the bound", gn(unmet("ReplicaBoundReached", "decode")) === "no decode count up to 16 replicas a role serves it", gn(unmet("ReplicaBoundReached", "decode")));
