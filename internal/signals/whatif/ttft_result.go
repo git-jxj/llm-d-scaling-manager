@@ -157,6 +157,13 @@ const (
 	// hits moved from those V_P was read at (Prefill.prefixMoved): the
 	// cached tokens' attention is not in E[I_eff]. No caller acts on it.
 	VPShapeMoved Flag = "VPShapeMoved"
+	// VPPromptNotCovered is a learned V_P priced at a mean prompt outside
+	// the prompts of the minutes it was read over, by more than
+	// MaxVPShapeRatio either way (Prefill.VPPromptLow, VPPromptHigh): out of
+	// the region it was learned in. The knee priced from it carries the
+	// flag, and no TTFT is priced from it (issue
+	// llm-d-incubation/llm-d-scaling-manager#405).
+	VPPromptNotCovered Flag = "VPPromptNotCovered"
 	// FlowControlInferredOff is flow control taken as off because its queue
 	// series does not exist (a scrape gap looks the same).
 	FlowControlInferredOff Flag = "FlowControlInferredOff"

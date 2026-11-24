@@ -473,13 +473,22 @@ check-doc-comment-owner: ## Fail on a doc comment describing a different declara
 # and learnreplay (3600+ s and 2765 s) with no change of its own.
 TEST_TIMEOUT ?= 90m
 
+# The race-detector pass after it (see test) runs whole packages under -race,
+# several times slower than without: internal/whatifapi alone ran past go
+# test's default 10m on a runner, and took 384 s on a 22-CPU workstation. A
+# runner 2 to 3 times slower puts it at 13 to 19 minutes, and one slow runner
+# has doubled a package's time before (TEST_TIMEOUT), so 60 minutes.
+RACE_TEST_TIMEOUT ?= 60m
+
 .PHONY: test
 test: manifests generate fmt vet setup-envtest helm check-import-direction check-doc-comment-owner ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" PATH="$(LOCALBIN):$(PATH)" go test -timeout $(TEST_TIMEOUT) $$(go list ./... | grep -v /e2e | grep -v /benchmark) ./test/e2e/fixtures/ -coverprofile cover.out
 	@# The race detector on the packages whose concurrency spec only it can
-	@# check (a few seconds): without -race that spec proves no deadlock and
-	@# nothing more.
-	CGO_ENABLED=1 go test -race -count=1 ./internal/engines/analyzers/slo/ ./internal/signals/itl/ ./internal/signals/learnrec/ ./internal/whatifapi/...
+	@# check: without -race that spec proves no deadlock and nothing more. It
+	@# runs whole packages, and internal/whatifapi under -race ran past go
+	@# test's default 10m on a runner, so it carries its own limit
+	@# (RACE_TEST_TIMEOUT).
+	CGO_ENABLED=1 go test -race -count=1 -timeout $(RACE_TEST_TIMEOUT) ./internal/engines/analyzers/slo/ ./internal/signals/itl/ ./internal/signals/learnrec/ ./internal/whatifapi/...
 	CGO_ENABLED=1 go test -race -count=1 -timeout 20m -run 'TestServeConcurrent' ./cmd/capacity-planner/
 
 # The commit a build is made from, recorded in each learner recording's start

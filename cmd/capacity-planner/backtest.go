@@ -25,11 +25,14 @@ import (
 // backtestFlags are backtest's flags.
 type backtestFlags struct {
 	fit, test, recording, split, fitUntil string
-	model, decodeVariant, prefillVariant  string
-	step, settle, ttft, measured, output  string
-	arrivalCV2, assumeVP                  float64
-	assumeA                               time.Duration
-	allowMismatch                         bool
+	// fitBelow and testAbove split by load (whatifapi.BacktestRequest's
+	// FitBelow and TestAbove).
+	fitBelow, testAbove                  string
+	model, decodeVariant, prefillVariant string
+	step, settle, ttft, measured, output string
+	arrivalCV2, assumeVP                 float64
+	assumeA                              time.Duration
+	allowMismatch                        bool
 	// assumePromptCV, assumeRouterHop and assumeITLB are the answers' own
 	// --assume-* flags, and flowControl, routerWaitInPrefill and
 	// priceRouterWait their TTFT flags of the same names (answer.go), so
@@ -95,6 +98,8 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.StringVar(&f.recording, "recording", "", "one recording to split: fit on its first part, test on the rest (with --split or --fit-until)")
 	fs.StringVar(&f.split, "split", "", "with --recording, the share of its span to fit on, as 60%; default 60%")
 	fs.StringVar(&f.fitUntil, "fit-until", "", "with --recording, fit on the cycles up to this time (RFC 3339), test on the rest")
+	fs.StringVar(&f.fitBelow, "fit-below", "", "split by load: fit only on the steps whose arrival rate is below this, a rate (12.5) or a percentile of the steps' rates (p50); with --test-above")
+	fs.StringVar(&f.testAbove, "test-above", "", "split by load: judge only the steps whose arrival rate is at or above this, a rate or a percentile (p75); with --fit-below")
 	fs.StringVar(&f.fit, "fit", "", "the recording to fit on (with --test)")
 	fs.StringVar(&f.test, "test", "", "the recording to test on (with --fit): its inputs are priced, its latency is what it is scored against")
 	fs.StringVar(&f.model, "model", "", "the model; empty takes the source's only model")
@@ -122,9 +127,45 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 		return err
 	}
 	var bt *whatifapi.BacktestResponse
+	byLoad := f.fitBelow != "" || f.testAbove != ""
 	switch {
 	case f.recording != "" && (f.fit != "" || f.test != ""):
 		return usagef("--recording splits one recording; --fit and --test name two: give one way")
+	case byLoad && (f.fitBelow == "" || f.testAbove == ""):
+		return usagef("--fit-below and --test-above split by load together: give both")
+	case byLoad && (f.split != "" || f.fitUntil != ""):
+		return usagef("--fit-below and --test-above split by load, --split and --fit-until by time: give one")
+	case byLoad && f.recording == "" && (f.fit == "" || f.test == ""):
+		return usagef("give --recording (split one recording by load) or --fit and --test (the fit's low steps, the test's high ones)")
+	case byLoad:
+		fitPath, testPath := f.fit, f.test
+		if f.recording != "" {
+			fitPath, testPath = f.recording, f.recording
+		}
+		fitWhole, err := f.resolve(ctx, fitPath, 0, warn)
+		if err != nil {
+			return err
+		}
+		test := fitWhole
+		if testPath != fitPath {
+			if test, err = f.resolve(ctx, testPath, 0, warn); err != nil {
+				return err
+			}
+		}
+		fit, err := f.loadFit(ctx, &req, fitPath, fitWhole, warn)
+		if err != nil {
+			return err
+		}
+		if err := f.rankMixture(&req, testPath, test, fitPath, fit); err != nil {
+			return err
+		}
+		if err := f.tpotDistribution(&req, testPath, test, fitPath, fit); err != nil {
+			return err
+		}
+		bt, err = whatifapi.Backtest(ctx, fit, test, req, time.Time{}, "", "schema-v"+strconv.Itoa(schemaVersion))
+		if err != nil {
+			return backtestError(err)
+		}
 	case f.recording != "":
 		whole, err := f.resolve(ctx, f.recording, 0, warn)
 		if err != nil {
@@ -198,10 +239,10 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 	}
 	req.TTFTModel, req.PrefillSlots = string(whatif.QueueRankMixture), prefillSlotsOf(fit)
 	req.RankMixtureStratified = f.rankMixtureStratified
-	if err := withRankMixture(testPath, test); err != nil {
+	if err := withRankMixture(testPath, test, nil); err != nil {
 		return err
 	}
-	return withRankMixture(fitPath, fit)
+	return withRankMixture(fitPath, fit, req.FitCycles)
 }
 
 // backtestError is err as the CLI exits with it: a request the inputs
@@ -215,7 +256,8 @@ func backtestError(err error) error {
 
 // request is the backtest the flags ask.
 func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
-	req := whatifapi.BacktestRequest{Step: f.step, Settle: f.settle, Measured: f.measured, AllowConfigMismatch: f.allowMismatch}
+	req := whatifapi.BacktestRequest{Step: f.step, Settle: f.settle, Measured: f.measured, AllowConfigMismatch: f.allowMismatch,
+		FitBelow: f.fitBelow, TestAbove: f.testAbove}
 	if f.arrivalCV2 != 0 {
 		req.ArrivalCV2 = &f.arrivalCV2
 	}
@@ -287,9 +329,16 @@ func (f *backtestFlags) assume() (whatifapi.Assume, error) {
 // resolveBacktest resolves one recording at cycle (0 the last): the
 // served path, which tests replace with one that replays each once.
 var resolveBacktest = func(ctx context.Context, f *backtestFlags, path string, cycle int, warn io.Writer) (*whatifapi.Resolved, error) {
+	return resolveCycles(ctx, f, path, cycle, nil, warn)
+}
+
+// resolveCycles is resolveBacktest, of only the cycles the set holds where it
+// is not nil: a load split's fit (whatifapi.LoadFitCycles).
+func resolveCycles(ctx context.Context, f *backtestFlags, path string, cycle int, cycles *whatifapi.CycleSet, warn io.Writer) (*whatifapi.Resolved, error) {
 	src := &servedSources{warn: warn, recordings: filepath.Dir(path)}
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant,
-		PrefillVPPlateau: f.vpPlateau, ExperimentalTTFT: f.experimentalTTFT, Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(path), Cycle: cycle}}
+		PrefillVPPlateau: f.vpPlateau, ExperimentalTTFT: f.experimentalTTFT,
+		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(path), Cycle: cycle, Cycles: cycles}}
 	res, err := src.Resolve(ctx, in)
 	if err != nil && whatifapi.IsInputError(err) {
 		return nil, usageError{err}
@@ -302,6 +351,17 @@ func (f *backtestFlags) resolve(ctx context.Context, path string, cycle int, war
 	return resolveBacktest(ctx, f, path, cycle, warn)
 }
 
+// loadFit is the fit of a split by load: the recording at path read from
+// its steps below --fit-below alone, and those cycles, set in req.
+func (f *backtestFlags) loadFit(ctx context.Context, req *whatifapi.BacktestRequest, path string, whole *whatifapi.Resolved, warn io.Writer) (*whatifapi.Resolved, error) {
+	cs, err := whatifapi.LoadFitCycles(whole, *req)
+	if err != nil {
+		return nil, backtestError(err)
+	}
+	req.FitCycles = cs
+	return resolveCycles(ctx, f, path, 0, cs, warn)
+}
+
 // seriesAndLatencyOf is seriesOf, and each cycle's measured latency beside
 // it, read in the same pass.
 func seriesAndLatencyOf(src learnreplay.Source, st *learnreplay.State, v learnreplay.SeriesVariants) ([]whatifapi.SeriesSample, []whatifapi.LatencySample, error) {
@@ -309,13 +369,17 @@ func seriesAndLatencyOf(src learnreplay.Source, st *learnreplay.State, v learnre
 	if err != nil {
 		return nil, nil, err
 	}
-	out := seriesSamplesOf(cycles)
+	return seriesSamplesOf(cycles), latencySamplesOf(lat), nil
+}
+
+// latencySamplesOf is each cycle's measured latency as the planner API's.
+func latencySamplesOf(lat []learnreplay.CycleLatency) []whatifapi.LatencySample {
 	ls := make([]whatifapi.LatencySample, len(lat))
 	for i, l := range lat {
 		ls[i] = whatifapi.LatencySample{At: l.At, Router: l.Router, EngineTTFT: l.EngineTTFT, EngineTTFTMean: l.EngineTTFTMean,
 			EngineTPOT: l.EngineTPOT, EngineITLMean: l.EngineITLMean}
 	}
-	return out, ls, nil
+	return ls
 }
 
 // seriesSamplesOf is the cycles as the planner API's series.
@@ -481,7 +545,8 @@ func factorText(x *float64) string {
 // excludedWords is a reason a step was not judged, in words.
 var excludedWords = map[string]string{whatifapi.ExcludedNoTraffic: "no traffic", whatifapi.ExcludedNoMeasurement: "no measured requests",
 	whatifapi.ExcludedScaling: "replicas changing", whatifapi.ExcludedWarmUp: "warm-up", whatifapi.ExcludedNotPriced: "not priced",
-	whatifapi.ExcludedOtherVariants: "other variants serving", whatifapi.ExcludedBurst: "a burst near the knee in its window"}
+	whatifapi.ExcludedOtherVariants: "other variants serving", whatifapi.ExcludedBurst: "a burst near the knee in its window",
+	whatifapi.ExcludedLoad: "outside the test's load"}
 
 // writeBacktestText is the backtest's human output: the verdict first, what
 // was not judged, the windows and the configuration, the steps, the scores
@@ -495,7 +560,13 @@ func writeBacktestText(out io.Writer, bt *whatifapi.BacktestResponse) error {
 	at := func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04") }
 	fmt.Fprintf(&b, "fit:  %s, %s to %s UTC, %d cycles\n", bt.Fit.Source, at(bt.Fit.From), at(bt.Fit.To), bt.Fit.Cycles)
 	fmt.Fprintf(&b, "test: %s, %s to %s UTC, %d cycles", bt.Test.Source, at(bt.Test.From), at(bt.Test.To), bt.Test.Cycles)
-	if bt.Split != "" {
+	switch ls := bt.LoadSplit; {
+	case ls != nil:
+		fmt.Fprintf(&b, "\nsplit %s: the fit read %s, the test judges %s at or above its floor", bt.Split, stepsWords(ls.FitSteps), stepsWords(ls.TestSteps))
+		if ls.FitRead > 0 {
+			fmt.Fprintf(&b, ", less %s the fit read", stepsWords(ls.FitRead))
+		}
+	case bt.Split != "":
 		fmt.Fprintf(&b, " (one recording split: %s)", bt.Split)
 	}
 	b.WriteString("\n")

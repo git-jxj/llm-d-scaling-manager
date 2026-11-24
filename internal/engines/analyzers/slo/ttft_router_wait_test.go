@@ -130,6 +130,7 @@ var notOnTheTTFTPath = map[string]string{
 	"TierUnstable":              "decode line",
 	"TransferHeld":              "joint model",
 	"VPFromPlateau":             "planner only: the controller never reads V_P from the occupancy plateau",
+	"VPPromptNotCovered":        "planner only: prefill-vp-prompt-coverage is off from the analyzer's constructor",
 	"ExperimentalTTFT":          "planner only: the CLI's --experimental-ttft",
 	"PSSlotsExceeded":           "planner only: slo-ttft-ps-by-engine, which the analyzer never prices with",
 	"RankMixtureTTFT":           "planner backtest only: --experimental-ttft=v2",
