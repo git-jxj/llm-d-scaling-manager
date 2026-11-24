@@ -24,10 +24,9 @@ import "math"
 // On a production P/D recording, a 50 % time split priced with three draw
 // seeds, a step's figure moved across the seeds by a median 2.4 to 2.9 %
 // and at most 12 to 17 % without them, and by 0.5 to 1.0 % and at most 1.2
-// to 2.6 % with them; the median ratios of priced to measured did not move,
-// and no step newly read under 0.8. The CLI turns it off with
-// --rank-mixture-stratified=false, a request with rankMixtureStratified
-// false.
+// to 2.6 % with them; the median ratios of priced to measured did not move.
+// The CLI turns it off with --rank-mixture-stratified=false, a request with
+// rankMixtureStratified false.
 const DefaultRankMixtureStratified = true
 
 // minStratifiedDraws is the fewest draws a rank takes with the switch, where

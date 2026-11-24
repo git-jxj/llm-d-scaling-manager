@@ -1,16 +1,58 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"io"
+	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
+
+// The main view's model reads the switch too: the inputs a server answers
+// with ttftModel rank-mixture, and at-replicas --experimental-ttft=v2, fit
+// it stratified by default, and from each rank's own draws where the
+// request, serve or at-replicas says false. On the q32 staircase the model
+// abstains on the fit window's length, after the fit it reports.
+func TestRankMixtureStratified_MainView(t *testing.T) {
+	src := &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(q32Recording)}
+	inputs := func(f serveFlags, asked *bool) bool {
+		f.recordings, f.listen, f.auth, f.noSelfCheck = q32Dir, "127.0.0.1:0", whatifapi.AuthNone, true
+		h, err := f.handler(newFlags("serve", io.Discard), io.Discard)
+		require.NoError(t, err)
+		code, body := loopbackPost(t, h, "/v1/inputs", whatifapi.InputsRequest{Source: src, TTFTModel: string(whatif.QueueRankMixture),
+			RankMixtureStratified: asked})
+		require.Equal(t, 200, code, "%s", body)
+		var in whatifapi.InputsResponse
+		require.NoError(t, json.Unmarshal(body, &in))
+		require.NotNil(t, in.TTFTModel)
+		require.NotNil(t, in.TTFTModel.Fit, in.TTFTModel.Abstained)
+		return in.TTFTModel.Fit.Stratified
+	}
+	off, on := false, true
+	assert.True(t, inputs(serveFlags{}, nil), "inputs: on by default")
+	assert.False(t, inputs(serveFlags{}, &off), "inputs: the request's false turns it off")
+	assert.False(t, inputs(serveFlags{rankMixtureStratified: &off}, nil), "inputs: serve's =false is the default")
+	assert.True(t, inputs(serveFlags{rankMixtureStratified: &off}, &on), "inputs: the request overrides serve")
+
+	atReplicas := func(args ...string) bool {
+		out, _ := runCmd(t, append([]string{"at-replicas", "--recording", q32Recording, "--ttft", "2s@p90", "-o", "json",
+			"--" + experimentalTTFTFlag + "=" + experimentalTTFTV2}, args...)...)
+		var rep whatifapi.ReportResponse
+		require.NoError(t, json.Unmarshal([]byte(out), &rep), out)
+		require.NotNil(t, rep.TTFTModel)
+		require.NotNil(t, rep.TTFTModel.Fit, rep.TTFTModel.Abstained)
+		return rep.TTFTModel.Fit.Stratified
+	}
+	assert.True(t, atReplicas(), "at-replicas: on by default")
+	assert.False(t, atReplicas("--"+rankMixtureStratifiedFlag+"=false"), "at-replicas: =false turns it off")
+}
 
 // --experimental-ttft=v2 prices with the stratified service moments by
 // default, on backtest and on serve; --rank-mixture-stratified=false reads
