@@ -504,11 +504,19 @@ if [ -n "$IMG" ]; then
     # --build-context release=<dist> carries none, and every check below would
     # read an empty directory: that is a failure here, never a pass.
     listing="$(docker run --rm --entrypoint /bin/sh "$IMG" -c 'cd /opt/scaling-manager-tools/release && ls -1' 2>&1)" || listing=""
-    nyaml="$(printf '%s\n' "$listing" | grep -c '^scaling-manager-.*\.yaml$' || true)"
-    if [ "$nyaml" -gt 0 ] && printf '%s\n' "$listing" | grep -qx SHA256SUMS; then
-        ok "the image carries $nyaml release manifests and SHA256SUMS"
+    # The manifests the release writes, read from RELEASE_FILES in
+    # deploy/release-manifests.sh rather than matched by name: the one
+    # manifest, scaling-manager.yaml, has no dash after the prefix.
+    want_files="$(tr -d '\r' < "$ROOT/deploy/release-manifests.sh" | sed -n '/^RELEASE_FILES=(/,/^)/s/^[[:space:]]*\(scaling-manager[^[:space:]]*\.yaml\)[[:space:]]*$/\1/p')"
+    nwant="$(printf '%s\n' "$want_files" | grep -c . || true)"
+    nyaml="$(printf '%s\n' "$listing" | grep -cE '^scaling-manager(-.*)?\.yaml$' || true)"
+    absent="$(printf '%s\n' "$want_files" | grep . | while read -r f; do printf '%s\n' "$listing" | grep -qxF "$f" || printf '%s ' "$f"; done)"
+    if [ "$nwant" -eq 0 ]; then
+        fail "read no release manifest from RELEASE_FILES in deploy/release-manifests.sh"
+    elif [ "$nyaml" = "$nwant" ] && [ -z "$absent" ] && printf '%s\n' "$listing" | grep -qx SHA256SUMS; then
+        ok "the image carries the $nyaml release manifests deploy/release-manifests.sh writes, and SHA256SUMS"
     else
-        fail "the image carries no release files (built without --build-context release=<dist>?): $(printf '%s' "$listing" | tr '\n' ' ' | cut -c1-200)"
+        fail "the image carries $nyaml of the $nwant release manifests${absent:+ (lacks $absent)} (built without --build-context release=<dist>?): $(printf '%s' "$listing" | tr '\n' ' ' | cut -c1-200)"
     fi
     out="$(docker run --rm --entrypoint /bin/sh "$IMG" -c 'cd /opt/scaling-manager-tools/release && sha256sum -c --ignore-missing SHA256SUMS' 2>&1)" && rc=0 || rc=$?
     nok="$(printf '%s\n' "$out" | grep -c ': OK$' || true)"
