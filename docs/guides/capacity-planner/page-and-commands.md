@@ -351,7 +351,7 @@ In a cluster, add both to the StatefulSet's `args`
   them (a prefill that never queued). See
   [The v2 TTFT curve](#the-v2-ttft-curve). Sizes follow, from the model's
   prefill limit. With `--experimental-tpot=v2` the main view's TPOT p90
-  too: see [The v2 TPOT curve](#the-v2-tpot-curve). Day plans and
+  and p95 too: see [The v2 TPOT curve](#the-v2-tpot-curve). Day plans and
   predictions are the default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
 - **What the page shows.** The summary says, for each model, that it is
@@ -402,22 +402,19 @@ In a cluster, add both to the StatefulSet's `args`
 
 #### The v2 TPOT curve
 
-- **What it moves.** Only the TPOT p90. The mean TPOT is the planner's
-  own. The model places a per-request distribution around that mean
-  ([how it reads](accuracy.md#experimental-the-per-request-tpot-distribution)),
-  fitted on the loaded source, so its p90 is the mean times one ratio: the
-  source's decode spread and output lengths, the same at every rate. The
-  plan's `tpot.ratio` names it, with the source "experimental TPOT model".
-- **Not the p95.** The p95 stays the planner's own. On a recording the
-  model's p95 read under 0.8 of the measured p95 on one step in ten, where
-  the planner's never did, and a p95 read low sizes too little decode for
-  a p95 target. The inputs still show the model's `p95Ratio` and p95
-  score, marked as not used for pricing.
+- **What it moves.** Only the TPOT p90 and p95. The mean TPOT is the
+  planner's own. The model places a per-request distribution around that
+  mean ([how it reads](accuracy.md#experimental-the-per-request-tpot-distribution)),
+  fitted on the loaded source, so each percentile is the mean times one
+  ratio: the source's decode spread and output lengths, the same at every
+  rate. The plan's `tpot.ratio` names it, with the source
+  "experimental TPOT model".
 - **What it prices.** The TPOT curve, point A, and decode's limit at a p90
-  target: the rate whose mean meets the target over that ratio. A size at
-  such a target sizes decode on it. The report's measured-shape table
-  prices its TPOT p90 the same way. The report's verdict, capacity and
-  summary cells stay the planner's own.
+  or p95 target: the rate whose mean meets the target over that ratio. A
+  size at such a target sizes decode on it. The report's measured-shape
+  table prices its TPOT percentile the same way. The report's verdict,
+  capacity and summary cells stay the planner's own. Day plans do not use
+  it.
 - **Solid, then dashed.** As the TTFT curve: solid up to the highest load
   the source served, per decode replica, and dashed beyond it. Each figure
   past that load carries `extrapolated` true, a size's steps among them.
@@ -430,9 +427,9 @@ In a cluster, add both to the StatefulSet's `args`
   cut alone, so a source whose traffic changes over the window can score
   low here while the curve still lands in the measured buckets (see
   [Known issue](#known-issue-a-low-held-out-score)).
-- **Where it is not used.** Any statistic but p90, a stated output length
-  or a stated R_q (`assume.tpotRatio`): the planner's own percentile
-  stands. The same where it abstains (under 2 h of steps with the router's
+- **Where it is not used.** A statistic other than p90 or p95, a stated
+  output length or a stated R_q (`assume.tpotRatio`): the planner's own
+  percentile stands. The same where it abstains (under 2 h of steps with the router's
   TPOT histogram and the output lengths, max-num-seqs not read, more than
   1 % of sequences waiting for a slot, or C at its bound).
 - **Other fleets.** At another decode count the ratio is the recorded one,
@@ -440,7 +437,8 @@ In a cluster, add both to the StatefulSet's `args`
 - **The self-check.** With the model on, the source's self-check prices its
   TPOT p90 with it too, each fold fitted on the fold's own window.
 - **The CLI.** `at-replicas --experimental-tpot=v2` prices its tables' TPOT
-  p90 the same way, from a `--recording`.
+  percentile the same way, from a `--recording`, at `--shape measured`.
+  The default shape, the load's own, stays the planner's.
 
 ##### Known issue: a low held-out score
 

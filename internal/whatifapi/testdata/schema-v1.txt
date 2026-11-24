@@ -720,7 +720,6 @@ inputs.tpotModel.heldOut.steps number
 inputs.tpotModel.label string
 inputs.tpotModel.measuredUpTo number
 inputs.tpotModel.model string
-inputs.tpotModel.notUsedForPricing string
 inputs.tpotModel.p90Ratio number
 inputs.tpotModel.p95Ratio number
 inputs.ttftModel object
@@ -1495,7 +1494,6 @@ report.tpotModel.heldOut.steps number
 report.tpotModel.label string
 report.tpotModel.measuredUpTo number
 report.tpotModel.model string
-report.tpotModel.notUsedForPricing string
 report.tpotModel.p90Ratio number
 report.tpotModel.p95Ratio number
 report.ttftModel object

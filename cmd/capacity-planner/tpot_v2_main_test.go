@@ -112,19 +112,20 @@ func TestMainViewTPOTV2_ServedPricesTheQ32Curve(t *testing.T) {
 	assert.Equal(t, own.TTFT, got.TTFT, "the TTFT is the planner's")
 	assert.Equal(t, own.Limits.Prefill, got.Limits.Prefill)
 
-	// The p95 is the planner's own with the model on: its curve, point A,
-	// ratio and limits are the flag-off plan's, the view saying why. (The
-	// p90 above, which the model prices, is the negative control.)
-	own95 := q32TPOTPlan(t, h, plain.InputsID, "p95", target)
+	// The p95 is priced the same way, at the model's p95 ratio.
+	require.NotNil(t, m.P95Ratio)
+	r95 := *m.P95Ratio
+	assert.Greater(t, r95, r90)
 	got95 := q32TPOTPlan(t, h, v2.InputsID, "p95", target)
 	require.NotNil(t, got95.TPOT.Model)
-	assert.False(t, got95.TPOT.Model.Priced)
-	assert.Contains(t, got95.TPOT.Model.NotPriced, "p90 only")
-	got95.TPOT.Model = nil
-	assert.Equal(t, own95.TPOT, got95.TPOT, "the p95 is the planner's")
-	assert.Equal(t, own95.Limits, got95.Limits)
-	require.NotNil(t, m.P95Ratio, "the model's p95 ratio is still reported")
-	assert.NotEmpty(t, m.NotUsedForPricing)
+	assert.True(t, got95.TPOT.Model.Priced)
+	for i, p := range got95.TPOT.Curve {
+		if mp := mean.TPOT.Curve[i]; mp.Figure.Value != nil {
+			require.NotNil(t, p.Figure.Value, "p95 at %g r/s", p.Rate)
+			assert.InEpsilon(t, r95**mp.Figure.Value, *p.Figure.Value, 1e-9, "p95 at %g r/s", p.Rate)
+			assert.Contains(t, p.Figure.Flags, string(whatif.TPOTDistribution))
+		}
+	}
 
 	code, body := loopbackPost(t, h, "/v1/inputs", whatifapi.InputsRequest{Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording,
 		Name: filepath.Base(q32Recording)}, TPOTModel: "ratio"})
@@ -151,10 +152,12 @@ func TestMainViewTPOTV2_ServeFlagIsTheDefault(t *testing.T) {
 // at-replicas --experimental-tpot=v2 fits the model on the recording and
 // prices the measured shape's TPOT p90 at each row as the model's ratio
 // times the row's own mean, flagged; every other figure, the verdict and
-// the summary cells among them, is the answer without the flag. The other
+// the summary cells among them, is the answer without the flag. The
+// measured shape is asked: the default, the load's own shape, is the
+// planner's (the model prices the source's own lengths). The other
 // answer commands refuse it, and so does a value other than v2.
 func TestAtReplicasTPOTV2(t *testing.T) {
-	args := []string{"at-replicas", "--recording", q32Recording, "--tpot", "50ms@p90", "-o", "json"}
+	args := []string{"at-replicas", "--recording", q32Recording, "--tpot", "50ms@p90", "--shape", "measured", "-o", "json"}
 	off, offCode := runCmd(t, args...)
 	on, onCode := runCmd(t, append(args, "--"+experimentalTPOTFlag+"="+experimentalTPOTV2)...)
 	assert.Equal(t, offCode, onCode)

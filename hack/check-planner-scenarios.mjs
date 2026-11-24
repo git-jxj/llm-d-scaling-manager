@@ -765,14 +765,14 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
 // drawn, never its TTFT.
 {
   const m = {label: "Experimental TPOT model", priced: true, measuredUpTo: 13.456, beyond: "beyond the highest load measured",
-    evidence: "held-out steps, at the measured mean: p90 in the measured bucket on 20 of 24, p95 on 19 (p95 not priced)"};
+    evidence: "held-out steps, at the measured mean: p90 in the measured bucket on 20 of 24, p95 on 19"};
   const n = tpotModelNote(m);
   check("tpotModelNote: names the model", n.startsWith("Experimental TPOT model"), n);
   check("tpotModelNote: the evidence", n.includes("p90 in the measured bucket on 20 of 24"), n);
   check("tpotModelNote: what is dashed, and from where", n.includes("dashed: beyond the highest load measured (13.5 r/s)"), n);
   check("tpotModelNote: no right end of its own", !n.includes("right end"), n);
-  const not = tpotModelNote({label: "Experimental TPOT model", priced: false, notPriced: "the model prices p90 only, not p99"});
-  check("tpotModelNote: not priced says why", not.includes("not used here (the model prices p90 only, not p99)"), not);
+  const not = tpotModelNote({label: "Experimental TPOT model", priced: false, notPriced: "the model prices p90 and p95, not p99"});
+  check("tpotModelNote: not priced says why", not.includes("not used here (the model prices p90 and p95, not p99)"), not);
   check("tpotModelNote: the planner's own percentile stands", not.includes("planner's own TPOT percentile is drawn") && !not.includes("TTFT"), not);
   check("tpotModelNote: no model, no note", tpotModelNote(undefined) === "" && tpotModelNote(null) === "");
   // A TPOT curve the model prices splits where its points are marked, as
@@ -793,7 +793,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 361;
+const EXPECTED_CASES = 369;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

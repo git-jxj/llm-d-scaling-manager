@@ -90,10 +90,8 @@ func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
 	assert.LessOrEqual(t, h.P90Inside, h.Steps)
 	assert.LessOrEqual(t, h.P95Inside, h.Steps)
 	assert.Equal(t, 2, h.Decode)
-	assert.Regexp(t, `^held-out steps, at the measured mean: p90 in the measured bucket on \d+ of \d+, p95 on \d+ \(p95 not priced\)$`,
-		mt.info.Evidence)
-	require.NotNil(t, mt.info.P95Ratio, "the p95 ratio is reported")
-	assert.Equal(t, tpotP95NotUsed, mt.info.NotUsedForPricing, "and labelled as not used for pricing")
+	assert.Regexp(t, `^held-out steps, at the measured mean: p90 in the measured bucket on \d+ of \d+, p95 on \d+$`, mt.info.Evidence)
+	require.NotNil(t, mt.info.P95Ratio)
 	top := *mt.info.MeasuredUpTo
 	assert.InDelta(t, 13.5, top, 0.5, "the highest step rate the window served")
 
@@ -147,33 +145,38 @@ func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
 	assert.Contains(t, strings.Join(out.Assumed, "; "), "experimental TPOT distribution")
 }
 
-// Only the p90 is priced. With the model on, a p95 (an under-read p95
-// would undersize decode at a p95 target), any other percentile and the
-// mean are the planner's: the plan's TPOT view, limits and sizes are the
-// flag-off plan's, but for the view saying why. The negative control: the
-// p90 on the same entry is the model's, not the planner's.
-func TestMainViewTPOT_PricesP90Only(t *testing.T) {
+// The p90 and the p95 are priced, each at its own ratio: the curve is the
+// planner's mean times it, flagged, and decode's limit at the target the
+// mean's over it. Any other percentile, and the mean, are the planner's: the
+// plan's TPOT view, limits and marginal are the flag-off plan's, but for
+// the view saying why.
+func TestMainViewTPOT_PricesP90AndP95Only(t *testing.T) {
 	s, e := tpotEntry(t, true, 64)
 	s0, e0 := tpotEntry(t, false, 64)
-	for _, st := range []string{"p95", "p50", "p99", "mean"} {
+	for st, q := range map[string]float64{"p90": 0.9, "p95": 0.95} {
+		got, _ := tpotPlan(t, s, e.id, st, nil)
+		require.True(t, got.TPOT.Model.Priced, st)
+		for _, p := range got.TPOT.Curve {
+			require.NotNil(t, p.Figure.Value, "%s at %g r/s", st, p.Rate)
+			assert.InEpsilon(t, e.tpotModel.ratio(q)*(0.005+p.Rate/1000), *p.Figure.Value, 1e-9, "%s at %g r/s", st, p.Rate)
+			assert.Contains(t, p.Figure.Flags, string(whatif.TPOTDistribution))
+		}
+		require.NotNil(t, got.TPOT.AtTarget.Rate.Value, st)
+		assert.InEpsilon(t, (tpotTarget/e.tpotModel.ratio(q)-0.005)*1000, *got.TPOT.AtTarget.Rate.Value, 1e-9, st)
+	}
+	assert.Greater(t, e.tpotModel.ratio(0.95), e.tpotModel.ratio(0.9))
+
+	for _, st := range []string{"p50", "p99", "mean"} {
 		base, _ := tpotPlan(t, s0, e0.id, st, nil)
 		got, _ := tpotPlan(t, s, e.id, st, nil)
 		require.NotNil(t, got.TPOT.Model, st)
 		assert.False(t, got.TPOT.Model.Priced, st)
-		assert.Contains(t, got.TPOT.Model.NotPriced, "p90 only", st)
+		assert.Contains(t, got.TPOT.Model.NotPriced, "p90 and p95", st)
 		got.TPOT.Model = nil
 		assert.Equal(t, base.TPOT, got.TPOT, "%s: the planner's TPOT view stands", st)
 		assert.Equal(t, base.Limits, got.Limits, "%s: the planner's limits stand", st)
 		assert.Equal(t, base.Marginal, got.Marginal, st)
-		assert.NotContains(t, strings.Join(got.Assumed, "; "), "experimental TPOT distribution", st)
 	}
-	p95, _ := tpotPlan(t, s, e.id, "p95", nil)
-	assert.Contains(t, p95.TPOT.Model.NotPriced, "planner's own")
-
-	base, _ := tpotPlan(t, s0, e0.id, "p90", nil)
-	got, _ := tpotPlan(t, s, e.id, "p90", nil)
-	assert.True(t, got.TPOT.Model.Priced, "the control: the p90 is the model's")
-	assert.NotEqual(t, base.TPOT.Curve, got.TPOT.Curve)
 }
 
 // Negative controls: a stated output length, or a stated R_q, is the
@@ -253,20 +256,18 @@ func TestMainViewTPOT_InputsRequest(t *testing.T) {
 // is the model's inversion, flagged, and the plan the answer carries reads
 // the same.
 func TestMainViewTPOT_SizesWhereThePlannerRefuses(t *testing.T) {
-	sizeAt := func(s *Server, id, statistic string) SizeResponse {
+	size := func(s *Server, id string) SizeResponse {
 		body, err := s.size(context.Background(), SizeRequest{InputsID: id, Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(3)}}},
-			SLO: &SLORequest{TPOT: &Objective{Statistic: statistic, Target: f64(0.02)}}})
+			SLO: &SLORequest{TPOT: &Objective{Statistic: "p90", Target: f64(0.02)}}})
 		require.NoError(t, err)
 		var out SizeResponse
 		require.NoError(t, json.Unmarshal(body, &out))
 		return out
 	}
-	size := func(s *Server, id string) SizeResponse { return sizeAt(s, id, "p90") }
 	s0, e0 := tpotEntry(t, false, 64)
 	assert.Nil(t, size(s0, e0.id).Answer, "the planner sizes no fleet without R_q")
 
 	s, e := tpotEntry(t, true, 64)
-	assert.Nil(t, sizeAt(s, e.id, "p95").Answer, "at a p95 target the model sizes nothing: the p95 is the planner's")
 	out := size(s, e.id)
 	require.NotNil(t, out.Answer, "%+v", out.Unmet)
 	d := out.Answer.Plan.Limits.Decode
@@ -307,7 +308,10 @@ func TestMainViewTPOT_Report(t *testing.T) {
 	}
 	assert.Contains(t, m.Flags, string(whatif.TPOTDistribution))
 	assert.Contains(t, strings.Join(m.Assumed, "; "), "summary cells are the planner's own")
-	assert.Equal(t, rep().Shapes[0].Table[2], m.Table[2], "a p95 row is the planner's")
+	p95 := m.Table[2].TPOTPercentile
+	require.NotNil(t, p95.Value, "a p95 row is the model's")
+	assert.InEpsilon(t, mt.ratio(0.95)*0.01, *p95.Value, 1e-12)
+	assert.Contains(t, p95.Flags, string(whatif.TPOTDistribution))
 	assert.NotNil(t, out.Shapes[1].Table[0].TPOTPercentile.Refused, "another shape is the planner's")
 
 	stated := rep()
@@ -396,7 +400,7 @@ func TestMainViewTPOT_LimitsPastTheLoadServedAreMarked(t *testing.T) {
 	require.NoError(t, err)
 	k, err := sc.knobs()
 	require.NoError(t, err)
-	z := &sizer{e: e, sc: sc, k: k, rate: *sc.Rate, bound: FleetCounts{Prefill: 32, Decode: 32}, seen: map[FleetCounts]sizeEval{},
+	z := &sizer{e: e, sc: sc, k: k, rate: *sc.Rate, bound: FleetCounts{Prefill: 32, Decode: 32}, models: e.models(), seen: map[FleetCounts]sizeEval{},
 		plain: map[FleetCounts]sizeEval{}}
 	st, err := z.step(t.Context(), FleetCounts{Prefill: 4, Decode: 3})
 	require.NoError(t, err)
@@ -427,4 +431,79 @@ func TestMainViewTPOT_SelfCheckPricesWithTheModel(t *testing.T) {
 	assert.Equal(t, off.TPOT.Bias, on.TPOT.Bias)
 	assert.Zero(t, off.TPOT.p90Steps, "without the model the stub's p90 is refused")
 	assert.Positive(t, on.TPOT.p90Steps, "with it the p90 is the model's, scored")
+}
+
+// A day plan is the default's also on inputs resolved with the
+// experimental TPOT model, alone or beside the TTFT model: its buckets,
+// whose cycles read no lengths, sit at the window's own shape, where the
+// models price, yet every figure, refusal and count is the default's, so
+// that no plan sizes decode on the model's ratio. The same inputs' size at
+// a p90 TPOT target is the model's, so the check is not empty.
+func TestDayPlan_ExperimentalTPOTModelLeavesTheDayPlanToTheDefault(t *testing.T) {
+	slo := &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}, TPOT: &Objective{Statistic: "p90", Target: f64(tpotTarget)}}
+	plan := func(s *Server, e *inputsEntry) DayPlanResponse {
+		t.Helper()
+		for i := range e.series {
+			e.series[i].HasShape = false
+		}
+		body, err := s.dayPlan(context.Background(), DayPlanRequest{InputsID: e.id, SLO: slo})
+		require.NoError(t, err)
+		var out DayPlanResponse
+		require.NoError(t, json.Unmarshal(body, &out))
+		return out
+	}
+	size := func(s *Server, id string) SizeResponse {
+		t.Helper()
+		body, err := s.size(context.Background(), SizeRequest{InputsID: id, Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(3)}}},
+			SLO: slo})
+		require.NoError(t, err)
+		var out SizeResponse
+		require.NoError(t, json.Unmarshal(body, &out))
+		return out
+	}
+	// sized is a size's answer, its fleet and limit, or why none: the
+	// inputs' ids differ either way.
+	sized := func(r SizeResponse) any {
+		if r.Answer == nil {
+			return r.Unmet
+		}
+		return []any{r.Answer.Fleet, r.Answer.Limit}
+	}
+	same := func(name string, base, got DayPlanResponse) {
+		t.Helper()
+		for _, b := range base.Buckets {
+			assert.Equal(t, "window", b.Shape.Source, "%s: the bucket at %s is at the window's shape", name, b.Start)
+		}
+		assert.Equal(t, base.Refused, got.Refused, name)
+		assert.Equal(t, base.Summary, got.Summary, name)
+		assert.Equal(t, base.Buckets, got.Buckets, name)
+	}
+
+	// The TPOT model alone.
+	s0, e0 := tpotEntry(t, false, 64)
+	s, e := tpotEntry(t, true, 64)
+	require.True(t, e.tpotModel.priced())
+	assert.Nil(t, size(s0, e0.id).Answer, "the default sizes no fleet at a p90 TPOT target: no R_q")
+	require.NotNil(t, size(s, e.id).Answer, "the model sizes the same inputs")
+	base := plan(s0, e0)
+	require.NotEmpty(t, base.Buckets)
+	same("tpot", base, plan(s, e))
+
+	// Both models, on inputs that hold what each fits on.
+	both := func(model bool) (*Server, *inputsEntry) {
+		s, e := mainEntry(t, model)
+		e.decode = tdDecode(e.series)
+		tdRouter(e.latency, e.decode, len(e.series)*3/4)
+		e.engine.DecodeSlots, e.engine.SpecTokens = 64, 3
+		if model {
+			e.tpotModel = fitMainTPOT(e)
+			require.True(t, e.tpotModel.priced(), e.tpotModel.info.Abstained)
+			require.NotNil(t, e.ttftModel)
+		}
+		return s, e
+	}
+	sb0, eb0 := both(false)
+	sb, eb := both(true)
+	require.NotEqual(t, sized(size(sb0, eb0.id)), sized(size(sb, eb.id)), "the models size the same inputs otherwise")
+	same("ttft+tpot", plan(sb0, eb0), plan(sb, eb))
 }
