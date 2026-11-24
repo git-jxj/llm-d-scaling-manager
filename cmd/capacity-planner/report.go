@@ -12,6 +12,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
@@ -494,7 +495,7 @@ func (r *reporter) addAssumed(words ...string) {
 }
 
 // loadOf is the load the fleet is judged at: the query's, else the statistic
-// asked (p95 by default) of the per-cycle arrival rate over the window's
+// asked (the p95 less counting noise by default) of the per-cycle arrival rate over the window's
 // cycles that read one above 0, refused (WindowGapAtPeak) when a gap in the
 // window could hide its peak (gapAtPeak). A growth load is a what-if of
 // its own (shapeReport), never the load judged at. The mean, p95 and
@@ -517,7 +518,7 @@ func (r *reporter) loadOf(l *whatifapi.ReportLoad) {
 		stats = loadStats(rates)
 		mean, p95, peak := stats[whatifapi.LoadMean], stats[whatifapi.LoadP95], stats[whatifapi.LoadPeak]
 		l.Mean, l.P95, l.Peak = &mean, &p95, &peak
-		mod := whatifapi.ModulationP95(rates, mean, p95)
+		mod := whatifapi.ModulationP95Every(rates, mean, p95, cycleSeconds(r.st))
 		stats[whatifapi.LoadP95Modulation] = mod
 		l.P95Modulation = &mod
 		l.P95IsPeak = len(rates) < minP95Cycles
@@ -1387,8 +1388,10 @@ func e2eSum(ttft, tpot whatif.Result, ol float64) whatif.Result {
 //   - UNDER-PROVISIONED on a known miss at the load judged;
 //   - NOT JUDGED where it would be UNDER-PROVISIONED on a load of other
 //     traffic than the shape priced, or one the window's own fleet served
-//     past the knee (notJudgedUnder), when its own check is not judged, or
-//     when the prefill side does not price and decode alone holds;
+//     past the knee (notJudgedUnder), when its own check is not judged,
+//     when the prefill side does not price and decode alone holds, or where
+//     the fleet holds on a measured shape priced lighter than the load's
+//     cycles, whose knee reads high for the load (phasesLighter, #361);
 //   - OVER-PROVISIONED when a role has a replica to spare: one fewer of it
 //     holds the whole fleet at the load judged, and the role's own check
 //     (knee and target) at the peak too, since removing capacity is the
@@ -1413,6 +1416,7 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 	if !r.brief {
 		lead = "at " + r.loadWords + ", "
 	}
+	lighter := r.phasesLighter()
 	switch {
 	case !base.kneeOK:
 		v.Verdict = whatifapi.VerdictNotJudged
@@ -1453,6 +1457,13 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		v.Verdict = whatifapi.VerdictNotJudged
 		v.Summary = fmt.Sprintf("%s: %s%s cannot be priced (%s).", v.Verdict, lead, base.slo.unknown,
 			refusalWords(base.slo.unknownFig))
+		return v, nil
+	case lighter != "":
+		// Ahead of decode alone holding: its decode-only need is sized on
+		// the same knee, and can name fewer decode than the fleet has.
+		v.Verdict = whatifapi.VerdictNotJudged
+		v.Reason += ". " + lighter
+		v.Summary = fmt.Sprintf("%s: %s %s.", v.Verdict, phasesWords, lighter)
 		return v, nil
 	case !base.prefillPriced:
 		v.Verdict = whatifapi.VerdictNotJudged
@@ -1633,9 +1644,52 @@ func (r *reporter) phasesDiffer(binds string) string {
 	if !r.sh.Measured || ls == nil || !(heavier(il, ls.InputTokens) || olHeavier) {
 		return ""
 	}
-	return fmt.Sprintf("the load's cycles ran at IL %s OL %s, the shape priced is IL %s OL %s, so the knee is of other traffic and "+
-		"no verdict is priced on it; --shape load prices the load at its own shape", num(round(ls.InputTokens)), num(round(ls.OutputTokens)),
-		num(round(il)), num(round(ol)))
+	return r.shapesWords("so the knee is of other traffic and no verdict is priced on it")
+}
+
+// phasesLighter says how the load's cycles ran heavier than the measured
+// shape priced, "" where they did not or a shape was stated: a shape priced
+// lighter than the load's in a length (more than
+// whatifapi.ShapeLoadTolerance under it) reads its knee high for the load,
+// so a verdict that the fleet holds, RIGHT-SIZED or OVER-PROVISIONED, is not
+// given on it (#361). It can cut replicas the load needs. An UNDER on such a
+// knee holds the more, and keeps its verdict.
+func (r *reporter) phasesLighter() string {
+	ls := r.loadShape
+	il, ol := r.pv.shape.AvgInputTokens, r.pv.shape.AvgOutputTokens
+	lighter := func(x, ref float64) bool { return x > 0 && ref > 0 && 1-x/ref > whatifapi.ShapeLoadTolerance }
+	if !r.sh.Measured || ls == nil || !(lighter(il, ls.InputTokens) || lighter(ol, ls.OutputTokens)) {
+		return ""
+	}
+	return r.shapesWords("so the knee reads high for the load and no verdict that the fleet holds is priced on it")
+}
+
+// shapesWords says the load's cycles' shape and the shape priced, then so,
+// and how to price the load at its own shape.
+func (r *reporter) shapesWords(so string) string {
+	ls := r.loadShape
+	return fmt.Sprintf("the load's cycles ran at IL %s OL %s, the shape priced is IL %s OL %s, %s; --shape load prices the load at its own shape",
+		num(round(ls.InputTokens)), num(round(ls.OutputTokens)), num(round(r.pv.shape.AvgInputTokens)), num(round(r.pv.shape.AvgOutputTokens)), so)
+}
+
+// decodeKneeScale is the decode knee at the shape priced over the knee at
+// cycle c's shape: a rate c served, times it, is that rate at the shape
+// priced. A decode knee is the sequences resident, the fill times the KV
+// capacity over the KV one request holds (KVreq = ILeff + D*OL/2), each
+// served once every OL steps: it goes as 1/(OL*KVreq). The prompt's KV is
+// resident on the decode pods, P/D or not, so a shorter prompt raises the
+// knee too. Both KVreq are read with the shape priced's prefix hit and
+// output dispersion, so only the lengths move the ratio. Where the batch
+// cap binds, the knee moves less with KVreq than that, so the KVreq ratio
+// is taken only where it is below 1: a cycle then counts at or below its
+// share at the shape priced, never past it. Callers check both lengths are
+// above 0.
+func (r *reporter) decodeKneeScale(c learnreplay.CycleShape) float64 {
+	s := r.pv.shape
+	kv := func(il, ol float64) float64 {
+		return shape.New(il, ol, s.PrefixHitRate).WithOutputDispersion(s.OutputDispersion).KVreq
+	}
+	return c.OutputTokens / s.AvgOutputTokens * min(1, kv(c.InputTokens, c.OutputTokens)/kv(s.AvgInputTokens, s.AvgOutputTokens))
 }
 
 // contradicted says how the window's own fleet served more than the model
@@ -1647,9 +1701,14 @@ func (r *reporter) phasesDiffer(binds string) string {
 // at least one replica and at most the replicas priced (CurrentReplicas
 // less PendingReplicas, summed over the role's variants), and the decode
 // replicas served above the share times the fleet knee; a cycle lighter
-// than the shape priced in the length the binding role's knee goes by
-// (prompt for prefill, output for decode) counts its rate scaled down by
-// that ratio, as its own knee is that much higher. The share is
+// than the shape priced counts its rate scaled down to the shape priced, as
+// its own knee is that much higher: by the prompt ratio where prefill binds,
+// and by decodeKneeScale where decode does. An aggregated fleet, with no
+// prefill variant, is one pool judged on its own knee: the decode knee its
+// line prices, fitted on pods that prefill too, with the pool's run counted
+// on its replicas; its scale is the lower of decodeKneeScale and the prompt
+// ratio, since a shorter prompt also shortens the prefill work in its steps
+// (#357). The share is
 // contradictShare, over the band's top where that sets the decode knee:
 // such a knee stops at the highest fill the line was fitted to, short of a
 // full replica. Where the recording holds every cycle's clock
@@ -1738,7 +1797,14 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 			case rolePrefill:
 				x *= min(1, c.InputTokens/il)
 			case roleDecodeWord:
-				x *= min(1, c.OutputTokens/ol)
+				s := r.decodeKneeScale(c)
+				if !hasPrefill {
+					// An aggregated pool also prefills on the same pods,
+					// in the steps its line was fitted on: a shorter
+					// prompt shortens them too (#357).
+					s = min(s, c.InputTokens/il)
+				}
+				x *= min(1, s)
 			}
 		}
 		if unknown[i] || !atShape || !(whatif.Finite(x) && x > over) || !within(dec[i], nd) || (checkPrefill && !within(pre[i], np)) {

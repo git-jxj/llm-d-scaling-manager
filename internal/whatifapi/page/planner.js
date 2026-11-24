@@ -21,7 +21,7 @@ const FLAG_WORDS = {
   LimitedPSHeavyTraffic: ["A prefill rank's utilization is above 0.9, where the limited processor sharing approximation is not taken to hold.", "fewer requests a rank, or more ranks"],
   RelaxationLong: ["The busiest prefill rank takes more than a tenth of the step to settle, so the step's rate is not one it ran at steadily.", "a longer step, or a lighter load"],
   KVDeferralOutside: ["The ranks' utilization is outside the range the KV-deferral wait was fitted over.", "a fit window that covers this load"],
-  TPOTDistribution: ["Priced with the experimental per-request TPOT distribution (backtest --experimental-tpot=v2): lognormal around the planner's mean TPOT, spread by the decode replicas' differences and by how few speculative steps a short request takes. Not validated, so every figure reads outside the validated region.", "a validated run of the model"],
+  TPOTDistribution: ["Priced with the experimental per-request TPOT distribution (--experimental-tpot=v2): lognormal around the planner's mean TPOT, spread by the decode replicas' differences and by how few speculative steps a short request takes. Not validated, so every figure reads outside the validated region.", "a validated run of the model"],
   TPOTDistributionAbstained: ["The experimental TPOT distribution was asked for and did not price: max-num-seqs was not read, sequences would wait for a slot, the fit window was too short, or its spread was not identified. This percentile is the planner's own.", "a fit window of two hours or more with the router's TPOT histogram, the decode pods' output lengths and max-num-seqs recorded"],
   VPFromPlateau: ["V_P comes from the occupancy plateau, with no queue: experimental (prefillVPPlateau, --prefill-vp-plateau) and never validated, so every figure on it is outside the validated region.", "a window where a prefill pod queues for compute"],
   VPAboveSlopeBound: ["V_P is above what the low-load fit allows: one of the two readings is wrong.", "more low-load readings, or a busy-minutes reading of V_P"],
@@ -562,7 +562,9 @@ function setInputs(inputs) {
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
   state.bt = null;
   el("btout").hidden = true;
-  el("btrun").disabled = !inputs.fleet.prefill;
+  el("btrun").disabled = el("btstart").disabled = !inputs.fleet.prefill;
+  // Nothing is checked at load: the check view says so and offers the check.
+  el("btnotrun").hidden = !inputs.fleet.prefill;
   el("btrun").title = inputs.fleet.prefill ? "" : "A backtest prices a P/D fleet: the source has no prefill variant";
   const loaded = inputs.source && inputs.source.name;
   const others = (state.sources ? state.sources.recordings : []).filter(n => n !== loaded).map(n => `<option>${esc(n)}</option>`).join("");
@@ -1597,7 +1599,7 @@ function renderTTFT() {
   const scored = state.bt ? btVerdictCard(state.bt, t.statistic, state.k.tpotStat)[0] : null;
   el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : !t.model ? "" :
     scored && scored.chip.startsWith(`TTFT ${t.statistic} `) ? `${t.model.label}: held-out ${scored.chip} (Check the planner).` :
-    ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) + (t.statistic !== "mean" ? ` The full check, at TTFT ${t.statistic}, is in Check the planner.` : "");
+    ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) + (t.statistic !== "mean" ? " " + (state.bt ? `The check in Check the planner gave no TTFT ${t.statistic} score.` : fullCheckNotRun(t.statistic)) : "");
   chart(el("ttftchart"), {W: 640, H: 340, xmax, ymax, series, target: t.line.target, belowFloor, floor: belowFloor ? floor : null,
     rate, dots, markers, knee, kneeLB: pkLB && knee === ps.value, onset, pinTarget, clip: "clip-ttft", ytitle: `TTFT ${t.statistic}`});
   el("ttftlegend").innerHTML = legend(series, onset != null);
@@ -1608,8 +1610,12 @@ function renderTTFT() {
     `<div>Floor: ${figText(t.line.floor, fmtSec)}</div>`;
 }
 
+// TPOT_CAP is the TPOT figure's caption, as the page is served.
+const TPOT_CAP = "Time per output token on the decode replicas, for the mix.";
+
 function renderTPOT() {
   const p = state.plan, t = p.tpot;
+  el("tpotcap").textContent = TPOT_CAP + (t && t.model ? " " + tpotModelNote(t.model) : "");
   if (!t) {
     el("tpottitle").textContent = "TPOT";
     el("tpotchart").innerHTML = "";
@@ -1621,7 +1627,12 @@ function renderTPOT() {
   const lk = lowerKnee(p.ttft.markers);
   const xmax = Math.max(lk != null ? lk * 1.2 : 10, rate * 1.1, pinXmax());
   const floor = val(t.floor);
-  const series = [{cls: "c-mix", name: `TPOT ${t.statistic}`, pts: pts(t.curve), band: true}];
+  // Priced by the experimental TPOT model, the line is solid up to the
+  // highest load measured and dashed beyond it, as the TTFT line is.
+  const line = measuredSplit(pts(t.curve));
+  const label = t.model && t.model.priced ? t.model.label + ", " : "";
+  const series = [{cls: "c-mix", name: `${label}TPOT ${t.statistic}`, pts: line.measured, band: true}];
+  if (line.beyond.length) series.push({cls: "c-mix", extra: " extrap", pts: line.beyond, band: true, name: `extrapolated (${t.model.beyond})`});
   const dots = [];
   const a = state.pin && state.pin.plan.tpot;
   let pinTarget = null;
@@ -2261,6 +2272,7 @@ function wire() {
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
   el("btrun").onclick = runBacktest;
+  el("btstart").onclick = checkAccuracy;
   el("bprun").onclick = runPredict;
   el("bcrun").onclick = runCompare;
   const btStale = () => { if (state.bt) el("btout").classList.add("stale"); };
@@ -2279,47 +2291,23 @@ function wire() {
 // startExecutive runs, once per inputs loaded and after the first plan, the
 // questions the executive panel needs beyond the plan: the fleet judged at
 // the traffic's own shape (POST v1/report) and the fleet +25% and +50% of
-// its busiest load needs (POST v1/size, execAnswers), then the planner
-// checked on the source's held-out last half (POST v1/backtest), each in the
-// background, with the progress bar saying which is running. The report and
-// the sizes are asked again when the SLO, shape or assumed terms change
-// (execKnobs); the check is not, since no SLO enters it. An answer for
-// inputs since replaced, or for knobs since changed, is dropped.
+// its busiest load needs (POST v1/size, execAnswers), in the background,
+// with the progress bar saying which is running. The report and the sizes
+// are asked again when the SLO, shape or assumed terms change (execKnobs).
+// The planner's check on the source (POST v1/backtest) is never run here:
+// it runs only when asked (checkAccuracy, or Run under Check the planner).
+// An answer for inputs since replaced, or for knobs since changed, is
+// dropped.
 async function startExecutive() {
   const x = state.exec;
   if (!x || x.started || !state.inputs || !state.plan) return;
   x.started = true;
-  const id = state.inputs.inputsId, mine = () => state.exec === x && state.inputs && state.inputs.inputsId === id;
-  // With the server's held-out check at load, the headline needs no check of
-  // its own: the full one runs when Check the planner is opened.
-  const held = state.inputs.ttftModel && state.inputs.ttftModel.heldOut;
-  x.btPending = !!state.inputs.fleet.prefill && !(held && held.steps > 0);
   x.reportPending = true;
   x.growthPending = true;
   const sig = execSigs();
   x.rSig = sig.r;
   x.gSig = sig.g;
   await execAnswers(x);
-  if (!mine() || !x.btPending) return;
-  try {
-    x.btAbort = new AbortController();
-    execProgress(x, "bt", "Checking the planner on your held-out hours: fitting, then pricing each step");
-    x.bt = await api("POST", "v1/backtest", {inputsId: id, split: "50%", step: "5m"}, x.btAbort.signal);
-  } catch (e) {
-    x.btError = e.message;
-  }
-  if (!mine()) return;
-  x.btAbort = null;
-  x.btPending = false;
-  execProgress(x, "bt", "");
-  // The check on the page's own tab shows the same run until you run another.
-  if (x.bt && !state.bt) {
-    state.bt = x.bt;
-    el("btsplit").value = "50";
-    el("btsplitout").textContent = "50%";
-    renderBacktest();
-  }
-  renderExec();
 }
 
 // execSigs is what the panel's report (r) and growth sizes (g) ask beyond
@@ -2443,15 +2431,13 @@ function growthMissingFor(inputs, plan) {
   return !v2 && !!pr && !!pr.refused && pr.refused.reason === "NoPrefillCapacity" ? GROWTH_NO_PREFILL : "";
 }
 
-// execProgress shows what the panel is asking: the report and sizes (ans)
-// before the check (bt), which runs beside a re-ask. Cancel stops both.
+// execProgress shows what the panel is asking: the report and the sizes
+// (ans). Cancel stops them.
 function execProgress(x, task, text) {
   x.prog = Object.assign({}, x.prog, {[task]: text});
   if (state.exec !== x) return;
-  const now = x.prog.ans || x.prog.bt || "";
-  progress(now, null, () => {
+  progress(x.prog.ans || "", null, () => {
     if (x.ansAbort) x.ansAbort.abort();
-    if (x.btAbort) x.btAbort.abort();
   });
 }
 
@@ -2459,7 +2445,19 @@ function execProgress(x, task, text) {
 function execAbort(x) {
   if (!x) return;
   if (x.ansAbort) x.ansAbort.abort();
-  if (x.btAbort) x.btAbort.abort();
+}
+
+// checkAccuracy is "Check accuracy on this recording", on the panel and on
+// Check the planner: it opens Check the planner and runs the check there on
+// this recording, at the split set (half, unless changed), whichever test
+// the tab had picked.
+function checkAccuracy() {
+  showView("check");
+  if (el("btothermode").checked) {
+    el("btsplitmode").checked = true;
+    el("btsplitmode").onchange();
+  }
+  if (!el("btrun").disabled) runBacktest();
 }
 
 // renderExec draws the executive panel and the trust chip from execView, as
@@ -2469,7 +2467,7 @@ function renderExec() {
   if (!x || !state.inputs || !state.plan || !state.k) return;
   // The check on the Check tab, where it ran, is the one score the panel,
   // the header chip and the check view quote.
-  const v = execView({inputs: state.inputs, plan: state.plan, report: x.report, bt: x.bt || state.bt, k: state.k,
+  const v = execView({inputs: state.inputs, plan: state.plan, report: x.report, bt: state.bt, k: state.k,
     reportPending: x.reportPending, reportError: x.reportError, btPending: x.btPending,
     growth: x.growth, growthPending: x.growthPending, growthMissing: x.growthMissing});
   const dl = el("execlines");
@@ -2494,7 +2492,9 @@ function renderExec() {
     for (const a of l.actions || []) {
       const b = textNode("button", a.label, "execact");
       b.type = "button";
-      b.onclick = a.act === "usevp" ? () => useVP(a.vp) : busierWindow;
+      b.onclick = a.act === "usevp" ? () => useVP(a.vp) : a.act === "check" ? checkAccuracy : busierWindow;
+      // A check already running is not asked for twice.
+      if (a.act === "check") b.disabled = el("btrun").disabled;
       dd.appendChild(b);
     }
     dl.appendChild(dd);
@@ -2532,8 +2532,8 @@ function renderRefusal() {
 const VIEWS = ["answer", "day", "check", "right"];
 
 // showView shows one view and selects its tab; focus moves to the tab when
-// asked (a keyboard move). Opening Check the planner runs the check of the
-// source's last half once, if no check is on screen.
+// asked (a keyboard move). Opening Check the planner runs nothing: the
+// check runs when asked.
 function showView(name, focus) {
   for (const v of VIEWS) {
     const on = v === name;
@@ -2542,10 +2542,6 @@ function showView(name, focus) {
     el("tab-" + v).tabIndex = on ? 0 : -1;
   }
   if (focus) el("tab-" + name).focus();
-  // The panel's own check of the last half, still running, lands here too:
-  // a second one would ask the server the same question twice.
-  const execCheck = state.exec && state.exec.btPending;
-  if (name === "check" && !state.bt && !execCheck && state.inputs && state.inputs.fleet.prefill && !el("btrun").disabled) runBacktest();
 }
 
 // wireTabs makes the tab list work by click and by arrow keys, Home and End.
@@ -2675,9 +2671,14 @@ function progress(text, share, cancel) {
 // source, testing another recording) and draws predicted against measured.
 async function runBacktest() {
   if (!state.inputs) return;
-  const inputsId = state.inputs.inputsId, t0 = performance.now();
-  el("btrun").disabled = true;
+  const inputsId = state.inputs.inputsId, t0 = performance.now(), x = state.exec;
+  // A run for inputs since replaced can end while a newer run is on: it then
+  // leaves the buttons and the stale mark to the newer one.
+  const run = state.btRun = (state.btRun || 0) + 1;
+  el("btrun").disabled = el("btstart").disabled = true;
   el("btout").classList.add("stale");
+  // The panel's Accuracy row says the check is running, not that none ran.
+  if (x) { x.btPending = true; renderExec(); }
   setStatus("Checking the planner: fitting, then pricing each step of the test (seconds to a minute)...");
   try {
     const req = {inputsId, step: el("btstep").value};
@@ -2700,8 +2701,11 @@ async function runBacktest() {
   } catch (e) {
     setStatus("Could not check the planner: " + e.message, true);
   } finally {
-    el("btrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
-    el("btout").classList.remove("stale");
+    if (state.btRun === run) {
+      el("btrun").disabled = el("btstart").disabled = !(state.inputs && state.inputs.fleet.prefill);
+      el("btout").classList.remove("stale");
+    }
+    if (x) { x.btPending = false; if (state.exec === x) renderExec(); }
   }
 }
 
@@ -2786,6 +2790,7 @@ async function runCompare() {
 function renderBacktest() {
   const bt = state.bt;
   el("btout").hidden = false;
+  el("btnotrun").hidden = true;
   const k = state.k || {};
   const card = el("btverdict");
   card.replaceChildren();

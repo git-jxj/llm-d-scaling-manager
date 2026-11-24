@@ -818,6 +818,43 @@ UNDER-PROVISIONED verdict still grows decode to the point estimate and states
 the bound count beside it; where its fleet needed trades decode for prefill, it
 cuts decode no lower than the bound either.
 
+**A shape priced lighter than the load (#361).** Asked for the measured shape
+(`--shape measured`), `at-replicas` prices the load at the decode variant's last
+cycles; by default it prices the load at its own cycles' shape, and this rule
+does not apply. Where the measured shape is more than 20% shorter, in prompt or
+output, than the cycles the load was read from (the same tolerance, read against
+the load's shape, as `ShapeLoadMismatch`), the knee reads high for the load. An
+OVER-PROVISIONED or RIGHT-SIZED verdict on
+it can cut replicas the load needs, so neither is given: the verdict is NOT
+JUDGED, no fleet is sized, and the summary names both shapes and `--shape load`.
+An UNDER-PROVISIONED verdict stands, as a heavier load only makes it more true.
+This is the mirror of the rule that withholds an UNDER on a shape priced heavier
+than the load (#294, #297). A stated shape is the question's, and keeps every
+verdict.
+
+**An aggregated fleet's window check (#357).** The window check withholds an
+UNDER-PROVISIONED verdict where the fleet priced, or a smaller one, served more
+than 1.25x the fleet knee for 3 minutes. On an aggregated fleet, with no prefill
+pods, prefill and decode share the pods, and the check judges that pool on its
+own knee. That knee is the decode knee: the pool's line was fitted on the ITL of
+pods that prefill too, so the prefill chunks in its steps are already in the line,
+at the shape priced. No separate single-pool knee is built. A cycle within 20% of
+the shape priced counts its served rate scaled down to that shape. Where prefill
+binds, the scale is the prompt ratio. Where decode binds, it is the decode knee's
+own: the knee is the sequences resident, fill x C / KVreq, each served once every
+OL steps, so it goes as 1/(OL x KVreq), with KVreq = ILeff + D x OL / 2. The
+scale is the cycle's OL x KVreq over the shape priced's, both read at the shape
+priced's prefix hit and dispersion. The prompt's KV is resident on the decode
+pods on a P/D fleet too, so a shorter prompt raises decode's knee there as well.
+A cycle lighter in both lengths then scales below either length ratio: at 0.85 of
+each, by 0.72 where IL = OL, not by 0.85. Where the batch cap binds, the knee moves
+less with KVreq, so the KVreq ratio is taken only below 1: a cycle counts at or
+below its share at the shape priced, never past it. One pool also prefills in its own steps, so a shorter prompt shortens
+them too; it takes the prompt ratio where that is lower. The pool's run is
+counted on its own replicas: more replicas than priced
+break the run. `TestReport_AnAggregatedPoolIsJudgedOnItsOwnKnee` pins NOT JUDGED
+where the pool served past its knee, and a verdict where it did not.
+
 The rules the page leaves open, chosen here: the row is the unit, as `AvgITL` and
 `generation_tokens` are per pod; a line is asked at the row's fill, clamped to the
 band as an answer is; the knee is read at the row's own shape, on one replica, against

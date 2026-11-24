@@ -634,7 +634,7 @@ func inputsOf(f *answerFlags, pv pricedVariant) *wireInputs {
 		Shape: wireShape{InputTokens: pv.shape.AvgInputTokens, InputSource: shapeMeasured,
 			OutputTokens: pv.shape.AvgOutputTokens, OutputSource: shapeMeasured, PrefixHitRate: pv.shape.PrefixHitRate,
 			FromCycle: pv.state.Shape.FromCycle, ToCycle: pv.state.Shape.ToCycle, Cycles: pv.state.Shape.Cycles,
-			OutputDispersion: pv.state.Shape.OutputDispersion},
+			OutputDispersion: pv.outputDispersion},
 		BatchCap: pv.perRank, BatchCapSource: pv.state.BatchCapSource,
 		Ranks: max(pv.state.Ranks, 1), Replicas: pv.decode.Replicas, ReplicasFrom: "recording",
 		Engine: engineOf(pv.state.Params),

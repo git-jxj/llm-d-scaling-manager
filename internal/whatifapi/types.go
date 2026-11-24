@@ -50,6 +50,13 @@ type InputsRequest struct {
 	// source's window and abstains where it is not identified; the
 	// planner's TTFT then stands.
 	TTFTModel string `json:"ttftModel,omitempty"`
+	// TPOTModel prices the main view's TPOT p90 and p95 with an
+	// experimental per-request TPOT distribution: "" is the server's
+	// default (serve --experimental-tpot=v2), and
+	// whatif.TPOTRenewalLognormal the only other. It is fitted on the
+	// source's window and abstains where its checks fail; the planner's
+	// percentile then stands. The mean TPOT is the planner's either way.
+	TPOTModel string `json:"tpotModel,omitempty"`
 }
 
 // The source kinds.
@@ -111,6 +118,9 @@ type InputsResponse struct {
 	// TTFTModel is the experimental TTFT model the main view prices with,
 	// as fitted on the source (InputsRequest.TTFTModel); absent otherwise.
 	TTFTModel *TTFTModelInfo `json:"ttftModel,omitempty"`
+	// TPOTModel is the experimental TPOT model the main view prices with,
+	// as fitted on the source (InputsRequest.TPOTModel); absent otherwise.
+	TPOTModel *TPOTModelInfo `json:"tpotModel,omitempty"`
 	// Measured is the source's busiest UTC hour and the TTFT and TPOT the
 	// router measured over it (BusiestHourMeasured); absent with no router
 	// histogram. It is measured, never priced.
@@ -281,9 +291,10 @@ type Figure struct {
 	// is met; one it misses is not known to be missed (issue
 	// llm-d-incubation/llm-d-scaling-manager#369).
 	UpperBound bool `json:"upperBound,omitempty"`
-	// Extrapolated says the figure, priced by the experimental TTFT model,
-	// is at a rate above the highest load the source's fit window served
-	// (TTFTModelView.MeasuredUpTo).
+	// Extrapolated says the figure, priced by the experimental TTFT or
+	// TPOT model, is at a rate above the highest load the source's fit
+	// window served (TTFTModelView.MeasuredUpTo,
+	// TPOTModelView.MeasuredUpTo).
 	Extrapolated bool `json:"extrapolated,omitempty"`
 	// BatchBeyondFit is the batch a decode figure's fill runs past the most
 	// the ITL line's fit rows held, where it is (flag BatchBeyondFit): the
@@ -629,6 +640,9 @@ type TPOTView struct {
 	AtRate    RatePoint   `json:"atRate"`
 	AtTarget  TargetPoint `json:"atTarget"`
 	Markers   Markers     `json:"markers"`
+	// Model is the experimental TPOT model at the plan's fleet, where the
+	// source was resolved with one (InputsResponse.TPOTModel).
+	Model *TPOTModelView `json:"model,omitempty"`
 }
 
 // Ratio is R_q, a TPOT percentile over its mean: its value and source

@@ -160,9 +160,11 @@ const (
 	LoadPeak = "peak"
 )
 
-// DefaultLoadStatistic is the statistic judged at when none is asked: p95, so
-// that a window whose mean hides its busy part is judged at the busy part.
-const DefaultLoadStatistic = LoadP95
+// DefaultLoadStatistic is the statistic judged at when none is asked: the
+// p95 less counting noise, so that a window whose mean hides its busy part is
+// judged at the busy part, but a steady stream's one-minute counting noise,
+// which the queueing model already prices, is not counted twice (#295).
+const DefaultLoadStatistic = LoadP95Modulation
 
 // The scopes a verdict covers: the whole fleet, or decode alone when the
 // prefill side does not price.
@@ -213,6 +215,10 @@ type ReportResponse struct {
 	// with, as fitted on the source; absent unless asked
 	// (InputsRequest.TTFTModel, at-replicas --experimental-ttft=v2).
 	TTFTModel *TTFTModelInfo `json:"ttftModel,omitempty"`
+	// TPOTModel is the experimental TPOT model the tables' TPOT percentile
+	// is priced with, as fitted on the source; absent unless asked
+	// (InputsRequest.TPOTModel, at-replicas --experimental-tpot=v2).
+	TPOTModel *TPOTModelInfo `json:"tpotModel,omitempty"`
 }
 
 // ReportShape is the fleet's answer at one request shape.
@@ -631,6 +637,11 @@ func (s *Server) report(ctx context.Context, req ReportRequest) (*ReportResponse
 		info := e.ttftModel.info
 		out.TTFTModel = &info
 	}
+	if e.tpotModel != nil {
+		e.tpotModel.applyToReport(out, q)
+		info := e.tpotModel.info
+		out.TPOTModel = &info
+	}
 	// The source's self-check was read before this report stated anything.
 	out.SelfCheck = e.doc.SelfCheck.RanWithout(&Stated{Assume: q.Assume, ArrivalCV2: q.ArrivalCV2})
 	out.WithholdOverOnMeasured(e.series, e.latency)
@@ -777,7 +788,7 @@ func CheckLoadStatistic(s string) error {
 // ParseReportShape reads a shape: "measured", or "IL/OL[/hit]", lengths in
 // tokens with an optional k (1024 tokens), and hit a rate in [0, 1).
 func ParseReportShape(s string) (ReportShapeAsk, error) {
-	if s == "measured" {
+	if s == shapeMeasured {
 		return ReportShapeAsk{Measured: true, Label: s}, nil
 	}
 	if s == ShapeLoad {

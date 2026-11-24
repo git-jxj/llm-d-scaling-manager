@@ -3,18 +3,18 @@ Self-check: tested on the last 1 h 13 min of this recording, each part predicted
 ns-01/model-02  P/D 2 prefill (variant-02) + 2 decode (variant-01)  window 2026-11-14 07:09-09:35Z, cycle 580 of 580
 decode engine   vLLM release not recorded
 prefill engine  vLLM release not recorded
-load judged     12.48 r/s, the p95 of the 573 of 580 cycles with traffic
+load judged     12.46 r/s, the p95 less counting noise of the 573 of 580 cycles with traffic
 load seen       per cycle (1-minute rates): mean 3.00, p95 12.48, peak 15.38 r/s; p95 less counting noise 12.46; busiest 2m1s (8 cycles): 12.96 r/s
 SLO             TTFT p90 2000.0 ms (asked)
 cell = TTFT p90 ms / TPOT p90 ms @ the rate priced, r/s; - refused (the shape's table says why); m the TPOT mean, where the p90 is refused; <= at most: a TTFT priced from a lower bound of V_P is an upper bound
 mark = the SLO (TTFT p90 2000.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, LB at or past a prefill knee priced from a lower bound of V_P (the knee is at least that rate), so not judged saturated, UB a TTFT over its target that is only an upper bound (V_P a lower bound), so the miss is not known, ? not judged
 summary     50%                   80%                    100%             seen
-  measured  <=5284/18.4 @2.08 UB  <=16229/18.4 @3.33 UB  -/18.4 @4.17 LB  -/19.1 @12.48 LB
+  measured  <=5284/18.4 @2.08 UB  <=16229/18.4 @3.33 UB  -/18.4 @4.17 LB  -/19.1 @12.46 LB
 verdicts
   measured  NOT JUDGED: the load and the shape priced are of different traffic: the load's cycles ran at IL 1000 OL 1133, the shape priced is IL 8016 OL 26, so the knee is of other traffic and no verdict is priced on it; --shape load prices the load at its own shape.
 
 shape measured: IL 8016 OL 26, prefix hit 0.00 (measured, cycles 560-579)
-  the load's cycles (the p95 and above: 30, cycles 8-89): IL 1000 OL 1133, prefix hit 0.00
+  the load's cycles (the p95's cycles, the p95 and above: 30, cycles 8-89): IL 1000 OL 1133, prefix hit 0.00
   SHAPE/LOAD MISMATCH: the load is priced at a shape more than 20% off the traffic that made it; --shape load prices it at its own
 utilization at the load judged
   decode        KV fill 0.019 (band top 0.8), slots 4 of 152, wait p 0.000
@@ -32,9 +32,9 @@ SLO vs load         r/s    TTFT p50/90 ms           TPOT mean/p90 ms  e2e mean (
   50% of knee       2.08   <=886.9/<=5283.7         10.82/18.38       <=2.01 s
   80% of knee       3.33   <=4395.1/<=16229.1       10.82/18.38       <=6.72 s
   100% of knee      4.17   past a lower-bound knee  10.82/18.38       past a lower-bound knee
-  load seen (299%)  12.48  past a lower-bound knee  11.22/19.07       past a lower-bound knee
+  load seen (299%)  12.46  past a lower-bound knee  11.22/19.07       past a lower-bound knee
 checks
-  2 prefill + 2 decode  not judged: 12.48 r/s is 3.0x a prefill knee of at least 4.17 r/s (V_P is a lower bound): whether the fleet saturates is not priced; TTFT p90 not judged (past a lower-bound knee)
+  2 prefill + 2 decode  not judged: 12.46 r/s is 3.0x a prefill knee of at least 4.17 r/s (V_P is a lower bound): whether the fleet saturates is not priced; TTFT p90 not judged (past a lower-bound knee)
 assumed: prompt cv 2 (no computed-prompt histogram); flow control off (no queue series); Poisson arrivals
 flags: UnvalidatedTTFT; VPLowerBound; VPScaledToPrompt; AssumedPromptSpread; KneeAtServedWork; HeldLine; SpreadBeyondProcessorSharing; FlowControlInferredOff; BelowFittedBand; KVBoundSlots; AssumedPoissonArrivals; TransferHeld; PromptSpreadAbovePeak; CoarseTPOTBucket; MeanBoundedTPOTPercentile; ShapeLoadMismatch
 

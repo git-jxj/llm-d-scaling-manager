@@ -476,7 +476,7 @@ func (mm *mainMixture) applyToReport(out *ReportResponse, q ReportQuery) {
 	}
 	for i := range out.Shapes {
 		sh := &out.Shapes[i]
-		if sh.Label != "measured" {
+		if sh.Label != shapeMeasured {
 			continue
 		}
 		pk, dk := sh.Capacity.PrefillKnee, sh.Capacity.DecodeKnee

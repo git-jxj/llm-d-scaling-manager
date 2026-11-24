@@ -394,7 +394,7 @@ func TestPageJudgesTheFleet(t *testing.T) {
 	html, js, scen := pageText(t, "index.html"), pageText(t, "planner.js"), pageText(t, "scenario.js")
 	for _, want := range []string{`id="rshapes"`, `id="rshapeadd"`, `id="rloads"`, `id="rgrowth"`, `id="rrun"`, `id="rmatrix"`,
 		`id="rstatus" class="hint" aria-live="polite"`, `id="rlegend"`, `<span class="rmark met">ok</span>`, `<span class="rmark missed">MISS</span>`,
-		`<span class="rmark saturated">SAT</span>`, `<span class="rmark unknown">?</span>`, `<span class="rmark notarget">no SLO</span>`, `<select id="rloadstat"`, `<option value="p95" selected>`,
+		`<span class="rmark saturated">SAT</span>`, `<span class="rmark unknown">?</span>`, `<span class="rmark notarget">no SLO</span>`, `<select id="rloadstat"`, `<option value="p95-modulation" selected>`,
 		`<summary>How accurate is this?</summary>`} {
 		assert.Contains(t, html, want)
 	}
@@ -462,6 +462,37 @@ func TestPageClearsAStalePlan(t *testing.T) {
 	assert.Contains(t, failed, "Nothing is shown until a plan prices: type a rate")
 	assert.Contains(t, js, `el("ratenote").textContent = rateNote(p.limits.chosen.rateSource);`)
 	assert.Contains(t, pageText(t, "scenario.js"), "function rateNote(source)")
+}
+
+// A page load runs no check of the planner: POST v1/backtest is asked from
+// runBacktest alone, which runs on a button, never from the load, the panel
+// or opening Check the planner. Before, the panel ran a check of the
+// source's last half after every load, and opening the tab ran another.
+// The panel's words before a check are execView's (scenario.js, run under
+// node by hack/check-planner-scenarios.sh).
+func TestPageChecksThePlannerOnlyWhenAsked(t *testing.T) {
+	html, js := pageText(t, "index.html"), pageText(t, "planner.js")
+	assert.Equal(t, 1, strings.Count(js, `"v1/backtest"`), "v1/backtest is asked from one place")
+	assert.Contains(t, between(t, js, "async function runBacktest(", "\n}\n"), `api("POST", "v1/backtest", req)`)
+	for _, fn := range []string{"async function startExecutive(", "function showView(", "function setInputs(", "function renderExec(", "async function loadInputs("} {
+		body := between(t, js, fn, "\n}\n")
+		assert.NotContains(t, body, "runBacktest", "%s runs no check", fn)
+		assert.NotContains(t, body, "v1/backtest", "%s asks no check", fn)
+	}
+	// Every call of runBacktest is a button's.
+	calls := regexp.MustCompile(`[^\n]*runBacktest\(\)[^\n]*`).FindAllString(js, -1)
+	require.NotEmpty(t, calls, "runBacktest is called")
+	for _, c := range calls {
+		assert.True(t, strings.Contains(c, "if (!el(\"btrun\").disabled) runBacktest();") || strings.Contains(c, "async function runBacktest()"),
+			"runBacktest is called from checkAccuracy alone: %s", strings.TrimSpace(c))
+	}
+	assert.Contains(t, js, `el("btrun").onclick = runBacktest;`)
+	// "Check accuracy on this recording" checks this recording, whichever
+	// test Check the planner had picked.
+	assert.Contains(t, js, `el("btstart").onclick = checkAccuracy;`)
+	assert.Contains(t, between(t, js, "function checkAccuracy(", "\n}\n"), `el("btsplitmode").checked = true;`)
+	assert.Contains(t, between(t, js, "function renderExec(", "\n}\n"), `a.act === "check" ? checkAccuracy`)
+	assert.Contains(t, html, `<button type="button" id="btstart" disabled>Check accuracy on this recording</button>`)
 }
 
 // between is s from the first start up to the end that follows it; both

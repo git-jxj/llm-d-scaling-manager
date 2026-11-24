@@ -209,7 +209,7 @@ These always read `OUTSIDE VALIDATED REGION`:
   but 2 prefill and 2 decode.
 - Any accelerator but H200.
 - Any TTFT from `backtest --experimental-ttft=v2` (below).
-- Any TPOT percentile from `backtest --experimental-tpot=v2` (below).
+- Any TPOT percentile from `--experimental-tpot=v2`, in a backtest or the main view (below).
 
 ## Experimental: the rank-mixture TTFT model
 
@@ -229,6 +229,21 @@ What it prices, per request: `TTFT = Z + q + P`.
 | `Z`, the rest | `a0 + s * beta * L`, `L` drawn from the prompt-length histogram | `beta`: the slopes of the engine's pre-queue overhead, the decode engine's first token and the router's remainder against the prompt. A slope is fitted only where its prompts spread (cv 0.03 or more); at one prompt length it is 0 and named in `betaUnidentified`. `s` is a calibration, fitted on the fit window's self-check folds so that their median p90 ratio is 1; p95 is not fitted. On a fit window under 12 h, `s` is 1, not fitted (`spreadDefaulted`); a fitted `s` under 1 is priced at 1 (`spreadFloored`) | `s` near 1 means `beta` holds the prompt's whole effect; its distance from 1 is what `beta` misses. Fitted `s` follows the fit window's own p90-over-mean, so it is not yet known to carry from one day to the next |
 | each step | priced as if its rate held (pointwise stationary) | | the busiest rank's relaxation, `E[S]/(1 - rho)^2`, well under the step; else the step is not scored (`unsettled`). A step whose arrivals (the router's rate `A`) ran ahead of its completions (the engine rows' rate `D`) by `(A - D)/D` over 0.1 left a backlog adding over a tenth of the step to the wait: it is not stationary. The fit leaves it out (`fitStepsBacklogged`), and the model refuses it as a test step |
 
+Two fixes to the fit are off by default, and `--rank-mixture-fit-steps`
+(`rankMixtureFitSteps`) turns both on:
+- **Clean fit steps.** The KV-deferral lines and the prompt slopes are
+  fitted only on steps whose busiest prefill rank sits under utilization 0.9.
+  Past it, a step's queue time is the overload's, not a wait for KV, and its
+  front end slows with the overload, not with the prompt.
+- **Shares at the load.** A router that balances by load spreads a busy
+  fleet's requests more evenly than a quiet one's. The ranks' shares at a
+  priced rate are the mean of the five fit steps nearest that rate, not the
+  fit window's mean.
+
+With fewer than four steps under 0.9, the two fits read every step; with
+fewer than five steps whose ranks carried a request a second, the shares are
+the fit window's mean. The model's `assumed` line says which it priced.
+
 `--rank-mixture-stratified` (`rankMixtureStratified`, off by default) fixes
 how the draws read each rank's service. Without it, each rank's mean service
 and its spread come from that rank's own few hundred random draws. On a
@@ -236,7 +251,8 @@ computed-token histogram with a long tail (a few requests compute a whole
 uncached prompt), whether those draws catch the tail is chance, and a figure
 moves by several percent with the seed. With the switch, the mean and the
 spread are read once from the histogram itself, and each rank draws one
-request per equal slice of it, so a figure moves far less with the seed.
+request per equal slice of it, so a figure moves far less with the seed. The two switches are
+independent: either, both or neither can be on.
 
 The model prices only what its inputs identify. It abstains on the whole backtest where:
 - a prompt slope is not identified;

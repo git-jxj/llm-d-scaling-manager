@@ -331,7 +331,8 @@ func (pv pricedVariant) tpotFlags(r resolvedRatio, percentile bool) []whatif.Fla
 	if !percentile || r.ratio.Assumed || r.refused != nil {
 		return r.flags
 	}
-	if _, ok := pv.hostBound(); !ok || slices.Contains(r.flags, hostBoundTPOTTail) {
+	// The experimental TPOT model's spread is fitted, not host jitter.
+	if _, ok := pv.hostBound(); !ok || slices.Contains(r.flags, hostBoundTPOTTail) || slices.Contains(r.flags, whatif.TPOTDistribution) {
 		return r.flags
 	}
 	return append(slices.Clone(r.flags), hostBoundTPOTTail)

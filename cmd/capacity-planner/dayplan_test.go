@@ -308,9 +308,11 @@ func day24h() []whatifapi.SeriesSample {
 	return out
 }
 
-// dayRequest is the 24-hour plan's question.
+// dayRequest is the 24-hour plan's question. It sizes each bucket for its
+// p95, which the tests on it check, not the default p95 less counting noise
+// (#295): the day's jitter is not counting noise.
 func dayRequest() whatifapi.DayPlanRequest {
-	return whatifapi.DayPlanRequest{SLO: &whatifapi.SLORequest{TTFT: &whatifapi.Objective{Statistic: "p95", Target: fp(0.5)},
+	return whatifapi.DayPlanRequest{SizeFor: whatifapi.SizeForP95, SLO: &whatifapi.SLORequest{TTFT: &whatifapi.Objective{Statistic: "p95", Target: fp(0.5)},
 		TPOT: &whatifapi.Objective{Statistic: statMean, Target: fp(0.004)}}, Assume: &whatifapi.Assume{VP: fp(30000)}}
 }
 
