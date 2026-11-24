@@ -90,4 +90,22 @@ func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
 	// Within the tolerance the verdict stands.
 	v := priceReport(t, heavierLoadState(t, 1.1, 1.1), measured(stairQuery(4, 4, 0))).Shapes[0].Verdict
 	assert.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
+
+	// Decode alone holding sizes a decode-only need on the same knee, which
+	// can name fewer decode than the fleet has: none is sized on it either.
+	// On the sweep, with no TTFT target, decode alone is judged. Its load's
+	// cycles ran at OL 1080 and its measured shape is OL 602: asked at the
+	// load's own shape decode alone holds and a need is sized; asked at the
+	// measured shape, none is.
+	t.Run("decode only", func(t *testing.T) {
+		own := priceReport(t, sweepReplay.state(t), sweepQuery()).Shapes[0].Verdict
+		require.Equal(t, whatifapi.ScopeDecodeOnly, own.Scope, own.Summary)
+		require.NotNil(t, own.Needed, "decode alone holds at the load's shape: %s", own.Summary)
+		s := priceReport(t, sweepReplay.state(t), measured(sweepQuery())).Shapes[0]
+		require.NotNil(t, s.LoadShape)
+		require.True(t, s.LoadShape.Mismatch)
+		assert.Equal(t, whatifapi.VerdictNotJudged, s.Verdict.Verdict, s.Verdict.Summary)
+		assert.Contains(t, s.Verdict.Summary, phasesWords, s.Verdict.Summary)
+		assert.Nil(t, s.Verdict.Needed, "no decode-only need on a knee that reads high: %s", s.Verdict.Summary)
+	})
 }

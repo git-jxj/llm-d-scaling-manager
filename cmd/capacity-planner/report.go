@@ -1455,6 +1455,13 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		v.Summary = fmt.Sprintf("%s: %s%s cannot be priced (%s).", v.Verdict, lead, base.slo.unknown,
 			refusalWords(base.slo.unknownFig))
 		return v, nil
+	case lighter != "":
+		// Ahead of decode alone holding: its decode-only need is sized on
+		// the same knee, and can name fewer decode than the fleet has.
+		v.Verdict = whatifapi.VerdictNotJudged
+		v.Reason += ". " + lighter
+		v.Summary = fmt.Sprintf("%s: %s %s.", v.Verdict, phasesWords, lighter)
+		return v, nil
 	case !base.prefillPriced:
 		v.Verdict = whatifapi.VerdictNotJudged
 		v.Reason += ". The prefill side is not priced: decode alone cannot show the fleet right-sized or over-provisioned"
@@ -1464,11 +1471,6 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		}
 		v.Summary = fmt.Sprintf("%s: decode only: decode alone holds %s%s; %s; prefill was not sized (%s), so this is not a fleet recommendation.",
 			v.Verdict, r.targetWords(), strings.TrimSuffix(" "+lead, ", "), need, refusalWords(base.prefillKnee))
-		return v, nil
-	case lighter != "":
-		v.Verdict = whatifapi.VerdictNotJudged
-		v.Reason += ". " + lighter
-		v.Summary = fmt.Sprintf("%s: %s %s.", v.Verdict, phasesWords, lighter)
 		return v, nil
 	}
 	roles, restsOnDecode, notes, err := r.roles(np, nd, base, &v)
