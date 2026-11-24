@@ -99,6 +99,11 @@ type answerFlags struct {
 	// prefixHitRead says prefixHit was read from the source (the load
 	// cycles, --shape load), not stated (whatifapi.Knobs.PrefixHitRead).
 	prefixHitRead bool
+	// prefillComputed is the prompt a backtest step's prefill pods computed
+	// a request (whatifapi.Knobs.PrefillComputedTokens), read beside the
+	// whole prompt inputTokens; 0 none. No flag sets it, and it is priced
+	// only with slo.SwitchTTFTPrefixAttention on (stepComputedPrompt).
+	prefillComputed float64
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
 	// assumeTransferBase is --assume-transfer-base, a TTFT flag (ttft.go,

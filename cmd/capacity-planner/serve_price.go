@@ -488,6 +488,7 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 		set("assume-input-tokens")
 	}
 	f.prefixHit, f.prefixHitRead = k.PrefixHit, k.PrefixHitRead
+	f.prefillComputed = k.PrefillComputedTokens
 	if s.cachedCost != nil {
 		f.cachedCost, f.cachedPhi = s.cachedCost, s.cachedCost.Phi
 	}

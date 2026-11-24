@@ -204,7 +204,11 @@ const SwitchTTFTPromptSupport = "slo-ttft-prompt-support"
 // .CachedContextRead), every tier's hits counted, and the prefix-cache hit
 // rate only where they do not: that rate counts the GPU's hits alone, and a
 // token served from a host, disk or peer tier is attended over all the same
-// (issue llm-d-incubation/llm-d-scaling-manager#383). Off, as before. Planner-only: off from the constructor, and
+// (issue llm-d-incubation/llm-d-scaling-manager#383). A backtest's step
+// states the prompt its prefill pods computed beside its whole prompt
+// (whatifapi.Knobs.PrefillComputedTokens): on, the step is priced at that
+// computed prompt with the rest as its cached context, not at its whole
+// prompt netted by the fit's hit. Off, as before. Planner-only: off from the constructor, and
 // not in learnreplay.PlannerSwitches, so it is off in the planner too until
 // a backtest turns it on. The analyzer itself reads no whole prompt and
 // prices nothing with it; the planner reads it through the replay

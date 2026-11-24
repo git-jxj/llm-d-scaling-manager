@@ -1698,6 +1698,9 @@ type stepInputs struct {
 	prefill, decode int
 	prompt, output  float64
 	hasShape        bool
+	// computed is the prompt the step's prefill pods computed a request,
+	// their computed tokens over their requests; 0 where they read none.
+	computed float64
 	// promptCV is the step's own prompt spread, read from its prefill
 	// pods' computed-token histograms; nil where they read none.
 	promptCV *float64
@@ -1723,9 +1726,14 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 	in.otherPods = slices.ContainsFunc(samples, func(x SeriesSample) bool { return x.OtherPods > 0 })
 	in.outputDispersion = outputDispersionOf(samples)
 	pooled := map[float64]float64{}
-	var computed, requests float64
+	var computed, requests, computedAll, requestsAll float64
 	for _, x := range samples {
-		if x.PromptBuckets == nil || !(x.PromptRequestRate > 0) {
+		if !(x.PromptRequestRate > 0) {
+			continue
+		}
+		computedAll += x.PromptComputedRate
+		requestsAll += x.PromptRequestRate
+		if x.PromptBuckets == nil {
 			continue
 		}
 		computed += x.PromptComputedRate
@@ -1733,6 +1741,9 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 		for b, r := range x.PromptBuckets {
 			pooled[b] += r
 		}
+	}
+	if requestsAll > 0 {
+		in.computed = computedAll / requestsAll
 	}
 	if requests > 0 {
 		if sp := whatif.ReadPromptSpread(pooled, computed/requests); !sp.Assumed {
@@ -1797,6 +1808,7 @@ func maxRatioOnGrid(r float64) float64 {
 type predictKey struct {
 	np, nd           int
 	prompt, output   float64
+	computed         float64
 	promptCV         float64
 	promptMaxRatio   float64
 	outputDispersion float64
@@ -1847,6 +1859,11 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		k := predictKey{np: in.prefill, nd: in.decode, q: q, promptCV: -1, outputDispersion: in.outputDispersion}
 		if in.hasShape {
 			k.prompt, k.output = shapeKnob(in.prompt), shapeKnob(in.output)
+			// The computed prompt on the same grid, never above the whole
+			// one: it is read only with slo.SwitchTTFTPrefixAttention on.
+			if in.computed > 0 {
+				k.computed = min(shapeKnob(in.computed), k.prompt)
+			}
 		}
 		// A spread read from a histogram carries the bound that histogram
 		// sets on the prompt; a typed one (assume.promptCV) carries none.
@@ -1872,6 +1889,7 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 			kn.PromptMaxRatio = k.promptMaxRatio
 			kn.OutputDispersion = k.outputDispersion
 			kn.CachedTokenCost = p.cachedCost
+			kn.PrefillComputedTokens = k.computed
 			var err error
 			if fl, err = p.pricer.Fleet(kn); err != nil {
 				return out, err
