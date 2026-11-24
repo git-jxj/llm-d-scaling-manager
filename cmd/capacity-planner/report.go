@@ -12,6 +12,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
@@ -1636,6 +1637,25 @@ func (r *reporter) phasesDiffer(binds string) string {
 		num(round(il)), num(round(ol)))
 }
 
+// decodeKneeScale is the decode knee at the shape priced over the knee at
+// cycle c's shape: a rate c served, times it, is that rate at the shape
+// priced. A decode knee is the sequences resident, the fill times the KV
+// capacity over the KV one request holds (KVreq = ILeff + D*OL/2), each
+// served once every OL steps: it goes as 1/(OL*KVreq). The prompt's KV is
+// resident on the decode pods, P/D or not, so a shorter prompt raises the
+// knee too. Both KVreq are read with the shape priced's prefix hit and
+// output dispersion, so only the lengths move the ratio. Where the batch
+// cap binds, the knee moves less with KVreq; the scale then reads low, and
+// a cycle counts below its share, never past it. Callers check both
+// lengths are above 0.
+func (r *reporter) decodeKneeScale(c learnreplay.CycleShape) float64 {
+	s := r.pv.shape
+	kv := func(il, ol float64) float64 {
+		return shape.New(il, ol, s.PrefixHitRate).WithOutputDispersion(s.OutputDispersion).KVreq
+	}
+	return c.OutputTokens * kv(c.InputTokens, c.OutputTokens) / (s.AvgOutputTokens * kv(s.AvgInputTokens, s.AvgOutputTokens))
+}
+
 // contradicted says how the window's own fleet served more than the model
 // prices it to, "" where it did not or cannot say: a shape stated by the
 // question, a cycle time, per-cycle fleet or shape the recording does not
@@ -1645,14 +1665,14 @@ func (r *reporter) phasesDiffer(binds string) string {
 // at least one replica and at most the replicas priced (CurrentReplicas
 // less PendingReplicas, summed over the role's variants), and the decode
 // replicas served above the share times the fleet knee; a cycle lighter
-// than the shape priced in the length the binding role's knee goes by
-// (prompt for prefill, output for decode) counts its rate scaled down by
-// that ratio, as its own knee is that much higher. An aggregated fleet, with
-// no prefill variant, is one pool judged on its own knee: the decode knee
-// its line prices, fitted on pods that prefill too, with the pool's run
-// counted on its replicas; a cycle lighter in either length counts its rate
-// scaled by the lower of the two ratios, since a shorter prompt is less work
-// on the same pods (#357). The share is
+// than the shape priced counts its rate scaled down to the shape priced, as
+// its own knee is that much higher: by the prompt ratio where prefill binds,
+// and by decodeKneeScale where decode does. An aggregated fleet, with no
+// prefill variant, is one pool judged on its own knee: the decode knee its
+// line prices, fitted on pods that prefill too, with the pool's run counted
+// on its replicas; its scale is the lower of decodeKneeScale and the prompt
+// ratio, since a shorter prompt also shortens the prefill work in its steps
+// (#357). The share is
 // contradictShare, over the band's top where that sets the decode knee:
 // such a knee stops at the highest fill the line was fitted to, short of a
 // full replica. Where the recording holds every cycle's clock
@@ -1741,11 +1761,11 @@ func (r *reporter) contradicted(np, nd int, base fleetEval) string {
 			case rolePrefill:
 				x *= min(1, c.InputTokens/il)
 			case roleDecodeWord:
-				s := c.OutputTokens / ol
+				s := r.decodeKneeScale(c)
 				if !hasPrefill {
-					// An aggregated pool prefills on the same pods: its
-					// work a request lies between the two ratios, so the
-					// lower never counts past its own knee (#357).
+					// An aggregated pool also prefills on the same pods,
+					// in the steps its line was fitted on: a shorter
+					// prompt shortens them too (#357).
 					s = min(s, c.InputTokens/il)
 				}
 				x *= min(1, s)

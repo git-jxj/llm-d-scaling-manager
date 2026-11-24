@@ -809,11 +809,19 @@ pods, prefill and decode share the pods, and the check judges that pool on its
 own knee. That knee is the decode knee: the pool's line was fitted on the ITL of
 pods that prefill too, so the prefill chunks in its steps are already in the line,
 at the shape priced. No separate single-pool knee is built. A cycle within 20% of
-the shape priced counts its served rate scaled down to that shape. On a P/D fleet,
-the scale is the binding role's length: prompt for prefill, output for decode. On
-one pool it is the lower of the two ratios. A request's work on that pool lies
-between them, so the scaled rate never counts past the pool's own knee at that
-cycle. The pool's run is counted on its own replicas: more replicas than priced
+the shape priced counts its served rate scaled down to that shape. Where prefill
+binds, the scale is the prompt ratio. Where decode binds, it is the decode knee's
+own: the knee is the sequences resident, fill x C / KVreq, each served once every
+OL steps, so it goes as 1/(OL x KVreq), with KVreq = ILeff + D x OL / 2. The
+scale is the cycle's OL x KVreq over the shape priced's, both read at the shape
+priced's prefix hit and dispersion. The prompt's KV is resident on the decode
+pods on a P/D fleet too, so a shorter prompt raises decode's knee there as well.
+A cycle lighter in both lengths then scales below either length ratio: at 0.85 of
+each, by 0.72 where IL = OL, not by 0.85. Where the batch cap binds, the knee moves
+less with KVreq and the scale reads low: a cycle counts below its share, never
+past it. One pool also prefills in its own steps, so a shorter prompt shortens
+them too; it takes the prompt ratio where that is lower. The pool's run is
+counted on its own replicas: more replicas than priced
 break the run. `TestReport_AnAggregatedPoolIsJudgedOnItsOwnKnee` pins NOT JUDGED
 where the pool served past its knee, and a verdict where it did not.
 

@@ -21,14 +21,29 @@ func aggregatedReporter(hot []int, rate float64, dec int) *reporter {
 	return r
 }
 
+// withLengths sets the decode variant's lengths in the hot cycles.
+func withLengths(r *reporter, il, ol float64) *reporter {
+	s := r.st.Variants[len(r.st.Variants)-1].ShapeSeries
+	for _, i := range cycles(10, 22) {
+		s[i].InputTokens, s[i].OutputTokens = il, ol
+	}
+	return r
+}
+
 // An aggregated fleet (no prefill pods) is judged on its own knee in the
 // window check (#357): the decode knee its line prices, which was fitted on
 // pods that prefill too. NOT JUDGED where the pool served past it for 3
-// minutes, judged otherwise. A cycle lighter in prompt, within 20%, has a
-// higher pool knee, as a cycle lighter in output does: 5.2 r/s at 820
-// prompt tokens is 4.3 r/s at the shape priced, under 1.25x a knee of 4. On
-// a P/D fleet the prompt is prefill's work on other pods, and does not move
-// the decode knee: the same cycles contradict it.
+// minutes, judged otherwise.
+//
+// A lighter cycle counts its rate at the shape priced (1000/1000 here,
+// KVreq 1500). The decode knee goes as 1/(OL*KVreq), and the prompt's KV is
+// resident on the decode pods, P/D or not: at 820/1000 the scale is
+// 1320/1500 = 0.88. One pool also prefills in its own steps, so it takes
+// the prompt ratio, 0.82, where that is lower. 5.9 r/s there is 5.19 r/s at
+// the shape priced on P/D, past 1.25x a knee of 4, and 4.84 on one pool,
+// under it. At 850/850 the scale is 850*1275/(1000*1500) = 0.72 on both:
+// 6.5 r/s is 4.7, under it, where the lower length ratio alone (0.85, 5.5)
+// read it past.
 func TestReport_AnAggregatedPoolIsJudgedOnItsOwnKnee(t *testing.T) {
 	base := fleetEval{kneeOK: true, knee: 4, binds: roleDecodeWord, decodeKnee: whatif.Answer{Value: 4}, under: true, pastOperating: true}
 
@@ -42,14 +57,15 @@ func TestReport_AnAggregatedPoolIsJudgedOnItsOwnKnee(t *testing.T) {
 	assert.False(t, aggregatedReporter(cycles(10, 22), 4.5, 2).notJudgedUnder(0, 2, base, &whatifapi.ReportVerdict{}), "served under 1.25x its knee")
 	assert.False(t, aggregatedReporter(cycles(10, 22), 12, 3).notJudgedUnder(0, 2, base, &whatifapi.ReportVerdict{}), "a larger pool served it")
 
-	lighter := func(r *reporter) *reporter {
-		for _, i := range cycles(10, 22) {
-			r.st.Variants[len(r.st.Variants)-1].ShapeSeries[i].InputTokens = 820
-		}
-		return r
-	}
-	assert.Empty(t, lighter(aggregatedReporter(cycles(10, 22), 5.2, 2)).contradicted(0, 2, base), "lighter prompt, one pool")
-	assert.False(t, lighter(aggregatedReporter(cycles(10, 22), 5.2, 2)).notJudgedUnder(0, 2, base, &whatifapi.ReportVerdict{}),
+	assert.Empty(t, withLengths(aggregatedReporter(cycles(10, 22), 5.9, 2), 820, 1000).contradicted(0, 2, base), "lighter prompt, one pool")
+	assert.False(t, withLengths(aggregatedReporter(cycles(10, 22), 5.9, 2), 820, 1000).notJudgedUnder(0, 2, base, &whatifapi.ReportVerdict{}),
 		"judged: the pool did not serve past its own knee")
-	assert.NotEmpty(t, lighter(contradictsReporter(cycles(10, 22), 5.2, 2, 2)).contradicted(2, 2, base), "lighter prompt, P/D")
+	assert.NotEmpty(t, withLengths(contradictsReporter(cycles(10, 22), 5.9, 2, 2), 820, 1000).contradicted(2, 2, base),
+		"lighter prompt, P/D: past decode's knee at 0.88")
+	assert.Empty(t, withLengths(contradictsReporter(cycles(10, 22), 5.2, 2, 2), 820, 1000).contradicted(2, 2, base),
+		"lighter prompt, P/D: the prompt's KV is on the decode pods")
+
+	assert.Empty(t, withLengths(contradictsReporter(cycles(10, 22), 6.5, 2, 2), 850, 850).contradicted(2, 2, base), "lighter in both, P/D")
+	assert.Empty(t, withLengths(aggregatedReporter(cycles(10, 22), 6.5, 2), 850, 850).contradicted(0, 2, base), "lighter in both, one pool")
+	assert.NotEmpty(t, withLengths(aggregatedReporter(cycles(10, 22), 7.5, 2), 850, 850).contradicted(0, 2, base), "past it at 7.5 r/s (5.4)")
 }
