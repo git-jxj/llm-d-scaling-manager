@@ -179,6 +179,11 @@ func TestReporterReadinessAndEvents(t *testing.T) {
 			t.Errorf("no Event %q in %q", w, ev)
 		}
 	}
+	for _, e := range ev {
+		if strings.Contains(e, EventNamespaceNotManaged) && strings.Contains(e, "team-a") {
+			t.Errorf("team-b's Event names the managed namespaces: %q", e)
+		}
+	}
 	if len(ev) != 3 { // so-a and pool-a in team-a, so-b in team-b
 		t.Errorf("%d Events, want 3: %q", len(ev), ev)
 	}

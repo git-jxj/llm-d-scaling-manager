@@ -195,12 +195,16 @@ case "$CMD" in
         run kubectl apply --server-side --force-conflicts -f "$DIR/scaling-manager.yaml"
         keda_side
         settings_patch "kedaNamespace=$KEDA_NS"
-        # smt's cluster-wide role writer grant (scaling-manager-dset-role-writer-cluster.yaml,
-        # smt --dset-role-writer). This install's writer acts only where the
-        # owner bound it per namespace.
-        $PRINT && note "smt's cluster-wide DisaggregatedSet role writer grant: this install grants it per namespace."
-        run kubectl delete clusterrolebinding scaling-manager-dset-role-writer-rolebinding --ignore-not-found
-        run kubectl delete clusterrole scaling-manager-dset-role-writer-role --ignore-not-found
+        # The earlier install's cluster-wide role writer grant: bare names from
+        # scaling-manager-dset-role-writer-cluster.yaml (smt --dset-role-writer),
+        # suffixed with the first 8 hex digits of sha256("scaling-manager-system")
+        # from make deploy (llmsm_ns_suffix). This install's writer acts only
+        # where the owner bound it per namespace.
+        $PRINT && note "The earlier install's cluster-wide DisaggregatedSet role writer grant: this install grants it per namespace."
+        run kubectl delete clusterrolebinding scaling-manager-dset-role-writer-rolebinding \
+            scaling-manager-dset-role-writer-rolebinding-5414d5c5 --ignore-not-found
+        run kubectl delete clusterrole scaling-manager-dset-role-writer-role \
+            scaling-manager-dset-role-writer-role-5414d5c5 --ignore-not-found
         ;;
     namespaces)
         [ $# -eq 1 ] || usage "namespaces needs one list, NS,NS, or --all"

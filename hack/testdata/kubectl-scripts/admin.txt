@@ -25,9 +25,9 @@ kubectl apply --server-side --force-conflicts -f ./scaling-manager.yaml
 kubectl apply --server-side -n keda-system -f ./scaling-manager-keda.yaml
 kubectl label namespace keda-system scaling-manager.llmd.ai/keda=true --overwrite
 kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge -p '{"data":{"kedaNamespace":"keda-system"}}'
-# smt's cluster-wide DisaggregatedSet role writer grant: this install grants it per namespace.
-kubectl delete clusterrolebinding scaling-manager-dset-role-writer-rolebinding --ignore-not-found
-kubectl delete clusterrole scaling-manager-dset-role-writer-role --ignore-not-found
+# The earlier install's cluster-wide DisaggregatedSet role writer grant: this install grants it per namespace.
+kubectl delete clusterrolebinding scaling-manager-dset-role-writer-rolebinding scaling-manager-dset-role-writer-rolebinding-5414d5c5 --ignore-not-found
+kubectl delete clusterrole scaling-manager-dset-role-writer-role scaling-manager-dset-role-writer-role-5414d5c5 --ignore-not-found
 $ scaling-manager-admin.sh --print namespaces team-a,team-b
 kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge -p '{"data":{"watchNamespaces":"team-a,team-b"}}'
 $ scaling-manager-admin.sh --print namespaces --all

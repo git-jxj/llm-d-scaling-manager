@@ -253,7 +253,11 @@ func (r *Reporter) readiness(ctx context.Context, ns string, v *nsView, grants [
 			so = "; the scaler refuses ScaledObjects " + strings.Join(v.refusedSOs, ", ")
 		}
 		const todo = ". A cluster admin adds it to watchNamespaces (scaling-manager-admin.sh namespaces)"
-		return StateNotManaged + ": " + v.refusal + so + todo, StateNotManaged + ": " + v.refusal + todo
+		// The Event leaves out the reason, which names the managed
+		// namespaces: another tenant's names, and a new Event on every
+		// change of the list. The status line keeps it.
+		return StateNotManaged + ": " + v.refusal + so + todo,
+			StateNotManaged + ": the scaler refuses ScaledObjects in this namespace" + todo
 	}
 	var problems, notes, eventNotes []string
 	for _, g := range grants {
