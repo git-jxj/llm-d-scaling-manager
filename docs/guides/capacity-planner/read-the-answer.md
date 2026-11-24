@@ -208,13 +208,13 @@ utilization at the load judged
 ### 5. The knee: how much the fleet carries
 
 ```text
-capacity            req/s     out tok/s   bound by
-  prefill knee      no prefill speed learned            P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
-  decode knee       36.98     7396        decode band top at fill 0.798
+capacity            req/s     out tok/s   in system   bound by
+  prefill knee      no prefill speed learned                        P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
+  decode knee       36.98     7396        unbounded   decode band top at fill 0.798
                     OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
-  fleet knee        36.98     7396        decode (prefill not priced)
-  operating (0.85)  31.44     6287        0.85 x fleet knee (scaleUpThreshold)
-  max at SLO        no prefill speed learned            no fleet rate: the prefill side is not priced, and decode alone does not bound the fleet (slo-to-rate gives none either): P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
+  fleet knee        36.98     7396        unbounded   decode (prefill not priced)
+  operating (0.85)  31.44     6287        -           0.85 x fleet knee (scaleUpThreshold)
+  max at SLO        no prefill speed learned                        no fleet rate: the prefill side is not priced, and decode alone does not bound the fleet (slo-to-rate gives none either): P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
 ```
 
 The **knee** is the rate at which a role saturates: past it, queues grow
@@ -227,6 +227,12 @@ at 36.98 r/s, when its KV cache fills to 0.8.
   burst.
 - `max at SLO`: the highest rate that still meets every target. It needs
   TTFT, so it is refused here.
+- `in system`: how many requests are in the system on average at that
+  rate, see [the SLO against load](#6-the-slo-against-load-and-the-checks).
+  At a knee the queue grows without bound, so there is no average:
+  `unbounded`. At a knee that is only a lower bound (`>=`) it reads
+  `not known`: the queue grows without bound only past the true knee,
+  which may be higher.
 - `prefill knee ... refused`: this sample has no measurement of prefill
   speed (V_P), so prefill is not priced. `--assume-vp` states one, and
   every figure on it is flagged as assumed.
@@ -234,11 +240,11 @@ at 36.98 r/s, when its KV cache fills to 0.8.
 ### 6. The SLO against load, and the checks
 
 ```text
-SLO vs load         r/s    TTFT p50/90 ms            TPOT mean/p90 ms           e2e mean (sum)
-  50% of knee       18.49  no prefill speed learned  3.15/TPOT bucket too wide  no prefill speed learned
-  80% of knee       29.59  no prefill speed learned  6.81/TPOT bucket too wide  no prefill speed learned
-  100% of knee      36.98  no prefill speed learned  saturated                  no prefill speed learned
-  load seen (113%)  41.70  no prefill speed learned  saturated                  no prefill speed learned
+SLO vs load         r/s    TTFT p50/90 ms            TPOT mean/p90 ms           e2e mean (sum)            in system (mean)
+  50% of knee       18.49  no prefill speed learned  3.15/TPOT bucket too wide  no prefill speed learned  -
+  80% of knee       29.59  no prefill speed learned  6.81/TPOT bucket too wide  no prefill speed learned  -
+  100% of knee      36.98  no prefill speed learned  saturated                  no prefill speed learned  unbounded
+  load seen (113%)  41.70  no prefill speed learned  saturated                  no prefill speed learned  unbounded
 checks
   2 prefill + 2 decode  does not hold: 41.70 r/s is 1.1x the fleet knee of 36.98 r/s; prefill not priced (no prefill speed learned); TTFT p95 not judged (no prefill speed learned)
 ```
@@ -247,6 +253,29 @@ The latency at each load, and each fleet the planner tried. `TPOT bucket
 too wide`: the router's histogram buckets are too coarse to read a p90,
 so only the mean is given.
 
+`in system (mean)` is the load as a concurrency: how many requests are in
+the system on average at that rate, from arrival to the last token. It is
+the rate times `e2e mean (sum)` (Little's law), so it is an average, not a
+peak. It needs the mean TTFT and the mean TPOT: here TTFT is not priced, so
+it reads `-`. At or past the knee it reads `unbounded`: the queue grows
+there, and no average holds. In `-o json` each row's `concurrency` also
+splits it by where the requests are: `prefill` (in the prefill engine:
+waiting there or computing their prompt), `routerQueue` (held at the
+router's flow-control gate, when that gate is priced), `decode` (the rate
+times OL times the mean TPOT, the sequences decoding at once) and
+`decodePerPod`. The fleet figure is more than their sum: it also holds
+the fixed latency, the hop and the KV pull.
+
+To check `prefill` against a running fleet, do not sum vLLM's
+`num_requests_running` and `num_requests_waiting` gauges on the prefill
+pods: vLLM sets them after each step has dropped the requests it
+finished, so a prompt prefilled in one step never shows in them, and they
+read low. Use the pods' own histograms instead: the request rate times
+the mean queue time plus the mean prefill time.
+
+If you drive load at a fixed concurrency, ask for it as a load:
+`--load 64c` is the rate at which the fleet holds 64 requests on average.
+
 ### 7. Flags and what is not validated
 
 ```text
@@ -254,7 +283,7 @@ flags: DecodeOnly; ExtrapolatedFill; BelowFittedBand; CoarseTPOTBucket; HostBoun
 
 not validated:
   - decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 43% to 99% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)
-  - e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile
+  - e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile; in system is the rate times it (Little's law), the requests in the system on average
 ```
 
 Every flag names something an answer rests on that was assumed, stretched

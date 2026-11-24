@@ -17,22 +17,22 @@ utilization at the load judged
   decode        KV fill 0.378 (band top 0.7), slots 37 of 64, wait p 0.001
   prefill       utilization pooled no fixed prefill latency learned, worst pod no fixed prefill latency learned
   verdict       NOT JUDGED: decode only: decode alone holds every target at the p95 less counting noise load of 26.9 r/s; no fewer than its 1 decode would hold it; prefill was not sized (the recording learned no fixed prefill latency; --assume-a states one), so this is not a fleet recommendation.
-capacity            req/s     out tok/s   bound by
-  prefill knee      no fixed prefill latency learned            P1 refused a: NoPromptSpread; pass --assume-a for a flagged answer
-  decode knee       38.00     18981       decode batch cap at fill 0.647
+capacity            req/s     out tok/s   in system   bound by
+  prefill knee      no fixed prefill latency learned                        P1 refused a: NoPromptSpread; pass --assume-a for a flagged answer
+  decode knee       38.00     18981       unbounded   decode batch cap at fill 0.647
                     OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
-  fleet knee        38.00     18981       decode (prefill not priced)
-  operating (0.85)  32.30     16134       0.85 x fleet knee (scaleUpThreshold)
-  max at SLO        no fixed prefill latency learned            no fleet rate: the prefill side is not priced, and decode alone does not bound the fleet (slo-to-rate gives none either): P1 refused a: NoPromptSpread; pass --assume-a for a flagged answer
-SLO vs load        r/s    TTFT p50/90 ms                    TPOT mean/p90 ms                e2e mean (sum)
-  50% of knee      19.00  no fixed prefill latency learned  2.48/TPOT bucket too wide       no fixed prefill latency learned
-  80% of knee      30.40  no fixed prefill latency learned  2.95/TPOT bucket too wide       no fixed prefill latency learned
-  100% of knee     38.00  no fixed prefill latency learned  saturated/TPOT bucket too wide  no fixed prefill latency learned
-  load seen (71%)  26.89  no fixed prefill latency learned  2.79/TPOT bucket too wide       no fixed prefill latency learned
+  fleet knee        38.00     18981       unbounded   decode (prefill not priced)
+  operating (0.85)  32.30     16134       -           0.85 x fleet knee (scaleUpThreshold)
+  max at SLO        no fixed prefill latency learned                        no fleet rate: the prefill side is not priced, and decode alone does not bound the fleet (slo-to-rate gives none either): P1 refused a: NoPromptSpread; pass --assume-a for a flagged answer
+SLO vs load        r/s    TTFT p50/90 ms                    TPOT mean/p90 ms                e2e mean (sum)                    in system (mean)
+  50% of knee      19.00  no fixed prefill latency learned  2.48/TPOT bucket too wide       no fixed prefill latency learned  -
+  80% of knee      30.40  no fixed prefill latency learned  2.95/TPOT bucket too wide       no fixed prefill latency learned  -
+  100% of knee     38.00  no fixed prefill latency learned  saturated/TPOT bucket too wide  no fixed prefill latency learned  unbounded
+  load seen (71%)  26.89  no fixed prefill latency learned  2.79/TPOT bucket too wide       no fixed prefill latency learned  -
 checks
   1 prefill + 1 decode  holds: 26.89 r/s within 0.85 x the fleet knee 38.00 r/s = 32.30 r/s; prefill not priced (no fixed prefill latency learned); TPOT mean 2.8 ms meets 5.0 ms
 flags: DecodeOnly; AssumedShape; BatchBeyondFit; ExtrapolatedFill; CoarseTPOTBucket; EngineTPOTHistogram
 
 not validated:
   - decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 43% to 99% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)
-  - e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile
+  - e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile; in system is the rate times it (Little's law), the requests in the system on average

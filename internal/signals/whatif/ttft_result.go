@@ -349,6 +349,14 @@ type TTFTParts struct {
 	// the requests, the busiest pod's and the others' by their shares: the
 	// time a prompt shares its pod beyond its own work.
 	EngineWait float64
+	// PrefillWork is the prompt's own compute on its prefill pod, E[I]/V_P
+	// at the V_P margin taken at the rate: the part of OwnPrefill the
+	// prefill engine computes. OwnPrefill holds besides a and the per-token
+	// parts of the transfer and of the decode and router terms, all spent
+	// outside the prefill engine, and TierLoad, which it waits on. With EngineWait and TierLoad it is a
+	// request's time in the prefill engine. A freeze does not write it: it
+	// writes the parts as they were.
+	PrefillWork float64 `json:"-"`
 	// KVPullWait is the KV pull's mean stretch on the decode pod, the time
 	// the pull shares the pod beyond its own work: 0 unless
 	// TTFTFleet.ProcessorSharing prices it, with a decode line. The pull's
