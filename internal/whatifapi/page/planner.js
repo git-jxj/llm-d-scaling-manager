@@ -550,8 +550,10 @@ function setInputs(inputs) {
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
   state.bt = null;
   el("btout").hidden = true;
-  el("btrun").disabled = !inputs.fleet.prefill;
-  el("btrun").title = inputs.fleet.prefill ? "" : "A backtest prices a P/D fleet: the source has no prefill variant";
+  el("btrun").disabled = el("btstart").disabled = !inputs.fleet.prefill;
+  // Nothing is checked at load: the check view says so and offers the check.
+  el("btnotrun").hidden = !inputs.fleet.prefill;
+  el("btrun").title =inputs.fleet.prefill ? "" : "A backtest prices a P/D fleet: the source has no prefill variant";
   const loaded = inputs.source && inputs.source.name;
   const others = (state.sources ? state.sources.recordings : []).filter(n => n !== loaded).map(n => `<option>${esc(n)}</option>`).join("");
   el("bttest").innerHTML = others;
@@ -1569,7 +1571,7 @@ function renderTTFT() {
   const scored = state.bt ? btVerdictCard(state.bt, t.statistic, state.k.tpotStat)[0] : null;
   el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : !t.model ? "" :
     scored && scored.chip.startsWith(`TTFT ${t.statistic} `) ? `${t.model.label}: held-out ${scored.chip} (Check the planner).` :
-    ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) + (t.statistic !== "mean" ? ` The full check, at TTFT ${t.statistic}, is in Check the planner.` : "");
+    ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) + (t.statistic !== "mean" ? " " + (state.bt ? `The check in Check the planner gave no TTFT ${t.statistic} score.` : fullCheckNotRun(t.statistic)) : "");
   chart(el("ttftchart"), {W: 640, H: 340, xmax, ymax, series, target: t.line.target, belowFloor, floor: belowFloor ? floor : null,
     rate, dots, markers, knee, kneeLB: pkLB && knee === ps.value, onset, pinTarget, clip: "clip-ttft", ytitle: `TTFT ${t.statistic}`});
   el("ttftlegend").innerHTML = legend(series, onset != null);
@@ -2232,7 +2234,7 @@ function wire() {
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
-  el("btrun").onclick = runBacktest;
+  el("btrun").onclick = el("btstart").onclick = runBacktest;
   el("bprun").onclick = runPredict;
   el("bcrun").onclick = runCompare;
   const btStale = () => { if (state.bt) el("btout").classList.add("stale"); };
@@ -2249,11 +2251,12 @@ function wire() {
 // ---- The answer: the executive panel and the refusal card ----
 
 // startExecutive runs, once per inputs loaded and after the first plan, the
-// two questions the executive panel needs beyond the plan: the fleet judged
-// at the traffic's own shape with the load grown (POST v1/report), then the
-// planner checked on the source's held-out last half (POST v1/backtest), each
-// in the background, with the progress bar saying which is running. An
-// answer for inputs since replaced is dropped.
+// one question the executive panel needs beyond the plan: the fleet judged
+// at the traffic's own shape with the load grown (POST v1/report), in the
+// background, with the progress bar saying so. The planner's check on the
+// source (POST v1/backtest) is never run here: it runs only when asked
+// (checkAccuracy, or Run under Check the planner). An answer for inputs
+// since replaced is dropped.
 async function startExecutive() {
   const x = state.exec;
   if (!x || x.started || !state.inputs || !state.plan) return;
@@ -2261,14 +2264,9 @@ async function startExecutive() {
   const id = state.inputs.inputsId, mine = () => state.exec === x && state.inputs && state.inputs.inputsId === id;
   const plan = planRequest();
   x.reportPending = true;
-  // With the server's held-out check at load, the headline needs no check of
-  // its own: the full one runs when Check the planner is opened.
-  const held = state.inputs.ttftModel && state.inputs.ttftModel.heldOut;
-  x.btPending = !!state.inputs.fleet.prefill && !(held && held.steps > 0);
   renderExec();
-  const steps = x.btPending ? 2 : 1;
   try {
-    progress(`Judging the fleet at your busiest load (1 of ${steps})`, 1 / (steps + 1), () => x.abort && x.abort.abort());
+    progress("Judging the fleet at your busiest load", 0.5, () => x.abort && x.abort.abort());
     x.abort = new AbortController();
     x.report = await api("POST", "v1/report", execReportRequest(id, plan), x.abort.signal);
   } catch (e) {
@@ -2283,28 +2281,17 @@ async function startExecutive() {
     renderTTFT();
     renderTPOT();
   }
-  renderExec();
-  if (x.btPending) {
-    try {
-      progress(`Checking the planner on your held-out hours (2 of ${steps}): fitting, then pricing each step`, 2 / (steps + 1), () => x.abort && x.abort.abort());
-      x.abort = new AbortController();
-      x.bt = await api("POST", "v1/backtest", {inputsId: id, split: "50%", step: "5m"}, x.abort.signal);
-    } catch (e) {
-      x.btError = e.message;
-    }
-    if (!mine()) return;
-    x.btPending = false;
-    // The check on the page's own tab shows the same run until you run another.
-    if (x.bt && !state.bt) {
-      state.bt = x.bt;
-      el("btsplit").value = "50";
-      el("btsplitout").textContent = "50%";
-      renderBacktest();
-    }
-  }
   x.abort = null;
   progress("");
   renderExec();
+}
+
+// checkAccuracy is the panel's "Check accuracy on this recording": it opens
+// Check the planner and runs the check there, on the split set (half, unless
+// changed).
+function checkAccuracy() {
+  showView("check");
+  if (!el("btrun").disabled) runBacktest();
 }
 
 // renderExec draws the executive panel and the trust chip from execView, as
@@ -2314,7 +2301,7 @@ function renderExec() {
   if (!x || !state.inputs || !state.plan || !state.k) return;
   // The check on the Check tab, where it ran, is the one score the panel,
   // the header chip and the check view quote.
-  const v = execView({inputs: state.inputs, plan: state.plan, report: x.report, bt: x.bt || state.bt, k: state.k,
+  const v = execView({inputs: state.inputs, plan: state.plan, report: x.report, bt: state.bt, k: state.k,
     reportPending: x.reportPending, btPending: x.btPending});
   const dl = el("execlines");
   dl.replaceChildren();
@@ -2337,7 +2324,9 @@ function renderExec() {
     for (const a of l.actions || []) {
       const b = textNode("button", a.label, "execact");
       b.type = "button";
-      b.onclick = a.act === "usevp" ? () => useVP(a.vp) : busierWindow;
+      b.onclick = a.act === "usevp" ? () => useVP(a.vp) : a.act === "check" ? checkAccuracy : busierWindow;
+      // A check already running is not asked for twice.
+      if (a.act === "check") b.disabled = el("btrun").disabled;
       dd.appendChild(b);
     }
     dl.appendChild(dd);
@@ -2375,8 +2364,8 @@ function renderRefusal() {
 const VIEWS = ["answer", "day", "check", "right"];
 
 // showView shows one view and selects its tab; focus moves to the tab when
-// asked (a keyboard move). Opening Check the planner runs the check of the
-// source's last half once, if no check is on screen.
+// asked (a keyboard move). Opening Check the planner runs nothing: the
+// check runs when asked.
 function showView(name, focus) {
   for (const v of VIEWS) {
     const on = v === name;
@@ -2385,10 +2374,6 @@ function showView(name, focus) {
     el("tab-" + v).tabIndex = on ? 0 : -1;
   }
   if (focus) el("tab-" + name).focus();
-  // The panel's own check of the last half, still running, lands here too:
-  // a second one would ask the server the same question twice.
-  const execCheck = state.exec && state.exec.btPending;
-  if (name === "check" && !state.bt && !execCheck && state.inputs && state.inputs.fleet.prefill && !el("btrun").disabled) runBacktest();
 }
 
 // wireTabs makes the tab list work by click and by arrow keys, Home and End.
@@ -2518,9 +2503,11 @@ function progress(text, share, cancel) {
 // source, testing another recording) and draws predicted against measured.
 async function runBacktest() {
   if (!state.inputs) return;
-  const inputsId = state.inputs.inputsId, t0 = performance.now();
-  el("btrun").disabled = true;
+  const inputsId = state.inputs.inputsId, t0 = performance.now(), x = state.exec;
+  el("btrun").disabled = el("btstart").disabled = true;
   el("btout").classList.add("stale");
+  // The panel's Accuracy row says the check is running, not that none ran.
+  if (x) { x.btPending = true; renderExec(); }
   setStatus("Checking the planner: fitting, then pricing each step of the test (seconds to a minute)...");
   try {
     const req = {inputsId, step: el("btstep").value};
@@ -2543,8 +2530,9 @@ async function runBacktest() {
   } catch (e) {
     setStatus("Could not check the planner: " + e.message, true);
   } finally {
-    el("btrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
+    el("btrun").disabled = el("btstart").disabled = !(state.inputs && state.inputs.fleet.prefill);
     el("btout").classList.remove("stale");
+    if (x) { x.btPending = false; if (state.exec === x) renderExec(); }
   }
 }
 
@@ -2629,6 +2617,7 @@ async function runCompare() {
 function renderBacktest() {
   const bt = state.bt;
   el("btout").hidden = false;
+  el("btnotrun").hidden = true;
   const k = state.k || {};
   const card = el("btverdict");
   card.replaceChildren();

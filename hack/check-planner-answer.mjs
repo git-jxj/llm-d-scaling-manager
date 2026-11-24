@@ -107,7 +107,8 @@ try {
   check("estimates carry no badge, and a note says so", v.lines.filter(l => !l.badge).map(l => l.label).join() === "Verdict,Decode,Prefill,+25% / +50% traffic" && v.note === "Rows are estimates unless marked.",
     v.lines.map(l => l.label + ":" + l.badge).join(","));
   check("the accuracy is checked on your data", line("Accuracy").badge === EXEC_BADGES.checked);
-  check("the quick check says where the SLO's percentile is scored", line("Accuracy").text.includes("The full check, at TTFT p90, is in Check the planner."), line("Accuracy").text);
+  check("the quick check says the full check at the SLO's percentile has not run", line("Accuracy").text.includes("The full check, at TTFT p90, has not been run yet: Check accuracy on this recording runs it."), line("Accuracy").text);
+  check("and offers it", JSON.stringify(line("Accuracy").actions) === JSON.stringify([{act: "check", label: "Check accuracy on this recording"}]), JSON.stringify(line("Accuracy").actions));
   check("the SLO used says a default is the page's", v.slo.includes("the page's default: set yours"), v.slo);
   check("growth not sized yet says pending", /^Pending/.test(line("+25% / +50% traffic").text));
   const grown = execView({inputs, plan: refusedPlan, report, k, growth: [{x: 1.25, rate: 25, need: "6 prefill + 12 decode"}, {x: 1.5, rate: 30, need: "at least 14 decode (prefill not sized)"}]});
@@ -127,8 +128,22 @@ try {
   const held = v;
   const pending = execView({inputs, plan: refusedPlan, k, reportPending: true, btPending: true});
   check("a panel still asking says so", pending.lines.some(l => /^Checking/.test(l.text)));
+  check("a check running is not offered again", pending.lines.every(l => !(l.actions || []).some(a => a.act === "check")));
+  // The page's check runs only when asked: before it, with no quick check
+  // from the server, the panel says plainly that nothing was checked and
+  // offers the check; it shows no score, no checked badge and no chip
+  // quoting one.
+  const unchecked = execView({inputs, plan: refusedPlan, report, k});
+  const notRun = unchecked.lines.find(l => l.label === "Accuracy");
+  check("before a check, the accuracy says it has not run", !!notRun && notRun.text.startsWith("Not checked yet: the planner has not been checked on this recording."), notRun && notRun.text);
+  check("and shows no score", !!notRun && !/within 20%|\d+ of \d+/.test(notRun.text), notRun && notRun.text);
+  check("and no checked badge", !!notRun && notRun.badge === "", notRun && notRun.badge);
+  check("and offers the check", !!notRun && JSON.stringify(notRun.actions) === JSON.stringify([{act: "check", label: "Check accuracy on this recording"}]), notRun && JSON.stringify(notRun.actions));
+  check("the header chip says not checked", unchecked.trust === "Accuracy not checked yet", unchecked.trust);
+  const aggOnly = Object.assign(copy(inputs), {fleet: {decode: inputs.fleet.decode}});
+  check("a fleet with no prefill, which the check cannot price, is offered no check", !execView({inputs: aggOnly, plan: refusedPlan, report, k}).lines.some(l => l.label === "Accuracy"));
   // The first screen speaks plainly.
-  for (const l of v.lines.concat(held.lines)) {
+  for (const l of v.lines.concat(held.lines, unchecked.lines)) {
     const bad = FIRST_SCREEN_BANNED.find(re => re.test(l.text));
     check(`"${l.label}" uses no planner symbol`, !bad, `${bad} in ${l.text}`);
   }

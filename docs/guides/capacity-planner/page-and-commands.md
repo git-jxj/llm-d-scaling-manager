@@ -29,11 +29,15 @@ The page has four tabs:
 While a recording loads, a bar at the top of the page says so, with a
 **Cancel**; **Load** is off until it ends. After a load the page judges the
 fleet at your busiest load in the background, and the bar says what runs.
+It does not check the planner's accuracy on the recording: that check takes
+seconds to a minute, so it runs only when you press **Check accuracy on this
+recording**.
 
 The **Answer** tab, top down:
 
 1. **The header.** The model and variants, the source, the window it covers,
-   and a chip "Checked on your traffic" that opens the evidence. The
+   and a chip "Checked on your traffic" that opens the evidence ("Accuracy
+   not checked yet" until you run the check). The
    self-check in full and the TTFT model's validation figures sit closed
    under the source.
 2. **The answer panel.** Fleet today, the verdict, the right size, headroom,
