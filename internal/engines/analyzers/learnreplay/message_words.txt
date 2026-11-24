@@ -1892,6 +1892,7 @@ logVerbosity
 log_balancedness
 log_balancedness_interval
 logged
+lone-rate
 long
 longer
 longest
@@ -2450,6 +2451,7 @@ prefill-spare
 prefill-throughput-bound-reading
 prefill-vp-at-served-work
 prefill-vp-floor-served
+prefill-vp-lone-rate
 prefill-vp-occupancy-plateau
 prefill-vp-served-unqueued
 prefill-vp-window-best
@@ -3482,6 +3484,9 @@ volume
 vp
 vpAboveSlopeBound
 vpFlooredAtServed
+vpLone
+vpLoneIsVP
+vpLoneMinutes
 vpLowerBound
 vpLowerBoundReason
 vpPlateau
