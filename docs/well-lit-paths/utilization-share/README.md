@@ -42,7 +42,7 @@ patch` of the settings ConfigMap, read live.
    [Try it in passive mode, steps 1 to 3](../../guides/try-in-passive-mode/README.md#installation-instructions),
    with the quota from
    [Utilization share in passive mode](../../guides/try-in-passive-mode/README.md#utilization-share-in-passive-mode).
-   Once a release carries the one manifest, the
+   From v0.13.0, the
    [kubectl install](../../guides/kubectl-install/) does this step with
    `scaling-manager-admin.sh install` and `set`: the quota is the settings keys `limiter`, `quotas` and
    `quotaScope`, as in the [README](../../../README.md#with-kubectl-from-one-manifest).

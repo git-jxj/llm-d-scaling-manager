@@ -1,12 +1,11 @@
-# Install with kubectl, from one manifest (draft)
+# Install with kubectl, from one manifest
 
 ## Overview
 
-**Draft.** This is phase 1 of the [kubectl install
-proposal](https://github.com/llm-d-incubation/llm-d-scaling-manager/pull/404). No release carries
-these files yet. They are tested on kind only (`make
-test-e2e-manifest-install`). Install a real cluster from [the cluster-wide
-guide](../install-cluster-wide/) until a release carries them.
+**New in v0.13.0.** Earlier releases do not carry these files; on those,
+install from [the cluster-wide guide](../install-cluster-wide/). The path is
+tested end to end on kind (`make test-e2e-manifest-install`, `make
+test-e2e-manifest-migrate`).
 
 One scaling manager serves the cluster, the way KEDA, Kueue and
 LeaderWorkerSet install: signed files, applied as downloaded with `kubectl`.
@@ -111,10 +110,13 @@ bash scaling-manager-admin.sh namespaces team-a,team-b,team-c
 ```
 <!-- guide:admin.namespaces end -->
 
-   An empty `watchNamespaces` (`namespaces --all`) manages every namespace,
-   as on every cluster-wide install today. Whether it should keep that
-   meaning on this install is an open question of the proposal: see
-   [the empty list](#open-question-the-empty-list).
+   An empty `watchNamespaces` (`namespaces --all`, or `install` without
+   `--watch-namespaces`) manages every namespace, as on every cluster-wide
+   install; any change to that meaning would come in a later release. On a
+   shared cluster, list the namespaces: a fresh install with
+   an empty list serves a ScaledObject in any namespace and shares one
+   budget across all of them. A value the controller rejects keeps the list
+   in force; a rejected value with no list before it manages nothing.
 
 4. Grant an EPP token reviews, only where its router chart did not. The
    controller reads each EPP's `/metrics` with its own token, which the EPP
@@ -127,7 +129,18 @@ bash scaling-manager-admin.sh grant-epp team-a <the EPP's ServiceAccount>
 ```
 <!-- guide:admin.epp end -->
 
-5. Once each namespace is `ok` and the counts it publishes look right, let
+5. Hand each namespace owner the controller's suggested ScaledObjects for
+   their namespace, as a file: the owner cannot read the controller's
+   namespace.
+
+<!-- guide:admin.plan start -->
+```bash
+# The controller's suggested ScaledObjects for one namespace, as a file for its owner, who cannot read the controller's namespace.
+kubectl get configmap scaling-manager-scaledobjects-plan -n scaling-manager-system -o jsonpath='{.data.team-a}' > team-a-scaledobjects.yaml
+```
+<!-- guide:admin.plan end -->
+
+6. Once each namespace is `ok` and the counts it publishes look right, let
    it scale:
 
 <!-- guide:admin.active start -->
@@ -139,7 +152,24 @@ bash scaling-manager-admin.sh set passive=false
 
 ## Namespace owner
 
-Each command is for one namespace, and needs rights in that namespace only.
+Each command is for one namespace, and needs rights in that namespace only;
+`policy` also labels the namespace, which needs the cluster admin. First get
+your script and the two files it applies, from the release the cluster admin
+installed:
+
+<!-- guide:owner.download start -->
+```bash
+# The namespace owner. The owner's script and the two files it applies, verified like the admin's.
+V=<the release the cluster admin installed>
+URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
+for f in scaling-manager-owner.sh scaling-manager-monitoring.yaml scaling-manager-grants.yaml; do
+  curl -fsSLO $URL/$f && curl -fsSLO $URL/$f.sigstore.json
+  cosign verify-blob $f --bundle $f.sigstore.json \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/$V"
+done
+```
+<!-- guide:owner.download end -->
 
 <!-- guide:owner.monitor start -->
 ```bash
@@ -159,12 +189,14 @@ The NetworkPolicy rule lets the controller reach port 9090 on every pod of
 the namespace. In a namespace with no policy it would cut every other
 ingress, so apply it only where a default deny is in place.
 
-Register your ScaledObjects. Without a file, the controller's suggestion is
-applied as it stands; review it first.
+Register your ScaledObjects: the file the cluster admin handed you (review
+min and max first), or your own. Without a file, the script applies the
+suggestion straight from the controller's namespace, which only someone who
+can read it, such as the cluster admin, can do.
 
 <!-- guide:owner.register start -->
 ```bash
-# Your ScaledObjects, or without a file the controller's suggestion (which needs read on ConfigMap scaling-manager-scaledobjects-plan in scaling-manager-system).
+# Your ScaledObjects, from a file you wrote or the suggestion the cluster admin handed you.
 bash scaling-manager-owner.sh register team-a scaledobjects.yaml
 ```
 <!-- guide:owner.register end -->
@@ -222,7 +254,7 @@ Download and verify the new release's files as in step 1, then:
 
 <!-- guide:upgrade.apply start -->
 ```bash
-# With the new release's files, downloaded and verified as above. The settings and the ScaledObjects stay. A rollback is the same command with the older release's files.
+# With the new release's files, downloaded and verified as above. The settings and the ScaledObjects stay. A rollback is the same command with the files of an older release that carries scaling-manager.yaml.
 bash scaling-manager-admin.sh upgrade --keda-namespace keda
 ```
 <!-- guide:upgrade.apply end -->
@@ -250,6 +282,12 @@ bash scaling-manager-admin.sh namespaces team-a,team-b
 A cluster-wide install from `scaling-manager-cluster.yaml` has the same
 objects, and moves the same way; no e2e covers it yet.
 
+`move` also deletes the `smt` install's cluster-wide DisaggregatedSet role
+writer grant: here each namespace owner binds it
+(`scaling-manager-owner.sh grant dset-role-writer <ns>`). What else the `smt`
+install made stays until `uninstall`, which removes it by the same instance
+label.
+
 **A namespaced install** (one controller per namespace) is not moved in
 place. Its scaler runs in that namespace, so its ScaledObjects name another
 address and ClusterTriggerAuthentication. Uninstall it as its guide says,
@@ -260,30 +298,18 @@ ScaledObjects again with `scaling-manager-owner.sh register`.
 
 <!-- guide:uninstall.all start -->
 ```bash
-# Removes everything this install made, in every namespace. Sharing goes to shadow first, so no transfer mark stays on a pod.
+# Removes everything this install made, in every namespace, and what a moved smt install left. Sharing goes to shadow first, so no transfer mark stays on a pod.
 bash scaling-manager-admin.sh uninstall --keda-namespace keda
 kubectl get clusterrole,clusterrolebinding,clustertriggerauthentication -l app.kubernetes.io/instance=scaling-manager-system
 ```
 <!-- guide:uninstall.all end -->
 
 The last line lists what is left; it should list nothing. The settings go
-with the namespace.
+with the namespace. The ScaledObjects an owner registered from their own
+file are not labelled by this install and stay: each owner deletes theirs
+first (`kubectl delete scaledobject -n <ns> <name>`).
 
-## Open question: the empty list
-
-On every cluster-wide install today an empty `watchNamespaces` manages every
-namespace. This install keeps that meaning. The proposal leaves open whether
-it should instead manage nothing until the admin lists a namespace:
-
-- **Every namespace** (today's meaning): a move from a cluster-wide install
-  changes nothing, and a small cluster needs no list. But a fresh install
-  serves a ScaledObject in any namespace, including one a tenant made, and
-  shares one budget across all of them.
-- **Nothing**: a fresh install acts nowhere until the admin names a
-  namespace. But the same empty value would mean opposite things on the two
-  cluster-wide installs, and a move would have to write the list first.
-
-## Not in this draft yet
+## Not covered yet
 
 - Suggested ScaledObjects for LeaderWorkerSets and DisaggregatedSets.
 - The EPP's ServiceMonitor in `scaling-manager-monitoring.yaml`.

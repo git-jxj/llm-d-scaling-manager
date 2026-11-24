@@ -38,7 +38,11 @@ kubectl patch configmap scaling-manager-settings -n <controller-namespace> --typ
 
 The ConfigMap is optional. Without it, the controller reads the manager
 ConfigMap and the scaling policy as before. Create it once, with
-`kubectl create`; an upgrade never overwrites it.
+`kubectl create`; an upgrade never overwrites it. On the
+[one-manifest install](../guides/kubectl-install/),
+`scaling-manager-admin.sh install` creates it and `set` changes it; there the
+controller waits for it, and a change to a restart key restarts the
+controller by itself.
 
 | Key | Values | Unset means | Replaces | Applies |
 | --- | --- | --- | --- | --- |

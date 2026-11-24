@@ -212,6 +212,9 @@ does all of this:
    The copy is Secret `scaling-manager-prometheus-ca` in the controller's namespace, mounted
    read-only at `/etc/scaling-manager-prometheus-ca`, with
    `PROMETHEUS_CA_CERT_PATH=/etc/scaling-manager-prometheus-ca/ca.crt` and verification on.
+   On the [one-manifest install](../guides/kubectl-install/),
+   `scaling-manager-admin.sh install --prometheus-ca FILE` creates the same
+   Secret and sets `caFromSecret: "true"`.
 3. **Probe.** Before it reports success, connects from a one-shot Pod in the
    controller's namespace with that CA and verification on. A refused
    certificate stops the install with the reason.

@@ -244,8 +244,8 @@ namespace](../guides/install-in-namespace/). A [cluster-wide
 install](../guides/install-cluster-wide/) runs one controller for every
 namespace.
 
-The [one-manifest install](../guides/kubectl-install/) (a draft, not in a
-release yet) is cluster-wide too, with one difference: the `watchNamespaces`
+The [one-manifest install](../guides/kubectl-install/) (v0.13.0 and
+later) is cluster-wide too, with one difference: the `watchNamespaces`
 setting takes effect without a restart, and selects the namespaces the
 controller acts in while its cache stays cluster-wide. The scaler refuses a
 ScaledObject in any other namespace, and the controller drops that

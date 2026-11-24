@@ -2549,8 +2549,8 @@ e2e below.
 ### Install from the one manifest
 
 `make test-e2e-manifest-install` installs from `scaling-manager.yaml`, the one
-manifest of the kubectl install proposal (PR #404, phase 1), with the commands
-of the [draft guide](../guides/kubectl-install/), on the same prerequisites as
+manifest, with the commands of
+[the guide](../guides/kubectl-install/), on the same prerequisites as
 the release-files e2e:
 
 ```bash

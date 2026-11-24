@@ -37,15 +37,14 @@ follow the guide that path links to. Nothing installed yet? The
 1. **Have a model to scale.** llm-d serving in a namespace, with the EPP's
    `flowControl` feature gate on, plus KEDA and Prometheus on the cluster.
    Nothing serving yet? [Install a small llm-d model](guides/install-small-model/) first.
-2. **Install the scaling manager.** The new way is one manifest for the
+2. **Install the scaling manager.** With one manifest for the
    whole cluster: the cluster admin applies the signed files with one script
    and lists the model namespaces in `watchNamespaces`; each namespace owner
    registers ScaledObjects with another
    ([install with kubectl, from one manifest](guides/kubectl-install/)).
-   It is a draft: no release carries `scaling-manager.yaml` yet, and it is
-   tested on kind only.
+   New in v0.13.0.
 
-   Until then, and for one controller per namespace, install into the
+   On an earlier release, and for one controller per namespace, install into the
    model's namespace from the files attached to the release, with
    `kubectl`. A cluster admin applies the
    `part=admin` objects once (and later gives KEDA its client certificate);
@@ -133,7 +132,7 @@ commands are generated from each guide's `guide.yaml`, so they cannot drift from
 what they document. Index and conventions: **[guides/](guides/)**.
 
 **Installing** — [with kubectl, from one manifest](guides/kubectl-install/)
-(draft, not in a release yet) · [in a namespace](guides/install-in-namespace/) (the common
+(v0.13.0 and later) · [in a namespace](guides/install-in-namespace/) (the common
 case) · [cluster-wide](guides/install-cluster-wide/) · [a small llm-d model
 first](guides/install-small-model/), if nothing is serving yet
 

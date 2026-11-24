@@ -66,9 +66,8 @@ nothing, until you switch it on.
 
 - **With kubectl, from one manifest.** One controller for the cluster, signed
   files applied as downloaded by two scripts that run `kubectl` only, no
-  docker and no checkout. **Draft:** no release
-  carries `scaling-manager.yaml` yet, and it is tested on kind only. Until a
-  release carries it, use the `smt` tools image.
+  docker and no checkout. New in v0.13.0; on an earlier release, use the
+  `smt` tools image.
 - **With the `smt` tools image.** In every release today. Also the way to run
   one controller per namespace, which the one manifest does not do.
 
@@ -93,12 +92,12 @@ verify the signatures, see [install with kubectl](docs/guides/kubectl-install/).
    namespace, and the settings, with the namespaces it manages and the quota.
 
    ```bash
-   V=<a release that carries scaling-manager.yaml>
+   V=<release, v0.13.0 or later>
    for f in scaling-manager.yaml scaling-manager-keda.yaml scaling-manager-grants.yaml \
        scaling-manager-monitoring.yaml scaling-manager-admin.sh scaling-manager-owner.sh; do
      curl -fsSLO https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V/$f
    done
-   export MODEL_NAMESPACES="<ns1> <ns2>"
+   export CTRL=scaling-manager-system MODEL_NAMESPACES="<ns1> <ns2>"
    bash scaling-manager-admin.sh install --prometheus-url https://<prometheus>:9090 \
      --keda-namespace <the namespace KEDA runs in> --watch-namespaces "$(echo $MODEL_NAMESPACES | tr ' ' ,)"
    bash scaling-manager-admin.sh set limiter=quota quotas=<gpu product>=<gpus> quotaScope=cluster utilizationShare=shadow
@@ -115,6 +114,11 @@ verify the signatures, see [install with kubectl](docs/guides/kubectl-install/).
      bash scaling-manager-owner.sh register $ns          # or: register $ns <your ScaledObjects file>
    done
    ```
+
+   Run as the cluster admin, `register` without a file reads the suggestion
+   from the controller's namespace. A namespace owner without that right
+   registers a file instead
+   ([the namespace owner's part](docs/guides/kubectl-install/README.md#namespace-owner)).
 
    LeaderWorkerSets and DisaggregatedSets are not suggested yet. Where nothing
    scrapes the model servers, `scaling-manager-owner.sh monitor <ns>` adds the
@@ -259,7 +263,8 @@ for ns in $MODEL_NAMESPACES; do                                       # admin: t
 done
 ```
 
-Then switch both on:
+Then switch both on (installed with kubectl, the same is
+`bash scaling-manager-admin.sh set passive=false utilizationShare=active`):
 
 ```bash
 kubectl patch configmap scaling-manager-settings -n $CTRL --type merge \
@@ -290,8 +295,8 @@ throughout.
 ### More
 
 - Every step with its checks:
-  - [install with kubectl, from one manifest](docs/guides/kubectl-install/)
-    (draft), including a move from a cluster-wide `smt` install;
+  - [install with kubectl, from one manifest](docs/guides/kubectl-install/),
+    including a move from a cluster-wide `smt` install;
   - [install in a namespace](docs/guides/install-in-namespace/);
   - [several namespaces, one budget](docs/guides/utilization-share-namespaced/);
   - [for the whole cluster](docs/guides/install-cluster-wide/);

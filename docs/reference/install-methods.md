@@ -10,13 +10,12 @@ a direct Kustomize apply, or seeing exactly what the script does.
 Each release attaches rendered manifests, pinned to its image by digest:
 `kubectl` installs them with no checkout. The guides lead with them
 ([in a namespace](../guides/install-in-namespace/),
-[cluster-wide](../guides/install-cluster-wide/)). A release will also
-attach `scaling-manager.yaml`, one manifest for the whole cluster, with
+[cluster-wide](../guides/install-cluster-wide/)). From v0.13.0 a release also
+attaches `scaling-manager.yaml`, one manifest for the whole cluster, with
 `scaling-manager-keda.yaml`, `scaling-manager-grants.yaml`,
 `scaling-manager-monitoring.yaml`, and the scripts `scaling-manager-admin.sh`
 and `scaling-manager-owner.sh` beside it
-([install with kubectl, from one manifest](../guides/kubectl-install/);
-a draft, in no release yet). What each file holds:
+([install with kubectl, from one manifest](../guides/kubectl-install/)). What each file holds:
 [the release process](../developer-guide/release-process.md). The capacity
 planner binaries are release files too
 ([Get the planner](../guides/capacity-planner/README.md#get-the-planner)), and

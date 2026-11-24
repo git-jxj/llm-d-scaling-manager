@@ -15,8 +15,8 @@ source docs/guides/env.sh
 | guide | for |
 | --- | --- |
 | [Install a small llm-d model](install-small-model/) | **first, if nothing is serving yet.** One 0.6B model on ONE GPU — llm-d's own guides start at 16 |
-| [Install with kubectl, from one manifest](kubectl-install/) (draft) | **the new install.** One controller for the cluster, signed files applied as downloaded by two kubectl-only scripts, no docker; the admin lists the namespaces it manages in `watchNamespaces`. Tested on kind only and not in a release yet: until it is, use one of the next two |
-| [Install the scaling manager in a namespace](install-in-namespace/) | **start here** when llm-d already serves, on a release today. One team, one namespace |
+| [Install with kubectl, from one manifest](kubectl-install/) | One controller for the cluster, signed files applied as downloaded by two kubectl-only scripts, no docker; the admin lists the namespaces it manages in `watchNamespaces`. From v0.13.0; on an earlier release, use one of the next two |
+| [Install the scaling manager in a namespace](install-in-namespace/) | **start here** when llm-d already serves. One team, one namespace |
 | [Install the scaling manager for the whole cluster](install-cluster-wide/) | one controller for every namespace, from the tools image or the release files |
 | [Try the scaling manager in passive mode](try-in-passive-mode/) | next to what scales your models today: it reports what it would order and changes nothing, then takes over one model at a time |
 | [Prepare model servers to scale](prepare-workloads/) | **after the install.** The engine image, weights and compile caches on each GPU node, so a new replica starts fast. One recommended configuration, from the release's tools image |
