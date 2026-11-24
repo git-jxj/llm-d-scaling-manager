@@ -1299,7 +1299,7 @@ function execView(o) {
   const pct = g => `+${Math.round((g.x - 1) * 100)}% (${roundRate(g.rate)} r/s)`;
   const same = growth.length > 1 && growth.every(g => g.need === growth[0].need) && /^(not sized|no )/.test(growth[0].need);
   const grownText = same ? `${growth.map(pct).join(" and ")}: ${growth[0].need}.` :
-    growth.length ? growth.map(g => `${pct(g)}: ${g.need}`).join("; ") + ", at the same SLO." :
+    growth.length ? growth.map(g => `${pct(g)}: ${g.need}${growthPast(g, testedTo)}`).join("; ") + ", at the same SLO." :
     o.growthMissing ? o.growthMissing : o.growthPending ? "Sizing the fleet for +25% and +50% of the busiest load..." : "";
   if (grownText) lines.push({label: "+25% / +50% traffic", badge: "", text: grownText});
 
@@ -1368,6 +1368,13 @@ function growthNeed(size, error) {
   if ((lim.flags || []).includes("VPLowerBound")) notes.push("prefill's limit is a lower bound, so fewer prefill may do");
   if (lim.extrapolated) notes.push("extrapolated past the tested range");
   return s + (notes.length ? `, ${notes.join("; ")}` : "");
+}
+
+// growthPast marks a grown rate above the range the model was tested over,
+// as the TTFT row does, where the size does not already say extrapolated.
+function growthPast(g, testedTo) {
+  if (testedTo == null || !(g.rate > testedTo) || /extrapolated/.test(g.need) || /^(not sized|no )/.test(g.need)) return "";
+  return `, extrapolated above the tested ${roundRate(testedTo)} r/s`;
 }
 
 // GROWTH_NO_PREFILL says why the panel sizes no growth: a prefill limit the

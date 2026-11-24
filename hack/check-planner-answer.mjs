@@ -133,6 +133,11 @@ try {
   // One refusal for both rates is said once, with no "at the same SLO".
   const floorNeed = gn(unmet("TargetBelowFloor", "prefill"));
   const both = execView({inputs, plan: refusedPlan, report, k, growth: [{x: 1.25, rate: 25, need: floorNeed}, {x: 1.5, rate: 30, need: floorNeed}]}).lines.find(l => l.label === "+25% / +50% traffic").text;
+  // A grown rate above the tested range is marked, as the TTFT row marks it.
+  const past = execView({inputs: withHour, plan: refusedPlan, report, k, growth: [{x: 1.25, rate: 25, need: "6 prefill + 12 decode (288 GPUs)"},
+    {x: 1.5, rate: 30, need: "7 prefill + 12 decode (304 GPUs), extrapolated past the tested range"}]}).lines.find(l => l.label === "+25% / +50% traffic").text;
+  check("a grown rate above the tested range is marked once", past === "+25% (25 r/s): 6 prefill + 12 decode (288 GPUs), extrapolated above the tested 20 r/s; " +
+    "+50% (30 r/s): 7 prefill + 12 decode (304 GPUs), extrapolated past the tested range, at the same SLO.", past);
   check("one refusal for both rates is said once", both === "+25% (25 r/s) and +50% (30 r/s): not sized: the TTFT target is below this model's floor at any fleet.", both);
   check("a failed request says so", gn(null, "boom") === "not sized (the request failed)");
   for (const s of [unmet("NoPrefillCapacity", "prefill"), unmet("TargetBelowFloor", "fleet"), unmet("ReplicaBoundReached", "decode")]) {
