@@ -1645,15 +1645,16 @@ func (r *reporter) phasesDiffer(binds string) string {
 // resident on the decode pods, P/D or not, so a shorter prompt raises the
 // knee too. Both KVreq are read with the shape priced's prefix hit and
 // output dispersion, so only the lengths move the ratio. Where the batch
-// cap binds, the knee moves less with KVreq; the scale then reads low, and
-// a cycle counts below its share, never past it. Callers check both
-// lengths are above 0.
+// cap binds, the knee moves less with KVreq than that, so the KVreq ratio
+// is taken only where it is below 1: a cycle then counts at or below its
+// share at the shape priced, never past it. Callers check both lengths are
+// above 0.
 func (r *reporter) decodeKneeScale(c learnreplay.CycleShape) float64 {
 	s := r.pv.shape
 	kv := func(il, ol float64) float64 {
 		return shape.New(il, ol, s.PrefixHitRate).WithOutputDispersion(s.OutputDispersion).KVreq
 	}
-	return c.OutputTokens * kv(c.InputTokens, c.OutputTokens) / (s.AvgOutputTokens * kv(s.AvgInputTokens, s.AvgOutputTokens))
+	return c.OutputTokens / s.AvgOutputTokens * min(1, kv(c.InputTokens, c.OutputTokens)/kv(s.AvgInputTokens, s.AvgOutputTokens))
 }
 
 // contradicted says how the window's own fleet served more than the model

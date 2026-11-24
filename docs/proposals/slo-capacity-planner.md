@@ -818,8 +818,8 @@ priced's prefix hit and dispersion. The prompt's KV is resident on the decode
 pods on a P/D fleet too, so a shorter prompt raises decode's knee there as well.
 A cycle lighter in both lengths then scales below either length ratio: at 0.85 of
 each, by 0.72 where IL = OL, not by 0.85. Where the batch cap binds, the knee moves
-less with KVreq and the scale reads low: a cycle counts below its share, never
-past it. One pool also prefills in its own steps, so a shorter prompt shortens
+less with KVreq, so the KVreq ratio is taken only below 1: a cycle counts at or
+below its share at the shape priced, never past it. One pool also prefills in its own steps, so a shorter prompt shortens
 them too; it takes the prompt ratio where that is lower. The pool's run is
 counted on its own replicas: more replicas than priced
 break the run. `TestReport_AnAggregatedPoolIsJudgedOnItsOwnKnee` pins NOT JUDGED

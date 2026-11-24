@@ -68,4 +68,9 @@ func TestReport_AnAggregatedPoolIsJudgedOnItsOwnKnee(t *testing.T) {
 	assert.Empty(t, withLengths(contradictsReporter(cycles(10, 22), 6.5, 2, 2), 850, 850).contradicted(2, 2, base), "lighter in both, P/D")
 	assert.Empty(t, withLengths(aggregatedReporter(cycles(10, 22), 6.5, 2), 850, 850).contradicted(0, 2, base), "lighter in both, one pool")
 	assert.NotEmpty(t, withLengths(aggregatedReporter(cycles(10, 22), 7.5, 2), 850, 850).contradicted(0, 2, base), "past it at 7.5 r/s (5.4)")
+
+	// A longer prompt never scales a rate up: at 1150/850 the KVreq ratio,
+	// 1575/1500, is not taken, as the batch cap can hold the knee where the
+	// output ratio puts it. 5.8 r/s counts as 4.9, not 5.2.
+	assert.Empty(t, withLengths(contradictsReporter(cycles(10, 22), 5.8, 2, 2), 1150, 850).contradicted(2, 2, base), "longer prompt, P/D")
 }

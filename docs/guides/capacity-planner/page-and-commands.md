@@ -668,7 +668,8 @@ cases, and no fleet is sized:
   and its rate counts scaled down to the shape priced. Where decode sets
   the knee, the scale is the cycle's output times the KV one request
   holds, over the shape priced's: the prompt's KV sits on the decode pods
-  too, on a P/D fleet as on one pool. One pool takes the prompt ratio
+  too, on a P/D fleet as on one pool. A longer prompt never scales a rate
+  up. One pool takes the prompt ratio
   where that is lower, as it also prefills on the same pods.
 
 Only an UNDER is withheld: neither case shows the fleet holding.
