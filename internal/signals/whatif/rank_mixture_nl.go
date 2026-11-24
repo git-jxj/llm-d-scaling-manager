@@ -32,10 +32,12 @@ import (
 // reads load-dependent misfit as prompt cost: a spread that grows moves A0
 // below zero.
 //
-// Abstention. With no location fitted to the router, the fit window prices
-// itself out of sample in A0: its median ratio of the model's mean and p90
-// to the router's measured ones (RankMixtureFit FitMean, FitP90) are checks,
-// and the backtest abstains outside [MinNLFitMean, MaxNLFitMean] and
+// Abstention. With no location or spread calibrated to the router's TTFT,
+// the fit window's median ratio of the model's mean and p90 to the router's
+// measured ones (RankMixtureFit FitMean, FitP90) are checks. They are in
+// sample: the remainder is the router's mean less both engines' means, so
+// FitMean reads mostly the prefill engine's queue and service against its
+// measured TTFT, and FitP90 the spreads. The backtest abstains outside [MinNLFitMean, MaxNLFitMean] and
 // [MinNLFitP90, MaxNLFitMean]. Those checks mean something only on a window
 // that holds the loads and prompts it will be asked about: on a fit window
 // under MinSpreadFitWindow it abstains too.

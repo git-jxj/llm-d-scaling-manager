@@ -296,8 +296,11 @@ the same flags. The answer's `rankMixture.model` reads `rank-mixture-nl-line`.
   KV-deferral lines and the parts on the steps under utilization 0.9, the
   shares at the priced load, and each rank's service read from the histogram.
 
-Nothing is fitted to the router, so the fit window must price itself. The
-variant abstains where:
+No spread or location is calibrated to the router's TTFT, so the fit window
+must price itself. This check is on the same window, and the router's
+remainder is the router's mean less both engines': a fit window priced at its
+mean mostly says the prefill engine's queue and service are. The variant
+abstains where:
 - the fit window's median ratio of priced to measured mean (`fitMean`) is
   outside 0.8 to 1.25;
 - its median p90 ratio (`fitP90`) is outside 0.9 to 1.25;
