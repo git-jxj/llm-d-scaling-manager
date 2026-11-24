@@ -60,10 +60,10 @@ type backtestFlags struct {
 	// rankMixtureFitSteps is --rank-mixture-fit-steps: the rank mixture's
 	// fit-step fixes (whatifapi.BacktestRequest.RankMixtureFitSteps).
 	rankMixtureFitSteps bool
-	// unstratified is --rank-mixture-stratified=false
-	// (whatifapi.BacktestRequest.RankMixtureStratified false): the zero
-	// value is the default, on.
-	unstratified bool
+	// rankMixtureStratified is --rank-mixture-stratified
+	// (whatifapi.BacktestRequest.RankMixtureStratified): nil is the
+	// default (whatif.DefaultRankMixtureStratified).
+	rankMixtureStratified *bool
 	// experimentalTPOT is --experimental-tpot (experimental_tpot.go),
 	// backtest's only.
 	experimentalTPOT string
@@ -83,7 +83,7 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTV2Usage)
-	fs.Var(offSwitch{&f.unstratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
+	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
 }
 
 // parsed records the flags given, once fs is parsed, and lets the default
@@ -253,8 +253,7 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 	}
 	req.TTFTModel, req.PrefillSlots = string(whatif.QueueRankMixture), prefillSlotsOf(fit)
 	req.RankMixtureFitSteps = f.rankMixtureFitSteps
-	stratified := !f.unstratified
-	req.RankMixtureStratified = &stratified
+	req.RankMixtureStratified = f.rankMixtureStratified
 	if err := withRankMixture(testPath, test, nil); err != nil {
 		return err
 	}

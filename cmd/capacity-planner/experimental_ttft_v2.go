@@ -39,33 +39,42 @@ const rankMixtureStratifiedUsage = "with --experimental-ttft=v2, read each prefi
 	"computed-token histogram itself, not from the rank's own random draws, so a figure moves far less with the draws; " +
 	"on by default, =false reads them from the draws"
 
-// offSwitch is a boolean flag on by default (whatif.DefaultRankMixtureStratified)
-// held as its negation, so that a flags struct's zero value is the
-// default: =false sets *off.
-type offSwitch struct {
-	off *bool
+// optionalBool is a boolean flag that is nil until it is given, so that a
+// flags struct's zero value is the default (def), whatever it is: the
+// caller reads nil as def.
+type optionalBool struct {
+	p   **bool
+	def bool
 }
 
-// String is the value.
-func (v offSwitch) String() string {
-	if v.off != nil && *v.off {
-		return "false"
+// String is the value, def where none was given.
+func (v optionalBool) String() string {
+	if v.p == nil || *v.p == nil {
+		return strconv.FormatBool(v.def)
 	}
-	return "true"
+	return strconv.FormatBool(**v.p)
 }
 
 // Set reads one value.
-func (v offSwitch) Set(s string) error {
-	on, err := strconv.ParseBool(s)
+func (v optionalBool) Set(s string) error {
+	b, err := strconv.ParseBool(s)
 	if err != nil {
 		return err
 	}
-	*v.off = !on
+	*v.p = &b
 	return nil
 }
 
 // IsBoolFlag lets the flag stand without a value: alone it is true.
-func (v offSwitch) IsBoolFlag() bool { return true }
+func (v optionalBool) IsBoolFlag() bool { return true }
+
+// stratifiedOr is a --rank-mixture-stratified given, or the default.
+func stratifiedOr(given *bool) bool {
+	if given == nil {
+		return whatif.DefaultRankMixtureStratified
+	}
+	return *given
+}
 
 // experimentalTTFTValue is --experimental-ttft where it also takes =v2: alone,
 // true or v1 it sets *switches (the TTFT model's switches), v2 sets *v2,
@@ -181,7 +190,7 @@ func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.Rep
 		return err
 	}
 	if f.rankMixtureTTFT {
-		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q, !f.unstratified)
+		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q, stratifiedOr(f.rankMixtureStratified))
 	}
 	if f.tpotDistribution {
 		rep.TPOTModel = whatifapi.ApplyTPOTModel(res, rep, q)

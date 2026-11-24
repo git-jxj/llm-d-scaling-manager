@@ -34,8 +34,9 @@ func TestRankMixtureStratified_OnByDefault(t *testing.T) {
 		require.NotNil(t, bt.RankMixture)
 		return bt.RankMixture
 	}
+	off := false
 	assert.True(t, served(serveFlags{}).Stratified, "serve: on by default")
-	assert.False(t, served(serveFlags{unstratified: true}).Stratified, "serve: =false turns it off")
+	assert.False(t, served(serveFlags{rankMixtureStratified: &off}).Stratified, "serve: =false turns it off")
 }
 
 // The switch parses the same on every command that takes it: absent or
@@ -51,15 +52,16 @@ func TestRankMixtureStratified_Flag(t *testing.T) {
 		fs.SetOutput(io.Discard)
 		bf.registerAssume(fs)
 		require.NoError(t, fs.Parse(c.args))
-		assert.Equal(t, c.off, bf.unstratified, "backtest %v", c.args)
+		assert.Equal(t, !c.off, stratifiedOr(bf.rankMixtureStratified), "backtest %v", c.args)
 
 		var af answerFlags
 		fs = flag.NewFlagSet("at-replicas", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		af.register(fs)
 		require.NoError(t, fs.Parse(c.args))
-		assert.Equal(t, c.off, af.unstratified, "at-replicas %v", c.args)
+		assert.Equal(t, !c.off, stratifiedOr(af.rankMixtureStratified), "at-replicas %v", c.args)
 	}
-	var off bool
-	assert.Error(t, offSwitch{&off}.Set("maybe"))
+	var given *bool
+	assert.Error(t, optionalBool{&given, true}.Set("maybe"))
+	assert.Nil(t, given)
 }

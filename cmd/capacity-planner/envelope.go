@@ -67,8 +67,8 @@ var (
 		// ExperimentalTTFT, which no envelope row allows.
 		experimentalTTFTFlag,
 		// Read only with --experimental-ttft=v2, whose every TTFT is
-		// flagged RankMixtureTTFT, which no envelope row allows; without it
-		// it states nothing.
+		// flagged RankMixtureTTFT, which no envelope row allows; without
+		// v2 it states nothing.
 		rankMixtureStratifiedFlag,
 		// The same: every TPOT percentile it prices is flagged
 		// TPOTDistribution, which no envelope row allows.

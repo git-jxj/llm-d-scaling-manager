@@ -61,10 +61,10 @@ type serveFlags struct {
 	// rankMixtureTTFT is its =v2, every backtest priced with the
 	// rank-mixture TTFT model (experimentalTTFTValue, as the CLI's).
 	experimentalTTFT, rankMixtureTTFT bool
-	// unstratified is --rank-mixture-stratified=false: the server's
-	// default for a request that does not say
+	// rankMixtureStratified is --rank-mixture-stratified: the server's
+	// default for a request that does not say, nil the planner's
 	// (whatifapi.Config.NoRankMixtureStratified).
-	unstratified bool
+	rankMixtureStratified *bool
 	// experimentalTPOT is --experimental-tpot (=v2): every backtest, and
 	// the main view of every source, priced with the per-request TPOT
 	// distribution.
@@ -106,7 +106,7 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.BoolVar(&f.allInContainer, "listen-all-in-container", false, "in a container whose port is published to the host's loopback only (-p 127.0.0.1:8080:8080): allow --listen 0.0.0.0:PORT with --auth=none; never where the address is reachable from a network. Refused when KUBERNETES_SERVICE_HOST is set, a best-effort tripwire, not enforcement")
 	fs.StringVar(&f.audiences, "token-audiences", "", "with --auth=kubernetes, the audiences a TokenReview checks a token for, comma-separated; default the API server's")
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, "price every request with the experimental TTFT model, as if each asked for experimentalTTFT: for a planner served to people who should see it without asking; =v2 instead prices every backtest with the rank-mixture TTFT model, as if each asked for ttftModel "+string(whatif.QueueRankMixture)+". "+experimentalTTFTV2Usage)
-	fs.Var(offSwitch{&f.unstratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage+"; a request's rankMixtureStratified overrides it")
+	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage+"; a request's rankMixtureStratified overrides it")
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "price every backtest, and the main view's TPOT p90 and p95 (plan, size, report), with the experimental per-request TPOT distribution, as if each asked for tpotModel "+whatif.TPOTRenewalLognormal+": "+experimentalTPOTUsage)
 	fs.BoolVar(&f.noSelfCheck, "no-self-check", false, "do not check the planner on each source beside its inputs, unless a request asks (selfCheck true)")
 	fs.BoolVar(&f.allowUpload, "allow-upload", false, "take recordings uploaded from the page (POST /v1/recordings): kept as sent, in a private temporary directory (TMPDIR; TMP on Windows), the last 4, until the server stops. Off by default: whoever may open the planner may then upload")
@@ -274,7 +274,7 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed, experimentalTTFT: f.experimentalTTFT,
 		rankMixture: f.rankMixtureTTFT, tpotDistribution: tpotV2}
 	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlannerVersion: plannerVersion(), SelfCheck: defaultSelfCheck && !f.noSelfCheck, PlanBudget: f.planBudget,
-		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes, NoRankMixtureStratified: f.unstratified}
+		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes, NoRankMixtureStratified: !stratifiedOr(f.rankMixtureStratified)}
 	if f.rankMixtureTTFT {
 		cfg.TTFTModel = string(whatif.QueueRankMixture)
 	}

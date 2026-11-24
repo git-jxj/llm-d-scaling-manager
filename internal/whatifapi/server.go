@@ -381,7 +381,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 			Unstratified bool
 		}{doc.InputsID, true})
 	}
-	if check &&(doc.Source.Kind == SourceRecording || doc.Source.Kind == SourcePrometheus) {
+	if check && (doc.Source.Kind == SourceRecording || doc.Source.Kind == SourcePrometheus) {
 		// The self-check is bounded as a plan is; out of time it is not run,
 		// and the inputs are still answered.
 		sctx, cancel := context.WithTimeoutCause(r.Context(), s.planBudget, errPlanBudget)
