@@ -624,6 +624,9 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 	joint := a.noteJoint(input, fleet, prefills, decodes, prefillRows, decodeRows, arrival, term, now)
 
 	view := &prefill.Settle{View: a.settleView(), Model: utils.GetNamespacedKey(input.Namespace, input.ModelID)}
+	// A model the v2 models run for publishes the mean, p90 and p95 beside
+	// the objective's percentile (model_published.go).
+	statistics := a.modelObserved(input.Namespace, input.ModelID)
 	var out []metrics.SLOTTFTReading
 	var asks map[string]int
 	for _, v := range prefills {
@@ -665,11 +668,15 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 				asks[v] = n
 			}
 		}
-		out = append(out, metrics.SLOTTFTReading{
+		reading := metrics.SLOTTFTReading{
 			Variant: v, Statistic: statistic, Predicted: p.published(), PerReplica: p.perReplica,
 			Unmet: p.unmet, VPSource: vpSource(est), Reason: p.reason, Refused: p.currentRefusal(),
 			Flags: publishedFlags(p.flags), Joint: joint.reading(),
-		})
+		}
+		if statistics && !math.IsNaN(reading.Predicted) {
+			reading.Statistics = defaultTTFTStatistics(in, arrival)
+		}
+		out = append(out, reading)
 		logTTFT(logger, input, v, in, p, arrival, target)
 		logJoint(logger, input, v, joint)
 	}

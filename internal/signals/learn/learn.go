@@ -45,10 +45,9 @@ const (
 
 // TTFTMixture and TPOTDistribution are the slo analyzer's v2 latency
 // learners: the rank-mixture TTFT fit and the renewal-lognormal TPOT fit the
-// capacity planner runs (docs/proposals/predicted-latency-in-controller.md).
-// Registered by name only: they fit nothing until the models are frozen, so
-// they are on neither Learners nor Reporters. Each joins both in the change
-// that makes it learn, with its Forget.
+// capacity planner runs (docs/proposals/predicted-latency-in-controller.md),
+// fitted on one window per model. The annotation forgets the window through
+// either name.
 const (
 	TTFTMixture      = "ttft-mixture"
 	TPOTDistribution = "tpot-distribution"
@@ -67,7 +66,7 @@ func Reporters() []string {
 // name to that code. A learner joins the list in the PR that moves it onto
 // the shared rules.
 func Learners() []string {
-	return []string{K2, Mu, ITL, Start}
+	return []string{K2, Mu, ITL, Start, TTFTMixture, TPOTDistribution}
 }
 
 // By is what forgot a key.

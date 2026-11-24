@@ -35,26 +35,16 @@ func modelInputsCycle() (domain.AnalyzerInput, *domain.RouterLatency) {
 	return in, router
 }
 
-// The v2 learners are registered by name, one per objective, and each name
-// is off the forget list until it learns (learn.Learners), so the
-// annotation's spec does not hold an analyzer to forgetting it yet.
-func TestModelLearners_AreRegisteredOffTheForgetList(t *testing.T) {
-	require.Len(t, modelLearners, 2)
-	assert.Equal(t, learn.TTFTMixture, modelLearners[0].name)
-	assert.Equal(t, learn.TPOTDistribution, modelLearners[1].name)
-	for _, l := range modelLearners {
-		assert.NotContains(t, learn.Learners(), l.name)
-		assert.NotContains(t, learn.Reporters(), l.name)
-	}
-	// The objectives are the ones the slo series name.
+// The objectives are the ones the slo series name.
+func TestModelLearners_ObjectivesAreTheSLOSeries(t *testing.T) {
 	assert.Equal(t, constants.SLOObjectiveTTFT, whatif.ObjectiveTTFT)
 	assert.Equal(t, constants.SLOObjectiveTPOT, whatif.ObjectiveTPOT)
 }
 
-// A missing input is reported per objective, by name; an objective whose
-// inputs were all read is not-built: the learners learn nothing until the
-// models are frozen. Both publish under the slo family, and no predicted
-// TPOT is set.
+// A missing input is reported per objective, by name, while no fit prices;
+// an objective whose inputs were all read on a window too short to fit is
+// window-short. Both publish under the slo family, and no predicted TPOT is
+// set here: Analyze publishes the figures.
 func TestObserveModelInputs_ReportsWhereEachModelStands(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	require.NoError(t, metrics.InitMetrics(registry))
@@ -83,7 +73,7 @@ func TestObserveModelInputs_ReportsWhereEachModelStands(t *testing.T) {
 	router.TPOTBuckets = []domain.LatencyBucket{{UpperBound: 0.05, Rate: 2}}
 	got = a.ObserveModelInputs(in, router)
 	for _, objective := range []string{whatif.ObjectiveTTFT, whatif.ObjectiveTPOT} {
-		assert.Equal(t, constants.SLOModelNotBuilt, got[objective].Reason, objective)
+		assert.Equal(t, constants.SLOModelWindowShort, got[objective].Reason, objective)
 		assert.Empty(t, got[objective].Missing, objective)
 	}
 	n, err = testutil.GatherAndCount(registry, constants.LLMSMSLOModelInputMissing, constants.LLMSMSLOPredictedTPOTSeconds)

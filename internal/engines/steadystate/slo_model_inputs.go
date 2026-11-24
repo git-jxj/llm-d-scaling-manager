@@ -30,6 +30,7 @@ import (
 type modelInputsObserver interface {
 	ReadsModelInputs() bool
 	ObserveModelInputs(in domain.AnalyzerInput, router *domain.RouterLatency) map[string]slo.ModelCoverage
+	ModelPrefillAsk(namespace, modelID string) (slo.ModelPrefillAsk, bool)
 }
 
 var _ modelInputsObserver = (*slo.Analyzer)(nil)
@@ -79,8 +80,10 @@ func (e *Engine) predictionNamespaces(modelGroups map[string][]llmdvariant.Varia
 // observeModelInputs hands the slo analyzer one model's cycle for its v2
 // models: the rows the collector kept for them, cut to the replicas the
 // analyzers read (routing drops a pod no InferencePool selects), the
-// model's variant states, and the router's latency as the models fit on it.
-func (e *Engine) observeModelInputs(ctx context.Context, data *modelData) {
+// model's variant states, arrival rate and policy (the TTFT objective the
+// v2 prefill ask is priced at), and the router's latency as the models fit
+// on it.
+func (e *Engine) observeModelInputs(ctx context.Context, data *modelData, policy domain.AnalyzerConfig) {
 	if data == nil {
 		return
 	}
@@ -95,13 +98,25 @@ func (e *Engine) observeModelInputs(ctx context.Context, data *modelData) {
 		rows = data.replicaMetrics
 	}
 	in := domain.AnalyzerInput{Namespace: data.namespace, ModelID: data.modelID,
-		ReplicaMetrics: sameReplicas(rows, data.replicaMetrics), VariantStates: data.variantStates}
+		ReplicaMetrics: sameReplicas(rows, data.replicaMetrics), VariantStates: data.variantStates,
+		ArrivalRate: data.arrivalRate, Config: policy}
 	router := e.ReplicaMetricsCollector.CollectPredictionLatency(ctx, data.modelID, data.namespace)
 	obs.ObserveModelInputs(in, router)
 	if e.sloModelInputs == nil {
 		e.sloModelInputs = map[string][2]string{}
 	}
 	e.sloModelInputs[utils.GetNamespacedKey(data.namespace, data.modelID)] = [2]string{data.namespace, data.modelID}
+}
+
+// modelPrefillAsk is the slo analyzer's v2 TTFT prefill ask for a model this
+// cycle, false where the analyzer does not run the v2 models or asks for
+// none.
+func (e *Engine) modelPrefillAsk(namespace, modelID string) (slo.ModelPrefillAsk, bool) {
+	obs, ok := e.sloAnalyzer.(modelInputsObserver)
+	if !ok {
+		return slo.ModelPrefillAsk{}, false
+	}
+	return obs.ModelPrefillAsk(namespace, modelID)
 }
 
 // sameReplicas is the rows of kept whose pod has a row in read, in kept's

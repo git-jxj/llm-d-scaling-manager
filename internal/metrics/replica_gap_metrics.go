@@ -36,7 +36,9 @@ func registerReplicaGapMetrics(registry prometheus.Registerer) error {
 	}
 	replicasSuggested = gauge(constants.LLMSMReplicasSuggested,
 		"Replicas the analyzers ask for (X), before the limiters, the variant's maxReplicas ceiling and "+
-			"the utilization share.", variantLabels)
+			"the utilization share. learner is empty for the analyzers' own ask; ttft-mixture is what they "+
+			"would ask for a passive or shadow model's prefill variant with the slo analyzer sizing it on the "+
+			"v2 TTFT model (would-be only).", append(append([]string{}, variantLabels...), constants.LabelLearner))
 	replicasProvided = gauge(constants.LLMSMReplicasProvided,
 		"Replicas the variant gets (Y), after the limiters and the utilization share. With mode active, the "+
 			"value of llmsm_desired_replicas; with mode passive or shadow nothing is applied and it is what "+
@@ -82,6 +84,10 @@ type ReplicaGap struct {
 	Namespace, ModelName, VariantName, Role string
 	// Mode is a constants.ReplicasMode* value: whether Provided is applied.
 	Mode string
+	// Learner is empty for the analyzers' own suggestion; a v2 learner's
+	// name (learn.TTFTMixture) for what the analyzers would suggest with
+	// the slo analyzer sizing on it, where only Suggested is published.
+	Learner string
 	// Suggested is X, Provided is Y. Suggested - Provided is the sum of Short
 	// less Borrowed.
 	Suggested, Provided int
@@ -126,7 +132,12 @@ func PublishReplicaGaps(gaps []ReplicaGap, quotas []QuotaAfterSuggested) {
 			constants.LabelRole:        gap.Role,
 			constants.LabelMode:        gap.Mode,
 		}
-		set(replicasSuggested, maps.Clone(vl), float64(gap.Suggested))
+		sl := maps.Clone(vl)
+		sl[constants.LabelLearner] = gap.Learner
+		set(replicasSuggested, sl, float64(gap.Suggested))
+		if gap.Learner != "" {
+			continue
+		}
 		set(replicasProvided, maps.Clone(vl), float64(gap.Provided))
 		set(replicasBorrowed, maps.Clone(vl), float64(gap.Borrowed))
 		for _, s := range gap.Short {

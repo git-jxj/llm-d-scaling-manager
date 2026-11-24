@@ -254,6 +254,15 @@ type Analyzer struct {
 	// prompts is each prefill variant's prompt window (ttft.go), under the
 	// same key, from the first row to carry a computed-token histogram.
 	prompts map[string]*promptSpreadWindow
+	// models is each model's v2 latency learners (model_learners.go), keyed
+	// namespace|model. Under mu.
+	models map[string]*modelWindow
+	// modelRefitEvery is how often the v2 learners refit, and
+	// modelRefitBackground whether a refit runs in the background
+	// (WithModelRefits); modelRefitting says one does, under mu.
+	modelRefitEvery      time.Duration
+	modelRefitBackground bool
+	modelRefitting       bool
 }
 
 // The batch cap's readers in this analyzer (issue ev-shindin/llm-scaling-manager#420). Each took the cap
@@ -348,6 +357,9 @@ func New(router RouterLatencySource, store *capacity.Store) *Analyzer {
 		decodeTTFT:           make(map[string]*decodeTTFTWindow),
 		decodeTerms:          make(map[string]*decodeTermWindow),
 		joint:                make(map[string]*jointWindow),
+		models:               make(map[string]*modelWindow),
+		modelRefitEvery:      ModelRefitEvery,
+		modelRefitBackground: true,
 
 		ttftImbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts,
 	}
@@ -441,10 +453,20 @@ func (a *Analyzer) analyze(ctx context.Context, input domain.AnalyzerInput) (*do
 	// The threshold the engine publishes this analyzer's target with: the slo
 	// entry's own when it sets one, the tier's otherwise.
 	scaleUp, _ := cfg.AnalyzerThresholds(domain.SLOAnalyzerName)
+	// A model the v2 models run for publishes the predicted latency of both
+	// models (model_published.go): its generating variants' lines are kept
+	// for the TPOT figures.
+	var lines map[string]itl.Model
+	if a.modelObserved(input.Namespace, input.ModelID) {
+		lines = map[string]itl.Model{}
+	}
 	var decodeLines []ttftDecodeLine
 	for _, vs := range fleet.variants {
 		key := a.variantKey(input.Namespace, input.ModelID, vs)
 		vc, reading, d := a.priceVariant(input, vs, key, fleet, tpotTarget, scaleUp, now)
+		if lines != nil && d.line.Tier != "" {
+			lines[vs.VariantName] = d.line.Model
+		}
 		a.noteLineLearner(logger, input.Namespace, input.ModelID, vs, key, d, now)
 		if domain.CanonicalRole(vs.Role) == domain.RoleDecode {
 			decodeLines = append(decodeLines, ttftDecodeLine{state: vs, detail: d})
@@ -514,6 +536,15 @@ func (a *Analyzer) analyze(ctx context.Context, input domain.AnalyzerInput) (*do
 	snap.TTFT, asks = a.priceTTFTVariants(logger, input, cfg, fleet, decodeLines, j.Latency, now)
 	if a.ttftSizesPrefill {
 		sizePrefill(result, asks, fleet, modelArrival(input, fleet))
+	}
+	if lines != nil {
+		snap.Predicted = a.modelPredictions(input, lines)
+		if reports := a.modelReports(input.Namespace, input.ModelID); len(reports) > 0 {
+			model := reportModel(input.Namespace, input.ModelID)
+			a.mu.Lock()
+			a.learnerReports[model] = append(a.learnerReports[model], reports...)
+			a.mu.Unlock()
+		}
 	}
 
 	// A window that covered a wake or a starting replica is not judged: the
@@ -977,6 +1008,15 @@ func (a *Analyzer) evictStale(now time.Time) Evicted {
 			ev.TTFTWindows++
 		}
 	}
+	for key, w := range a.models {
+		if now.Sub(w.seen) > a.stateTimeout {
+			if ns, model, ok := strings.Cut(key, "|"); ok {
+				a.noteModelForgottenLocked(ns, model, w, learn.ByEvicted)
+			}
+			delete(a.models, key)
+			ev.Models++
+		}
+	}
 	a.evictOwnSettleLocked(now)
 	return ev
 }
@@ -986,11 +1026,13 @@ type Evicted struct {
 	Lines, Baselines, Transients, Accelerators int
 	// TTFTWindows counts the imbalance, decode-TTFT and prompt windows.
 	TTFTWindows int `learnrec:"omitzero"`
+	// Models counts the models whose v2 latency learners were evicted.
+	Models int `learnrec:"omitzero"`
 }
 
 // Any reports whether anything was evicted.
 func (e Evicted) Any() bool {
-	return e.Lines+e.Baselines+e.Transients+e.Accelerators+e.TTFTWindows > 0
+	return e.Lines+e.Baselines+e.Transients+e.Accelerators+e.TTFTWindows+e.Models > 0
 }
 
 // beginCycle marks the start of an engine cycle. The engine calls it once per
