@@ -310,3 +310,110 @@ func TestMixtureFleet_AtLeastOnlyOnALowerBoundPrefillKnee(t *testing.T) {
 	assert.True(t, fl.lowerBound, "the stub refuses the prefill knee")
 	assert.False(t, fl.endAtLeast, "the curve ends at decode's knee there")
 }
+
+// The curve's end is "at least" only where a prefill knee that is only a
+// lower bound ends it: not decode's knee, not a tie with it (the fleet stops
+// at decode's), and not a refused or a priced prefill knee.
+func TestEndAtLeast(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		pv         float64
+		pok, lower bool
+		dv         float64
+		dok        bool
+		served     float64
+		want       bool
+	}{
+		{"a lower-bound prefill knee under decode's", 10, true, true, 20, true, 8, true},
+		{"raised to the load served, still under decode's", 10, true, true, 20, true, 15, true},
+		{"raised past decode's: decode's ends it", 10, true, true, 12, true, 15, false},
+		{"a tie with decode's: decode's ends it", 12, true, true, 12, true, 8, false},
+		{"a priced prefill knee", 10, true, false, 20, true, 8, false},
+		{"a refused prefill knee: decode's", 0, false, true, 12, true, 15, false},
+		{"decode refused: the lower-bound prefill knee", 10, true, true, 0, false, 15, true},
+	} {
+		assert.Equal(t, c.want, endAtLeast(c.pv, c.pok, c.lower, c.dv, c.dok, c.served), c.name)
+	}
+}
+
+// The model's fleet limit is the lowest of headroom times the curve's end,
+// the prefill limit and decode's, named by what binds; a refused decode or
+// prefill limit is the fleet's. Decode's bound is named as the planner names
+// it, and only a binding curve's end that is "at least" carries
+// VPLowerBound.
+func TestMixtureFleet_FleetLimit(t *testing.T) {
+	f := &mixtureFleet{knee: 10, kneeOK: true, endAtLeast: true}
+	prefill := whatif.Answer{Value: 7, Flags: []whatif.Flag{whatif.RankMixtureTTFT}}
+	prefill.Basis.BoundBy = []whatif.Bound{"TTFT"}
+	decode := whatif.Answer{Value: 6}
+	decode.Basis.BoundBy = []whatif.Bound{"TPOT p90"}
+
+	a, ok := f.fleetLimit(0.85, decode, prefill).(whatif.Answer)
+	require.True(t, ok)
+	assert.InDelta(t, 6, a.Value, 1e-12, "decode binds")
+	assert.Equal(t, []whatif.Bound{"decode TPOT p90"}, a.Basis.BoundBy)
+	assert.Equal(t, []whatif.Flag{whatif.RankMixtureTTFT}, a.Flags)
+
+	a, ok = f.fleetLimit(0.5, decode, prefill).(whatif.Answer)
+	require.True(t, ok)
+	assert.InDelta(t, 5, a.Value, 1e-12, "the cap binds")
+	assert.Equal(t, []whatif.Bound{whatif.BoundOperatingPoint}, a.Basis.BoundBy)
+	assert.Contains(t, a.Flags, whatif.VPLowerBound, "a lower-bound end is at least")
+
+	a, ok = f.fleetLimit(1, nil, prefill).(whatif.Answer)
+	require.True(t, ok)
+	assert.InDelta(t, 7, a.Value, 1e-12, "no TPOT asked: prefill binds")
+	assert.NotContains(t, a.Flags, whatif.VPLowerBound)
+
+	refused := whatif.Unanswerable{Reason: whatif.NoPrefillCapacity}
+	assert.Equal(t, whatif.Result(refused), f.fleetLimit(1, refused, prefill), "a refused decode limit is the fleet's")
+	assert.Equal(t, whatif.Result(refused), f.fleetLimit(1, decode, refused), "a refused prefill limit is the fleet's")
+}
+
+// With no TPOT asked, so that the fleet grows with the rate past the load the
+// source served, every fleet limit the model set reads extrapolated exactly
+// where it passes that load at its own prefill count: the answer's, the
+// plan's +1 steps' and the one-fewer steps'. Some of them do, so the check is
+// not empty.
+func TestMainView_ExperimentalModelMarksEveryExtrapolatedLimit(t *testing.T) {
+	s, e := mainEntry(t, true)
+	none := "none"
+	var checked, extrapolated int
+	check := func(what string, n FleetCounts, f Figure) {
+		t.Helper()
+		if f.Value == nil {
+			return
+		}
+		assert.Contains(t, f.Flags, string(whatif.RankMixtureTTFT), what)
+		top := *e.ttftModel.info.MeasuredUpTo * float64(n.Prefill) / float64(e.ttftModel.prefill)
+		assert.Equal(t, *f.Value > top, f.Extrapolated, "%s at %+v: %g r/s against %g served", what, n, *f.Value, top)
+		checked++
+		if f.Extrapolated {
+			extrapolated++
+		}
+	}
+	var prev *SizeAnswer
+	for _, rate := range []float64{4, 12, 24} {
+		body, err := s.size(context.Background(), SizeRequest{InputsID: e.id, Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(rate)}}},
+			SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}, TPOT: &Objective{Statistic: none}}})
+		require.NoError(t, err)
+		var out SizeResponse
+		require.NoError(t, json.Unmarshal(body, &out))
+		require.NotNil(t, out.Answer, "sized at %g r/s: %+v", rate, out.Unmet)
+		a := out.Answer
+		check("the answer", a.Fleet, a.Limit)
+		check("+1 prefill", a.Plan.Marginal.PrefillPlusOne.Fleet, a.Plan.Marginal.PrefillPlusOne.Limit)
+		check("+1 decode", a.Plan.Marginal.DecodePlusOne.Fleet, a.Plan.Marginal.DecodePlusOne.Limit)
+		for _, st := range []*SizeStep{a.FewerPrefill, a.FewerDecode} {
+			if st != nil {
+				check("one fewer", st.Fleet, st.Limit)
+			}
+		}
+		if prev != nil {
+			assert.Greater(t, a.Fleet.Prefill+a.Fleet.Decode, prev.Fleet.Prefill+prev.Fleet.Decode, "%g r/s needs more than the rate before", rate)
+		}
+		prev = a
+	}
+	assert.Positive(t, extrapolated, "some limit is past the load served")
+	assert.Less(t, extrapolated, checked, "and some is not")
+}
