@@ -63,7 +63,7 @@ try {
     ttftModel: {heldOut: {statistic: "mean", within: 130, steps: 144, medianRatio: 0.94, rateFrom: 10, rateTo: 20, prefill: 3, decode: 6}}});
   const v = execView({inputs: withHour, plan: refusedPlan, report, k, growthPending: true});
   check("the panel opens on the fleet today", v.lines[0].label === "Fleet today" && v.lines[0].text.startsWith("3 prefill + 6 decode: 9 pods, 72 GPUs (8 per pod)."), v.lines[0].text);
-  check("one busiest load, its statistic named, the peak small", /The busiest load \(p95 of 1-minute cycles\): [0-9.]+ r\/s\.$/.test(v.lines[0].text) && /^peak /.test(v.lines[0].small),
+  check("one busiest load, its statistic named, the peak small", /The busiest load \(p95 less counting noise of 1-minute cycles\): [0-9.]+ r\/s\.$/.test(v.lines[0].text) && /^peak /.test(v.lines[0].small),
     v.lines[0].text + " | " + v.lines[0].small);
   check("at most seven rows, in order", v.lines.map(l => l.label).join() === "Fleet today,Verdict,Decode,Prefill,TTFT / TPOT,+25% / +50% traffic,Accuracy",
     v.lines.map(l => l.label).join());
