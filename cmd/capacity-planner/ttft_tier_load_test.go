@@ -304,3 +304,35 @@ func TestTTFT_PrefixAttentionReadsEveryTiersCachedContext(t *testing.T) {
 		assert.InDelta(t, max(p.VPWholePromptTokens-p.VPPromptTokens, 0), p.VPCachedContextTokens, 1e-9, name)
 	}
 }
+
+// A prompt the question states (--assume-input-tokens, a backtest's step)
+// is netted from a whole one, and its cached context is the whole prompt
+// less the netted one, so no token is both computed and cached. Netted by
+// the prefix-cache hit rate, the host tier's tokens are priced as computed:
+// the span reads no cached context, and the hit rates stand on both sides,
+// like with like. Netted by every tier's hit (slo.SwitchTTFTComputedHit),
+// the span reads that hit's cached context.
+func TestTTFT_PrefixAttentionStatedPromptCountsEachTokenOnce(t *testing.T) {
+	t.Parallel()
+	st := tierState(t, tierRecording(t, true))
+	whole := tierFleet(t, st, false, true, false, whatifapi.Knobs{Headroom: 0.8}).pf.fleet.Prefill.WholePromptTokens
+	require.Positive(t, whole, "the fixture reads the whole prompt")
+	knobs := whatifapi.Knobs{Headroom: 0.8, PromptTokens: whole}
+
+	p := tierFleet(t, st, false, true, false, knobs).pf.fleet.Prefill
+	require.InDelta(t, whole, p.WholePromptTokens, 1e-9)
+	require.InDelta(t, whole*(1-p.PromptHitRate), p.PromptTokens, 1e-6, "netted by the prefix-cache hit rate")
+	assert.False(t, p.CachedContextRead, "cached context %.0f over a computed %.0f of a %.0f prompt",
+		p.CachedContextTokens, p.PromptTokens, whole)
+
+	cp := *st
+	cp.Prefill = slices.Clone(st.Prefill)
+	cp.Prefill[0].ComputedHit = true
+	p = tierFleet(t, &cp, false, true, false, knobs).pf.fleet.Prefill
+	hit, ok := st.Prefill[0].PromptWindow.ComputedHit()
+	require.True(t, ok)
+	require.InDelta(t, whole*(1-hit), p.PromptTokens, 1e-6, "netted by the computed-token hit")
+	require.True(t, p.CachedContextRead)
+	assert.InDelta(t, whole*hit, p.CachedContextTokens, 1e-6)
+	assert.InDelta(t, whole, p.PromptTokens+p.CachedContextTokens, 1e-6)
+}

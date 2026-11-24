@@ -89,7 +89,12 @@ it. On:
   the question's from the computed-token hit of the same rows and minutes,
   V_P's from `VPWholePromptTokens − VPPromptTokens`. A token served from a
   host, disk or peer tier is a miss to the prefix-cache hit rate, yet the
-  prompt attends over it. Only where they are not read is `h`
+  prompt attends over it. A prompt netted from a whole one
+  (`--assume-input-tokens`, a backtest's step) reads `h` as the whole less
+  the netted one, so no token is both computed and cached, and only where
+  `slo-ttft-computed-hit` netted it by every tier's hit: netted by the
+  prefix-cache hit rate, a tier's tokens are priced as computed. Only where
+  they are not read is `h`
   `I_eff·hit/(1 − hit)`, from each side's prefix-cache hit rate. It needs
   both whole prompts known and a cached share above
   `MaterialPrefixHitMove` on either side; otherwise the rescale is as

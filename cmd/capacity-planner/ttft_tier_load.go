@@ -144,7 +144,10 @@ func (pf *pricedFleet) tierLoad(ps *learnreplay.PrefillState) {
 // llm-d-incubation/llm-d-scaling-manager#383): the question's from the
 // computed-token hit of the same rows and minutes, or from a stated whole
 // prompt and hit; V_P's from the whole and computed prompts of its own
-// minutes. A token served from a host, disk or peer tier is a miss to the
+// minutes. A prompt netted from a whole one (--assume-input-tokens, a
+// backtest's step, the decode variant's shape) is read as the whole less
+// the netted one, so no token is both computed and cached, and only where
+// slo.SwitchTTFTComputedHit netted it by every tier's hit. A token served from a host, disk or peer tier is a miss to the
 // GPU's prefix-cache hit rate, yet the prompt attends over it. Either side
 // unread leaves the hit rates to it.
 func (pf *pricedFleet) cachedContext() {
@@ -155,6 +158,14 @@ func (pf *pricedFleet) cachedContext() {
 	var h float64
 	switch {
 	case pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead && p.WholePromptTokens > 0:
+		h = max(p.WholePromptTokens-p.PromptTokens, 0)
+	case pf.in.PromptSource != shapeMeasured:
+		// A prompt netted from a whole one: netted by the prefix-cache hit
+		// rate, a tier's tokens are priced as computed, and the hit rates
+		// stand.
+		if _, _, ok := pf.netByComputedHit(); !ok || !(p.WholePromptTokens > 0) {
+			return
+		}
 		h = max(p.WholePromptTokens-p.PromptTokens, 0)
 	default:
 		hit, ok := pf.pricedComputedHit()
