@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -20,15 +21,15 @@ func gapRows(t *testing.T, reg *prometheus.Registry, name string, keys ...string
 			continue
 		}
 		for _, m := range mf.GetMetric() {
-			k := ""
+			var k strings.Builder
 			for _, key := range keys {
 				for _, l := range m.GetLabel() {
 					if l.GetName() == key {
-						k += l.GetValue() + "/"
+						k.WriteString(l.GetValue() + "/")
 					}
 				}
 			}
-			out[k] = m.GetGauge().GetValue()
+			out[k.String()] = m.GetGauge().GetValue()
 		}
 	}
 	return out
