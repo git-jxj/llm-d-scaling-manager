@@ -57,6 +57,11 @@ func TestStepOutputDispersion_TheStepsSpreadOnTheSwitch(t *testing.T) {
 	assert.InDelta(t, 1575, on.decode.KVPerRequest, 1)
 	assert.InDelta(t, 1, on.shape.OutputDispersion, 1e-9)
 	assert.NotContains(t, on.flags, whatif.OutputSpreadUnread)
+	// What the answer says it priced is the spread it priced at.
+	assert.Contains(t, off.shapeText(), "output spread D 1.263")
+	assert.Contains(t, on.shapeText(), "output spread D 1.000")
+	assert.InDelta(t, 1, inputsOf(&answerFlags{}, on).Shape.OutputDispersion, 1e-9)
+	assert.InDelta(t, 1.263, inputsOf(&answerFlags{}, unread).Shape.OutputDispersion, 1e-9, "unread at the step: the fit's")
 
 	// Near the knee the fill moves by more than the KV per request does.
 	assert.Less(t, fill(on), fill(off)*0.85, "on %.3f, off %.3f", fill(on), fill(off))

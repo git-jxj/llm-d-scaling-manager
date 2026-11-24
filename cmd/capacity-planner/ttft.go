@@ -598,7 +598,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.promptAssumed = f.set["assume-input-tokens"]
 	pf.hint = f.hintSource()
 	pf.decodeSide()
-	if pf.fleet.Decode != nil && pf.pv.state.Shape.OutputDispersion == 0 {
+	if pf.fleet.Decode != nil && pf.pv.outputDispersion == 0 {
 		pf.assume("%s", outputSpreadUnreadWords)
 	}
 	pf.flowControl(st, f.flowControl)

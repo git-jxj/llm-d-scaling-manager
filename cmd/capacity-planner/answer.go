@@ -499,6 +499,10 @@ type pricedVariant struct {
 	cycles int
 	decode whatif.Decode
 	shape  shape.Shape
+	// outputDispersion is the output spread D the shape was priced at as
+	// read, 0 where none was (shape.Shape holds 1 there): the fit's, or a
+	// backtest step's own (saturation.SwitchBacktestStepOutputDispersion).
+	outputDispersion float64
 	// check is the line against the recording's rows, the zero value with no
 	// line.
 	check whatif.LineCheck
@@ -674,7 +678,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			// last minutes may have carried other traffic.
 			d = f.stepOutputDispersion
 		}
-		pv.shape = shape.New(il, ol, hit).WithOutputDispersion(d)
+		pv.shape, pv.outputDispersion = shape.New(il, ol, hit).WithOutputDispersion(d), d
 		replicas := vs.Replicas
 		if f.decode > 0 {
 			replicas = f.decode
@@ -1206,7 +1210,7 @@ func footer(st *learnreplay.State, variants []pricedVariant) string {
 // shapeText is the shape a variant was priced at and where each length came
 // from, and the spread of its output lengths where one was read.
 func (pv pricedVariant) shapeText() string {
-	if d := pv.state.Shape.OutputDispersion; d > 0 {
+	if d := pv.outputDispersion; d > 0 {
 		return fmt.Sprintf("%s, output spread D %.3f (measured)", pv.lengthsText(), d)
 	}
 	return pv.lengthsText()

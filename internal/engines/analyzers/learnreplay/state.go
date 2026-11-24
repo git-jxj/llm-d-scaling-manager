@@ -392,9 +392,13 @@ type shapeSample struct {
 // staircase's 1000/1000 A phases, fitted on warm-ups that end on short
 // outputs (D 1.26), the predicted decode fill falls from 1.87 to 1.59 times
 // what the pods held (1.57 to 1.26 with the hold and the lift), and the
-// Qwen3-32B A-off phase's from 1.19 to 1.05; where D is about 1 on both
-// sides (the B and C phases) nothing moves by more than 1%. No backtest
-// figure newly reads under what was measured with it alone. It is not
+// Qwen3-32B A-off phase's from 1.19 to 1.05. On the 8000/200 B and C
+// phases, where the prompt holds most of the KV, no median moves by more
+// than 0.01 with the hold and the lift; alone, the first B-off phase's
+// rises from 1.24 to 1.37, as two steps it refused are now priced. No
+// backtest figure newly reads under what was measured with it alone. With
+// the hold and the lift it deepens two Qwen3-32B A-off TTFT steps already
+// under (mean 0.69 to 0.46 of measured). It is not
 // listed yet: listing it moves the backtest figures of every recording
 // whose decode pods publish an output-length histogram.
 //
