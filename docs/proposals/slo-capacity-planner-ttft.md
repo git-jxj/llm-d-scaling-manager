@@ -1824,8 +1824,13 @@ always in the CLI:
   checks on the Qwen3-32B 2+2 phases, 24.4-24.8 ms at every step). On the 0.6B
   staircase it reads 25-28 ms at every load from 4 to 22 r/s a decode pod. It
   takes Poisson arrivals: a burstier stream stretches the same work more, so
-  the work it reads is the larger, the safe side. Off by default; the planner's
-  replay does not turn it on yet.
+  the work it reads is the larger, the safe side. `T` is the mean of one
+  transfer and `λ` the pod's request rate, so `S` is a request's work where a
+  request makes one transfer on each rank; with more, less stretch comes out,
+  again the safe side. `D` below is netted of `S`, not of the time the pull
+  took in `D`'s own windows, so the stretch those windows saw stays in `D`: a
+  surplus, small where `D` was fitted at a light load. Off by
+  default; the planner's replay does not turn it on yet.
 - `D`'s per-token part comes net of the pull, since `D` was fitted with the pull
   inside it. On the staircase's warm-up that is 5.616e-6 less 2.541e-6, 3.074e-6
   s a token: at 8000 tokens `D`'s per-token part falls from 44.9 to 24.6 ms, and

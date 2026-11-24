@@ -46,13 +46,14 @@ type TransferWindow struct {
 
 // pullWork is the processor-sharing work S of a stage whose mean time at
 // arrival rate lambda is t: t = S/(1 - lambda S), so S = t/(1 + lambda t).
-// Poisson arrivals: a burstier stream stretches the same work more, so S read
-// at Poisson is the larger, the safe side. A rate not read, or not above 0,
-// is no stretch: t.
+// Here t is a row's mean NIXL transfer and lambda the pod's request rate, the
+// rate the pull stage prices at, so S is a request's work where a request makes
+// one transfer on each rank. Where it makes more, the transfers arrive faster
+// than lambda and less stretch is taken out than t holds. Poisson arrivals: a
+// burstier stream stretches the same work more, so S read at Poisson is the
+// larger. Both leave S high, the safe side. The caller passes a finite rate
+// above 0 (requestRate), so 1 + lambda t is above 1.
 func pullWork(t, lambda float64) float64 {
-	if !(lambda > 0) || math.IsInf(lambda, 0) {
-		return t
-	}
 	return t / (1 + lambda*t)
 }
 
@@ -101,8 +102,8 @@ func (w *TransferWindow) Observe(now time.Time, rows []domain.ReplicaMetrics) {
 			continue
 		}
 		t := rm.AvgKVTransferTime
-		if w.PullWork && rm.RequestRateKnown {
-			t = pullWork(t, rm.RequestRate)
+		if lambda, ok := requestRate(rm); w.PullWork && ok {
+			t = pullWork(t, lambda)
 		}
 		sum += t
 		n++

@@ -136,4 +136,13 @@ func TestTransferWindow_PullWorkTakesTheStretchOut(t *testing.T) {
 	uw.PullWork = true
 	uw.Observe(at, unread)
 	assert.InDelta(t, 0.060, uw.Reading().Figure(), 1e-12, "no rate read, no stretch taken out")
+
+	// A rate read but not finite and above 0 takes nothing out either.
+	for _, rate := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		bad := transferRows(1, 0, 0.060)
+		bad[0].RequestRate, bad[0].RequestRateKnown = rate, true
+		bw := TransferWindow{PullWork: true}
+		bw.Observe(at, bad)
+		assert.InDelta(t, 0.060, bw.Reading().Figure(), 1e-12, "rate %g", rate)
+	}
 }
