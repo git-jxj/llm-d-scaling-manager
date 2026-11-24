@@ -42,7 +42,19 @@ type lineSamples struct {
 	// the band's bottom; kept only for a variant whose line is read at its
 	// busiest rank (saturation.SwitchMoEBusiestRank).
 	ratios map[string][]float64
+	// fit is each variant's steady rows in the band, off a ramp, over a
+	// line's whole window (fitRowsAge) and not its latest shapeCycles cycles
+	// alone: the rows a line's fit rests on, and the batch it held
+	// (fitRows). ownFitAt is when each variant's line was last its own fit
+	// (noteOwnFit): a held line's fit was made then.
+	fit      map[string][]whatif.LineRow
+	ownFitAt map[string]time.Time
 }
+
+// fitRowsAge is how far back a variant's fit rows reach: a line's window
+// (itl.DefaultObservationMaxAge), and the steady readings it carries past it
+// (itl.DefaultSteadyCarry).
+const fitRowsAge = itl.DefaultObservationMaxAge + itl.DefaultSteadyCarry
 
 // busiestRatioRows is how many rows a variant's busiest/mean rank fill ratio
 // is the median of: one row a replica a cycle, so an hour of one replica at
@@ -76,7 +88,44 @@ func fillForITL(rm domain.ReplicaMetrics, busiest func(variant string) bool) flo
 func newLineSamples() *lineSamples {
 	return &lineSamples{steady: map[string][]whatif.LineRow{}, ramps: map[string][]whatif.LineRow{},
 		above: map[string][]whatif.LineRow{}, fills: map[string][]fillAt{}, below: map[string][]itl.Observation{},
-		ratios: map[string][]float64{}}
+		ratios: map[string][]float64{}, fit: map[string][]whatif.LineRow{}, ownFitAt: map[string]time.Time{}}
+}
+
+// noteOwnFit notes that variant's line at is its own fit, not held or
+// borrowed (whatif.TierOLS, whatif.TierPinnedB): a line held later was
+// fitted from the rows up to it.
+func (l *lineSamples) noteOwnFit(variant string, at time.Time) {
+	l.ownFitAt[variant] = at
+}
+
+// fitRows is the rows the line of vs was fitted on, for the batch its fit
+// held (VariantState.FitRows): a refitted line's, the rows of the cycles its
+// readings span (VariantState.ReadingsFrom to ReadingsTo); a held line's, the
+// rows of the window that ends at the cycle its line was last its own fit.
+// Nil for any other line, or with no such row: the planner then reads the
+// latest rows (VariantState.LineRows).
+func (l *lineSamples) fitRows(vs VariantState) []whatif.LineRow {
+	rows := l.fit[vs.Variant]
+	var out []whatif.LineRow
+	switch {
+	case vs.Refitted && vs.ReadingsFrom > 0:
+		for _, r := range rows {
+			if r.Cycle >= vs.ReadingsFrom && r.Cycle <= vs.ReadingsTo {
+				out = append(out, r)
+			}
+		}
+	case vs.Tier == whatif.TierHeld:
+		at, ok := l.ownFitAt[vs.Variant]
+		if !ok {
+			return nil
+		}
+		for _, r := range rows {
+			if !r.At.After(at) && !r.At.Before(at.Add(-fitRowsAge)) {
+				out = append(out, r)
+			}
+		}
+	}
+	return out
 }
 
 // leastBelowBand is the variant's floor below the band, in seconds
@@ -147,9 +196,56 @@ func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time, bus
 		case ramp:
 			kept = l.ramps
 		}
-		kept[rm.VariantName] = keepCycles(append(kept[rm.VariantName], whatif.LineRow{Cycle: cycle, At: at, K: k, KVPerRequest: rowResidentKV(rm, s),
-			TokenRate: rm.GenerationTokenRate, Ramp: ramp, AboveBand: k > top}), shapeCycles)
+		row := whatif.LineRow{Cycle: cycle, At: at, K: k, KVPerRequest: rowResidentKV(rm, s),
+			TokenRate: rm.GenerationTokenRate, Sequences: rowSequences(rm), Ramp: ramp, AboveBand: k > top}
+		kept[rm.VariantName] = keepCycles(append(kept[rm.VariantName], row), shapeCycles)
+		if !ramp && k <= top {
+			l.fit[rm.VariantName] = append(l.fit[rm.VariantName], row)
+		}
 	}
+	l.pruneFit(at)
+}
+
+// pruneFit drops the fit rows older than fitRowsAge before now, or before
+// the cycle a variant's line was last its own fit where that is earlier: a
+// line held since keeps the rows its fit was made on.
+func (l *lineSamples) pruneFit(now time.Time) {
+	for v, rows := range l.fit {
+		from := now
+		if at, ok := l.ownFitAt[v]; ok && at.Before(from) {
+			from = at
+		}
+		cutoff := from.Add(-fitRowsAge)
+		i := 0
+		for i < len(rows) && rows[i].At.Before(cutoff) {
+			i++
+		}
+		if i > 0 {
+			l.fit[v] = slices.Clone(rows[i:])
+		}
+	}
+}
+
+// rowSequences is the sequences a replica ran over the row's window
+// (whatif.LineRow.Sequences): its generated tokens per second times its mean
+// ITL (Little), a window mean as the row's fill is, over the tokens a step
+// emits where speculation accepted drafts (vLLM's ITL is the step's time);
+// else the running-requests gauge; 0 with neither. The fill times the
+// capacity over the KV a request is not used: the KV a request is read off
+// one scrape, the fill over a minute, and on the Qwen3-32B warm-up their
+// ratio reads 271 sequences a pod where Little reads 210.
+func rowSequences(rm domain.ReplicaMetrics) float64 {
+	if rm.ITLState() == domain.ITLFinite && rm.AvgITL > 0 && !math.IsInf(rm.AvgITL, 0) && rm.GenerationTokenRate > 0 {
+		n := rm.GenerationTokenRate * rm.AvgITL
+		if rm.SpecAcceptedPerStepKnown && rm.SpecAcceptedPerStep > 0 {
+			n /= 1 + rm.SpecAcceptedPerStep
+		}
+		return n
+	}
+	if rm.RunningRequestsKnown && rm.RunningRequests > 0 {
+		return float64(rm.RunningRequests)
+	}
+	return 0
 }
 
 // rowResidentKV is the KV a request held on the row, as the line check prices

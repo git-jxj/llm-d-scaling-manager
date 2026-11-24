@@ -478,6 +478,12 @@ type BacktestStep struct {
 	// Target is the TTFT target judged, predicted and measured: met,
 	// missed or unknown.
 	Target *BacktestJudged `json:"target,omitempty"`
+	// BatchBeyondFit is the batch the step's decode runs past the most the
+	// fit's ITL line rows held (flag BatchBeyondFit): its mean TPOT's, or,
+	// on a step past the decode knee, the knee's, where the TPOT is refused.
+	// Its TPOT may read low and the decode knee high. Absent where the batch
+	// is inside the fit's.
+	BatchBeyondFit *BatchBeyondFit `json:"batchBeyondFit,omitempty"`
 }
 
 // BacktestPoint is one statistic of a step: the prediction (with the
@@ -1373,6 +1379,9 @@ func (q *backtestQuestion) finish(out *BacktestResponse) {
 	out.VerdictLines, out.Excluded = verdictOf(out, q.step)
 	out.Verdict = strings.Join(out.VerdictLines, " ")
 	out.Notes = append(out.Notes, backtestNotes(q)...)
+	if n := batchBeyondFitNote(out.Steps); n != "" {
+		out.Notes = append(out.Notes, n)
+	}
 	if q.mixture != nil {
 		r := q.mixture.report
 		out.RankMixture = &r
@@ -1609,6 +1618,7 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		out.TTFT = append(out.TTFT, predictedPoint(q, pred.ttft[i], pred.ttftBound[i]))
 		out.TPOT = append(out.TPOT, predictedPoint(q, pred.tpot[i], pred.tpotBound[i]))
 	}
+	out.BatchBeyondFit = pred.beyondFit
 	return out
 }
 
@@ -1782,6 +1792,9 @@ type prediction struct {
 	// promptCV is the prompt spread priced, and ca2 the arrivals' (1 for
 	// random arrivals).
 	promptCV, ca2 float64
+	// beyondFit is the batch the step's decode runs past its line's fit
+	// (BacktestStep.BatchBeyondFit), nil inside it.
+	beyondFit *BatchBeyondFit
 }
 
 // predict prices one step at each statistic: the TTFT as a report's table
@@ -1855,6 +1868,9 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 			kneeShare = shareOf(in.rate, v)
 		}
 		pf = validate(pf, kind, q, class, kneeShare)
+		if q == 0 {
+			out.beyondFit = stepBeyondFit(pf, fl.DecodeKnee(), in.rate)
+		}
 		var pb *float64
 		if pf.Value != nil && pf.Band != nil {
 			pb = ptr(max(*pf.Value, pf.Band.Hi))
@@ -1890,6 +1906,50 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		out.tpot, out.tpotBound = append(out.tpot, pf), append(out.tpotBound, pb)
 	}
 	return out, nil
+}
+
+// stepBeyondFit is a step's batch past its decode line's fit: the mean TPOT's
+// (mean), or, where the step's rate is at or past the decode knee and the
+// TPOT is refused, the knee's, priced at the batch the knee runs. Nil inside
+// the fit's batch.
+func stepBeyondFit(mean Figure, knee whatif.Result, rate float64) *BatchBeyondFit {
+	if b := mean.BatchBeyondFit; b != nil {
+		return &BatchBeyondFit{Priced: b.Priced, Fitted: b.Fitted}
+	}
+	k, ok := knee.(whatif.Answer)
+	if !ok || mean.Refused == nil || k.Basis.Batch == nil || rate < k.Value {
+		return nil
+	}
+	return &BatchBeyondFit{Priced: k.Basis.Batch.Priced, Fitted: k.Basis.Batch.Fitted}
+}
+
+// batchBeyondFitNote is the note a backtest adds where steps ran past the
+// batch the fit's decode line was fitted on (BacktestStep.BatchBeyondFit):
+// which, and the batches; "" with none.
+func batchBeyondFitNote(steps []BacktestStep) string {
+	var at []string
+	var fitted, lo, hi int64
+	for _, s := range steps {
+		b := s.BatchBeyondFit
+		if b == nil || s.Excluded != "" {
+			continue
+		}
+		at = append(at, s.Start.UTC().Format("15:04"))
+		fitted = b.Fitted
+		if lo == 0 || b.Priced < lo {
+			lo = b.Priced
+		}
+		hi = max(hi, b.Priced)
+	}
+	if len(at) == 0 {
+		return ""
+	}
+	runs := fmt.Sprintf("about %d", lo)
+	if hi != lo {
+		runs = fmt.Sprintf("about %d to %d", lo, hi)
+	}
+	return fmt.Sprintf("BatchBeyondFit on %d judged steps (%s): the decode line was fitted on up to %d sequences a pod; these steps run %s, "+
+		"so TPOT may read low and the decode knee high. The figures are priced all the same.", len(at), strings.Join(at, ", "), fitted, runs)
 }
 
 // measured is one step's measured figures at each statistic of

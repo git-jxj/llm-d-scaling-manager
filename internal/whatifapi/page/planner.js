@@ -102,7 +102,7 @@ const FLAG_WORDS = {
   SGLangNoMixedChunk: ["An aggregated SGLang pod without --enable-mixed-chunk: a prefill step stalls every running sequence.", "--enable-mixed-chunk"],
   ExtensibleKVCache: ["vLLM's extensible KV cache: the KV capacity read at start-up can grow while the engine runs.", "--no-enable-extensible-kv-cache, or a recording of the grown cache"],
   DefaultBatchCapBelowRelease: ["The batch cap priced is the parser's default of 256, but this vLLM release runs 1024 on this accelerator: the decode figures can ask for up to 4 times too many replicas.", "--max-num-seqs on the engine, or --batch-cap"],
-  BatchBeyondFit: ["The shape's KV per request is under half that of the rows the ITL line was read on, and the batch priced is past the largest they held: ITL also rises with batch tokens, which the line does not carry across shapes.", "a recording at this shape"],
+  BatchBeyondFit: ["At this load a decode pod runs more sequences than the most the rows its ITL line was fitted on held: ITL also rises with the batch, which the line does not carry, so TPOT may read low and the decode knee high. The figure is priced all the same.", "a recording that runs this many sequences a pod"],
 };
 
 // BUCKET_NOTE is what the per-bucket lines are, every time they are drawn.
@@ -217,16 +217,25 @@ function shapeOf(p) {
 // the rest are counted there and listed in the flags drawer. UnvalidatedTTFT
 // is the banner, on every TTFT figure.
 const SHOWN_FLAGS = new Set(["AboveFlowControlOnset", "FlowControlWaitPriced", "SpreadBeyondProcessorSharing", "HeldByDecodeAdmission",
-  "AssumedTPOTRatio", "AssumedVP", "AssumedA", "AssumedShape", "AssumedPromptSpread", "AssumedImbalance", "AssumedArrivalCV2"]);
+  "AssumedTPOTRatio", "AssumedVP", "AssumedA", "AssumedShape", "AssumedPromptSpread", "AssumedImbalance", "AssumedArrivalCV2",
+  "BatchBeyondFit"]);
 
 // flagChips is a figure's flags: the ones that change its trust by name,
 // with their words on hover, and how many more the drawer lists.
 function flagChips(f) {
   const flags = (f && f.flags) || [];
   const shown = flags.filter(n => SHOWN_FLAGS.has(n)), rest = flags.filter(n => !SHOWN_FLAGS.has(n) && n !== "UnvalidatedTTFT");
-  return shown.map(n => `<span class="chip flagged" title="${esc((FLAG_WORDS[n] || [n])[0])}">${esc(n)}</span>`).join(" ") +
+  return shown.map(n => `<span class="chip flagged" title="${esc(flagTitle(n, f))}">${esc(n)}</span>`).join(" ") +
     // The rest are in the Flags drawer: no "+N more" chip beside a figure.
     "";
+}
+
+// flagTitle is a flag's words on hover, with the batches a BatchBeyondFit
+// figure carries.
+function flagTitle(n, f) {
+  const words = (FLAG_WORDS[n] || [n])[0], b = f && f.batchBeyondFit;
+  if (n !== "BatchBeyondFit" || !b) return words;
+  return `The decode line was fitted on up to ${b.fitted} sequences a pod; this load runs about ${b.priced}. ` + words;
 }
 
 // setStatus writes the status line, which a screen reader announces. While

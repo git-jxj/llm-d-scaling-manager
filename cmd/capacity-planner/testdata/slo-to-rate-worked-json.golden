@@ -111,8 +111,7 @@
             },
             "flags": [
               "AssumedShape",
-              "OutputSpreadUnread",
-              "BatchBeyondFit"
+              "OutputSpreadUnread"
             ],
             "validation": {
               "validated": false,

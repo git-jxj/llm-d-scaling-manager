@@ -171,12 +171,17 @@
           ],
           "flags": [
             "AssumedShape",
-            "ExtrapolatedFill"
+            "ExtrapolatedFill",
+            "BatchBeyondFit"
           ],
           "validation": {
             "validated": false,
             "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
             "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
+          },
+          "batchBeyondFit": {
+            "priced": 110,
+            "fitted": 85
           },
           "outputTokensPerSecond": 7396.996222484839,
           "binds": "decode band top at fill 0.798"
@@ -214,7 +219,8 @@
             "AssumedShape",
             "AssumedPoissonArrivals",
             "AssumedA",
-            "ExtrapolatedFill"
+            "ExtrapolatedFill",
+            "BatchBeyondFit"
           ],
           "outputTokensPerSecond": 5941.147946642053,
           "binds": "TTFT p90, end to end"
@@ -641,6 +647,7 @@
         "AssumedPromptSpread",
         "AssumedShape",
         "ExtrapolatedFill",
+        "BatchBeyondFit",
         "RouterHopAssumed",
         "SpreadBeyondProcessorSharing",
         "BelowFittedBand",

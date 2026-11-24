@@ -103,13 +103,17 @@
               "boundBy": [
                 "batch cap"
               ],
-              "tier": "ols"
+              "tier": "ols",
+              "batchBeyondFit": {
+                "priced": 64,
+                "fitted": 55
+              }
             },
             "flags": [
               "AssumedShape",
               "OutputSpreadUnread",
-              "BatchBeyondFit",
-              "ExtrapolatedFill"
+              "ExtrapolatedFill",
+              "BatchBeyondFit"
             ],
             "validation": {
               "validated": false,
@@ -138,8 +142,7 @@
             },
             "flags": [
               "AssumedShape",
-              "OutputSpreadUnread",
-              "BatchBeyondFit"
+              "OutputSpreadUnread"
             ]
           }
         },
@@ -161,8 +164,7 @@
             },
             "flags": [
               "AssumedShape",
-              "OutputSpreadUnread",
-              "BatchBeyondFit"
+              "OutputSpreadUnread"
             ],
             "validation": {
               "validated": false,
@@ -283,8 +285,7 @@
               "AssumedPoissonArrivals",
               "AssumedArrivalCV2",
               "AssumedShape",
-              "OutputSpreadUnread",
-              "BatchBeyondFit"
+              "OutputSpreadUnread"
             ],
             "parts": {
               "independent": 0.2095911139700388,

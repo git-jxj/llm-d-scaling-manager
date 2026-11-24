@@ -855,8 +855,9 @@ func (pv pricedVariant) observedFillMax() (float64, bool) {
 	return hi, ok
 }
 
-// qualify adds the variant's own flags to an answer, and ExtrapolatedFill
-// when its fill lies above every reading; a NoLine refusal on a variant that
+// qualify adds the variant's own flags to an answer, ExtrapolatedFill when
+// its fill lies above every reading, and BatchBeyondFit when the batch at
+// that fill is past the most the line's fit rows held; a NoLine refusal on a variant that
 // learned no line says so by the cycle.
 func (pv pricedVariant) qualify(r whatif.Result) whatif.Result {
 	a, ok := r.(whatif.Answer)
@@ -881,6 +882,14 @@ func (pv pricedVariant) qualify(r whatif.Result) whatif.Result {
 	// arrivals cluster (decode-burst-fill), so that is the fill checked.
 	if top, ok := pv.observedFillMax(); ok && pv.decode.SeenFill(a.Basis.Fill) > top && !slices.Contains(flags, whatif.ExtrapolatedFill) {
 		flags = append(flags, whatif.ExtrapolatedFill)
+	}
+	// The batch at that fill, against the most the line's fit rows held:
+	// the figure is printed as priced, and flagged.
+	if b, ok := pv.beyondFit(pv.decode.SeenFill(a.Basis.Fill)); ok {
+		if !slices.Contains(flags, batchBeyondFit) {
+			flags = append(flags, batchBeyondFit)
+		}
+		a.Basis.Batch = &b
 	}
 	a.Flags = flags
 	return a

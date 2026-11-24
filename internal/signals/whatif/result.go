@@ -259,6 +259,20 @@ type Basis struct {
 	// own wire types (wireBasis), field by field, so this field reaches the
 	// wire only when the CLI maps it (TestJSONSchemaIsPinned holds it out).
 	TTFT *TTFTBasis
+	// Batch is the batch the answer's fill runs against the most the decode
+	// line's fit rows held, where it is past them (the planner's
+	// BatchBeyondFit flag); nil where it is not, or either is unknown.
+	Batch *BatchBeyondFit
+}
+
+// BatchBeyondFit is a decode answer's batch past its line's fit, in
+// sequences an engine rank: Priced is the batch the answer's fill holds,
+// Fitted the most the rows the line was fitted on held. The line is read
+// there all the same; ITL also rises with the batch's tokens past the GEMM
+// roofline, which a line in fill alone does not carry, so a TPOT reads low
+// and a knee high (issues llm-d-incubation/llm-d-scaling-manager#309, #354).
+type BatchBeyondFit struct {
+	Priced, Fitted int64
 }
 
 // Answer is a priced figure: Value in the question's unit (requests per

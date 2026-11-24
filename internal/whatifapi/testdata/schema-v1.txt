@@ -2,6 +2,9 @@ Figure object
 Figure.band object
 Figure.band.hi number
 Figure.band.lo number
+Figure.batchBeyondFit object
+Figure.batchBeyondFit.fitted int64
+Figure.batchBeyondFit.priced int64
 Figure.boundBy array
 Figure.boundBy[] string
 Figure.extrapolated boolean
@@ -149,6 +152,9 @@ backtest.steps array
 backtest.steps[] object
 backtest.steps[].backlog number
 backtest.steps[].backlogWait number
+backtest.steps[].batchBeyondFit object
+backtest.steps[].batchBeyondFit.fitted int64
+backtest.steps[].batchBeyondFit.priced int64
 backtest.steps[].cycles number
 backtest.steps[].decode number
 backtest.steps[].decodeKneeShare number
@@ -957,6 +963,9 @@ prediction.steps array
 prediction.steps[] object
 prediction.steps[].backlog number
 prediction.steps[].backlogWait number
+prediction.steps[].batchBeyondFit object
+prediction.steps[].batchBeyondFit.fitted int64
+prediction.steps[].batchBeyondFit.priced int64
 prediction.steps[].cycles number
 prediction.steps[].decode number
 prediction.steps[].decodeKneeShare number
