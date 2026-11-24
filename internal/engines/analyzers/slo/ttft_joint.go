@@ -137,6 +137,7 @@ func withInvertedVP(est prefill.Estimate, j *jointCycle) prefill.Estimate {
 	// The joint window reads no whole prompt or hit rate: P1's, if any, were
 	// of the minutes the refused V_P rested on, not of this one.
 	est.VPWholePromptTokens, est.VPPromptHitRate = 0, 0
+	est.VPPromptLow, est.VPPromptHigh = 0, 0
 	return est
 }
 

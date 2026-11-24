@@ -47,6 +47,12 @@ type answerFlags struct {
 	noSelfCheck, serveSelfCheck bool
 	folds                       map[int]*learnreplay.State
 	checked                     *whatifapi.SelfCheck
+	// withLatency asks readState to keep each cycle's series and measured
+	// latency, in series and latency (at-replicas withholds an over the
+	// router measured missing, as POST /v1/report does).
+	withLatency bool
+	series      []whatifapi.SeriesSample
+	latency     []whatifapi.LatencySample
 	// cachedCost is phi as fitted on the source (fitCachedCosts), nil where
 	// none was; cachedPhi is the phi priced, and cachedPhiSet says it was
 	// stated by the fit's own pass (whatifapi.Knobs.CachedTokenCost), not
@@ -337,15 +343,25 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 	// The variants asked; an empty name counts every variant of the role,
 	// rows and replicas alike, where the server counts the variant it
 	// resolved. Both compare a role's rows with its own replicas.
-	cycles, err := learnreplay.SeriesFrom(src.open, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID},
-		learnreplay.SeriesVariants{Prefill: f.prefillVariant, Decode: f.variant})
+	sq, sv := learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID}, learnreplay.SeriesVariants{Prefill: f.prefillVariant, Decode: f.variant}
+	var cycles []learnreplay.CycleSample
+	var lat []learnreplay.CycleLatency
+	if f.withLatency {
+		cycles, lat, err = learnreplay.SeriesWithLatencyFrom(src.open, sq, sv)
+	} else {
+		cycles, err = learnreplay.SeriesFrom(src.open, sq, sv)
+	}
 	if cerr := src.unchanged(); cerr != nil {
 		return nil, cerr
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	if why := whatifapi.EngineRowsShort(seriesSamplesOf(cycles)); why != "" {
+	series := seriesSamplesOf(cycles)
+	if f.withLatency {
+		f.series, f.latency = series, latencySamplesOf(lat)
+	}
+	if why := whatifapi.EngineRowsShort(series); why != "" {
 		// Every per-replica rate and knee would read low by the ranks the
 		// rows leave out (issue llm-d-incubation/llm-d-scaling-manager#331).
 		return nil, usagef("%s: %s; the planner reads a replica as its engine rows, so it answers nothing from this recording; %s", name, why, engineRowsFix)

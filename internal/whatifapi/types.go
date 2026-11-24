@@ -72,6 +72,10 @@ type SourceRequest struct {
 	To        string `json:"to,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Cycle     int    `json:"cycle,omitempty"`
+	// Cycles, when set, reads the recording with only these cycles
+	// (learnreplay.CyclesOf): a load split's fit (LoadFitCycles). Never
+	// sent: a backtest sets it.
+	Cycles *CycleSet `json:"-"`
 }
 
 // InputsResponse is a source resolved: every term the plans price from, each
@@ -108,6 +112,10 @@ type InputsResponse struct {
 	// TPOTModel is the experimental TPOT model the main view prices with,
 	// as fitted on the source (InputsRequest.TPOTModel); absent otherwise.
 	TPOTModel *TPOTModelInfo `json:"tpotModel,omitempty"`
+	// Measured is the source's busiest UTC hour and the TTFT and TPOT the
+	// router measured over it (BusiestHourMeasured); absent with no router
+	// histogram. It is measured, never priced.
+	Measured *MeasuredHour `json:"measured,omitempty"`
 }
 
 // SourceInfo is what the inputs were read from. Prometheus is the URL's

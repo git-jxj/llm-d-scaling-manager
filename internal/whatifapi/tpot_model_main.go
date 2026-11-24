@@ -371,16 +371,46 @@ func ApplyTPOTModel(res *Resolved, out *ReportResponse, q ReportQuery) *TPOTMode
 	return &info
 }
 
-// markLimit is markExtrapolatedRate for a limit fl priced at k, with the
-// experimental TPOT model's mark beside the TTFT model's: a size's step and
-// a plan's one-more-replica step are marked as the plan's own limits are.
-func (e *inputsEntry) markLimit(fl Fleet, k Knobs, f Figure) Figure {
-	return e.tpotModel.mark(k, 0, markExtrapolatedRate(fl, f))
+// experimentalModels is the experimental models a source was resolved
+// with, either nil: what a plan and a size price with, and a day plan,
+// which is the default's, does not (sizer.models).
+type experimentalModels struct {
+	ttft *mainMixture
+	tpot *mainTPOT
 }
 
-// modelFleet is fl with the experimental models e was resolved with: the
-// TPOT model's ratio first, since it replaces the fleet the TTFT model then
-// wraps.
-func (e *inputsEntry) modelFleet(fl Fleet, k Knobs) Fleet {
-	return e.ttftModel.fleet(e.tpotModel.fleet(fl, k), k)
+// models is e's experimental models, nil where it was resolved with none.
+func (e *inputsEntry) models() *experimentalModels {
+	if e.ttftModel == nil && e.tpotModel == nil {
+		return nil
+	}
+	return &experimentalModels{ttft: e.ttftModel, tpot: e.tpotModel}
+}
+
+// fleet is fl with the models: the TPOT model's ratio first, since it
+// replaces the fleet the TTFT model then wraps; fl itself where m is nil.
+func (m *experimentalModels) fleet(fl Fleet, k Knobs) Fleet {
+	if m == nil {
+		return fl
+	}
+	return m.ttft.fleet(m.tpot.fleet(fl, k), k)
+}
+
+// markLimit is markExtrapolatedRate for a limit fl priced at k, with the
+// TPOT model's mark beside the TTFT model's: a size's step and a plan's
+// one-more-replica step are marked as the plan's own limits are. With m
+// nil, f is unchanged.
+func (m *experimentalModels) markLimit(fl Fleet, k Knobs, f Figure) Figure {
+	if m == nil {
+		return f
+	}
+	return m.tpot.mark(k, 0, markExtrapolatedRate(fl, f))
+}
+
+// modelFleet is fl with the experimental models e was resolved with.
+func (e *inputsEntry) modelFleet(fl Fleet, k Knobs) Fleet { return e.models().fleet(fl, k) }
+
+// markLimit is experimentalModels.markLimit with e's models.
+func (e *inputsEntry) markLimit(fl Fleet, k Knobs, f Figure) Figure {
+	return e.models().markLimit(fl, k, f)
 }

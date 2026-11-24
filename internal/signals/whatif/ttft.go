@@ -120,6 +120,14 @@ type Prefill struct {
 	// (shapedVP, prefixMoved).
 	VPWholePromptTokens, VPPromptHitRate float64
 	WholePromptTokens, PromptHitRate     float64
+	// VPPromptLow and VPPromptHigh are the range of effective prompts the
+	// minutes V_P rests on read (prefill.Estimate.VPPromptLow, VPPromptHigh,
+	// set with saturation.SwitchPrefillVPPromptCoverage); 0 is not known.
+	// Known, a mean prompt more than MaxVPShapeRatio outside them is out of
+	// the region V_P was learned in (promptNotCovered): the knee carries
+	// VPPromptNotCovered and no TTFT is priced. An assumed V_P is never
+	// checked against them.
+	VPPromptLow, VPPromptHigh float64
 	// PrefixAttention prices the attention over a prefix hit's cached
 	// tokens in the curve's rescale (shapedVP): off, I_eff stands for the
 	// context, as if no token were cached. The replay switch
@@ -722,6 +730,21 @@ func (p Prefill) prefixMoved() bool {
 	return w > MaxVPShapeRatio*wvp || w*MaxVPShapeRatio < wvp
 }
 
+// promptNotCovered reports whether the question's mean prompt lies outside
+// the prompts V_P was read over (VPPromptLow, VPPromptHigh) by more than
+// MaxVPShapeRatio either way. A V_P is the speed of the steps of the minutes
+// it was read in: on longer prompts each token costs more attention, and on
+// shorter ones each request's fixed step cost is shared by fewer tokens, so
+// it is not the capacity at a prompt those minutes never ran, whatever its
+// source says it bounds (issue llm-d-incubation/llm-d-scaling-manager#405).
+// False with the range unknown and for an assumed V_P.
+func (p Prefill) promptNotCovered() bool {
+	if p.VPAssumed || !(p.VPPromptLow > 0) || !(p.VPPromptHigh > 0) {
+		return false
+	}
+	return p.PromptTokens > MaxVPShapeRatio*p.VPPromptHigh || p.PromptTokens*MaxVPShapeRatio < p.VPPromptLow
+}
+
 // check refuses a Prefill the model cannot price, naming the first input
 // that fails, in the order an operator fixes them: the question, then the
 // capacity, the fixed latency, the imbalance and the shape.
@@ -768,6 +791,9 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 			p.CachedContextTokens, p.VPCachedContextTokens))
 	case !Finite(p.TierLoadSeconds) || p.TierLoadSeconds < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("tier load %g s, want a finite value of at least 0", p.TierLoadSeconds))
+	case !Finite(p.VPPromptLow) || p.VPPromptLow < 0 || !Finite(p.VPPromptHigh) || p.VPPromptHigh < p.VPPromptLow:
+		u = refuse(InvalidInput, fmt.Sprintf("V_P read over prompts %g to %g, want finite values, 0 <= low <= high (0 is unknown)",
+			p.VPPromptLow, p.VPPromptHigh))
 	case !Finite(p.CurveSlope) || p.CurveSlope < 0 || !Finite(p.CurveCurvature) || p.CurveCurvature < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("curve b %g, c %g, want finite values of at least 0", p.CurveSlope, p.CurveCurvature))
 	case !(p.VPMargin >= 0 && p.VPMargin <= MaxVPMargin):
@@ -794,6 +820,7 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 		}{
 			{p.VPAssumed, AssumedVP}, {p.VPLowerBound, VPLowerBound}, {p.VPAboveSlopeBound, VPAboveSlopeBound},
 			{p.VPFromPlateau, VPFromPlateau}, {p.ExperimentalTTFT, ExperimentalTTFT}, {shape != "", shape}, {shape != VPShapeMoved && p.prefixMoved(), VPShapeMoved},
+			{p.promptNotCovered(), VPPromptNotCovered},
 			{p.ImbalanceAssumed, AssumedImbalance}, {p.PromptCVAssumed, AssumedPromptSpread},
 			{p.TransferSecondsPerToken == 0, TransferOmitted},
 		} {
@@ -1112,6 +1139,8 @@ type ttftPlan struct {
 	// servedOnly is Prefill.VPServedOnly on a V_P not the caller's: no TTFT
 	// is priced from it.
 	servedOnly bool
+	// notCovered is Prefill.promptNotCovered: no TTFT is priced from V_P.
+	notCovered bool
 }
 
 // plan checks a fleet and places its flow-control onsets.
@@ -1128,7 +1157,8 @@ func (fl TTFTFleet) plan() (ttftPlan, *Unanswerable) {
 	pl := ttftPlan{pf: pf, d: fl.Decode, fc: fl.FlowControl, ps: fl.ProcessorSharing,
 		psCapped:     fl.ProcessorSharing && fl.Prefill.BeyondProcessorSharing(),
 		kneeUnpriced: fl.LowerBoundKneeUnpriced && fl.Prefill.VPLowerBound && !fl.Prefill.VPAssumed,
-		servedOnly:   fl.Prefill.VPServedOnly && !fl.Prefill.VPAssumed}
+		servedOnly:   fl.Prefill.VPServedOnly && !fl.Prefill.VPAssumed,
+		notCovered:   fl.Prefill.promptNotCovered()}
 	pl.routerWait = (fl.PriceRouterWait || fl.RouterWaitInPrefill) && pl.ps && !pl.psCapped
 	pl.gateStage = pl.routerWait && fl.PriceRouterWait
 	pl.psOnsets = fl.PSOnsets && pl.ps
@@ -1513,6 +1543,17 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		u := refuse(NoPrefillCapacity, fmt.Sprintf("V_P %.0f tokens/s is only the rate a prefill pod was seen to compute "+
 			"(it never queued for capacity): no TTFT is priced from it; pass --assume-vp for a flagged answer", pl.pf.p.VP))
 		u.Flags = []Flag{VPLowerBound}
+		return priced{u: &u}
+	}
+	if pl.notCovered {
+		// A V_P read at other prompts prices no TTFT here: the queue under it
+		// would rest on a speed the pods were never seen to run at this
+		// prompt, and a lower bound there is not one here.
+		p := pl.pf.p
+		u := refuse(NoPrefillCapacity, fmt.Sprintf("V_P %.0f tokens/s was read over prompts of %.0f to %.0f tokens; "+
+			"a mean prompt of %.0f is outside them, so no TTFT is priced from it; pass --assume-vp for a flagged answer",
+			p.VP, p.VPPromptLow, p.VPPromptHigh, p.PromptTokens))
+		u.Flags = []Flag{VPPromptNotCovered}
 		return priced{u: &u}
 	}
 	if rate >= pk {

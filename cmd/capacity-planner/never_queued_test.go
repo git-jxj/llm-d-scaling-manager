@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
 // neverQueuedRecording writes the q32 staircase's warm-up (q32Recording) with
@@ -117,6 +118,31 @@ func TestNeverQueued_Golden(t *testing.T) {
 			want, err := os.ReadFile(path)
 			require.NoError(t, err, "go test ./cmd/capacity-planner -run TestNeverQueued_Golden -update writes it")
 			assert.Equal(t, strings.ReplaceAll(string(want), "\r\n", "\n"), got)
+		})
+	}
+}
+
+// A fleet past its decode operating point whose TTFT no fleet prices (V_P
+// only the served peak) is UNDER-PROVISIONED on decode, and its need is
+// decode's alone, at least that many: never "no fleet holds", which read the
+// TTFT no fleet prices as a target every fleet misses.
+// The same where the TTFT is priced only as an upper bound over its target
+// (lowerBoundRecording: V_P floored at the served rate, the target under a
+// floor that is itself at most its figure): no fleet is shown to meet it or
+// to miss it.
+func TestNeverQueued_NeedIsDecodesWhereNoTTFTPrices(t *testing.T) {
+	for name, rec := range map[string]string{"never queued": neverQueuedRecording(t), "lower-bound knee": lowerBoundRecording(t)} {
+		t.Run(name, func(t *testing.T) {
+			rep := atReplicasJSON(t, "at-replicas", "--recording", rec)
+			require.NotEmpty(t, rep.Shapes)
+			v := rep.Shapes[0].Verdict
+			require.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Summary)
+			require.NotNil(t, v.Needed, v.Summary)
+			assert.Empty(t, v.Needed.Unmet, v.Summary)
+			assert.True(t, v.Needed.DecodeOnly, v.Summary)
+			assert.Greater(t, v.Needed.Decode, rep.Fleet.Decode, v.Summary)
+			assert.NotContains(t, v.Summary, "no fleet up to")
+			assert.Contains(t, v.Summary, "needs at least")
 		})
 	}
 }
