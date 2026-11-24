@@ -66,9 +66,6 @@ type backtestFlags struct {
 	// experimentalTPOT is --experimental-tpot (experimental_tpot.go),
 	// backtest's only.
 	experimentalTPOT string
-	// fitOutputDispersion is --fit-output-dispersion
-	// (whatifapi.BacktestRequest.FitOutputDispersion), backtest's only.
-	fitOutputDispersion bool
 }
 
 // registerAssume registers the stated-input flags backtest and predict take.
@@ -128,8 +125,6 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 		"priced load (the fit steps of nearest rate) instead of the fit window's mean; off by default")
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage)
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
-	fs.BoolVar(&f.fitOutputDispersion, "fit-output-dispersion", false, "price every step at the fit's output spread D, the older way; "+
-		"by default each step is priced at the D its own decode rows read, where they read one")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
 		return err
@@ -278,7 +273,7 @@ func backtestError(err error) error {
 // request is the backtest the flags ask.
 func (f *backtestFlags) request() (whatifapi.BacktestRequest, error) {
 	req := whatifapi.BacktestRequest{Step: f.step, Settle: f.settle, Measured: f.measured, AllowConfigMismatch: f.allowMismatch,
-		FitBelow: f.fitBelow, TestAbove: f.testAbove, FitOutputDispersion: f.fitOutputDispersion}
+		FitBelow: f.fitBelow, TestAbove: f.testAbove}
 	if f.arrivalCV2 != 0 {
 		req.ArrivalCV2 = &f.arrivalCV2
 	}

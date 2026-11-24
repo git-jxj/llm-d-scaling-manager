@@ -14,7 +14,5 @@ package saturation
 // step that read none keeps the fit's. The analyzer accepts the switch and
 // does nothing with it: the planner reads it (learnreplay.State.StepOutputDispersion),
 // and the controller never prices from it. Planner-only: off from the
-// constructor, on in the planner (learnreplay.PlannerSwitches); a backtest
-// asked with fitOutputDispersion (--fit-output-dispersion) prices every
-// step at the fit's spread, as before.
+// constructor, on in the planner (learnreplay.PlannerSwitches).
 const SwitchBacktestStepOutputDispersion = "backtest-step-output-dispersion"

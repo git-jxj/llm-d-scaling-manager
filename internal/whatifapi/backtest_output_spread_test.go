@@ -47,35 +47,6 @@ func TestBacktestStep_ReadsItsOwnOutputSpread(t *testing.T) {
 	}
 }
 
-// fitOutputDispersion (--fit-output-dispersion) prices every step at the
-// fit's output spread, the older way: no fleet is stated a step's own, and
-// the answer is another backtest, under its own id.
-func TestBacktestStep_FitOutputDispersionKeepsTheFits(t *testing.T) {
-	r := &stubResolver{}
-	var mu sync.Mutex
-	var knobs []Knobs
-	r.onFleet = func(k Knobs) { mu.Lock(); knobs = append(knobs, k); mu.Unlock() }
-	fitS, fitL := btEarlier(btSeries(240, 0, 1))
-	fit := btEntry(t, r, "fit", fitS, fitL, btConfig("H100"))
-	s, l := btSeries(240, 0, 1)
-	for i := range s {
-		s[i].OutputTokensSquared = 12500
-	}
-	test := btEntry(t, r, "test", s, l, btConfig("H100"))
-	own := btRun(t, fit, test, BacktestRequest{})
-	require.NotEmpty(t, knobs)
-	for _, k := range knobs {
-		assert.InDelta(t, 1.25, k.OutputDispersion, 1e-9, "by default the step's own")
-	}
-	knobs = nil
-	fits := btRun(t, fit, test, BacktestRequest{FitOutputDispersion: true})
-	require.NotEmpty(t, knobs)
-	for _, k := range knobs {
-		assert.Zero(t, k.OutputDispersion, "asked, the fit's")
-	}
-	assert.NotEqual(t, own.BacktestID, fits.BacktestID)
-}
-
 // A step's spread pools its cycles weighted by rate, as its lengths are, so
 // lengths that move from cycle to cycle are a spread too; one cycle with a
 // length and no E[O^2] leaves the step unread, and a cycle with no shape is

@@ -121,8 +121,7 @@ type Knobs struct {
 	// E[O^2]/E[O]^2 (shape.Dispersion), that a backtest step's decode rows
 	// read, priced in place of the fit's where the replay turned
 	// saturation.SwitchBacktestStepOutputDispersion on (the planner's
-	// default); 0 is the fit's, as BacktestRequest.FitOutputDispersion
-	// asks. No flag sets it.
+	// default); 0 is the fit's. No flag sets it.
 	OutputDispersion float64
 	ArrivalCV2       *float64
 	// Headroom is the operating point's fraction of the lower knee.

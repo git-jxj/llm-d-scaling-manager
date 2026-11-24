@@ -1942,7 +1942,6 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../../cmd/capacity-planner", "TestStepOutputDispersion_TheStepsSpreadOnTheSwitch"},
 		{"../../../whatifapi", "TestBacktestStep_ReadsItsOwnOutputSpread"},
-		{"../../../whatifapi", "TestBacktestStep_FitOutputDispersionKeepsTheFits"},
 		{".", "TestPlannerSwitches_TheStepOutputDispersionIsOn"},
 		{".", "TestSeries_TheDecodeRowsOutputSpread"},
 		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},

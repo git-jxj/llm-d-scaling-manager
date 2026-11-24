@@ -201,8 +201,6 @@ On the 0.6B staircase, whose warm-ups end on a few minutes of short outputs,
 the predicted decode KV fill on the 1000/1000 phases fell from 1.87 to 1.59
 times what the pods held, and on the Qwen3-32B A-off phase from 1.19 to
 1.05. No backtest figure newly read more than 20% under what was measured.
-To price the older way, give `backtest --fit-output-dispersion` (the API's
-`fitOutputDispersion`).
 
 ## Never validated
 

@@ -347,12 +347,11 @@ type shapeSample struct {
 //   - saturation.SwitchBacktestStepOutputDispersion: a backtest step priced
 //     at its own output spread, not the fit's (issue
 //     llm-d-incubation/llm-d-scaling-manager#274). Only a backtest states
-//     one (whatifapi.Knobs.OutputDispersion), so no other answer moves; a
-//     backtest asked with fitOutputDispersion (--fit-output-dispersion)
-//     prices every step at the fit's, as before. On the 0.6B staircase's
-//     1000/1000 A phases, fitted on warm-ups that end on short outputs (D
-//     1.26), the predicted decode fill falls from 1.87 to 1.59 times what
-//     the pods held, and the Qwen3-32B A-off phase's from 1.19 to 1.05. On
+//     one (whatifapi.Knobs.OutputDispersion), so no other answer moves. On
+//     the 0.6B staircase's 1000/1000 A phases, fitted on warm-ups that end
+//     on short outputs (D 1.26), the predicted decode fill falls from 1.87
+//     to 1.59 times what the pods held, and the Qwen3-32B A-off phase's
+//     from 1.19 to 1.05. On
 //     the 8000/200 B and C phases, where the prompt holds most of the KV,
 //     the first B-off phase's rises from 1.24 to 1.37, as two steps it
 //     refused are now priced. No backtest figure newly reads more than 20%
