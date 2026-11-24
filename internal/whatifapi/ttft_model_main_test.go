@@ -417,3 +417,38 @@ func TestMainView_ExperimentalModelMarksEveryExtrapolatedLimit(t *testing.T) {
 	assert.Positive(t, extrapolated, "some limit is past the load served")
 	assert.Less(t, extrapolated, checked, "and some is not")
 }
+
+// A day plan is the default TTFT model's, also on inputs resolved with the
+// experimental one: its buckets, whose cycles read no lengths, sit at the
+// window's own shape, where the model prices, yet every figure, refusal and
+// count is the default's, so that no plan mixes a model-priced prefill with
+// a default-priced decode. The same inputs' size is the model's, so the
+// check is not empty.
+func TestDayPlan_ExperimentalModelLeavesTheDayPlanToTheDefault(t *testing.T) {
+	plan := func(model bool) DayPlanResponse {
+		t.Helper()
+		s, e := mainEntry(t, model)
+		for i := range e.series {
+			e.series[i].HasShape = false
+		}
+		body, err := s.dayPlan(context.Background(), DayPlanRequest{InputsID: e.id,
+			SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}}})
+		require.NoError(t, err)
+		var out DayPlanResponse
+		require.NoError(t, json.Unmarshal(body, &out))
+		return out
+	}
+	base, v2 := plan(false), plan(true)
+	require.Positive(t, base.Summary.Counts.Sized, "the default sizes some bucket")
+	for _, b := range base.Buckets {
+		assert.Equal(t, "window", b.Shape.Source, "the bucket at %s is at the window's shape", b.Start)
+	}
+	assert.Equal(t, base.Summary.Counts.Sized, base.Summary.Counts.PrefillNotPriced, "the default prices no prefill: V_P is refused")
+
+	s, e := mainEntry(t, true)
+	require.NotNil(t, v2SizeOf(t, s, e.id, 4).Answer, "the model sizes the same inputs")
+
+	assert.Equal(t, base.Refused, v2.Refused)
+	assert.Equal(t, base.Summary, v2.Summary)
+	assert.Equal(t, base.Buckets, v2.Buckets)
+}

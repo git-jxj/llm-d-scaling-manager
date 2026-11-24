@@ -185,7 +185,7 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 			if s.onSearch != nil {
 				s.onSearch()
 			}
-			z := &sizer{e: e, sc: sc, k: k, rate: *sc.Rate, bound: bound, low: on == SizeOnLow,
+			z := &sizer{e: e, sc: sc, k: k, rate: *sc.Rate, bound: bound, low: on == SizeOnLow, ttftModel: e.ttftModel,
 				seen: map[FleetCounts]sizeEval{}, plain: map[FleetCounts]sizeEval{}}
 			if found, err = z.search(ctx); err != nil {
 				return nil, err
@@ -289,6 +289,9 @@ type sizer struct {
 	bound FleetCounts
 	// low sizes on the low end of each limit's span over V_P and f.
 	low bool
+	// ttftModel is the experimental TTFT model the search prices with: the
+	// inputs' for a size, nil for a day plan, which is the default's.
+	ttftModel *mainMixture
 	// seen is every fleet priced, by its counts; plain, with low, every
 	// fleet priced for decode's own limit alone, without the span.
 	seen, plain map[FleetCounts]sizeEval
@@ -344,7 +347,7 @@ func (z *sizer) priced(ctx context.Context, cache map[FleetCounts]sizeEval, n Fl
 	if err != nil {
 		return sizeEval{}, err
 	}
-	fl = z.e.ttftModel.fleet(fl, k)
+	fl = z.ttftModel.fleet(fl, k)
 	tpot := 0.0
 	if z.sc.TPOT != nil {
 		tpot = z.sc.TPOT.Target
