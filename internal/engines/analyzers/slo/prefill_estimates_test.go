@@ -183,38 +183,23 @@ func TestPrefillEstimates_ConcurrentReadsAndSaturationCycles(t *testing.T) {
 	p := newStashPair()
 	// The clock is fixed for the run: the reads must find the estimates of
 	// the cycle in progress, stamped at the same reading.
-	var wg sync.WaitGroup
+	//
+	// The overlap the last assertion checks is built, not hoped for: the
+	// readers start before any cycle runs, and each model's cycles go on past
+	// minCycles until some read has found an estimate. On a slow or one-CPU
+	// runner the scheduler may otherwise run every cycle before a reader is
+	// scheduled at all. maxCycles bounds the wait, so a stash no read can
+	// find fails that assertion rather than the deadlock guard.
+	const minCycles, maxCycles = 25, 10000
 	var reads atomic.Int64
 	done := make(chan struct{})
+	var readersStarted, readers sync.WaitGroup
 	for m := range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			model := fmt.Sprintf("m%d", m)
-			for range 25 {
-				if _, err := p.sat.Analyze(context.Background(), stashInput(model)); err != nil {
-					t.Error(err)
-					return
-				}
-			}
-		}()
-	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := range 25 {
-			p.sat.ForgetVariant("ns", "m0", "prefill", fmt.Sprintf("t%d", i))
-			p.sat.EvictStaleHistory()
-			if i%10 == 0 {
-				p.sat.ForgetLearnedState()
-			}
-		}
-	}()
-	var readers sync.WaitGroup
-	for m := range 4 {
+		readersStarted.Add(1)
 		readers.Add(1)
 		go func() {
 			defer readers.Done()
+			readersStarted.Done()
 			model := fmt.Sprintf("m%d", m)
 			for {
 				select {
@@ -233,6 +218,33 @@ func TestPrefillEstimates_ConcurrentReadsAndSaturationCycles(t *testing.T) {
 			}
 		}()
 	}
+	var wg sync.WaitGroup
+	for m := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			readersStarted.Wait()
+			model := fmt.Sprintf("m%d", m)
+			for i := 0; i < minCycles || (reads.Load() == 0 && i < maxCycles); i++ {
+				if _, err := p.sat.Analyze(context.Background(), stashInput(model)); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		readersStarted.Wait()
+		for i := range 25 {
+			p.sat.ForgetVariant("ns", "m0", "prefill", fmt.Sprintf("t%d", i))
+			p.sat.EvictStaleHistory()
+			if i%10 == 0 {
+				p.sat.ForgetLearnedState()
+			}
+		}
+	}()
 	finished := make(chan struct{})
 	go func() {
 		wg.Wait()
