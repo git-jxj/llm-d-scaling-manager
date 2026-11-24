@@ -33,7 +33,8 @@
 #      metrics-collection-alerts: a failing scaling query raises
 #      LLMSMMetricsCollectionFailing; a failing learner_recording query, which
 #      feeds only a learner recording, does not, nor does a ttft_inputs one,
-#      which feeds only the shadow TTFT pricing.
+#      which feeds only the shadow TTFT pricing, nor a predicted_latency one,
+#      which feeds only the shadow predicted-latency component.
 #      scaler-reach-alerts: an external scaler no client reaches pages once
 #      per controller namespace after its for:, and stops once KEDA reaches
 #      it again.

@@ -57,6 +57,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/logging"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/passive"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/predictedlatency"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/registry"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/scalingpolicy"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/balance"
@@ -232,6 +233,12 @@ type Engine struct {
 	// learnRecStarted is whether this process has opened a recording: one
 	// per controller start (startLearnerRecording).
 	learnRecStarted bool
+
+	// PredictedLatency is the predicted-latency component
+	// (--predicted-latency, predicted_latency.go); nil, the default, is off:
+	// no query is added and nothing is published. Set before
+	// StartOptimizeLoop.
+	PredictedLatency *predictedlatency.Predictor
 
 	// clock is the cycle clock: pinned once per optimize cycle (optimizeV2),
 	// it is what the analyzers and the capacity store stamp and age their
@@ -1751,6 +1758,7 @@ func (e *Engine) optimizeV2(
 			reportSignalReason(namespace, modelID, nil)
 			continue
 		}
+		e.observePredictedLatency(ctx, data)
 
 		req, err := e.collectV2ModelRequest(ctx, modelID, namespace,
 			data.replicaMetrics, scalingPolicyConfig, data.variantStates, data.variantMetadata,

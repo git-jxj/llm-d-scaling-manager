@@ -41,6 +41,7 @@ name on the controller Deployment. All of these need a restart.
 | `--rest-client-timeout` | Flag | `60s` | a slow API server times out |
 | `--external-scaler-bind-address` | Flag | `:9090` | the port is taken |
 | `--external-scaler-client-san` | Flag | any identity the client CA signed | you want to accept only named KEDA identities |
+| `--predicted-latency` | Flag | `false` | you want to see which inputs of the capacity planner's latency models your fleet exports. Shadow: a few per-pod queries per namespace a cycle, and the `llmsm_predicted_latency_*` series ([metrics](prometheus.md#predicted-latency-metrics)); no scaling decision reads them. It predicts nothing yet ([proposal](../proposals/predicted-latency-in-controller.md)) |
 
 ### Warm-pool flags
 
