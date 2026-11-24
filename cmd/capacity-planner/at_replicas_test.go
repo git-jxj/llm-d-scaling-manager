@@ -663,7 +663,7 @@ func TestAtReplicas_NeededFleetHolds(t *testing.T) {
 // The verdict judges each role on its own: three prefill and seven decode
 // replicas at the staircase's p95 have a decode replica to spare even at the
 // peak (six meet the decode knee's error bound), and no prefill to spare,
-// prefill being 1.9% under its operating point; the sentence says both, and
+// prefill being 2.0% under its operating point; the sentence says both, and
 // the f the third prefill pod is priced with, which no run learned.
 func TestAtReplicas_ShrinkIsPerRole(t *testing.T) {
 	v := stairReport(t, stairQuery(3, 7, 0)).Shapes[0].Verdict
