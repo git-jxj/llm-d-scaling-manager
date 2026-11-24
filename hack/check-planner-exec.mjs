@@ -289,6 +289,13 @@ try {
   check("ticked: the link carries it", linked().includes("loadAwareRouter=1"), linked());
   check("ticked: an import admits the link", run(`linkProblem(${JSON.stringify(linked())})`) === "", run(`linkProblem(${JSON.stringify(linked())})`));
   check("ticked: counted as typed", document.getElementById("assumecount").textContent === "1 typed", document.getElementById("assumecount").textContent);
+  // The link reopens it ticked (applyLink), and a link without it unticked.
+  for (const [link, want] of [[linked(), true], ["recording=r&prefill=3", false]]) {
+    run(`linked = new URLSearchParams(${JSON.stringify(link)}); state.k.assume = {}; el("a-lar").checked = !${want}; applyLink();`);
+    check(`opened from ${link}: ticked ${want}`, lar.checked === want && (state.k.assume.loadAwareRouter === true) === want,
+      `${lar.checked} ${JSON.stringify(state.k.assume)}`);
+  }
+  run("state.k.assume.loadAwareRouter = true;");
   lar.checked = false;
   lar.onchange();
   check("unticked again: no assume sent", asked().assume === undefined, JSON.stringify(asked().assume));

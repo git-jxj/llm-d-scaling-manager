@@ -166,9 +166,44 @@ func TestLoadAware_TheSweepsPriceProcessorSharing(t *testing.T) {
 	}
 }
 
+// With the shipped fall, every f a plan admits (1 < f <= N_p), read at any
+// rho_m up to past its cap, at any margin, prices a finite TTFT at every rate
+// below the knee on each queue: f(rho) rho stays under 1 - margin there, so
+// no wait tail is lost. A Saturated refusal with a NaN decay rate is an f
+// that breaks that, as the one TestLoadAware_TheSweepsCatchANonMonotoneF
+// injects does.
+func TestLoadAware_EveryFPricesBelowTheKnee(t *testing.T) {
+	for _, f := range []float64{1.01, 1.3, 1.8, 2.5, 3} {
+		for _, rm := range []float64{0.01, 0.4, 0.9, 0.99} {
+			for _, margin := range []float64{0, DefaultVPMargin, MaxVPMargin} {
+				for name, c := range sweepFleets() {
+					fl := c[0]
+					fl.Prefill.Imbalance, fl.Prefill.ImbalanceUtilization, fl.Prefill.VPMargin = f, rm, margin
+					pl, u := fl.Prefill.check()
+					if u != nil {
+						t.Fatalf("%s f %g rho_m %g margin %g: %v", name, f, rm, margin, u)
+					}
+					k := kneeOf(t, fl.Prefill)
+					for i := 1; i <= 50; i++ {
+						rate := k * min(float64(i)/50, 0.999)
+						if g := pl.fAt(rate); !(g >= 1 && g <= f) {
+							t.Errorf("%s f %g rho_m %g margin %g: f %g at %.4g r/s", name, f, rm, margin, g, rate)
+						}
+						if r, ok := TTFTAt(fl, rate, 0.9).(TTFT); !ok || !Finite(r.Seconds) {
+							t.Errorf("%s f %g rho_m %g margin %g at %.4g r/s (knee %.4g): %#v", name, f, rm, margin, rate, k, TTFTAt(fl, rate, 0.9))
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 // Every sweep fails on an f(rho) that does not fall smoothly: f held at even
 // twentieths of the pooled utilization and 1 at odd ones. It is never above
-// the held f, so it is the fall with the rate the sweeps catch.
+// the held f, so it is the fall with the rate the sweeps catch. Never
+// t.Parallel: it swaps loadAwareFall for the package, and a sequential test
+// ends, Cleanup included, before any parallel one resumes.
 func TestLoadAware_TheSweepsCatchANonMonotoneF(t *testing.T) {
 	saved := loadAwareFall
 	t.Cleanup(func() { loadAwareFall = saved })
