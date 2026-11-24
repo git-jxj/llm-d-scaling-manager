@@ -808,6 +808,7 @@ build
 built
 built-in
 busiest
+busiest-rank
 busiest-rank-max_over_time
 busiestPod
 busiestRankKvUsage
@@ -2165,6 +2166,7 @@ namespaces
 nan
 narrow
 near-k_sat
+nearest
 nearly
 need
 needGPUs

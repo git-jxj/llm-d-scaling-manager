@@ -57,6 +57,9 @@ type backtestFlags struct {
 	// rankMixtureTTFT is --experimental-ttft=v2 (experimental_ttft_v2.go),
 	// backtest's only.
 	experimentalTTFT, rankMixtureTTFT bool
+	// rankMixtureFitSteps is --rank-mixture-fit-steps: the rank mixture's
+	// fit-step fixes (whatifapi.BacktestRequest.RankMixtureFitSteps).
+	rankMixtureFitSteps bool
 	// rankMixtureStratified is --rank-mixture-stratified
 	// (whatifapi.BacktestRequest.RankMixtureStratified).
 	rankMixtureStratified bool
@@ -115,6 +118,11 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "the test's arrivals' Ca^2, when known; default Poisson (1), flagged")
 	fs.StringVar(&f.measured, "measured", whatifapi.MeasuredAuto, "the latency scored against: auto (the router's where recorded), router or engine")
 	f.registerAssume(fs)
+	// Backtest's only, as the rank mixture it changes: predict refuses
+	// --experimental-ttft=v2.
+	fs.BoolVar(&f.rankMixtureFitSteps, "rank-mixture-fit-steps", false, "with --experimental-ttft=v2, fit the KV-deferral lines and "+
+		"the prompt slopes only on steps whose busiest prefill rank is under utilization 0.9, and read the ranks' shares at the "+
+		"priced load (the fit steps of nearest rate) instead of the fit window's mean; off by default")
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage)
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
@@ -124,6 +132,9 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	f.parsed(fs)
 	if f.output != outputText && f.output != outputJSON {
 		return usagef("-o %q, want text or json", f.output)
+	}
+	if f.rankMixtureFitSteps && !f.rankMixtureTTFT {
+		return usagef("--rank-mixture-fit-steps changes the fit of the rank mixture: give it with --experimental-ttft=v2")
 	}
 	ctrllog.SetLogger(logr.Discard())
 	req, err := f.request()
@@ -242,6 +253,7 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 		return nil
 	}
 	req.TTFTModel, req.PrefillSlots = string(whatif.QueueRankMixture), prefillSlotsOf(fit)
+	req.RankMixtureFitSteps = f.rankMixtureFitSteps
 	req.RankMixtureStratified = f.rankMixtureStratified
 	if err := withRankMixture(testPath, test, nil); err != nil {
 		return err

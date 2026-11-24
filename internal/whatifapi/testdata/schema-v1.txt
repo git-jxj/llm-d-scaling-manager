@@ -454,6 +454,7 @@ backtestRequest.fitUntil string
 backtestRequest.inputsId string
 backtestRequest.measured string
 backtestRequest.prefillSlots number
+backtestRequest.rankMixtureFitSteps boolean
 backtestRequest.rankMixtureStratified boolean
 backtestRequest.settle string
 backtestRequest.specTokens number

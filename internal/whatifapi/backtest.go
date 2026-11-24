@@ -325,6 +325,12 @@ type BacktestRequest struct {
 	// other (backtest_rank_mixture.go). Every TTFT it prices reads OUTSIDE
 	// VALIDATED REGION.
 	TTFTModel string `json:"ttftModel,omitempty"`
+	// RankMixtureFitSteps turns on the rank mixture's fit-step fixes: its
+	// KV-deferral lines and prompt slopes fitted on the steps under rho 0.9
+	// only, and the ranks' shares read at the priced load
+	// (whatif.RankMixtureOptions CleanFitSteps, SharesAtLoad). Off by
+	// default; read only with TTFTModel rank-mixture.
+	RankMixtureFitSteps bool `json:"rankMixtureFitSteps,omitempty"`
 	// RankMixtureStratified prices the rank mixture with stratified service
 	// moments (whatif.RankMixtureOptions.StratifiedMoments): each rank's
 	// mean service and cs^2 integrated over the computed-token law, not
@@ -1070,6 +1076,9 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	}
 	switch req.TTFTModel {
 	case "":
+		if req.RankMixtureFitSteps {
+			return nil, InputErrorf("rankMixtureFitSteps changes the fit of ttftModel %q: give it with that model", whatif.QueueRankMixture)
+		}
 	case string(whatif.QueueRankMixture):
 		// The model prices only where its identifiability checks pass;
 		// otherwise it abstains, and every TTFT is the planner's own.
@@ -1077,7 +1086,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		case len(test.mixture) != len(test.series):
 			q.mixture = abstainedMixture("the test source did not give the per-rank series")
 		default:
-			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots, req.RankMixtureStratified)
+			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots, rankMixtureSwitchesOf(req))
 			if ferr != nil {
 				q.mixture = abstainedMixture(ferr.Error())
 			} else {
