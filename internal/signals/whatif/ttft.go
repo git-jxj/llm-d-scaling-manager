@@ -136,7 +136,8 @@ type Prefill struct {
 	// CachedContextRead says CachedContextTokens and VPCachedContextTokens
 	// were read: the cached context of the question's mean request and of
 	// V_P's minutes, as the whole prompt less the computed one, every
-	// tier's hits counted (slo.SwitchTTFTTierLoad). With PrefixAttention
+	// tier's hits counted (read with slo.SwitchTTFTPrefixAttention, issue
+	// llm-d-incubation/llm-d-scaling-manager#383). With PrefixAttention
 	// on, shapedVP takes the attention span from them in place of the
 	// prefix-cache hit rates, which count the GPU's hits alone.
 	CachedContextRead                          bool
@@ -655,7 +656,7 @@ func (pl prefillPlan) atRate(rate float64) prefillPlan {
 // PrefixAttention on, both whole prompts known (the hit rates are read with
 // them) and either hit rate above MaterialPrefixHitMove, the rescale reads
 // that argument at I_vp and at the question, h from each side's own hit rate.
-// With CachedContextRead (slo.SwitchTTFTTierLoad), h is each side's cached
+// With CachedContextRead (the planner reads it with PrefixAttention), h is each side's cached
 // context as read, the whole prompt less the computed one, and the span is
 // priced where either side's h is above MaterialPrefixHitMove of its whole
 // prompt: the prefix-cache hit rate counts the GPU's hits alone, and reads a
@@ -671,7 +672,7 @@ func (p Prefill) shapedVP() (float64, Flag) {
 		switch {
 		case !p.PrefixAttention:
 		case p.CachedContextRead:
-			if h, hvp := p.CachedContextTokens, p.VPCachedContextTokens; max(h/(h+i), hvp/(hvp+ivp)) > MaterialPrefixHitMove {
+			if h, hvp := p.CachedContextTokens, p.VPCachedContextTokens; max(cachedShare(h, i), cachedShare(hvp, ivp)) > MaterialPrefixHitMove {
 				i, ivp = i+2*h, ivp+2*hvp
 			}
 		case p.VPWholePromptTokens > 0 && p.WholePromptTokens > 0 &&
@@ -715,19 +716,35 @@ const MaterialPrefixHitMove = 0.1
 // llm-d-incubation/llm-d-scaling-manager#311). False with either whole
 // prompt unknown, as before, and for an assumed V_P. With no hit on either
 // side it is false: the whole prompt then moves with E[I_eff], which
-// shapedVP reads.
+// shapedVP reads. With CachedContextRead, each side's hit is its cached
+// share of the whole prompt, every tier's hits counted, as shapedVP prices
+// the span: like with like, not the prefix-cache hit rates, which count the
+// GPU's hits alone (issue llm-d-incubation/llm-d-scaling-manager#383).
 func (p Prefill) prefixMoved() bool {
 	if p.VPAssumed || !(p.VPWholePromptTokens > 0) || !(p.WholePromptTokens > 0) {
 		return false
 	}
-	if math.Abs(p.PromptHitRate-p.VPPromptHitRate) > MaterialPrefixHitMove {
+	hit, hitVP := p.PromptHitRate, p.VPPromptHitRate
+	if p.CachedContextRead {
+		hit, hitVP = cachedShare(p.CachedContextTokens, p.PromptTokens), cachedShare(p.VPCachedContextTokens, p.VPPromptTokens)
+	}
+	if math.Abs(hit-hitVP) > MaterialPrefixHitMove {
 		return true
 	}
-	if max(p.PromptHitRate, p.VPPromptHitRate) <= MaterialPrefixHitMove {
+	if max(hit, hitVP) <= MaterialPrefixHitMove {
 		return false
 	}
 	w, wvp := p.WholePromptTokens, p.VPWholePromptTokens
 	return w > MaxVPShapeRatio*wvp || w*MaxVPShapeRatio < wvp
+}
+
+// cachedShare is h cached tokens' share of a whole prompt of h + eff
+// computed ones; 0 where the prompt is empty.
+func cachedShare(h, eff float64) float64 {
+	if !(h+eff > 0) {
+		return 0
+	}
+	return h / (h + eff)
 }
 
 // promptNotCovered reports whether the question's mean prompt lies outside

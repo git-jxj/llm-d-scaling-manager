@@ -469,6 +469,24 @@ type shapeSample struct {
 // that lower bound, and the TTFT read many times what was measured. It is
 // on only with --experimental-ttft.
 //
+// slo.SwitchTTFTTierLoad and slo.SwitchTTFTTierKVWait are planner-only and
+// not listed (issue llm-d-incubation/llm-d-scaling-manager#386). Their
+// first real test is a private production P/D recording whose prefill pods
+// serve a material share of the prompt from a host tier and a little from a
+// peer tier, both priced from the recorded offload load with no flag. Its
+// default TTFT is refused (no V_P learned), so it was scored with
+// --experimental-ttft, the two switches alone changed. No figure newly reads
+// under 0.8 of measured with either, on a time split, a load split or the
+// busiest hour of the test, and with the KV wait the median mean TTFT of
+// the 75% time split comes closer to measured. But at the 50%
+// split, whose figures rest on a lower-bound V_P and read high, both raise
+// the median error of the mean and p90 TTFT and take figures from within
+// 20% of measured to more than 20% over, which the issue's rule forbids;
+// the load split's mean does the same. The engine's KV wait is several times
+// the transfer's own seconds there, so the tier load alone moves little.
+// They go on once a recording with a tier and a V_P learned under a queue
+// passes that rule.
+//
 // saturation.SwitchMoEBusiestRank is not listed either: it reads a
 // data-parallel MoE engine's line at its busiest rank (issue
 // llm-d-incubation/llm-d-scaling-manager#312), and its only evidence is
