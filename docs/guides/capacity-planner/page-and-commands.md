@@ -538,7 +538,10 @@ It replays the recording once and answers, for each shape and load:
   - OVER-PROVISIONED: a role has a replica to spare. One fewer of it must
     hold every target at the load judged, and the role's own knee and
     target at the window's peak too, since removing capacity is the costly
-    mistake.
+    mistake. A decode replica must also be spare at the decode knee's error
+    bound: one fewer still meets the count the load needs if the knee reads
+    as high as its label allows (`no spare: 3 decode if the decode knee
+    reads 99% high` otherwise).
   - RIGHT-SIZED: the fleet holds, and no role has a replica to spare.
   - NOT JUDGED: where it would be UNDER-PROVISIONED on a load of other
     traffic than the shape priced, or on a knee the window's own fleet
