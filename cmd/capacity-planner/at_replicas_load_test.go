@@ -36,8 +36,8 @@ func atReplicasJSON(t *testing.T, args ...string) whatifapi.ReportResponse {
 // those busy cycles ran at OL 500, so the knee is of other traffic and
 // neither is judged (#297).
 func TestAtReplicas_JudgedAtTheBusyLoad(t *testing.T) {
-	t.Run("staircase 3 prefill + 4 decode", func(t *testing.T) {
-		args := atStair("--prefill", "3", "--decode", "4", "--imbalance-across-counts=false")
+	t.Run("staircase 3 prefill + 7 decode", func(t *testing.T) {
+		args := atStair("--prefill", "3", "--decode", "7", "--imbalance-across-counts=false")
 		rep := atReplicasJSON(t, args...)
 		require.NotNil(t, rep.Load.Rate.Value)
 		assert.InDelta(t, 41.70, *rep.Load.Rate.Value, 0.005, "the default load is the p95, not the mean")
@@ -52,7 +52,8 @@ func TestAtReplicas_JudgedAtTheBusyLoad(t *testing.T) {
 		assert.Equal(t, whatifapi.VerdictUnder, peak.Shapes[0].Verdict.Verdict, peak.Shapes[0].Verdict.Reason)
 	})
 	t.Run("throughput sweep, decode only", func(t *testing.T) {
-		args := []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms"}
+		// The measured shape, asked: the load's cycles ran at another.
+		args := []string{"at-replicas", "--recording", outputSpreadRun, "--tpot", "5ms", "--shape", "measured"}
 		rep := atReplicasJSON(t, args...)
 		require.NotNil(t, rep.Load.P95)
 		assert.InDelta(t, 26.90, *rep.Load.P95, 0.005, "the sweep's p95")

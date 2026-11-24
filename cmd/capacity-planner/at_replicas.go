@@ -57,8 +57,8 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.Lookup("headroom").Usage = "the operating point as a fraction of the fleet knee, in (0, 1); default the policy's scaleUpThreshold"
 	fs.Lookup("variant").Usage = "the decode variant to judge; required when the model has several (the refusal names them)"
 	var rf reportFlags
-	fs.Var(&rf.shapes, "shape", "a request shape to answer for, repeatable: measured (the default), load (the shape of the cycles the load judged at was read from), "+
-		"or IL/OL[/hit] in tokens, k for 1024 (8k/200, 1k/4k/0.3)")
+	fs.Var(&rf.shapes, "shape", "a request shape to answer for, repeatable: load (the default: the shape of the cycles the load judged at was read from, "+
+		"or measured where none read one), measured (the decode variant's latest cycles), or IL/OL[/hit] in tokens, k for 1024 (8k/200, 1k/4k/0.3)")
 	fs.Var(&rf.loads, "load", "a rate the tables price, repeatable: 5r/s, 80% of the shape's fleet knee, seen, or seen x1.5 (a growth what-if with its own verdict); default 50%, 80%, 100% and seen")
 	fs.StringVar(&rf.loadStatistic, "load-statistic", whatifapi.DefaultLoadStatistic,
 		"the statistic of the window's per-cycle arrival rate to judge at: mean, p95, peak, or p95-modulation (the p95 less the one-minute rate's counting noise, "+
@@ -80,6 +80,7 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	if err != nil {
 		return err
 	}
+	f.withLatency = true
 	st, err := f.readState(ctx)
 	if err != nil {
 		return err
@@ -114,8 +115,16 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 		return err
 	}
 	rep.SchemaVersion = whatifapi.SchemaVersion
+	if f.rankMixtureTTFT {
+		if err := f.rankMixtureReport(ctx, rep, q); err != nil {
+			return err
+		}
+	}
 	rep.Source.Recording = f.recording
 	rep.SelfCheck = f.checked
+	// As POST /v1/report: an over the router measured missing its TTFT
+	// target at the load judged is withheld.
+	rep.WithholdOverOnMeasured(f.series, f.latency)
 	rep.JudgeTrust()
 	if f.output == outputJSON {
 		enc := json.NewEncoder(out)

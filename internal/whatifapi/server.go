@@ -189,6 +189,9 @@ type inputsEntry struct {
 	decode []whatif.DecodeCycle
 	// engine is the engines' flags those models read (Resolved.Engine).
 	engine EngineSlots
+	// ttftModel is the experimental TTFT model the main view prices with,
+	// fitted on the source; nil unless asked (InputsRequest.TTFTModel).
+	ttftModel *mainMixture
 	// bytes is the entry's weight in the inputs cache (Resolved.Bytes).
 	bytes int
 }
@@ -307,6 +310,12 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 		check = *req.SelfCheck
 	}
 	req.SelfCheck = &check
+	model, err := ttftModelOf(req.TTFTModel, s.ttftModel)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	req.TTFTModel = model
 	res, err := s.resolver.Resolve(r.Context(), req)
 	if err != nil {
 		writeErr(w, err)
@@ -315,6 +324,19 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	doc := res.Inputs
 	doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
 	doc.InputsID = contentID("inputs", res.Content)
+	doc.Measured = BusiestHourMeasured(res.Series, res.Latency)
+	var mm *mainMixture
+	if model != "" {
+		// The same source priced with the model is another entry: its id
+		// names the model.
+		doc.InputsID = contentID("inputs", struct {
+			Content   any
+			TTFTModel string
+		}{res.Content, model})
+		mm = fitMainMixture(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine})
+		info := mm.info
+		doc.TTFTModel = &info
+	}
 	if check && (doc.Source.Kind == SourceRecording || doc.Source.Kind == SourcePrometheus) {
 		// The self-check is bounded as a plan is; out of time it is not run,
 		// and the inputs are still answered.
@@ -326,7 +348,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	// its own source: two recordings of the same bytes share an id, not a
 	// name.
 	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
-		config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode, engine: res.Engine})
+		config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode, engine: res.Engine, ttftModel: mm})
 	body, err := marshal(doc)
 	if err != nil {
 		writeErr(w, err)

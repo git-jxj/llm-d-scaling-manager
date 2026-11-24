@@ -410,6 +410,27 @@ type shapeSample struct {
 // lower bound. One warm-up's self-check falls from weak to inconsistent with
 // it. It stays off until TTFT under a lower-bound knee is priced.
 //
+// saturation.SwitchPrefillVPPromptCoverage is planner-only and not listed
+// (issue llm-d-incubation/llm-d-scaling-manager#405): it keeps the prompts
+// the minutes V_P rests on read, and prices no TTFT from a V_P at a mean
+// prompt more than whatif.MaxVPShapeRatio outside them
+// (whatif.VPPromptNotCovered). It goes on once the public cross-validation
+// shows no figure newly under what was measured and no worse self-check.
+//
+// saturation.SwitchPrefillVPLoneRate is planner-only and not listed (issue
+// llm-d-incubation/llm-d-scaling-manager#406): it reads V_P from light load,
+// one request's computed tokens over its prefill time at the prompt priced,
+// where no queue gives one and the served peak agrees with it. It goes on
+// once the public cross-validation shows no figure newly under what was
+// measured, no worse self-check, and the prefill knee within 15% of the
+// measured one on the staircases whose knee was measured.
+//
+// saturation.SwitchPrefillHitAtCount is planner-only and not listed (issue
+// llm-d-incubation/llm-d-scaling-manager#384): it prices the prefix hit at a
+// prefill count other than the fit's, the floor hit x N'/N at fewer pods and
+// the fit's hit held at more. It goes on once the public cross-validation
+// shows no figure newly under what was measured.
+//
 // saturation.SwitchPrefillVPWindowBest is planner-only and not listed: it
 // keeps the peak under a queue read anywhere in the recording, not only in
 // the last 6 hours, flagged with its age (VPFromEarlierInWindow). No public
@@ -594,6 +615,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	ttft.psByEngine = opts.Switches[PackageSLO][slo.SwitchTTFTPSByEngine]
 	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
 	ttft.vpAtServed = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPAtServedWork]
+	ttft.hitAtCount = opts.Switches[PackageSaturation][saturation.SwitchPrefillHitAtCount]
 	ttft.cachedTokenCost = opts.Switches[PackageSLO][slo.SwitchTTFTCachedTokenCost]
 	ttft.specHeld = opts.Switches[PackageSLO][slo.SwitchTTFTDecodeSpeculatingHeld]
 	// SwitchITLPerToken is on from the saturation analyzer's constructor: a

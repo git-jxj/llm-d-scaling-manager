@@ -78,12 +78,18 @@ func priceCurves(ctx context.Context, fl Fleet, tpotAsked, prefillRole bool) (*c
 		cs.tpotFloor = noFloor(cs.decodeKnee)
 		return cs, nil
 	}
-	for _, rate := range grid(cs.lowerKnee) {
+	// The experimental TTFT model may draw past a prefill knee that is only
+	// a lower bound, up to the load the fleet served (curveCap).
+	span := cs.lowerKnee
+	if x, ok := fl.(interface{ curveEnd() float64 }); ok {
+		span = max(span, x.curveEnd())
+	}
+	for _, rate := range grid(span) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		t := fl.TTFTAt(rate)
-		cs.ttft = append(cs.ttft, Point{Rate: rate, Figure: figureOf(t, unitSeconds, true)})
+		cs.ttft = append(cs.ttft, Point{Rate: rate, Figure: markExtrapolated(fl, rate, figureOf(t, unitSeconds, true))})
 		if v, ok := t.(whatif.TTFT); ok && cs.ttftFloor.Value == nil {
 			cs.ttftFloor = Figure{Value: ptr(v.Floor), Unit: unitSeconds, Flags: FlagNames(v.Flags)}
 		}
@@ -225,6 +231,10 @@ type limitEntry struct {
 	// plusOne is the fleet's plain limits with one more prefill replica, then
 	// one more decode replica: decode, prefill and fleet each.
 	plusOne [2][3]whatif.Result
+	// plusOneExtrapolated says each step's fleet limit is one the
+	// experimental TTFT model set past the highest load served
+	// (markExtrapolatedRate).
+	plusOneExtrapolated [2]bool
 	// buckets is each bucket line's rate at its target, with the view asked.
 	buckets map[string]whatif.Result
 }
@@ -275,8 +285,10 @@ func (p *planner) priceLimits(ctx context.Context, k Knobs, fl Fleet) (*limitEnt
 		if err != nil {
 			return nil, err
 		}
+		more = p.e.ttftModel.fleet(more, kk)
 		d, pr, f := more.PlainLimits(sc.TTFT.Target, tpot, sc.Headroom)
 		le.plusOne[i] = [3]whatif.Result{d, pr, f}
+		le.plusOneExtrapolated[i] = markExtrapolatedRate(more, figureOf(f, unitRate, false)).Extrapolated
 	}
 	if sc.Views.AllTrafficPerBucket {
 		le.buckets = map[string]whatif.Result{}
@@ -320,6 +332,10 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The experimental TTFT model, where the source was resolved with one,
+	// prices the TTFT curve and point A; every other figure is the
+	// planner's.
+	fl = p.e.ttftModel.fleet(fl, k)
 	cs, err := p.curves(ctx, k, fl)
 	if err != nil {
 		return nil, err
@@ -342,9 +358,10 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 
 	out := &PlanResponse{SchemaVersion: SchemaVersion, WhatifSchema: p.s.whatifSchema, InputsID: p.e.id, Banner: banner, Scenario: sc}
 	markers := cs.markers(sc.Headroom)
-	out.TTFT = TTFTView{Statistic: sc.TTFT.Statistic, Markers: p.markers("ttft.markers", markers)}
+	out.TTFT = TTFTView{Statistic: sc.TTFT.Statistic, Markers: p.markers("ttft.markers", markers), Model: p.e.ttftModel.view(fl, k)}
 	at, notes := fl.TTFTPoint(rate)
 	out.TTFT.Line = p.line("ttft.line", Line{Bucket: SemanticsMix, Semantics: SemanticsMix, Target: sc.TTFT.Target}, cs, at, ls.Prefill, rate)
+	out.TTFT.Line.AtRate.Figure = markExtrapolated(fl, rate, out.TTFT.Line.AtRate.Figure)
 
 	if sc.TPOT != nil {
 		mean, pct := fl.TPOTAt(rate)
@@ -363,6 +380,11 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	}
 
 	out.Limits = p.limitsOf(rate, rateSource, ls)
+	// A limit the experimental TTFT model set past the highest load the
+	// source served is an extrapolation.
+	out.Limits.Prefill = markExtrapolatedRate(fl, out.Limits.Prefill)
+	out.Limits.Fleet.Figure = markExtrapolatedRate(fl, out.Limits.Fleet.Figure)
+	out.Limits.Fleet.WithoutHeadroom = markExtrapolatedRate(fl, out.Limits.Fleet.WithoutHeadroom)
 	validatePlan(out, k, fl.Class(), cs, rate)
 	out.Marginal = p.marginal(le, ls.Fleet)
 	if sc.Views.AllTrafficPerBucket {
@@ -484,6 +506,7 @@ func (p *planner) marginal(le *limitEntry, fleet whatif.Result) Marginal {
 	} {
 		decode, prefill, limit := le.plusOne[i][0], le.plusOne[i][1], le.plusOne[i][2]
 		s := MarginalStep{Fleet: step.count, Limit: p.note(step.path, figureOf(limit, unitRate, false)), Binding: binding(prefill, decode)}
+		s.Limit.Extrapolated = le.plusOneExtrapolated[i]
 		now, nowOK := valueOf(fleet)
 		then, thenOK := valueOf(limit)
 		switch {

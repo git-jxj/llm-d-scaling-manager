@@ -20,19 +20,19 @@ Pin a release tag or a digest, and deploy with the manifests from the **same**
 release. An image older than the manifests crash-loops on flags it does not
 know. Releases are listed on the
 [Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases);
-the current one is `v0.12.3`.
+the current one is `v0.12.4`.
 A checked-out release deploys its own tag, so `IMG_TAG` below only makes that
 explicit. Each release's notes list its image digest; a digest names one build,
 and a tag could in principle be re-pushed.
 
 ```bash
-git checkout v0.12.3
-make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.12.3
-# or by digest (v0.12.3's, from its release notes)
+git checkout v0.12.4
+make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.12.4
+# or by digest (v0.12.4's, from its release notes)
 make deploy-scaling-manager NAMESPACE=<namespace> \
-  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:c6527a853298c5094e0af7428c911b1175bdb06e07ea901eaf94e0f08df8cffb
+  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:dcca9e445c234283b894b51b8fbce1e52b769f562d1ee10ee706adb0f4c0ab6a
 # out-of-reach shape (the cluster admin runs it): the controller runs in llmsm-<namespace>
-NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.12.3
+NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.12.4
 ```
 
 `IMG_TAG` sets the tag of the default `IMG`; `IMG` replaces the whole reference.
@@ -128,6 +128,27 @@ changed, and there is no compatibility path. Reinstall.
    ```
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
+
+### Upgrading from v0.12.3 to v0.12.4
+
+[Upgrade](#upgrade) as for any release. Nothing in the controller changes: its
+RBAC, settings and alerts are as in v0.12.3, and `make workload-patch` need not
+be run again. The changes are in the capacity planner and the recording tools:
+
+- **Two experimental models, off by default.** `capacity-planner backtest`
+  takes `--experimental-ttft=v2` and `--experimental-tpot=v2`. Without the
+  flags every answer is byte for byte as in v0.12.3. With them, every figure the
+  models price is flagged and reads OUTSIDE VALIDATED REGION
+  ([the experimental models](../guides/capacity-planner/page-and-commands.md)).
+- **`capacity-planner serve` takes the same flags**, so a planner served to
+  people (for example in a cluster) uses the models for every backtest without
+  anyone switching them on. Add them to the StatefulSet's `args`
+  ([run it in a cluster](../guides/capacity-planner/in-cluster.md)).
+- **Recordings.** `capture` also saves the speculative-decoding acceptance per
+  draft position. A recording made with v0.12.4 tools loads in a v0.12.4
+  planner; record with v0.12.4 tools for this planner.
+- **Hiding names.** The export accepts recordings made with v0.12.3's capture,
+  which it refused before.
 
 ### Upgrading from v0.12.2 to v0.12.3
 

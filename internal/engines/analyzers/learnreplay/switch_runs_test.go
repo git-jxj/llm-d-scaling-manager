@@ -1309,6 +1309,21 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// replay runs it off and off alone from all on moves nothing. Its unit
 	// tests hold it (heldBy).
 	saturation.SwitchPrefillVPOccupancyPlateau: nil,
+	// llm-d-incubation/llm-d-scaling-manager#405: the prompts V_P speaks
+	// for. Planner-only, off from the constructor, so every golden replay
+	// runs it off and off alone from all on moves nothing. Its unit tests
+	// hold it (heldBy).
+	saturation.SwitchPrefillVPPromptCoverage: nil,
+	// llm-d-incubation/llm-d-scaling-manager#406: V_P from the lone rate.
+	// Planner-only, off from the constructor, so every golden replay runs
+	// it off and off alone from all on moves nothing. Its unit tests hold
+	// it (heldBy).
+	saturation.SwitchPrefillVPLoneRate: nil,
+	// llm-d-incubation/llm-d-scaling-manager#384: the prefix hit at another
+	// prefill count. Planner-only, off from the constructor, so every golden
+	// replay runs it off and off alone from all on moves nothing. Its unit
+	// tests hold it (heldBy).
+	saturation.SwitchPrefillHitAtCount: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1779,6 +1794,38 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestPlateau_RaisesALowerBoundUnderIt"},
 		{"../../../signals/prefill", "TestPlateau_ARisingPlateauIsFlooredAtTheServedPeak"},
 		{"../saturation", "TestPrefillVPOccupancyPlateau_ThroughAnalyze"},
+	},
+	saturation.SwitchPrefillHitAtCount: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{".", "TestStateAt_TheHitAtCountSwitchReachesThePrefillState"},
+		{"../../../signals/prefill", "TestHitAtCount_TheLabRunFittedOnTwoPods"},
+		{"../../../signals/prefill", "TestHitAtCount_TheSameCountMovesNothing"},
+		{"../../../signals/prefill", "TestHitAtCount_Edges"},
+		{"../../../signals/prefill", "TestHitAtCount_TheFloor"},
+		{"../../../signals/prefill", "TestHitAtCount_TheReuseGapRule"},
+		{"../../../signals/prefill", "TestHitAtCount_TheReuseGapRuleFallsBackToTheFloor"},
+	},
+	saturation.SwitchPrefillVPPromptCoverage: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestPromptCoverage_BusyMinutesCarryTheirRange"},
+		{"../../../signals/prefill", "TestPromptCoverage_OffCarriesNone"},
+		{"../../../signals/prefill", "TestPromptCoverage_PlateauCarriesItsRange"},
+		{"../../../signals/prefill", "TestPromptCoverage_LoneRateCarriesItsRange"},
+		{"../../../signals/whatif", "TestPromptNotCovered_PricesNoTTFTOutsideTheRange"},
+		{"../../../signals/whatif", "TestPromptNotCovered_InsideTheRangeIsPriced"},
+		{"../saturation", "TestPrefillVPPromptCoverage_ThroughAnalyze"},
+	},
+	saturation.SwitchPrefillVPLoneRate: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestLoneRate_IsVPWhereTheServedPeakAgrees"},
+		{"../../../signals/prefill", "TestLoneRate_ABatchingGainLeavesItALowerBound"},
+		{"../../../signals/prefill", "TestLoneRate_AbstainsWithTooFewMinutes"},
+		{"../../../signals/prefill", "TestLoneRate_OnlyThePromptPricedCounts"},
+		{"../../../signals/prefill", "TestLoneRate_BusyMinutesWin"},
+		{"../../../signals/prefill", "TestLoneRate_ADataParallelRowCountsItsRanks"},
+		{"../../../signals/prefill", "TestLoneRate_AnAgedServedPeakStillBounds"},
+		{"../../../signals/prefill", "TestLoneRate_RaisesALowerBoundToTheLargerOfTheTwo"},
+		{"../saturation", "TestPrefillVPLoneRate_ThroughAnalyze"},
 	},
 	// The first holds it off from the constructor; the others run it on and
 	// off and assert both, in the window, through Analyze and in the

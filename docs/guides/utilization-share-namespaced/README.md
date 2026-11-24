@@ -183,7 +183,7 @@ namespace to someone the model teams trust.
 <!-- guide:steps.smt start -->
 ```bash
 # Once per machine. The release's tools image, by the digest the release prints. Each person keeps their own kubeconfig; SMT_KUBECONFIG picks one.
-TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:77be49dde69c86010fabbaac341ab71eceba26ee8f2b0c8fb0cd530669457cc2
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:0e70901bbc138cf910b7e24409a09b6b6b03138be1c9170465ea9c4e8dfc071e
 mkdir -p ~/.smt && chmod 700 ~/.smt
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }

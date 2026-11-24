@@ -78,7 +78,8 @@ func apiError(err error) error {
 func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest) (*whatifapi.Resolved, error) {
 	f := answerFlags{question: "serve", cycle: "last", model: req.Model, variant: req.DecodeVariant, prefillVariant: req.PrefillVariant,
 		serveSelfCheck: req.SelfCheck != nil && *req.SelfCheck,
-		seed:           whatif.DefaultResampling().Seed, vpPlateau: req.PrefillVPPlateau, experimentalTTFT: req.ExperimentalTTFT || s.experimentalTTFT, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
+		seed:           whatif.DefaultResampling().Seed, vpPlateau: req.PrefillVPPlateau, hitAtCount: req.PrefillHitAtCount,
+		experimentalTTFT: req.ExperimentalTTFT || s.experimentalTTFT, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
 		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {
@@ -123,6 +124,9 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	}
 	defer func() { _ = data.Close() }()
 	data.onPass = s.onPass
+	if src.Cycles != nil {
+		data.open = learnreplay.CyclesOf(data.open, src.Cycles.Keeps)
+	}
 	st, err := f.stateOf(ctx, name, data)
 	if err != nil {
 		return nil, hidePath(apiError(err), hide, info.Name)
@@ -135,7 +139,7 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	res, err := s.resolved(ctx, &f, st, data, info)
 	var serr error
 	if err == nil {
-		serr = s.experimentalSeries(data, res)
+		serr = s.experimentalSeries(data, res, req.TTFTModel != "")
 	}
 	// The series, and the experimental models' after it, are the last
 	// passes: a file changed under them is refused, and nothing is kept
@@ -158,9 +162,11 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 // experimental model (--experimental-ttft=v2, --experimental-tpot=v2), the
 // cycles that model reads and the engines' flags it takes, in a pass of
 // their own over data: the CLI's backtest reads the same (rankMixture,
-// tpotDistribution). Neither changes the inputs' content id.
-func (s *servedSources) experimentalSeries(data *recordingSource, res *whatifapi.Resolved) error {
-	if s.rankMixture {
+// tpotDistribution). Neither changes the inputs' content id. ttftModel
+// says the request asked for the experimental TTFT model
+// (whatifapi.InputsRequest.TTFTModel), which reads the same series.
+func (s *servedSources) experimentalSeries(data *recordingSource, res *whatifapi.Resolved, ttftModel bool) error {
+	if s.rankMixture || ttftModel {
 		if err := rankMixtureFrom(data.open, res); err != nil {
 			return err
 		}
@@ -411,6 +417,11 @@ func (s *servedSources) resolved(ctx context.Context, f *answerFlags, st *learnr
 		// Another replay, so other inputs: never the id of the default's.
 		res.Inputs.PrefillVPPlateau = true
 		res.Content += "\x00" + vpPlateauFlag
+	}
+	if f.hitAtCount {
+		// Another replay, so other inputs: never the id of the default's.
+		res.Inputs.PrefillHitAtCount = true
+		res.Content += "\x00" + hitAtCountFlag
 	}
 	if f.experimentalTTFT {
 		// Another replay, so other inputs: never the id of the default's.

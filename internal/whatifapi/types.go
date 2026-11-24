@@ -34,11 +34,22 @@ type InputsRequest struct {
 	// prefill pod queued (the CLI's --prefill-vp-plateau): experimental and
 	// off by default. Every figure priced from it is flagged VPFromPlateau.
 	PrefillVPPlateau bool `json:"prefillVPPlateau,omitempty"`
+	// PrefillHitAtCount prices the prefix hit at a prefill count other than
+	// the source's (the CLI's --prefill-hit-at-count): off by default. At
+	// fewer pods the hit is the floor hit x N'/N, flagged PrefixHitAtCount;
+	// at more it is held, flagged PrefixHitHeld.
+	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
 	// ExperimentalTTFT prices TTFT with the TTFT model's switches that are
 	// off by default (the CLI's --experimental-ttft): for demonstration,
 	// not validated. Every prefill and TTFT figure is flagged
 	// ExperimentalTTFT.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
+	// TTFTModel prices the main view's TTFT with an experimental model:
+	// "" is the server's default (serve --experimental-ttft=v2), and
+	// whatif.QueueRankMixture the only other. The model is fitted on the
+	// source's window and abstains where it is not identified; the
+	// planner's TTFT then stands.
+	TTFTModel string `json:"ttftModel,omitempty"`
 }
 
 // The source kinds.
@@ -59,6 +70,10 @@ type SourceRequest struct {
 	To        string `json:"to,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Cycle     int    `json:"cycle,omitempty"`
+	// Cycles, when set, reads the recording with only these cycles
+	// (learnreplay.CyclesOf): a load split's fit (LoadFitCycles). Never
+	// sent: a backtest sets it.
+	Cycles *CycleSet `json:"-"`
 }
 
 // InputsResponse is a source resolved: every term the plans price from, each
@@ -86,9 +101,20 @@ type InputsResponse struct {
 	// PrefillVPPlateau says the source was read with V_P from the occupancy
 	// plateau (InputsRequest.PrefillVPPlateau); absent otherwise.
 	PrefillVPPlateau bool `json:"prefillVPPlateau,omitempty"`
+	// PrefillHitAtCount says the source was read with the prefix hit priced
+	// at each prefill count (InputsRequest.PrefillHitAtCount); absent
+	// otherwise.
+	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
 	// ExperimentalTTFT says the source was read with the experimental TTFT
 	// model (InputsRequest.ExperimentalTTFT); absent otherwise.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
+	// TTFTModel is the experimental TTFT model the main view prices with,
+	// as fitted on the source (InputsRequest.TTFTModel); absent otherwise.
+	TTFTModel *TTFTModelInfo `json:"ttftModel,omitempty"`
+	// Measured is the source's busiest UTC hour and the TTFT and TPOT the
+	// router measured over it (BusiestHourMeasured); absent with no router
+	// histogram. It is measured, never priced.
+	Measured *MeasuredHour `json:"measured,omitempty"`
 }
 
 // SourceInfo is what the inputs were read from. Prometheus is the URL's
@@ -255,6 +281,10 @@ type Figure struct {
 	// is met; one it misses is not known to be missed (issue
 	// llm-d-incubation/llm-d-scaling-manager#369).
 	UpperBound bool `json:"upperBound,omitempty"`
+	// Extrapolated says the figure, priced by the experimental TTFT model,
+	// is at a rate above the highest load the source's fit window served
+	// (TTFTModelView.MeasuredUpTo).
+	Extrapolated bool `json:"extrapolated,omitempty"`
 }
 
 // Band is a bootstrap band, Lo to Hi.
@@ -511,6 +541,9 @@ type TTFTView struct {
 	Line      Line    `json:"line"`
 	PerBucket []Line  `json:"perBucket,omitempty"`
 	Markers   Markers `json:"markers"`
+	// Model is the experimental TTFT model at the plan's fleet, where the
+	// source was resolved with one (InputsResponse.TTFTModel).
+	Model *TTFTModelView `json:"model,omitempty"`
 }
 
 // The semantics a TTFT line has.

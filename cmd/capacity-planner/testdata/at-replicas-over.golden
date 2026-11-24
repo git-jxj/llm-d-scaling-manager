@@ -9,14 +9,14 @@ mark = the SLO (TTFT p90 2000.0 ms (asked), TPOT mean 30.0 ms (asked)) at that r
 summary     50%                80%                    100%               seen
   measured  620/3.1 @24.99 ok  1554/5.2 @39.98 MISS*  -/11.2 @49.97 SAT  539/3.1 @20.00 ok
 verdicts
-  measured  OVER-PROVISIONED: at the stated load of 20.0 r/s, decode: one fewer holds; prefill: no spare (52.9% under its operating point); needs 2 prefill + 2 decode (has 2 + 3), 3 decode if the decode knee reads 99% high; the same at f 1 to 1.5 (decode knee outside its validated region).
+  measured  RIGHT-SIZED: at the stated load of 20.0 r/s, the fleet holds every target with headroom; decode: no spare: 3 decode if the decode knee reads 99% high; prefill: no spare (52.9% under its operating point).
 
 shape measured: IL 8003 OL 200, prefix hit 0.00 (measured, cycles 269-288)
 utilization at the load judged
   decode        KV fill 0.024 (band top 0.8), slots 10 of 333, wait p 0.000
   KV pull       utilization 0.402 per decode pod, mean wait 40.5 ms: the larger mean wait in TTFT sits on the decode pods
   prefill       utilization pooled 0.40, worst pod 0.40 (f 1)
-  verdict       OVER-PROVISIONED: at the stated load of 20.0 r/s, decode: one fewer holds; prefill: no spare (52.9% under its operating point); needs 2 prefill + 2 decode (has 2 + 3), 3 decode if the decode knee reads 99% high; the same at f 1 to 1.5 (decode knee outside its validated region).
+  verdict       RIGHT-SIZED: at the stated load of 20.0 r/s, the fleet holds every target with headroom; decode: no spare: 3 decode if the decode knee reads 99% high; prefill: no spare (52.9% under its operating point).
 capacity            req/s     out tok/s   bound by
   prefill knee      49.97     9993        prefill compute: N_p 2 x V_P / (f 1.000 x 8001 tokens)
   decode knee       55.48     11094       decode band top at fill 0.798

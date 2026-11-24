@@ -155,7 +155,7 @@ func (pf *pricedFleet) cachedContext() {
 	case pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead && p.WholePromptTokens > 0:
 		h = max(p.WholePromptTokens-p.PromptTokens, 0)
 	default:
-		hit, ok := pf.promptWindow.ComputedHit()
+		hit, ok := pf.pricedComputedHit()
 		if !ok {
 			return
 		}

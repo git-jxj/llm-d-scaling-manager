@@ -47,6 +47,12 @@ type answerFlags struct {
 	noSelfCheck, serveSelfCheck bool
 	folds                       map[int]*learnreplay.State
 	checked                     *whatifapi.SelfCheck
+	// withLatency asks readState to keep each cycle's series and measured
+	// latency, in series and latency (at-replicas withholds an over the
+	// router measured missing, as POST /v1/report does).
+	withLatency bool
+	series      []whatifapi.SeriesSample
+	latency     []whatifapi.LatencySample
 	// cachedCost is phi as fitted on the source (fitCachedCosts), nil where
 	// none was; cachedPhi is the phi priced, and cachedPhiSet says it was
 	// stated by the fit's own pass (whatifapi.Knobs.CachedTokenCost), not
@@ -124,9 +130,16 @@ type answerFlags struct {
 	// vpPlateau is --prefill-vp-plateau: the replay reads V_P from the
 	// occupancy plateau (replayOptions); off by default.
 	vpPlateau bool
+	// hitAtCount is --prefill-hit-at-count: the replay turns
+	// saturation.SwitchPrefillHitAtCount on (replayOptions); off by default.
+	hitAtCount bool
 	// experimentalTTFT is --experimental-ttft: the replay turns the TTFT
 	// model's off-by-default switches on (replayOptions); off by default.
 	experimentalTTFT bool
+	// rankMixtureTTFT is --experimental-ttft=v2: at-replicas prices its
+	// tables' TTFT with the experimental rank-mixture model, fitted on the
+	// recording (experimental_ttft_v2.go); refused elsewhere.
+	rankMixtureTTFT bool
 	// fixedImbalance, above zero, is f at every prefill count above one,
 	// assumed: the report's sensitivity to f (fSensitivity). No flag sets
 	// it.
@@ -187,7 +200,9 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.inputBucket, "input-bucket", "", "not supported: per-bucket answers are the planner's M1")
 	fs.BoolVar(&f.loadAwareRouter, "load-aware-router", whatif.DefaultPlannerLoadAwareRouter, "state that the router scores each pod's queue (llm-d's EPP queue scorer): f is held to the load it was learned at, then falls to 1 at full load, so the prefill knee is the pooled one less the margin and f prices only the latency below it; off by default, because no recording says what the router scores")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
-	fs.BoolVar(&f.experimentalTTFT, experimentalTTFTFlag, false, experimentalTTFTUsage)
+	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
+	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
+		". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on the --recording")
 	fs.BoolVar(&f.imbalanceAcrossCounts, "imbalance-across-counts", whatif.DefaultPlannerImbalanceAcrossCounts, fmt.Sprintf("at a prefill count P1 has not learned, price f off a curve fitted to the counts it learned; with none learned, and with =false, max(%g, f) (flagged AssumedImbalance either way)", whatif.ImbalanceFloor))
 	f.window.registerWindow(fs)
 	fs.Lookup("prometheus").Usage = "answer from a window of this Prometheus (base URL), captured and generated in memory, in place of --recording"
@@ -207,6 +222,10 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 		return err
 	}
 	switch {
+	case f.rankMixtureTTFT && f.question != reportQuestion:
+		return usagef("--%s=%s is backtest's, predict's, serve's and at-replicas'", experimentalTTFTFlag, experimentalTTFTV2)
+	case f.rankMixtureTTFT && f.recording == "":
+		return usagef("--%s=%s fits the model on a --recording", experimentalTTFTFlag, experimentalTTFTV2)
 	case f.output != outputText && f.output != outputJSON:
 		return usagef("-o %q, want text or json", f.output)
 	case f.decode < 0:
@@ -310,15 +329,25 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 	// The variants asked; an empty name counts every variant of the role,
 	// rows and replicas alike, where the server counts the variant it
 	// resolved. Both compare a role's rows with its own replicas.
-	cycles, err := learnreplay.SeriesFrom(src.open, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID},
-		learnreplay.SeriesVariants{Prefill: f.prefillVariant, Decode: f.variant})
+	sq, sv := learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID}, learnreplay.SeriesVariants{Prefill: f.prefillVariant, Decode: f.variant}
+	var cycles []learnreplay.CycleSample
+	var lat []learnreplay.CycleLatency
+	if f.withLatency {
+		cycles, lat, err = learnreplay.SeriesWithLatencyFrom(src.open, sq, sv)
+	} else {
+		cycles, err = learnreplay.SeriesFrom(src.open, sq, sv)
+	}
 	if cerr := src.unchanged(); cerr != nil {
 		return nil, cerr
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	if why := whatifapi.EngineRowsShort(seriesSamplesOf(cycles)); why != "" {
+	series := seriesSamplesOf(cycles)
+	if f.withLatency {
+		f.series, f.latency = series, latencySamplesOf(lat)
+	}
+	if why := whatifapi.EngineRowsShort(series); why != "" {
 		// Every per-replica rate and knee would read low by the ranks the
 		// rows leave out (issue llm-d-incubation/llm-d-scaling-manager#331).
 		return nil, usagef("%s: %s; the planner reads a replica as its engine rows, so it answers nothing from this recording; %s", name, why, engineRowsFix)

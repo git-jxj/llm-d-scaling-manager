@@ -150,6 +150,20 @@ const (
 	// P1's curve to a longer one (Prefill.shapedVP): V_P * s(I_vp)/s(I),
 	// s(I) = b + c*I.
 	VPScaledToPrompt Flag = "VPScaledToPrompt"
+	// PrefixHitAtCount is a prefill figure priced at fewer prefill pods than
+	// the prefix hit was read on, whose priced hit moved from the read one
+	// by more than MaterialPrefixHitMove/2 (prefill.HitAtCountOf; the
+	// planner's prefill-hit-at-count switch): the hit, and so the computed
+	// tokens a request, are extrapolated, by the floor hit x N'/N or the
+	// reuse-gap rule. The floor reads the computed tokens at or over the
+	// truth where the router keeps each prefix on one pod at both counts.
+	PrefixHitAtCount Flag = "PrefixHitAtCount"
+	// PrefixHitHeld is a prefill figure priced at more prefill pods than the
+	// prefix hit was read on, with the hit above MaterialPrefixHitMove/2:
+	// the read hit is held. A cache-aware router spreads the prefixes over
+	// more caches, so the true hit is likely higher and the capacity reads
+	// low.
+	PrefixHitHeld Flag = "PrefixHitHeld"
 	// VPShapeMoved is a V_P read at a mean prompt more than MaxVPShapeRatio
 	// from the one asked, either way, or at one not known, with no curve to
 	// rescale it by: the V_P is held, and on a longer prompt it reads high
@@ -157,6 +171,13 @@ const (
 	// hits moved from those V_P was read at (Prefill.prefixMoved): the
 	// cached tokens' attention is not in E[I_eff]. No caller acts on it.
 	VPShapeMoved Flag = "VPShapeMoved"
+	// VPPromptNotCovered is a learned V_P priced at a mean prompt outside
+	// the prompts of the minutes it was read over, by more than
+	// MaxVPShapeRatio either way (Prefill.VPPromptLow, VPPromptHigh): out of
+	// the region it was learned in. The knee priced from it carries the
+	// flag, and no TTFT is priced from it (issue
+	// llm-d-incubation/llm-d-scaling-manager#405).
+	VPPromptNotCovered Flag = "VPPromptNotCovered"
 	// FlowControlInferredOff is flow control taken as off because its queue
 	// series does not exist (a scrape gap looks the same).
 	FlowControlInferredOff Flag = "FlowControlInferredOff"

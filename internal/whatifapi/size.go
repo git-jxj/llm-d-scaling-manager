@@ -185,7 +185,7 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 			if s.onSearch != nil {
 				s.onSearch()
 			}
-			z := &sizer{e: e, sc: sc, k: k, rate: *sc.Rate, bound: bound, low: on == SizeOnLow,
+			z := &sizer{e: e, sc: sc, k: k, rate: *sc.Rate, bound: bound, low: on == SizeOnLow, ttftModel: e.ttftModel,
 				seen: map[FleetCounts]sizeEval{}, plain: map[FleetCounts]sizeEval{}}
 			if found, err = z.search(ctx); err != nil {
 				return nil, err
@@ -289,6 +289,9 @@ type sizer struct {
 	bound FleetCounts
 	// low sizes on the low end of each limit's span over V_P and f.
 	low bool
+	// ttftModel is the experimental TTFT model the search prices with: the
+	// inputs' for a size, nil for a day plan, which is the default's.
+	ttftModel *mainMixture
 	// seen is every fleet priced, by its counts; plain, with low, every
 	// fleet priced for decode's own limit alone, without the span.
 	seen, plain map[FleetCounts]sizeEval
@@ -299,6 +302,9 @@ type sizer struct {
 // refused, and then the fleet's too), the prefill role's, and the fleet's.
 type sizeEval struct {
 	decode, prefill, fleet whatif.Result
+	// extrapolated says the fleet limit is one the experimental TTFT model
+	// set past the highest load served (markExtrapolatedRate).
+	extrapolated bool
 }
 
 // at prices the fleet of n, once per search, stopping with ctx's error once
@@ -341,6 +347,7 @@ func (z *sizer) priced(ctx context.Context, cache map[FleetCounts]sizeEval, n Fl
 	if err != nil {
 		return sizeEval{}, err
 	}
+	fl = z.ttftModel.fleet(fl, k)
 	tpot := 0.0
 	if z.sc.TPOT != nil {
 		tpot = z.sc.TPOT.Target
@@ -352,6 +359,7 @@ func (z *sizer) priced(ctx context.Context, cache map[FleetCounts]sizeEval, n Fl
 	} else {
 		v.decode, v.prefill, v.fleet = fl.PlainLimits(z.sc.TTFT.Target, tpot, z.sc.Headroom)
 	}
+	v.extrapolated = markExtrapolatedRate(fl, figureOf(v.fleet, unitRate, false)).Extrapolated
 	cache[n] = v
 	return v, nil
 }
@@ -377,6 +385,7 @@ func (z *sizer) step(ctx context.Context, n FleetCounts) (*SizeStep, error) {
 		return nil, err
 	}
 	st := &SizeStep{Fleet: n, Limit: figureOf(v.fleet, unitRate, false), Binding: binding(v.prefill, v.decode)}
+	st.Limit.Extrapolated = v.extrapolated
 	x, ok := valueOf(v.fleet)
 	if a, isAnswer := v.fleet.(whatif.Answer); isAnswer && z.low && a.Sensitivity != nil {
 		if a.Sensitivity.Refused != "" {

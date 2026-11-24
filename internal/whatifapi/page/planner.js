@@ -10,12 +10,13 @@
 // FLAG_WORDS is every flag the engine raises, in plain words, and what clears
 // it. A flag missing here is shown by its name (TestPageNamesEveryFlag).
 const FLAG_WORDS = {
+  MeasuredTTFTOverTarget: ["The model finds a replica to spare, but the router measured the TTFT over its target here: a fleet that missed its TTFT target has nothing to spare, so no verdict is given.", "a TTFT within its target as measured"],
   ShapeLoadMismatch: ["The measured shape (the last cycles') is more than 20% off the shape of the cycles the load was read from: the load is priced at traffic other than the traffic that made it.", "ask the shape load to price the load at its own cycles' shape"],
   UnvalidatedTTFT: ["The TTFT model is not validated, and its figures are not a bound. On the validation recordings (not this fleet) it read high at an assumed prompt spread and up to 33% low at the spread actually sent; the banner gives the figures.", "a fresh frozen staircase run that validates the model"],
   AssumedVP: ["V_P, the prefill token rate, is the value you typed, not a learned one.", "learn V_P: run at a load that keeps a prefill pod busy for a minute"],
   VPLowerBound: ["V_P comes from a lower bound (the peak under a queue): the limits under-promise.", "a window where a prefill pod is busy without a queue"],
   ExperimentalTTFT: ["Priced with the experimental TTFT model (experimentalTTFT, --experimental-ttft): processor sharing by engine config, router hop from window means, prefill speed raised to the served work. For demonstration, not validated, so every figure on it is outside the validated region.", "the default model: leave experimentalTTFT off"],
-  RankMixtureTTFT: ["Priced with the experimental rank-mixture TTFT model (backtest --experimental-ttft=v2): limited processor sharing per prefill rank, mixed over the ranks' measured shares, a fitted KV-deferral wait and a cost per prompt token. Not validated, so every figure reads outside the validated region.", "a validated run of the model"],
+  RankMixtureTTFT: ["Priced with the experimental rank-mixture TTFT model (--experimental-ttft=v2): limited processor sharing per prefill rank, mixed over the ranks' measured shares, a fitted KV-deferral wait and a cost per prompt token. Not validated, so every figure reads outside the validated region.", "a validated run of the model"],
   RankMixtureAbstained: ["The experimental rank-mixture model was asked for and abstained: one of its identifiability checks failed, so this TTFT is the planner's own.", "a fit window that identifies the model: 12 h or more, prompts that spread, each rank's own rate and max-num-seqs recorded"],
   LimitedPSHeavyTraffic: ["A prefill rank's utilization is above 0.9, where the limited processor sharing approximation is not taken to hold.", "fewer requests a rank, or more ranks"],
   RelaxationLong: ["The busiest prefill rank takes more than a tenth of the step to settle, so the step's rate is not one it ran at steadily.", "a longer step, or a lighter load"],
@@ -26,6 +27,9 @@ const FLAG_WORDS = {
   VPAboveSlopeBound: ["V_P is above what the low-load fit allows: one of the two readings is wrong.", "more low-load readings, or a busy-minutes reading of V_P"],
   VPScaledToPrompt: ["V_P was read at another prompt length and rescaled along the fitted curve.", "a V_P reading at this prompt length"],
   VPShapeMoved: ["V_P was read at a prompt length far from this one and held: on longer prompts it over-promises.", "a V_P reading at this prompt length"],
+  PrefixHitAtCount: ["The prefix-cache hit was measured at another prefill pod count. With fewer pods each pod's cache holds less of the shared prompts, so the hit is priced lower, at a safe floor, and each request computes more prompt tokens.", "a recording at this prefill pod count"],
+  PrefixHitHeld: ["The prefix-cache hit was measured at fewer prefill pods and is kept as it was. With more pods each pod's cache holds more of the shared prompts, so the real hit is likely higher and the capacity shown is likely low.", "a recording at this prefill pod count"],
+  VPPromptNotCovered: ["The prefill speed was learned at different prompt lengths, more than 1.2 times away from this one: no TTFT is priced from it, and the knee is outside the validated region.", "a V_P reading at this prompt length"],
   AssumedImbalance: ["The load imbalance f between prefill pods is assumed, not learned.", "a window with per-pod prefill load"],
   AssumedPromptSpread: ["The prompt-length spread (cv) is assumed, not read from a histogram.", "a prompt-length histogram (recorder R1)"],
   SpreadBeyondProcessorSharing: ["The prompt spread is wider than processor sharing was validated at: TTFT is the larger of the processor-sharing and first-come prices.", "nothing: a property of the traffic"],
@@ -146,6 +150,7 @@ function val(f) {
 function why(f) {
   if (!f) return "not priced";
   if (!f.refused) return "";
+  if (f.refused.reason === "NoPrefillCapacity") return noPrefillWords(f.refused);
   return f.refused.reason + (f.refused.detail ? ": " + f.refused.detail : "");
 }
 
@@ -172,7 +177,7 @@ function fmtNum(v) {
 // figPlain is a figure as plain text: the number, or "refused (reason)".
 function figPlain(f, fmt) {
   const v = val(f);
-  return v != null ? fmt(v) : "refused (" + (f && f.refused ? f.refused.reason : "not priced") + ")";
+  return v != null ? fmt(v) : "not estimated" + (f && f.refused ? " (" + plainReasonWord(f.refused) + ")" : "");
 }
 
 // figText is figPlain escaped, for HTML.
@@ -187,8 +192,8 @@ function spanPlain(f) {
   const lo = s.lo != null ? fmtRate(s.lo) : "refused (" + s.loRefused + ")";
   const hi = s.hi != null ? fmtRate(s.hi) : "refused (" + s.hiRefused + ")";
   // Ends that print the same are one figure: V_P and f do not move it.
-  if (lo === hi) return lo + " at every V_P and f corner";
-  return lo + " to " + hi + " over V_P and f";
+  if (lo === hi) return lo + " whatever the prefill speed and load imbalance";
+  return lo + " to " + hi + " over the uncertainty range";
 }
 
 // spanText is spanPlain escaped, for HTML.
@@ -220,7 +225,8 @@ function flagChips(f) {
   const flags = (f && f.flags) || [];
   const shown = flags.filter(n => SHOWN_FLAGS.has(n)), rest = flags.filter(n => !SHOWN_FLAGS.has(n) && n !== "UnvalidatedTTFT");
   return shown.map(n => `<span class="chip flagged" title="${esc((FLAG_WORDS[n] || [n])[0])}">${esc(n)}</span>`).join(" ") +
-    (rest.length ? ` <span class="chip" title="${esc(rest.join(", "))}">+${rest.length} more flags</span>` : "");
+    // The rest are in the Flags drawer: no "+N more" chip beside a figure.
+    "";
 }
 
 // setStatus writes the status line, which a screen reader announces. While
@@ -364,13 +370,23 @@ async function loadInputs() {
     if (el("pvariant").value.trim()) req.prefillVariant = el("pvariant").value.trim();
     if (el("dvariant").value.trim()) req.decodeVariant = el("dvariant").value.trim();
     const loading = req.source.kind === "prometheus" ? "Reading the Prometheus window (seconds to a minute)" :
-      "Replaying the recording (a day-long one takes a minute or two; asking again starts a second load)";
+      "Replaying the recording (a day-long one takes a minute or two)";
     setStatus(loading + "...");
     const t0 = Date.now();
+    // The sticky bar says the load runs and lets you cancel it. The server
+    // reports no share done, so the bar runs without one.
+    const ctl = new AbortController();
+    const show = () => progress(`${req.source.kind === "prometheus" ? "Reading the Prometheus window" : "Replaying the recording"} · ` +
+      `${Math.round((Date.now() - t0) / 1000)} s (a day-long recording takes a minute or two)`, null, () => ctl.abort());
+    show();
     tick = setInterval(() => {
-      if (seq === state.seq) setStatus(`${loading}... ${Math.round((Date.now() - t0) / 1000)} s`);
+      if (seq === state.seq) {
+        setStatus(`${loading}... ${Math.round((Date.now() - t0) / 1000)} s`);
+        show();
+      }
     }, 1000);
-    const inputs = await api("POST", "v1/inputs", req);
+    const inputs = await api("POST", "v1/inputs", req, ctl.signal);
+    progress("");
     clearInterval(tick);
     if (seq !== state.seq) return;
     setInputs(inputs);
@@ -381,6 +397,8 @@ async function loadInputs() {
     plan();
   } catch (e) {
     clearInterval(tick);
+    if (seq === state.seq) progress("");
+    const msg = e.name === "AbortError" ? "cancelled" : e.message;
     const end = linkAtLoadEnd(state.link, seq, state.seq, false);
     state.link = end.link;
     let opened = "";
@@ -393,7 +411,7 @@ async function loadInputs() {
         e.message.startsWith("400:") && e.message.includes("no such upload")) {
       forgetUpload(source.name);
     }
-    setStatus("Could not load the inputs: " + e.message + opened, true);
+    setStatus("Could not load the inputs: " + msg + opened, true);
     el("source").open = true;
   } finally {
     el("load").disabled = false;
@@ -411,7 +429,9 @@ const PLAN_FIGURES = ["fleet", "fleetn", "chosen", "bars", "barsdesc", "limits",
 function clearPlan() {
   state.plan = null;
   for (const id of PLAN_FIGURES) el(id).textContent = "";
-  el("banner").hidden = true;
+  el("bannerbox").hidden = true;
+  el("notice").hidden = true;
+  el("refusal").hidden = true;
 }
 
 // mib is n bytes in MiB, for the upload's words.
@@ -509,7 +529,7 @@ function forgetUpload(name) {
 function setInputs(inputs) {
   const badge = selfCheckBadge(inputs.selfCheck);
   el("sccheck").hidden = !badge;
-  el("scbox").hidden = !badge;
+  el("scbox").hidden = el("scdetails").hidden = !badge;
   if (badge) {
     el("sccheck").textContent = badge.text;
     el("sccheck").className = "chip selfcheck " + badge.cls;
@@ -520,6 +540,13 @@ function setInputs(inputs) {
   el("rresult").hidden = true;
   el("rstatus").textContent = "";
   state.inputs = inputs;
+  // The executive panel's questions are asked again for every inputs loaded.
+  execAbort(state.exec);
+  clearTimeout(execTimer);
+  state.exec = {};
+  progress("");
+  el("exec").hidden = true;
+  el("trustchip").hidden = true;
   state.day = null;
   el("dayout").hidden = true;
   el("dayrun").disabled = !inputs.fleet.prefill;
@@ -638,11 +665,15 @@ function showSource(inputs) {
     const t = d => new Date(d).toISOString().slice(0, 16).replace("T", " ");
     text = `Prometheus window ${t(s.from)} to ${t(s.to)} UTC`;
   } else {
-    text = `Recording ${s.name}, cycle ${s.cycle} of ${s.totalCycles}`;
+    text = `Recording ${s.name}` + (s.cycle && s.cycle !== s.totalCycles ? `, up to cycle ${s.cycle} of ${s.totalCycles}` : "");
   }
   el("srcsum").textContent = text;
-  el("srcchip").textContent = "Source: " + text;
+  el("srcchip").textContent = text;
   el("srcchip").hidden = false;
+  // The window the source covers, first cycle to last, in UTC.
+  const day = d => d ? new Date(d).toISOString().slice(0, 16).replace("T", " ") : "";
+  el("winchip").textContent = s.firstAt && s.lastAt ? `Window ${day(s.firstAt)} to ${day(s.lastAt)} UTC` : "";
+  el("winchip").hidden = !(s.firstAt && s.lastAt);
   const fleet = inputs.fleet;
   el("what").textContent = `${inputs.model} · namespace ${inputs.namespace} · ` +
     (fleet.prefill ? `prefill ${fleet.prefill.variant}, decode ${fleet.decode.variant}` : `decode ${fleet.decode.variant}`);
@@ -670,7 +701,7 @@ function showInputs(inputs) {
   }).join("");
   el("assumed").innerHTML = (inputs.assumed || []).map(a => `<li>assumed: ${esc(a)}</li>`).join("");
   const s = inputs.source;
-  state.inputSum = `cycle ${s.cycle} of ${s.totalCycles}, ${inputs.terms.length} terms, ${refused} refused, ${flagged} flagged, ` +
+  state.inputSum = `${inputs.terms.length} terms, ${refused} not learned, ${flagged} flagged, ` +
     `${(inputs.assumed || []).length} assumed by the source`;
   showTyped();
 }
@@ -855,6 +886,18 @@ function planRequest() {
   return req;
 }
 
+// growthSizeRequest is the size the panel asks for a grown load: the plan's
+// scenario at that rate, the fleet the answer, the bound the size mode's.
+function growthSizeRequest(rate) {
+  const req = planRequest();
+  delete req.fleet;
+  delete req.views;
+  delete req.bucketEdges;
+  req.maxReplicas = {prefill: state.k.maxRep, decode: state.k.maxRep};
+  req.traffic = Object.assign({}, req.traffic, {classes: {critical: {rate}}});
+  return req;
+}
+
 // sizeRequest is the size the knobs ask: the plan's scenario but the fleet,
 // which is the answer, and the per-bucket view, with the bound searched.
 function sizeRequest() {
@@ -952,12 +995,16 @@ async function plan() {
         syncControls();
         fitRateSlider(null);
         renderSize();
+        renderRefusal();
         renderFlags();
         renderCompare();
+        // The panel's report and growth are the targets', not the fleet's.
+        execKnobs();
+        renderExec();
       }
       writeLink();
       clearInterval(ticker);
-      const what = out.answer ? `${fleetPlain(out.answer.fleet)}` : `no fleet within the bound (${out.unmet.refused.reason})`;
+      const what = out.answer ? `${fleetPlain(out.answer.fleet)}` : `no fleet within the bound (${plainReasonWord(out.unmet.refused)})`;
       setStatus(`Sized ${fmtRate(out.rate)} in ${((performance.now() - t0) / 1000).toFixed(1)} s: ${what}; ` +
         `${out.searched} fleet${out.searched === 1 ? "" : "s"} searched` + (out.answer ? ", then the plan at the answer." : "."));
       return;
@@ -970,7 +1017,7 @@ async function plan() {
     if (state.k.rate == null) state.k.rate = out.limits.chosen.rate;
     render();
     writeLink();
-    setStatus(`Priced in ${Math.round(performance.now() - t0)} ms.`);
+    setStatus(`Updated in ${Math.round(performance.now() - t0)} ms.`);
     // A link's edges the page could not use are said once, after the plan
     // that priced the default buckets in their place.
     if (state.linkNote) {
@@ -1006,9 +1053,32 @@ async function plan() {
   }
 }
 
+// quickCheckNote says how the answer panel's quick check differs from this
+// one, where the server ran it: "" otherwise.
+function quickCheckNote() {
+  const h = state.inputs && state.inputs.ttftModel && state.inputs.ttftModel.heldOut;
+  if (!h || !(h.steps > 0)) return "";
+  return `Before this check ran, the answer panel quoted the server's quick check: TTFT ${h.statistic || "mean"} within 20% in ${h.within || 0} of ${h.steps} steps. ` +
+    "It is a different check: two held-out folds, refit at 50% and 75% of the window, each scoring its own steps; this one fits once on the split above.";
+}
+
+// prefillShown is prefill's limit as the page shows it (prefillAtLeast): a
+// lower bound under the busiest load the fleet carried reads as that load.
+function prefillShown(m) {
+  const r = state.exec && state.exec.report, p = state.plan;
+  const n = p && p.scenario && p.scenario.fleet ? p.scenario.fleet.prefill : null;
+  return prefillAtLeast(m && m.prefillKnee, r && r.load, n, r && r.fleet ? r.fleet.prefill : null);
+}
+
+// prefillWords is that limit in words: "at least X (lower bound)", or
+// "at least X (carried without queuing)" where raised to the load carried.
+function prefillWords(s) {
+  return `at least ${fmtRate(s.value)} (${s.raised ? "carried without queuing" : "lower bound"})`;
+}
+
 // lowerKnee is the lower of the plan's knees, or null.
 function lowerKnee(m) {
-  const ks = [val(m.prefillKnee), val(m.decodeKnee)].filter(v => v != null);
+  const ks = [prefillShown(m).value, val(m.decodeKnee)].filter(v => v != null);
   return ks.length ? Math.min(...ks) : null;
 }
 
@@ -1058,10 +1128,11 @@ function render() {
   const p = state.plan;
   syncControls();
   el("banner").textContent = p.banner;
-  el("banner").hidden = !p.banner;
+  el("bannerbox").hidden = !p.banner;
+  renderNotice(p.flags, p.banner);
   fitRateSlider(lowerKnee(p.ttft.markers));
   el("ratenote").textContent = rateNote(p.limits.chosen.rateSource);
-  el("limitsfor").textContent = `(priced at ${shapeOf(p)})`;
+  el("limitsfor").textContent = `(at ${shapeOf(p)})`;
   renderSize();
   renderAtTarget();
   renderLimits();
@@ -1070,6 +1141,10 @@ function render() {
   renderTables();
   renderFlags();
   renderCompare();
+  renderRefusal();
+  execKnobs();
+  renderExec();
+  startExecutive();
 }
 
 // rolesText is roles as a sentence's subject: "prefill binds", "prefill and
@@ -1100,11 +1175,11 @@ function lowNote(limit, z) {
   const s = limit.sensitivity;
   if (!s) return "";
   if (s.loRefused) {
-    return `<div class="miss">At one corner of V_P and f this fleet's limit is refused (${esc(s.loRefused)}).` +
+    return `<div class="miss">At one end of the uncertainty range this fleet's limit is refused (${esc(s.loRefused)}).` +
       (z.sizeOn === "low" ? "" : " Tick \"size for the worst corner\" to size on it.") + `</div>`;
   }
   if (s.lo == null || s.lo >= z.rate * (1 - 1e-9)) return "";
-  return `<div class="miss">At one corner of V_P and f this fleet serves only ${fmtRate(s.lo)}, under the rate. ` +
+  return `<div class="miss">At one end of the uncertainty range this fleet serves only ${fmtRate(s.lo)}, under the rate. ` +
     `Tick "size for the worst corner" to size on it.</div>`;
 }
 
@@ -1124,7 +1199,7 @@ function renderSize() {
     const low = z.sizeOn === "low";
     el("sizetitle").textContent = `The fleet ${rate} needs`;
     el("sizeanswer").innerHTML = `<div class="v">${fleetText(f)}</div>` +
-      `<div>The ${a.gpus != null ? "fewest GPUs" : "fewest replicas"} whose fleet limit reaches ${rate}` + (low ? " at the worst corner of V_P and f" : "") +
+      `<div>The ${a.gpus != null ? "fewest GPUs" : "fewest replicas"} whose fleet limit reaches ${rate}` + (low ? " at the worst case of the uncertainty range" : "") +
       (a.gpus != null ? ` (${a.gpus} GPUs at ${a.gpusPerReplica.prefill} a prefill and ${a.gpusPerReplica.decode} a decode replica; ` +
         `of two as few, the one with fewer replicas, then fewer decode). ` :
         ` (the fewest in all; of two as few, the one with fewer decode replicas). `) +
@@ -1138,16 +1213,16 @@ function renderSize() {
   // With no plan to draw, the size says what a plan would: the banner, and
   // nothing under the targets from a fleet no longer on screen.
   el("banner").textContent = z.banner;
-  el("banner").hidden = !z.banner;
+  el("bannerbox").hidden = !z.banner;
   el("ttftat").textContent = el("tpotat").textContent = "";
   el("sizetitle").textContent = `No fleet within the bound serves ${rate}`;
-  el("sizeanswer").innerHTML = `<div class="v miss">${esc(u.refused.reason)}</div><div>${esc(unmetAdvice(z))}</div>` +
+  el("sizeanswer").innerHTML = `<div class="v miss" title="${esc(u.refused.reason)}">${esc(plainReasonWord(u.refused).replace(/^./, c => c.toUpperCase()))}</div><div>${esc(unmetAdvice(z))}</div>` +
     `<div class="hint">Searched up to ${fleetText(z.maxReplicas)}; the role that falls short: ${esc(u.role)}.` +
     (UNMET_SAID.has(u.refused.reason) ? "" : ` The server says: ${esc(u.refused.detail)}`) + `</div>`;
-  const shortText = short != null ? `, ${fmtRate(-short)} short` + (z.sizeOn === "low" ? " at the worst corner of V_P and f" : "") :
-    (s.headroom && s.headroom.refused ? `, refused at the worst corner of V_P and f (${esc(s.headroom.refused.reason)})` : "");
+  const shortText = short != null ? `, ${fmtRate(-short)} short` + (z.sizeOn === "low" ? " at the worst case of the uncertainty range" : "") :
+    (s.headroom && s.headroom.refused ? `, refused at the worst case of the uncertainty range (${esc(s.headroom.refused.reason)})` : "");
   el("fewer").innerHTML = `<li>At the bound (${fleetText(s.fleet)}), the fleet limit: ` +
-    (lim == null ? `refused: ${esc(why(s.limit))}` : `<b>${fmtRate(lim)}</b>${shortText}`) +
+    (lim == null ? `not known: ${esc(why(s.limit))}` : `<b>${fmtRate(lim)}</b>${shortText}`) +
     (boundText(s.limit) ? ", " + esc(boundText(s.limit)) : "") + ` ${flagChips(s.limit)}</li>`;
 }
 
@@ -1163,9 +1238,9 @@ function fewerLine(role, s, low) {
   if (lim == null) {
     what = `<span class="miss">refused: ${esc(why(s.limit))}</span>`;
   } else if (short == null) {
-    what = `<span class="miss"><b>${fmtRate(lim)}</b>, refused at the worst corner of V_P and f (${esc(why(s.headroom))})</span>${binds}`;
+    what = `<span class="miss"><b>${fmtRate(lim)}</b>, refused at the worst case of the uncertainty range (${esc(why(s.headroom))})</span>${binds}`;
   } else if (low && s.limit.sensitivity && s.limit.sensitivity.lo != null && fmtRate(s.limit.sensitivity.lo) !== fmtRate(lim)) {
-    what = `<span class="miss"><b>${fmtRate(s.limit.sensitivity.lo)}</b> at the worst corner of V_P and f (${fmtRate(lim)} at the learned ones), ` +
+    what = `<span class="miss"><b>${fmtRate(s.limit.sensitivity.lo)}</b> at the worst case of the uncertainty range (${fmtRate(lim)} at the learned ones), ` +
       `${fmtRate(-short)} short</span>${binds}`;
   } else {
     what = `<span class="miss"><b>${fmtRate(lim)}</b>, ${fmtRate(-short)} short</span>${binds}`;
@@ -1192,15 +1267,15 @@ const UNMET_SAID = new Set(["NoPrefillCapacity", "NoTPOTHistogram", "TargetBelow
 // do not set, are said so.
 function unmetAdvice(z) {
   const u = z.unmet, reason = u.refused.reason, low = z.sizeOn === "low";
-  const untick = low ? ', or untick "Size for the worst corner of V_P and f"' : "";
+  const untick = low ? ', or untick "Size for the worst case of the uncertainty range"' : "";
   switch (reason) {
   case "NoPrefillCapacity":
-    return 'The source learned no prefill rate V_P: type one under "Assume a term the source did not learn".';
+    return noPrefillWords(u.refused) + ' Type a prefill speed under "Assume a term the source did not learn", or load a busier window.';
   case "NoTPOTHistogram":
     return "The source learned no TPOT percentile ratio R_q: type an assumed ratio under the TPOT target, or pick the mean.";
   case "TargetBelowFloor": {
     const which = u.role === "decode" ? "TPOT" : "TTFT";
-    return `The ${which} target is under the floor` + (low ? " at the worst corner of V_P and f" : "") +
+    return `The ${which} target is under the floor` + (low ? " at the worst case of the uncertainty range" : "") +
       `, the least ${which} any fleet gives. More replicas do not lower a floor: raise the ${which} target above it${untick}.`;
   }
   case "ReplicaBoundReached": {
@@ -1224,7 +1299,7 @@ function renderAtTarget() {
   const p = state.plan, rate = fmtRate(p.limits.chosen.rate);
   const at = (fig, target) => {
     const v = val(fig);
-    if (v == null) return `<span class="miss">refused at ${rate}: ${esc(fig && fig.refused ? fig.refused.reason : "not priced")}</span>`;
+    if (v == null) return `<span class="miss">not known at ${rate}: ${esc(fig && fig.refused ? plainReasonWord(fig.refused) : "not estimated")}</span>`;
     return `<span class="${v <= target ? "ok" : "miss"}">${fmtSec(v)} at ${rate}, ${v <= target ? "meets it" : "misses"}.</span>`;
   };
   el("ttftat").innerHTML = at(p.ttft.line.atRate.figure, p.ttft.line.target) + (state.k.ttftDefault ? ' <span class="hint">The policy sets no TTFT target: this one is the page\'s. Set yours.</span>' : "");
@@ -1233,7 +1308,8 @@ function renderAtTarget() {
   if (state.k.ttftDefault) set.push(`TTFT ${PAGE_TTFT.statistic} ${fmtSec(PAGE_TTFT.seconds)}`);
   if (state.k.tpotDefault) set.push(`TPOT ${PAGE_TPOT.statistic} ${fmtSec(PAGE_TPOT.seconds)}`);
   el("pagetargets").textContent = set.length ? `Targets set by the page, not the policy: ${set.join(", ")}. Set your own above.` : "";
-  el("pagetargets").hidden = !set.length;
+  // The answer panel's SLO line says it once; the controls prompt for yours.
+  el("pagetargets").hidden = true;
   const ratio = p.tpot && p.tpot.ratio;
   let note = "";
   if (ratio && ratio.refused) note = "R_q is not learned (" + ratio.refused.reason + "): type a ratio, or pick the mean.";
@@ -1245,7 +1321,7 @@ function renderAtTarget() {
 // fleet's limit stops at the cap, not there.
 function aboveCap(p, rate) {
   const cap = val(p.ttft.markers.operatingCap);
-  return rate != null && cap != null && rate > cap ? ` (above the cap ${fmtRate(cap)})` : "";
+  return rate != null && cap != null && rate > cap ? (Math.abs(p.limits.chosen.rate - cap) < 1e-6 ? ` (above your chosen rate, ${fmtRate(cap)})` : ` (above the safe load ${fmtRate(cap)})`) : "";
 }
 
 // bindsWithoutHeadroom is the role whose limit the fleet's figure without
@@ -1264,32 +1340,48 @@ function bindsWithoutHeadroom(L) {
 function renderLimits() {
   const p = state.plan, L = p.limits, f = L.fleet;
   const fv = val(f);
-  el("fleet").textContent = fv != null ? fmtRate(fv) : "refused";
+  // With no fleet limit the hero says what is known, never "not known":
+  // the TTFT floor over its target, or what decode allows alone.
+  const floor = val(p.ttft.line.floor), dv = val(L.decode);
+  const floorOver = floor != null && floor > p.ttft.line.target;
+  // A target under the model's floor is the user's to set, said neutrally.
+  el("fleet").textContent = fv != null ? fmtRate(fv) : floorOver ?
+    `Your ${fmtSec(p.ttft.line.target)} TTFT target is below this model's floor (${fmtSec(floor)}) at any load` : dv != null ? `decode ${fmtRate(dv)}` : "prefill unmeasured";
+  el("fleet").classList.toggle("vsentence", fv == null && floorOver);
   const notes = [];
-  if (fv == null) notes.push(why(f));
+  if (fv == null) {
+    notes.push(floorOver ? "set a realistic target under SLO" :
+      dv != null ? "what decode carries alone; prefill's limit is not measured (see the answer panel)" : plainReasonWord(f.refused));
+  }
   if (f.capApplied) {
-    notes.push(`the operating-point cap binds (headroom ${p.scenario.headroom}); without headroom: ${figPlain(f.withoutHeadroom, fmtRate)}` +
+    notes.push(`held to the safe load, ${Math.round(100 * p.scenario.headroom)}% of the limit; without that margin: ${figPlain(f.withoutHeadroom, fmtRate)}` +
       (bindsWithoutHeadroom(L) ? `, where ${bindsWithoutHeadroom(L)} binds` : ""));
   }
   if (spanPlain(f)) notes.push(spanPlain(f));
   el("fleetn").innerHTML = esc(notes.join("; ")) + (f.flags && f.flags.length ? "<br>" + flagChips(f) : "");
   // The headroom is the API's figure, as it is: the page derives no share of it.
   const h = val(L.chosen.headroom);
-  el("chosen").innerHTML = h == null ? `You chose ${fmtRate(L.chosen.rate)}: no headroom, the limit is refused.` :
+  el("chosen").innerHTML = h == null ? `You chose ${fmtRate(L.chosen.rate)}: the margin is not known while the limit is not.` :
     `You chose ${fmtRate(L.chosen.rate)}: <span class="${h >= 0 ? "ok" : "miss"}">headroom ${h >= 0 ? "+" : ""}${fmtRate(h)}` +
     `${h < 0 ? ", the SLO is missed" : ""}</span>`;
 
   const binding = f.binding || [];
   const held = (L.prefill.flags || []).includes("HeldByDecodeAdmission");
+  // A prefill limit known only as a lower bound, or not priced for want of
+  // a prefill speed, is never said to bind: nothing measured shows it first.
+  const prefillLB = kneeLowerBound(p.ttft.markers.prefillKnee) || kneeLowerBound(L.prefill) ||
+    !!(L.prefill && L.prefill.refused && L.prefill.refused.reason === "NoPrefillCapacity");
   const rows = [
-    {name: "Prefill", what: "TTFT", fig: L.prefill, cls: "c-pre", binds: binding.includes("prefill")},
-    {name: "Decode", what: "TPOT", fig: L.decode, cls: "c-dec", binds: binding.includes("decode")},
+    {name: "Prefill", what: "TTFT", fig: L.prefill, cls: "c-pre", chip: limitChip("prefill", L.prefill, binding, prefillLB)},
+    {name: "Decode", what: "TPOT", fig: L.decode, cls: "c-dec", chip: limitChip("decode", L.decode, binding, prefillLB)},
   ].filter(r => r.fig);
   el("limits").innerHTML = rows.map(r => {
-    const parts = [`<b>${r.name}</b> (${r.what}) <b>${figText(r.fig, fmtRate)}</b>`];
-    if (r.binds) parts.push('<span class="binds">binds</span>');
-    if (r.fig.boundBy) parts.push("bound by " + esc(r.fig.boundBy.join(", then ")));
-    if (r.fig.refused) parts.push(esc(why(r.fig)));
+    // Prefill seen only as a lower bound says so, as its bar does.
+    const ps = prefillShown(p.ttft.markers);
+    const parts = [`<b>${r.name}</b> (${r.what}) <b>${esc(barWords(r, ps))}</b>`];
+    if (r.chip) parts.push(`<span class="${r.chip === "binds" ? "binds" : "hint"}">${esc(r.chip)}</span>`);
+    if (r.fig.boundBy) parts.push("bound by " + esc(plainVerdict(r.fig.boundBy.join(", then ")).replace("operating-point cap", "the safe load")));
+    if (r.fig.refused) parts.push(esc(plainReasonWord(r.fig.refused)));
     if (r.fig.uncapped != null) parts.push(`${r.what} alone would allow ${fmtRate(r.fig.uncapped)}`);
     if (r.fig.prefillOnlyRate != null && val(r.fig) != null && Math.abs(r.fig.prefillOnlyRate - val(r.fig)) > 1e-9) parts.push(`the prefill side alone allows ${fmtRate(r.fig.prefillOnlyRate)}`);
     if (spanText(r.fig)) parts.push(spanText(r.fig));
@@ -1299,7 +1391,10 @@ function renderLimits() {
 
   const step = (name, s) => {
     const lim = val(s.limit), d = val(s.delta);
-    if (lim == null) return `<li>+1 ${name}: refused (${esc(s.limit.refused ? s.limit.refused.reason : "")})</li>`;
+    if (lim == null) {
+      const nr = s.limit.refused && s.limit.refused.reason === "NoPrefillCapacity";
+      return `<li>+1 ${name}: ${nr ? "prefill's limit is not measured yet" : esc(s.limit.refused ? plainReasonWord(s.limit.refused) : "not estimated")}</li>`;
+    }
     const dtext = d == null ? "" : d === 0 ? ` (+0: ${name} does not bind)` : ` (${d > 0 ? "+" : ""}${fmtRate(d)})`;
     const b = (s.binding || []).join(" and ");
     return `<li>+1 ${name} (${s.fleet.prefill} P / ${s.fleet.decode} D) <b>${fmtRate(lim)}</b>${dtext}${b ? ", then " + esc(b) + " binds" : ""}</li>`;
@@ -1317,6 +1412,9 @@ function drawBars(rows, fleet, rate) {
   const W = 960, L = 70, R = 200, rowH = 26, T = 6, pw = W - L - R;
   const H = T + all.length * rowH + 22;
   const X = v => L + pw * Math.min(v, xmax) / xmax;
+  // A role's limit past the fleet's operating-point cap is drawn solid to
+  // the cap and faded beyond it: the fleet serves no more than the cap.
+  const opCap = state.plan ? val(state.plan.ttft.markers.operatingCap) : null;
   let s = "";
   all.forEach((r, i) => {
     const y = T + i * rowH, v = val(r.fig);
@@ -1324,11 +1422,15 @@ function drawBars(rows, fleet, rate) {
     const labelX = v == null ? 0 : (capped ? Math.max(X(v), X(val(fleet.withoutHeadroom))) : X(v)) + 6;
     s += `<text class="lbl" x="${L - 8}" y="${y + 14}" text-anchor="end">${r.name}</text>`;
     s += `<rect class="barbg" x="${L}" y="${y + 5}" width="${pw}" height="10" rx="4"/>`;
-    if (v != null) {
+    if (v != null && opCap != null && v > opCap) {
+      s += `<rect class="${r.cls}" x="${L}" y="${y + 5}" width="${Math.max(2, X(opCap) - L).toFixed(1)}" height="10" rx="4"/>` +
+        `<rect class="${r.cls} beyondcap" x="${X(opCap).toFixed(1)}" y="${y + 5}" width="${Math.max(0, X(v) - X(opCap)).toFixed(1)}" height="10" rx="4"/>`;
+      s += `<text class="lblp" x="${labelX}" y="${y + 14}">${esc(barWords(r))}</text>`;
+    } else if (v != null) {
       s += `<rect class="${r.cls}" x="${L}" y="${y + 5}" width="${Math.max(2, X(v) - L).toFixed(1)}" height="10" rx="4"/>`;
       s += `<text class="lblp" x="${labelX}" y="${y + 14}">${fmtRate(v)}${capped ? " (without headroom " + fmtRate(val(fleet.withoutHeadroom)) + ")" : ""}</text>`;
     } else {
-      s += `<text class="lbl" x="${L + 6}" y="${y + 14}">refused: ${esc(r.fig.refused ? r.fig.refused.reason : "")}</text>`;
+      s += `<text class="lbl" x="${L + 6}" y="${y + 14}">${esc(barWords(r))}</text>`;
     }
     if (capped) {
       const u = X(val(fleet.withoutHeadroom));
@@ -1340,10 +1442,30 @@ function drawBars(rows, fleet, rate) {
   s += `<text x="${L + pw}" y="${yb + 14}" text-anchor="start" dx="14">r/s</text>`;
   s += `<line class="guide" x1="${X(rate)}" x2="${X(rate)}" y1="${T}" y2="${yb}"/>` +
     `<text class="lbl" x="${X(rate) + 4}" y="${T + 2}" dy="-2">you chose ${fmtRate(rate)}</text>`;
+  if (opCap != null && opCap < xmax) s += `<line class="marker" x1="${X(opCap)}" x2="${X(opCap)}" y1="${T}" y2="${yb}"/>`;
   const svg = el("bars");
   svg.setAttribute("viewBox", `0 -10 ${W} ${H + 10}`);
   svg.innerHTML = s;
-  el("barsdesc").textContent = all.map(r => `${r.name} limit ${figPlain(r.fig, fmtRate)}`).join("; ") + `; you chose ${fmtRate(rate)}.`;
+  // The screen-reader text says what the bars say.
+  el("barsdesc").textContent = all.map(r => `${r.name} limit ${barWords(r)}`).join("; ") + `; you chose ${fmtRate(rate)}.`;
+}
+
+// barWords is what a limit's bar says: its figure (with the rate chosen
+// where the limit passes the safe load), else what is known: prefill's
+// lower bound, or the TTFT target under the floor.
+function barWords(r, ps) {
+  const p = state.plan, v = val(r.fig);
+  const opCap = p ? val(p.ttft.markers.operatingCap) : null;
+  if (v != null) {
+    if (opCap == null || v <= opCap) return fmtRate(v);
+    const chosen = p.limits.chosen.rate;
+    return `${fmtRate(v)} (` + (Math.abs(chosen - opCap) < 1e-6 ? `your chosen rate: ${fmtRate(opCap)})` : `past the safe load ${fmtRate(opCap)})`);
+  }
+  const pk = ps || prefillShown(p && p.ttft.markers);
+  const fl = p && val(p.ttft.line.floor), tg = p && p.ttft.line.target;
+  return r.name === "Prefill" && pk.value != null ? prefillWords(pk) :
+    r.name === "Fleet" && fl != null && fl > tg ? "the TTFT target is below the floor at any rate" :
+    r.name === "Fleet" && pk.value != null ? `prefill's limit not measured; ${prefillWords(pk)}` : figPlain(r.fig, fmtRate);
 }
 
 // ticks are about n round values from 0 to max.
@@ -1373,7 +1495,8 @@ function pts(curve) {
   return curve.map(c => {
     const f = c.figure, y = val(f);
     const b = f.band || f.sensitivity;
-    return {x: c.rate, y, lo: b && b.lo != null ? b.lo : null, hi: b && b.hi != null ? b.hi : null, why: y == null ? why(f) : ""};
+    return {x: c.rate, y, lo: b && b.lo != null ? b.lo : null, hi: b && b.hi != null ? b.hi : null, why: y == null ? why(f) : "",
+      extrapolated: !!f.extrapolated};
   });
 }
 
@@ -1396,7 +1519,19 @@ function pinDot(rate, target, curRate, curTarget) {
 function renderTTFT() {
   const p = state.plan, t = p.ttft, k = state.k;
   const m = t.markers, knee = lowerKnee(m);
-  const series = [{cls: "c-mix", name: `${shapeOf(p)} (the limits are read here)`, pts: pts(t.line.curve), band: true}];
+  // Priced by the experimental TTFT model, the mix line is solid up to the
+  // highest load measured and dashed beyond it.
+  // It is dashed from the top of the tested range too, where the held-out
+  // check ends below the highest load measured: past it is an extrapolation.
+  const held = state.inputs && state.inputs.ttftModel && state.inputs.ttftModel.heldOut;
+  const testedTo = held && held.rateTo != null ? held.rateTo : null;
+  const mix = measuredSplit(pts(t.line.curve).map(q => Object.assign(q, {extrapolated: q.extrapolated || (testedTo != null && q.x > testedTo)})));
+  const label = t.model && t.model.priced ? t.model.label + ", " : "";
+  const series = [{cls: "c-mix", name: `${label}${shapeOf(p)} (the limits are read here)`, pts: mix.measured, band: true}];
+  if (mix.beyond.length) {
+    series.push({cls: "c-mix", extra: " extrap", pts: mix.beyond, band: true,
+      name: testedTo != null ? `extrapolated (above the tested ${fmtRate(testedTo)})` : `extrapolated (${t.model ? t.model.beyond : ""})`});
+  }
   const dots = [];
   const buckets = t.perBucket || [];
   // The lines follow the plan's edges, up to 8: past five the colours
@@ -1422,7 +1557,13 @@ function renderTTFT() {
   }
   const targets = [t.line.target].concat(buckets.map(l => l.target), pinTarget != null ? [pinTarget] : []);
   const floor = val(t.line.floor);
-  const ymax = Math.max(3 * Math.max(...targets), floor != null ? floor * 1.3 : 0);
+  // The axis holds the curve up to the rate set, so a curve that starts over
+  // its target is drawn, not clipped at three times the target; at most ten
+  // times the target, past which the curve is clipped.
+  const upTo = series[0].pts.concat(series[1] && series[1].extra === " extrap" ? series[1].pts : [])
+    .filter(q => q.y != null && q.x <= (p.limits.chosen.rate || 0) * 1.1).map(q => q.y);
+  const seen = upTo.length ? Math.min(Math.max(...upTo) * 1.15, 10 * Math.max(...targets)) : 0;
+  const ymax = Math.max(3 * Math.max(...targets), floor != null ? floor * 1.3 : 0, seen);
   const B = val(t.line.atTarget.rate), A = val(t.line.atRate.figure);
   const belowFloor = t.line.atTarget.rate.refused && t.line.atTarget.rate.refused.reason === "TargetBelowFloor";
   // On a rising curve, below-right of A and above-left of B are off the line.
@@ -1430,23 +1571,31 @@ function renderTTFT() {
   if (A != null) dots.push({x: t.line.atRate.rate, y: A, cls: "c-mix", label: `${fmtSec(A)} at ${fmtRate(t.line.atRate.rate)}`, below: true, side: aSide});
   if (B != null) dots.push({x: B, y: t.line.target, cls: "c-mix", filled: true, label: `${fmtRate(B)} meets it${aboveCap(p, B)}`, side: aSide === "left" ? "right" : "left"});
   const markers = [];
-  if (val(m.prefillKnee) != null) markers.push({x: val(m.prefillKnee), label: "prefill knee"});
-  if (val(m.decodeKnee) != null) markers.push({x: val(m.decodeKnee), label: "decode knee"});
-  if (val(m.operatingCap) != null) markers.push({x: val(m.operatingCap), label: "cap"});
+  const pkLB = kneeLowerBound(m.prefillKnee), ps = prefillShown(m);
+  if (ps.value != null) markers.push({x: ps.value, label: pkLB ? "prefill limit at least" : "prefill limit", after: pkLB ? (ps.raised ? " r/s (carried)" : " r/s (lower bound)") : ""});
+  if (val(m.decodeKnee) != null) markers.push({x: val(m.decodeKnee), label: "decode limit"});
+  if (val(m.operatingCap) != null) markers.push({x: val(m.operatingCap), label: "safe load"});
   let onset = null;
   if (m.onsets && m.onsets.prefill != null) onset = m.onsets.prefill;
   if (m.onsets && m.onsets.decode != null) markers.push({x: m.onsets.decode, label: "decode onset"});
   const rate = p.limits.chosen.rate;
   const xmax = Math.max(knee != null ? knee * 1.2 : 10, rate * 1.1, pinXmax());
   el("ttfttitle").textContent = `TTFT ${t.statistic} against the request rate`;
-  el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : "One line for the mix; its point B is the prefill limit.";
+  // A short caption: the model's label and evidence; what is dashed is in
+  // the legend, and the rest of the model's note in the Flags drawer.
+  // The caption quotes the score at the chart's own statistic: the page's
+  // check where it ran, else the held-out mean, saying where the rest is.
+  const scored = state.bt ? btVerdictCard(state.bt, t.statistic, state.k.tpotStat)[0] : null;
+  el("ttftcap").textContent = buckets.length ? BUCKET_NOTE : !t.model ? "" :
+    scored && scored.chip.startsWith(`TTFT ${t.statistic} `) ? `${t.model.label}: held-out ${scored.chip} (Check the planner).` :
+    ttftModelNote(Object.assign({}, t.model, {rightEnd: "", measuredUpTo: null})) + (t.statistic !== "mean" ? ` The full check, at TTFT ${t.statistic}, is in Check the planner.` : "");
   chart(el("ttftchart"), {W: 640, H: 340, xmax, ymax, series, target: t.line.target, belowFloor, floor: belowFloor ? floor : null,
-    rate, dots, markers, knee, onset, pinTarget, clip: "clip-ttft"});
+    rate, dots, markers, knee, kneeLB: pkLB && knee === ps.value, onset, pinTarget, clip: "clip-ttft", ytitle: `TTFT ${t.statistic}`});
   el("ttftlegend").innerHTML = legend(series, onset != null);
   el("ttftpoints").innerHTML =
-    `<div>Open circle, the TTFT at your rate: <b>${figText(t.line.atRate.figure, fmtSec)}</b> ${flagChips(t.line.atRate.figure)}</div>` +
-    `<div>Filled circle, the rate at ${fmtSec(t.line.target)}: <b>${figText(t.line.atTarget.rate, fmtRate)}</b>${esc(aboveCap(p, val(t.line.atTarget.rate)))}` +
-    (t.line.atTarget.rate.refused ? " " + esc(why(t.line.atTarget.rate)) : "") + ` ${flagChips(t.line.atTarget.rate)}</div>` +
+    `<div>Open circle, the TTFT at your rate: <b>${figText(t.line.atRate.figure, fmtSec)}${dagger(t.line.atRate.figure)}</b> ${flagChips(t.line.atRate.figure)}</div>` +
+    `<div>Filled circle, the rate at ${fmtSec(t.line.target)}: <b>${val(t.line.floor) != null && val(t.line.floor) > t.line.target ? "none: the target is below the floor" : figText(t.line.atTarget.rate, fmtRate)}${dagger(t.line.atTarget.rate)}</b>${esc(aboveCap(p, val(t.line.atTarget.rate)))}` +
+    ` ${flagChips(t.line.atTarget.rate)}</div>` +
     `<div>Floor: ${figText(t.line.floor, fmtSec)}</div>`;
 }
 
@@ -1480,19 +1629,20 @@ function renderTPOT() {
   if (B != null) dots.push({x: B, y: t.target, cls: "c-mix", filled: true, label: `${fmtRate(B)} meets it${aboveCap(p, B)}`, side: aSide === "left" ? "right" : "left"});
   const belowFloor = t.atTarget.rate.refused && t.atTarget.rate.refused.reason === "TargetBelowFloor";
   const markers = [];
-  if (knee != null) markers.push({x: knee, label: "decode knee"});
+  if (knee != null) markers.push({x: knee, label: "decode limit"});
   const cap = val(p.ttft.markers.operatingCap);
-  if (cap != null) markers.push({x: cap, label: "cap"});
+  if (cap != null) markers.push({x: cap, label: "safe load"});
   el("tpottitle").textContent = `TPOT ${t.statistic} against the request rate`;
   chart(el("tpotchart"), {W: 460, H: 340, xmax, ymax, series, target: t.target, belowFloor, floor: belowFloor ? floor : null,
-    rate, dots, markers, knee: lk, pinTarget, clip: "clip-tpot"});
+    rate, dots, markers, knee: lk, kneeLB: kneeLowerBound(p.ttft.markers.prefillKnee) && lk === prefillShown(p.ttft.markers).value,
+    pinTarget, clip: "clip-tpot", ytitle: `TPOT ${t.statistic}`});
   el("tpotlegend").innerHTML = legend(series, false);
   const u = t.atTarget.rate.uncapped;
   el("tpotpoints").innerHTML =
-    `<div>Open circle, the TPOT at your rate: <b>${figText(t.atRate.figure, fmtSec)}</b> ${flagChips(t.atRate.figure)}</div>` +
-    `<div>Filled circle, the rate at ${fmtSec(t.target)}: <b>${figText(t.atTarget.rate, fmtRate)}</b>${esc(aboveCap(p, val(t.atTarget.rate)))}` +
+    `<div>Open circle, the TPOT at your rate: <b>${figText(t.atRate.figure, fmtSec)}${dagger(t.atRate.figure)}</b> ${flagChips(t.atRate.figure)}</div>` +
+    `<div>Filled circle, the rate at ${fmtSec(t.target)}: <b>${figText(t.atTarget.rate, fmtRate)}${dagger(t.atTarget.rate)}</b>${esc(aboveCap(p, val(t.atTarget.rate)))}` +
     (u != null ? ` (TPOT alone would allow ${fmtRate(u)})` : "") +
-    (t.atTarget.rate.refused ? " " + esc(why(t.atTarget.rate)) : "") + ` ${flagChips(t.atTarget.rate)}</div>` +
+    (t.atTarget.rate.refused ? " " + esc(plainReasonWord(t.atTarget.rate.refused)) : "") + ` ${flagChips(t.atTarget.rate)}</div>` +
     `<div>Floor: ${figText(t.floor, fmtSec)}</div>`;
 }
 
@@ -1502,23 +1652,28 @@ function legend(series, onsets) {
   const sw = (cls, dash, thin, pin, extra) => `<svg viewBox="0 0 18 10" aria-hidden="true"><line class="${dash ? "guide" : "line " + cls + (thin ? " thin" : "") + (pin ? " pin" : "") + (extra || "")}" x1="1" x2="17" y1="5" y2="5"/></svg>`;
   const box = cls => `<svg viewBox="0 0 18 10" aria-hidden="true"><rect class="${cls}" x="1" y="1" width="16" height="8"/></svg>`;
   return series.map(s => `<span>${sw(s.cls, false, s.thin, s.pin, s.extra)}${esc(s.name)}</span>`).join("") +
-    `<span>${sw("", true)}target / rate you set</span><span>${box("band")}span over V_P and f, or band</span>` +
-    `<span>${box("sat")}saturated</span>` + (onsets ? `<span>${box("onset")}past the prefill flow-control onset</span>` : "");
+    `<span>${sw("", true)}target / your rate</span><span>${box("band")}uncertainty range</span>` +
+    `<span>${box("sat")}overloaded</span>` + (onsets ? `<span>${box("onset")}the router queues</span>` : "");
 }
 
 // chart draws one graph: the curves (gaps where refused), the target and the
 // rate as dashed lines, the two points, the knees and the cap, and the
 // saturated region shaded.
 function chart(svg, o) {
-  const {W, H} = o, L = 52, R = 16, T = 26, Bm = 34, pw = W - L - R, ph = H - T - Bm;
+  const {W, H} = o, L = 52, R = 16, T = 38, Bm = 34, pw = W - L - R, ph = H - T - Bm;
   const X = v => L + pw * v / o.xmax, Y = v => T + ph * (1 - v / o.ymax);
   const yms = o.ymax < 2;
   const yfmt = v => yms ? fmtNum(v * 1000) : fmtNum(v);
   let s = `<defs><clipPath id="${o.clip}"><rect x="${L}" y="${T}" width="${pw}" height="${ph}"/></clipPath></defs>`;
   if (o.onset != null && o.onset < o.xmax) s += `<rect class="onset" x="${X(o.onset)}" y="${T}" width="${L + pw - X(o.onset)}" height="${ph}"/>`;
   if (o.knee != null && o.knee < o.xmax) {
-    s += `<rect class="sat" x="${X(o.knee)}" y="${T}" width="${L + pw - X(o.knee)}" height="${ph}"/>` +
-      `<text x="${L + pw - 4}" y="${T + ph - 8}" text-anchor="end">saturated</text>`;
+    // Past a knee priced from a lower bound of V_P the fleet is not known to
+    // saturate: the true knee may be higher.
+    // The zone's name is drawn where it collides with nothing: only when the
+    // rate set lies well left of it (the legend names it otherwise).
+    const zone = o.kneeLB ? "past a lower-bound limit" : "overloaded";
+    s += `<rect class="${o.kneeLB ? "satlb" : "sat"}" x="${X(o.knee)}" y="${T}" width="${L + pw - X(o.knee)}" height="${ph}"><title>${zone}</title></rect>` +
+      (X(o.rate) < X(o.knee) - 8 && L + pw - X(o.knee) > 7 * zone.length ? `<text x="${L + pw - 4}" y="${T + ph - 8}" text-anchor="end">${zone}</text>` : "");
   }
   for (const v of ticks(o.ymax, 5)) {
     if (v > o.ymax) continue;
@@ -1530,15 +1685,19 @@ function chart(svg, o) {
     s += `<text x="${X(v)}" y="${T + ph + 16}" text-anchor="middle">${fmtNum(v)}</text>`;
   }
   s += `<text x="${L + pw / 2}" y="${H - 4}" text-anchor="middle">request rate, r/s</text>` +
-    `<text x="12" y="${T + ph / 2}" transform="rotate(-90 12 ${T + ph / 2})" text-anchor="middle">${yms ? "ms" : "s"}</text>`;
+    `<text x="12" y="${T + ph / 2}" transform="rotate(-90 12 ${T + ph / 2})" text-anchor="middle">${esc(o.ytitle || "")} (${yms ? "ms" : "s"})</text>`;
   // The knees and the cap, labelled along the top, staggered when close.
-  let lastX = -1e9, row = 0;
+  // A label is staggered up a row when it would touch the one before it,
+  // whose half width is about 3.3 px a character at the chart's font.
+  let lastX = -1e9, lastHalf = 0, row = 0;
   for (const mk of o.markers.slice().sort((a, b) => a.x - b.x)) {
     if (mk.x > o.xmax) continue;
-    row = X(mk.x) - lastX < 70 ? (row + 1) % 2 : 0;
+    const text = `${mk.label} ${fmtNum(mk.x)}${mk.after || ""}`, half = 3.3 * text.length;
+    row = X(mk.x) - lastX < lastHalf + half + 6 ? (row + 1) % 2 : 0;
     lastX = X(mk.x);
+    lastHalf = half;
     s += `<line class="marker" x1="${X(mk.x)}" x2="${X(mk.x)}" y1="${T - 4}" y2="${T + ph}"/>` +
-      `<text x="${X(mk.x)}" y="${T - 8 - 11 * row}" text-anchor="middle">${esc(mk.label)} ${fmtNum(mk.x)}</text>`;
+      `<text x="${X(mk.x)}" y="${row ? T - 21 : T - 8}" text-anchor="middle">${esc(text)}</text>`;
   }
   let g = "";
   for (const sr of o.series) {
@@ -1554,6 +1713,15 @@ function chart(svg, o) {
       };
       for (const q of sr.pts) (q.y != null && q.lo != null && q.hi != null) ? run.push(q) : flush();
       flush();
+    }
+  }
+  // Where a line leaves the plot at the top, a marker says so: the curve
+  // goes on above the axis.
+  for (const sr of o.series) {
+    const out = (sr.pts || []).find(q => q.y != null && q.y > o.ymax && q.x <= o.xmax);
+    if (out) {
+      s += `<text class="offaxis" x="${X(out.x).toFixed(1)}" y="${T + 10}" text-anchor="middle">&#9650;` +
+        `<title>${esc(sr.name || "")}: above the axis from ${esc(fmtRate(out.x))}</title></text>`;
     }
   }
   for (const sr of o.series.slice().reverse()) {
@@ -1629,6 +1797,7 @@ function renderTables() {
   const cell = q => q ? (q.y != null ? fmtSec(q.y) + band(q) : "refused: " + esc(q.why)) : "";
   el("curvetable").innerHTML = "<table><tr><th>rate</th><th>TTFT " + esc(p.ttft.statistic) + "</th>" + (p.tpot ? "<th>TPOT " + esc(p.tpot.statistic) + "</th>" : "") + "</tr>" +
     ttft.map((q, i) => `<tr><td>${fmtRate(q.x)}</td><td>${cell(q)}</td>${p.tpot ? `<td>${cell(tpot[i])}</td>` : ""}</tr>`).join("") + "</table>";
+  exportsRow(el("planexports"), "plan", [["CSV", "text/csv", () => curvesCSV(p)], ["JSON", "application/json", () => JSON.stringify(p, null, 2) + "\n"]]);
   const b = p.ttft.perBucket || [];
   el("buckettable").innerHTML = !b.length ? "" :
     `<table><caption class="hint">${esc(BUCKET_NOTE)}</caption><tr><th>bucket</th><th>prompt</th><th>lower knee</th><th>TTFT at ${fmtRate(p.limits.chosen.rate)}</th><th>rate at its target</th></tr>` +
@@ -2072,6 +2241,12 @@ function wire() {
   el("rrun").onclick = runReport;
   addShapeRow("", "", "");
   el("unpin").onclick = unpin;
+  wireTabs();
+  // The glossary: each symbol the method uses, and the words the page says.
+  el("glossary").replaceChildren(...GLOSSARY.flatMap(([sym, words]) => [textNode("dt", sym), textNode("dd", words)]));
+  el("usevp").onclick = useVP;
+  el("busier").onclick = busierWindow;
+  el("execcopy").onclick = copyExecImage;
   el("kprom").onchange = el("krec").onchange = el("lasthour").onchange = showKind;
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
   el("upload").onclick = uploadRecording;
@@ -2088,6 +2263,401 @@ function wire() {
     document.querySelector('[data-btmode="other"]').hidden = !other;
     btStale();
   };
+}
+
+// ---- The answer: the executive panel and the refusal card ----
+
+// startExecutive runs, once per inputs loaded and after the first plan, the
+// questions the executive panel needs beyond the plan: the fleet judged at
+// the traffic's own shape (POST v1/report) and the fleet +25% and +50% of
+// its busiest load needs (POST v1/size, execAnswers), then the planner
+// checked on the source's held-out last half (POST v1/backtest), each in the
+// background, with the progress bar saying which is running. The report and
+// the sizes are asked again when the SLO, shape or assumed terms change
+// (execKnobs); the check is not, since no SLO enters it. An answer for
+// inputs since replaced, or for knobs since changed, is dropped.
+async function startExecutive() {
+  const x = state.exec;
+  if (!x || x.started || !state.inputs || !state.plan) return;
+  x.started = true;
+  const id = state.inputs.inputsId, mine = () => state.exec === x && state.inputs && state.inputs.inputsId === id;
+  // With the server's held-out check at load, the headline needs no check of
+  // its own: the full one runs when Check the planner is opened.
+  const held = state.inputs.ttftModel && state.inputs.ttftModel.heldOut;
+  x.btPending = !!state.inputs.fleet.prefill && !(held && held.steps > 0);
+  x.reportPending = true;
+  x.growthPending = true;
+  const sig = execSigs();
+  x.rSig = sig.r;
+  x.gSig = sig.g;
+  await execAnswers(x);
+  if (!mine() || !x.btPending) return;
+  try {
+    x.btAbort = new AbortController();
+    execProgress(x, "bt", "Checking the planner on your held-out hours: fitting, then pricing each step");
+    x.bt = await api("POST", "v1/backtest", {inputsId: id, split: "50%", step: "5m"}, x.btAbort.signal);
+  } catch (e) {
+    x.btError = e.message;
+  }
+  if (!mine()) return;
+  x.btAbort = null;
+  x.btPending = false;
+  execProgress(x, "bt", "");
+  // The check on the page's own tab shows the same run until you run another.
+  if (x.bt && !state.bt) {
+    state.bt = x.bt;
+    el("btsplit").value = "50";
+    el("btsplitout").textContent = "50%";
+    renderBacktest();
+  }
+  renderExec();
+}
+
+// execSigs is what the panel's report (r) and growth sizes (g) ask beyond
+// the inputs: the SLO, headroom and assumed terms, and for the sizes the
+// shape and the bound too. Neither carries the rate or the fleet on screen.
+function execSigs() {
+  return {r: JSON.stringify(execReportRequest(state.inputs.inputsId, planRequest())), g: JSON.stringify(growthSizeRequest(0))};
+}
+
+// execKnobs re-asks, debounced, whichever of the report and the growth sizes
+// the knobs just changed. The rows it re-asks read as updating from now on:
+// an answer in flight for the old knobs is cancelled and dropped.
+let execTimer = null;
+function execKnobs() {
+  const x = state.exec;
+  if (!x || !x.started || !state.inputs || !state.plan) return;
+  const sig = execSigs();
+  const r = sig.r !== x.rSig, g = sig.g !== x.gSig;
+  if (!r && !g) return;
+  x.rSig = sig.r;
+  x.gSig = sig.g;
+  x.gen = (x.gen || 0) + 1;
+  if (x.ansAbort) x.ansAbort.abort();
+  if (r) x.reportPending = true;
+  if (g) x.growthPending = true;
+  // Growth that will not be sized says why at once, never "Sizing".
+  if (x.growthPending) {
+    x.growth = null;
+    x.growthMissing = growthMissingFor(state.inputs, state.plan);
+    if (x.growthMissing) x.growthPending = false;
+  }
+  clearTimeout(execTimer);
+  execTimer = setTimeout(() => execAnswers(x), 400);
+}
+
+// execAnswers asks what the panel has pending: the report, then the growth
+// sizes, one after the other. A later call (execKnobs) or a load supersedes
+// it; its answers are then dropped.
+async function execAnswers(x) {
+  if (state.exec !== x || !state.inputs) return;
+  const gen = x.gen = (x.gen || 0) + 1;
+  if (x.ansAbort) x.ansAbort.abort();
+  const ctl = x.ansAbort = new AbortController();
+  const id = state.inputs.inputsId;
+  const live = () => state.exec === x && x.gen === gen && state.inputs && state.inputs.inputsId === id;
+  const plan = planRequest();
+  const askReport = !!x.reportPending;
+  // Growth is sized where prefill's limit is priced: by the default model,
+  // or the experimental one where it is on; and for a P/D fleet, the one
+  // POST /v1/size sizes. Else the row says what is missing, with no request.
+  if (x.growthPending) {
+    x.growth = null;
+    x.growthMissing = growthMissingFor(state.inputs, state.plan);
+    if (x.growthMissing) x.growthPending = false;
+  }
+  const askGrowth = !!x.growthPending;
+  renderExec();
+  if (askReport) {
+    execProgress(x, "ans", "Judging the fleet at your busiest load");
+    x.reportError = null;
+    let report = null;
+    try {
+      report = await api("POST", "v1/report", execReportRequest(id, plan), ctl.signal);
+    } catch (e) {
+      if (!live()) return;
+      x.reportError = e.name === "AbortError" ? "cancelled" : e.message;
+    }
+    if (!live()) return;
+    // A report that failed keeps the busiest load the last one measured (no
+    // SLO enters it) but not its verdict, which was for other targets.
+    x.report = report || (x.report ? Object.assign({}, x.report, {shapes: []}) : null);
+    x.reportPending = false;
+    // Prefill's bound may rise to the load the report judged at: the bars and
+    // the charts show it as the panel does.
+    if (report) {
+      renderLimits();
+      renderTTFT();
+      renderTPOT();
+    }
+    renderExec();
+  }
+  if (askGrowth) {
+    // The fleet +25% and +50% of the busiest load needs, sized one after the
+    // other at the panel's SLO and shape. A cancel stops both.
+    const seen = x.report && x.report.load && x.report.load.rate ? x.report.load.rate.value : null;
+    if (seen == null) {
+      x.growthMissing = "Not sized: the busiest load was not judged.";
+    } else {
+      const growth = [];
+      for (const g of [1.25, 1.5]) {
+        execProgress(x, "ans", `Sizing the fleet for ${Math.round((g - 1) * 100)}% more traffic`);
+        let size = null, err = null;
+        try {
+          size = await api("POST", "v1/size", growthSizeRequest(g * seen), ctl.signal);
+        } catch (e) {
+          if (!live()) return;
+          if (e.name === "AbortError") {
+            x.growthMissing = "Not sized: cancelled.";
+            break;
+          }
+          err = e.message;
+        }
+        if (!live()) return;
+        growth.push({x: g, rate: g * seen, need: growthNeed(size, err)});
+      }
+      if (!x.growthMissing) x.growth = growth;
+    }
+    x.growthPending = false;
+  }
+  x.ansAbort = null;
+  execProgress(x, "ans", "");
+  renderExec();
+}
+
+// growthMissingFor is why the panel sizes no growth for these inputs and
+// plan, in words, or "" where it sizes it.
+function growthMissingFor(inputs, plan) {
+  if (!inputs.fleet.prefill) return GROWTH_NO_PD;
+  const pr = plan.limits.prefill;
+  const v2 = !!(plan.ttft && plan.ttft.model && plan.ttft.model.priced);
+  return !v2 && !!pr && !!pr.refused && pr.refused.reason === "NoPrefillCapacity" ? GROWTH_NO_PREFILL : "";
+}
+
+// execProgress shows what the panel is asking: the report and sizes (ans)
+// before the check (bt), which runs beside a re-ask. Cancel stops both.
+function execProgress(x, task, text) {
+  x.prog = Object.assign({}, x.prog, {[task]: text});
+  if (state.exec !== x) return;
+  const now = x.prog.ans || x.prog.bt || "";
+  progress(now, null, () => {
+    if (x.ansAbort) x.ansAbort.abort();
+    if (x.btAbort) x.btAbort.abort();
+  });
+}
+
+// execAbort cancels everything the panel is asking, on a new load.
+function execAbort(x) {
+  if (!x) return;
+  if (x.ansAbort) x.ansAbort.abort();
+  if (x.btAbort) x.btAbort.abort();
+}
+
+// renderExec draws the executive panel and the trust chip from execView, as
+// text nodes.
+function renderExec() {
+  const x = state.exec;
+  if (!x || !state.inputs || !state.plan || !state.k) return;
+  // The check on the Check tab, where it ran, is the one score the panel,
+  // the header chip and the check view quote.
+  const v = execView({inputs: state.inputs, plan: state.plan, report: x.report, bt: x.bt || state.bt, k: state.k,
+    reportPending: x.reportPending, reportError: x.reportError, btPending: x.btPending,
+    growth: x.growth, growthPending: x.growthPending, growthMissing: x.growthMissing});
+  const dl = el("execlines");
+  dl.replaceChildren();
+  for (const l of v.lines) {
+    const dt = textNode("dt", l.label);
+    // A badge only where a row is not an estimate: the note below says so.
+    if (l.badge) dt.appendChild(textNode("span", l.badge, "badge " + (l.badge === EXEC_BADGES.measured ? "b-measured" : "b-checked")));
+    dl.appendChild(dt);
+    // A row being asked again reads as updating, never as the answer.
+    const dd = textNode("dd", l.text, l.updating ? "updating" : "");
+    if (l.small) dd.appendChild(textNode("span", " " + l.small, "hint"));
+    // A row's detail sits in its drawer, closed.
+    if (l.more && l.more.length) {
+      const d = document.createElement("details");
+      d.className = "execmore";
+      d.appendChild(textNode("summary", "Details"));
+      for (const m of l.more) d.appendChild(textNode("div", m, "hint"));
+      dd.appendChild(d);
+    }
+    // A line's actions are page actions, never a CLI flag.
+    for (const a of l.actions || []) {
+      const b = textNode("button", a.label, "execact");
+      b.type = "button";
+      b.onclick = a.act === "usevp" ? () => useVP(a.vp) : busierWindow;
+      dd.appendChild(b);
+    }
+    dl.appendChild(dd);
+  }
+  el("execslo").textContent = v.note + " SLO used: " + v.slo;
+  el("execsrc").textContent = el("srcchip").textContent;
+  el("exec").hidden = false;
+  // The panel carries prefill's actions: the card is for size mode alone.
+  renderRefusal();
+  el("trustchip").textContent = v.trust;
+  el("trustchip").hidden = !v.trust;
+  state.execView = v;
+}
+
+// renderRefusal shows the refusal card where prefill's capacity could not
+// be priced, with what to do as page actions: in size mode, where the
+// answer panel does not carry them.
+function renderRefusal() {
+  const z = state.mode === "size" ? state.size : null;
+  const r = state.mode === "size" ? refusalView(state.plan, z && z.unmet) : null;
+  el("refusal").hidden = !r;
+  if (!r) return;
+  el("refusaltitle").textContent = r.title;
+  el("refusaltext").textContent = r.text;
+  el("usevp").hidden = r.vp == null;
+  if (r.vp != null) {
+    el("usevp").textContent = `Use ${Math.round(r.vp).toLocaleString("en-US")} tokens/s as the limit (conservative)`;
+    el("usevp").dataset.vp = String(r.vp);
+  }
+  el("refusalcode").textContent = r.code;
+}
+
+// VIEWS are the page's tabs, by name: Answer, Day plan, Check the planner,
+// Right-size.
+const VIEWS = ["answer", "day", "check", "right"];
+
+// showView shows one view and selects its tab; focus moves to the tab when
+// asked (a keyboard move). Opening Check the planner runs the check of the
+// source's last half once, if no check is on screen.
+function showView(name, focus) {
+  for (const v of VIEWS) {
+    const on = v === name;
+    el("view-" + v).hidden = !on;
+    el("tab-" + v).setAttribute("aria-selected", String(on));
+    el("tab-" + v).tabIndex = on ? 0 : -1;
+  }
+  if (focus) el("tab-" + name).focus();
+  // The panel's own check of the last half, still running, lands here too:
+  // a second one would ask the server the same question twice.
+  const execCheck = state.exec && state.exec.btPending;
+  if (name === "check" && !state.bt && !execCheck && state.inputs && state.inputs.fleet.prefill && !el("btrun").disabled) runBacktest();
+}
+
+// wireTabs makes the tab list work by click and by arrow keys, Home and End.
+function wireTabs() {
+  for (const v of VIEWS) {
+    el("tab-" + v).onclick = () => showView(v);
+    el("tab-" + v).onkeydown = e => {
+      const i = VIEWS.indexOf(v);
+      const to = {ArrowRight: (i + 1) % VIEWS.length, ArrowLeft: (i + VIEWS.length - 1) % VIEWS.length, Home: 0, End: VIEWS.length - 1}[e.key];
+      if (to == null) return;
+      e.preventDefault();
+      showView(VIEWS[to], true);
+    };
+  }
+  el("trustchip").onclick = e => { e.preventDefault(); showView("check", true); };
+}
+
+// renderNotice is the answer's one notice on how far to trust its figures
+// (noticeText): never a tag in every cell.
+function renderNotice(flags, banner) {
+  const t = noticeText(flags, banner);
+  el("notice").textContent = t;
+  el("notice").hidden = !t;
+}
+
+// useVP prices prefill at the speed the pods were seen to compute: typed as
+// the assumed prefill speed, flagged as every assumed term is.
+function useVP(given) {
+  const vp = Number(typeof given === "number" ? given : el("usevp").dataset.vp);
+  if (!state.k || !(vp > 0)) return;
+  state.k.assume.vp = vp;
+  el("a-vp").value = String(Math.round(vp));
+  showTyped();
+  schedule(0);
+}
+
+// busierWindow opens the source to pick another window: a busier one may
+// queue the prefill pods, which shows their limit.
+function busierWindow() {
+  el("source").open = true;
+  (kindNow() === "recording" ? el("cycle") : el("lasthour")).focus();
+  setStatus("Pick a window where the prefill pods were busy enough to queue, then Load.");
+}
+
+// copyExecImage draws the executive panel onto a canvas, as text, and puts
+// the image on the clipboard, or offers it as a file where the clipboard
+// takes no image. Nothing is loaded: the page's policy allows no image
+// source, so the text is drawn, not a picture of the page.
+async function copyExecImage() {
+  const v = state.execView;
+  if (!v) return;
+  const W = 1440, pad = 32, labelW = 260, lineH = 26, font = "16px system-ui, sans-serif";
+  const c = document.createElement("canvas"), g = c.getContext("2d");
+  g.font = font;
+  const wrap = (text, width) => {
+    const out = [];
+    let line = "";
+    for (const w of text.split(" ")) {
+      const t = line ? line + " " + w : w;
+      if (g.measureText(t).width > width && line) { out.push(line); line = w; } else line = t;
+    }
+    if (line) out.push(line);
+    return out;
+  };
+  const rows = v.lines.map(l => ({l, text: wrap(l.text, W - 2 * pad - labelW)}));
+  // Every line is drawn: a panel taller than 400 px is scaled down to fit,
+  // never cut, so the image stays at most 1440 x 400.
+  const H = pad * 2 + 40 + rows.reduce((n, r) => n + r.text.length * lineH + 8, 0) + lineH;
+  const s = Math.min(1, 400 / H);
+  c.width = Math.round(W * s);
+  c.height = Math.round(H * s);
+  g.scale(s, s);
+  const css = getComputedStyle(document.documentElement);
+  g.fillStyle = css.getPropertyValue("--surface-1").trim() || "#fff";
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = css.getPropertyValue("--text-primary").trim() || "#000";
+  g.font = "600 20px system-ui, sans-serif";
+  g.fillText("Capacity planner: " + el("execsrc").textContent, pad, pad + 8);
+  let y = pad + 44;
+  for (const r of rows) {
+    g.font = "600 15px system-ui, sans-serif";
+    g.fillStyle = css.getPropertyValue("--text-primary").trim() || "#000";
+    g.fillText(r.l.label, pad, y);
+    g.font = "12px system-ui, sans-serif";
+    g.fillStyle = css.getPropertyValue("--text-secondary").trim() || "#444";
+    g.fillText(r.l.badge, pad, y + 16);
+    g.font = font;
+    g.fillStyle = css.getPropertyValue("--text-primary").trim() || "#000";
+    for (const t of r.text) {
+      g.fillText(t, pad + labelW, y);
+      y += lineH;
+    }
+    y += 8;
+  }
+  g.font = "13px system-ui, sans-serif";
+  g.fillStyle = css.getPropertyValue("--text-secondary").trim() || "#444";
+  g.fillText("SLO used: " + v.slo, pad, H - 14);
+  const blob = await new Promise(res => c.toBlob(res, "image/png"));
+  try {
+    await navigator.clipboard.write([new ClipboardItem({"image/png": blob})]);
+    el("execcopied").textContent = "Copied the panel as an image.";
+  } catch (e) {
+    const out = el("execcopied");
+    out.textContent = "The clipboard takes no image here; save it instead:";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "capacity-answer.png";
+    a.textContent = "capacity-answer.png";
+    out.append(" ", a);
+  }
+}
+
+// progress shows the sticky progress bar: what runs, how far (a share, or
+// null for no share known), and a Cancel that calls cancel; "" hides it.
+function progress(text, share, cancel) {
+  el("progress").hidden = !text;
+  el("progtext").textContent = text;
+  el("progfill").style.width = share == null ? "100%" : Math.round(100 * share) + "%";
+  el("progfill").classList.toggle("indeterminate", share == null);
+  el("progcancel").hidden = !cancel;
+  el("progcancel").onclick = cancel || null;
 }
 
 // ---- Check the planner (POST /v1/backtest) ----
@@ -2200,21 +2770,44 @@ async function runCompare() {
   }
 }
 
-// renderBacktest draws the check: the verdict and what was not judged, the
-// two charts on one time axis, the legend, the scores and the notes.
+// renderBacktest draws the check, the answer first: the verdict card (three
+// lines, each with a chip), the one notice, the charts, the bucket tip and
+// the exports; the scores, every step (failing steps only on asking) and the
+// method closed below.
 function renderBacktest() {
   const bt = state.bt;
   el("btout").hidden = false;
+  const k = state.k || {};
+  const card = el("btverdict");
+  card.replaceChildren();
+  for (const l of btVerdictCard(bt, k.ttftStat, k.tpotStat)) {
+    const p = document.createElement("p");
+    p.appendChild(textNode("span", l.chip, "chip vchip v-" + l.cls));
+    p.appendChild(textNode("span", " " + l.text));
+    card.appendChild(p);
+  }
+  const notice = btNotice(bt);
+  el("btnotice").textContent = notice;
+  el("btnotice").hidden = !notice;
   const lines = btSummaryText(bt);
-  el("btsum").innerHTML = lines.map((t, i) => `<li>${i === 0 ? "<b>" + esc(t) + "</b>" : esc(t)}</li>`).join("");
+  el("btsum").innerHTML = lines.map(t => `<li>${esc(t)}</li>`).join("");
   const g = btSVG(bt), svg = el("btchart");
   svg.setAttribute("viewBox", g.viewBox);
   svg.innerHTML = g.markup;
   el("btlegend").innerHTML = btLegend();
-  el("btdesc").textContent = lines.join(" ");
+  // The charts' description is the verdict card's three lines: the method is in its own section.
+  el("btdesc").textContent = card.textContent;
+  el("bttip").textContent = btBucketTip(bt);
   el("btscores").innerHTML = btScoreTable(bt);
-  el("btsteps").innerHTML = btStepTable(bt);
-  el("btnotes").innerHTML = bt.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(bt.banner)}</li>`;
+  el("btunscored").innerHTML = btUnscoredList(bt).map(t => `<li>${esc(t)}</li>`).join("");
+  const steps = () => { el("btsteps").innerHTML = btStepTable(bt, el("btfailing").checked); };
+  el("btfailing").onchange = steps;
+  steps();
+  el("btnotes").innerHTML = bt.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(bt.banner)}</li>` + esc(quickCheckNote()).replace(/^(.+)$/, "<li>$1</li>");
+  exportsRow(el("btexports"), "check", [["CSV", "text/csv", () => btStepsCSV(bt)], ["JSON", "application/json", () => JSON.stringify(bt, null, 2) + "\n"]]);
+  // The panel, the header chip and the TTFT caption quote this check from now on.
+  renderExec();
+  if (state.plan) renderTTFT();
   const xh = svg.querySelector(".xh"), tip = el("tip");
   svg.onmousemove = e => {
     const r = svg.getBoundingClientRect(), vx = (e.clientX - r.left) * g.W / r.width;
@@ -2227,6 +2820,40 @@ function renderBacktest() {
     tip.style.top = (e.clientY + 14) + "px";
   };
   svg.onmouseleave = () => { xh.setAttribute("visibility", "hidden"); tip.hidden = true; };
+}
+
+// exportsRow is a result card's exports: Copy link, then a download of each
+// format the card offers ([label, type, text()]), named after the view and
+// the source.
+function exportsRow(box, view, formats) {
+  box.replaceChildren();
+  const link = textNode("button", "Copy link");
+  link.type = "button";
+  link.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(location.href);
+      link.textContent = "Link copied";
+    } catch (e) {
+      link.textContent = "Copy the address bar: the clipboard is closed here";
+    }
+  };
+  box.appendChild(link);
+  const base = `capacity-${view}-` + ((state.inputs && state.inputs.inputsId) || "").replace(/^sha256:/, "").slice(0, 12);
+  for (const [label, type, text] of formats) {
+    const b = textNode("button", "Download " + label);
+    b.type = "button";
+    b.onclick = () => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([text()], {type}));
+      a.download = `${base}.${label.toLowerCase()}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    };
+    box.appendChild(document.createTextNode(" · "));
+    box.appendChild(b);
+  }
 }
 
 // ---- The day plan ----
@@ -2285,6 +2912,8 @@ function renderDay() {
   el("daytable").innerHTML = dayHoursTable(d);
   el("daybuckets").innerHTML = dayBucketsTable(d);
   el("daynotes").innerHTML = d.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(d.banner)}</li>`;
+  el("dayhead").textContent = dayHeadline(d);
+  exportsRow(el("dayexports"), "dayplan", [["CSV", "text/csv", () => dayHoursCSV(d)], ["JSON", "application/json", () => JSON.stringify(d, null, 2) + "\n"]]);
   dayHover(svg, g);
 }
 
@@ -2323,7 +2952,7 @@ function renumberShapes() {
 }
 
 // addShapeRow adds a request-shape row: IL, OL and hit boxes and a remove
-// button. A blank row is the measured shape.
+// button. A blank row is the shape of the traffic the load ran at.
 function addShapeRow(il, ol, hit) {
   const rows = el("rshapes");
   if (rows.children.length >= MAX_REPORT_SHAPES) {
@@ -2480,9 +3109,19 @@ function renderReport(r) {
     li.appendChild(shapeLabel(s));
     if (s.whatIf) li.appendChild(textNode("span", " if all traffic were this shape", "rwhatif"));
     if (s.decodeOnly) li.appendChild(textNode("span", "decode only", "rmark unknown rscope"));
-    li.appendChild(textNode("b", " " + s.verdict + ": "));
+    // NOT JUDGED reads as plain words, with what to do as a page action.
+    const notJudged = s.verdict === "NOT JUDGED";
+    li.appendChild(textNode("b", " " + (notJudged ? "Not judged yet" : s.verdict) + ": "));
     if (s.needs) li.appendChild(textNode("span", s.needs, s.unmet ? "rneeds unmet" : "rneeds"));
-    li.appendChild(textNode("span", " " + s.rest, "rverdict"));
+    li.appendChild(textNode("span", " " + (notJudged ? plainVerdict(s.rest) + "." : s.rest), "rverdict"));
+    const card = notJudged ? refusalView(state.plan) : null;
+    if (card && card.vp != null) {
+      const b = textNode("button", `Use ${Math.round(card.vp).toLocaleString("en-US")} tokens/s as prefill's limit, then judge again`, "execact");
+      b.type = "button";
+      b.onclick = () => useVP(card.vp);
+      li.appendChild(b);
+    }
+    if (s.prompt) li.appendChild(textNode("div", "(" + s.prompt + ")", "rtrust"));
     if (s.trust) li.appendChild(textNode("div", "Self-check: " + s.trust + ".", "rtrust"));
     // Growth sits under the verdict it grows from, never in its place.
     for (const g of s.growth) {
@@ -2533,6 +3172,7 @@ function renderReport(r) {
   const notes = el("rnotes");
   notes.replaceChildren();
   for (const n of v.notes) notes.appendChild(textNode("li", n));
+  exportsRow(el("rexports"), "rightsize", [["CSV", "text/csv", () => reportCSV(v)], ["JSON", "application/json", () => JSON.stringify(r, null, 2) + "\n"]]);
   el("rresult").hidden = false;
 }
 

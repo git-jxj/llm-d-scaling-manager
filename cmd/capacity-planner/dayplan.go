@@ -42,6 +42,9 @@ type dayPlanFlags struct {
 	noSelfCheck   bool
 	// vpPlateau is --prefill-vp-plateau, as answerFlags' (vp_plateau.go).
 	vpPlateau bool
+	// hitAtCount is --prefill-hit-at-count, as answerFlags'
+	// (hit_at_count.go).
+	hitAtCount bool
 	// experimentalTTFT is --experimental-ttft, as answerFlags'
 	// (experimental_ttft.go).
 	experimentalTTFT bool
@@ -85,6 +88,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.Float64Var(&f.inputTokens, "assume-input-tokens", 0, "price every bucket at this mean prompt, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.Float64Var(&f.outputTokens, "assume-output-tokens", 0, "price every bucket at this mean output, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
+	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.BoolVar(&f.experimentalTTFT, experimentalTTFTFlag, false, experimentalTTFTUsage)
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
@@ -163,7 +167,7 @@ var resolveDay = func(ctx context.Context, f *dayPlanFlags, warn io.Writer) (*wh
 func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.Resolved, error) {
 	check := defaultSelfCheck && !f.noSelfCheck
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant, SelfCheck: &check,
-		PrefillVPPlateau: f.vpPlateau, ExperimentalTTFT: f.experimentalTTFT}
+		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, ExperimentalTTFT: f.experimentalTTFT}
 	src := &servedSources{warn: warn}
 	switch {
 	case f.recording != "" && f.window.prometheus != "":
@@ -397,8 +401,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 			ap, ad = withNotServing(ap, n.Prefill), withNotServing(ad, n.Decode)
 			notServing = true
 		}
-		verdict := map[string]string{whatifapi.DayVerdictUnder: "UNDER (SLO risk)", whatifapi.DayVerdictOver: "over (waste)",
-			whatifapi.DayVerdictMatch: "ok", whatifapi.DayVerdictRefused: "REFUSED (see above)", "": "not sized"}[h.Verdict]
+		verdict := dayVerdictWords(h.Verdict, h.Scope)
 		if h.Unmet > 0 {
 			verdict += fmt.Sprintf(", %d bucket(s) beyond %d replicas", h.Unmet, max(p.MaxReplicas.Prefill, p.MaxReplicas.Decode))
 		}
@@ -469,6 +472,13 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	if c.Sized > 0 {
 		fmt.Fprintf(&b, "hours under (SLO risk): %s\n", hourList(s.UnderHours, at))
 		fmt.Fprintf(&b, "hours over (waste): %s\n", hourList(s.OverHours, at))
+		if c.MeasuredTTFT > 0 && p.TTFT != nil {
+			fmt.Fprintf(&b, "measured TTFT over its target (%s %s): %d of the %d buckets the router measured\n",
+				p.TTFT.Statistic, msText(p.TTFT.Target), c.MeasuredTTFTOver, c.MeasuredTTFT)
+		}
+		if len(s.DecodeOverHours) > 0 {
+			fmt.Fprintf(&b, "hours decode only had a replica to spare: %s (%s)\n", hourList(s.DecodeOverHours, at), decodeOnlyWords)
+		}
 	}
 	if len(s.RefusedHours) > 0 {
 		fmt.Fprintf(&b, "hours refused: %s\n", hourList(s.RefusedHours, at))
@@ -481,6 +491,28 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 	}
 	_, err := io.WriteString(out, b.String())
 	return err
+}
+
+// decodeOnlyWords says why a verdict judged on decode alone is not the
+// fleet's.
+const decodeOnlyWords = "prefill was not sized, so this is not a fleet recommendation"
+
+// dayVerdictWords is an hour's verdict in the table's words. A verdict on
+// decode alone says so: decode's spare replica is no fleet's waste while
+// prefill is not sized.
+func dayVerdictWords(verdict, scope string) string {
+	if scope == whatifapi.ScopeDecodeOnly {
+		switch verdict {
+		case whatifapi.DayVerdictUnder:
+			return "UNDER (SLO risk), decode only"
+		case whatifapi.DayVerdictOver:
+			return "decode only: a decode replica to spare"
+		case whatifapi.DayVerdictMatch:
+			return "decode only: ok"
+		}
+	}
+	return map[string]string{whatifapi.DayVerdictUnder: "UNDER (SLO risk)", whatifapi.DayVerdictOver: "over (waste)",
+		whatifapi.DayVerdictMatch: "ok", whatifapi.DayVerdictRefused: "REFUSED (see above)", "": "not sized"}[verdict]
 }
 
 // withNotServing is a had cell with n replicas asked for and not serving
