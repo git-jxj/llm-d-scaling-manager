@@ -183,6 +183,11 @@ type RankMixture struct {
 	// profile is read at the priced load (RankMixtureOptions.SharesAtLoad);
 	// nil prices Shares.
 	ShareRows []ShareRow
+	// CleanSteps and OverloadedSteps are the fit steps under and at or over
+	// MaxCleanFitRho where the KV-deferral lines and the prompt slopes are
+	// fitted on the clean steps (RankMixtureOptions.CleanFitSteps); both 0
+	// without it.
+	CleanSteps, OverloadedSteps int
 }
 
 // MaxRelaxationShare is the largest relaxation time, as a share of the step
@@ -557,7 +562,7 @@ func (m RankMixture) Assumed() string {
 	}
 	return fmt.Sprintf("experimental TTFT model %s (OUTSIDE VALIDATED REGION): %s per rank on %d ranks "+
 		"(busiest share %.3g of the mean), S(x) = %.3g s + x / %.4g tok/s; %s; Z = %.3g s + %.3g x %.3g us x L "+
-		"(beta: overhead %.3g, decode %.3g, remainder %.3g us per prompt token)",
+		"(beta: overhead %.3g, decode %.3g, remainder %.3g us per prompt token)%s",
 		QueueRankMixture, queue, len(m.Shares), busiest, m.S0, m.V, kv, m.A0, m.Spread, m.Beta*1e6,
-		m.BetaOverhead*1e6, m.BetaDecode*1e6, m.BetaRemainder*1e6)
+		m.BetaOverhead*1e6, m.BetaDecode*1e6, m.BetaRemainder*1e6, m.fitStepsAssumed())
 }

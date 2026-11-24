@@ -72,9 +72,6 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0); set, it turns the default --router-wait-in-prefill off")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTV2Usage)
-	fs.BoolVar(&f.rankMixtureFitSteps, "rank-mixture-fit-steps", false, "with --experimental-ttft=v2, fit the KV-deferral lines and "+
-		"the prompt slopes only on steps whose busiest prefill rank is under utilization 0.9, and read the ranks' shares at the "+
-		"priced load (the fit steps of nearest rate) instead of the fit window's mean; off by default")
 }
 
 // parsed records the flags given, once fs is parsed, and lets the default
@@ -106,6 +103,11 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.Float64Var(&f.arrivalCV2, "arrival-cv2", 0, "the test's arrivals' Ca^2, when known; default Poisson (1), flagged")
 	fs.StringVar(&f.measured, "measured", whatifapi.MeasuredAuto, "the latency scored against: auto (the router's where recorded), router or engine")
 	f.registerAssume(fs)
+	// Backtest's only, as the rank mixture it changes: predict refuses
+	// --experimental-ttft=v2.
+	fs.BoolVar(&f.rankMixtureFitSteps, "rank-mixture-fit-steps", false, "with --experimental-ttft=v2, fit the KV-deferral lines and "+
+		"the prompt slopes only on steps whose busiest prefill rank is under utilization 0.9, and read the ranks' shares at the "+
+		"priced load (the fit steps of nearest rate) instead of the fit window's mean; off by default")
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage)
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
@@ -115,6 +117,9 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	f.parsed(fs)
 	if f.output != outputText && f.output != outputJSON {
 		return usagef("-o %q, want text or json", f.output)
+	}
+	if f.rankMixtureFitSteps && !f.rankMixtureTTFT {
+		return usagef("--rank-mixture-fit-steps changes the fit of the rank mixture: give it with --experimental-ttft=v2")
 	}
 	ctrllog.SetLogger(logr.Discard())
 	req, err := f.request()

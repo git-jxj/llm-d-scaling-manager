@@ -238,6 +238,10 @@ Two fixes to the fit are off by default, and `--rank-mixture-fit-steps`
   priced rate are the mean of the five fit steps nearest that rate, not the
   fit window's mean.
 
+With fewer than four steps under 0.9, the two fits read every step; with
+fewer than five steps whose ranks carried a request a second, the shares are
+the fit window's mean. The model's `assumed` line says which it priced.
+
 The model prices only what its inputs identify. It abstains on the whole backtest where:
 - a prompt slope is not identified;
 - the spread is not calibrated (fit window under 12 h);

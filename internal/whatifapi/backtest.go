@@ -986,6 +986,9 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	}
 	switch req.TTFTModel {
 	case "":
+		if req.RankMixtureFitSteps {
+			return nil, InputErrorf("rankMixtureFitSteps changes the fit of ttftModel %q: give it with that model", whatif.QueueRankMixture)
+		}
 	case string(whatif.QueueRankMixture):
 		// The model prices only where its identifiability checks pass;
 		// otherwise it abstains, and every TTFT is the planner's own.

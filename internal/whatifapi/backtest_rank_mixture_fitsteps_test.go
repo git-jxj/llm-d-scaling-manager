@@ -27,6 +27,12 @@ func TestBacktest_RankMixtureFitSteps(t *testing.T) {
 	q, err = backtestQuestionOf(fit, test, req, time.Time{}, "")
 	require.NoError(t, err)
 	assert.NotEmpty(t, q.mixture.m.ShareRows)
+	assert.Contains(t, q.mixture.report.Assumed, "shares read at the priced rate")
+	// Without the rank mixture the switch has no fit to change: a 400, not
+	// a request answered as if it were not given.
+	_, err = backtestQuestionOf(fit, test, BacktestRequest{RankMixtureFitSteps: true}, time.Time{}, "")
+	require.Error(t, err)
+	assert.True(t, IsInputError(err), "%v", err)
 	// The request names the switch only when it is on.
 	b, err := json.Marshal(BacktestRequest{TTFTModel: string(whatif.QueueRankMixture)})
 	require.NoError(t, err)

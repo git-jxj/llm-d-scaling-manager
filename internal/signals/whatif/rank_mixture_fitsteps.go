@@ -2,8 +2,10 @@ package whatif
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"slices"
+	"strings"
 )
 
 // Two fit-step fixes for the rank mixture (rank_mixture_fit.go), each a
@@ -46,9 +48,10 @@ type ShareRow struct {
 
 // cleanFitSteps is the steps whose busiest rank is under MaxCleanFitRho at
 // the service line S0 + x/V, each rank at its own rate and mean computed
-// prompt; every step where fewer than minCleanFitSteps are.
-func cleanFitSteps(steps []MixtureStep, s0, v float64) []MixtureStep {
-	var out []MixtureStep
+// prompt; every step where fewer than minCleanFitSteps are. clean is the
+// steps under it, and overloaded the rest.
+func cleanFitSteps(steps []MixtureStep, s0, v float64) (fitOn []MixtureStep, clean, overloaded int) {
+	out := make([]MixtureStep, 0, len(steps))
 	for _, st := range steps {
 		top := 0.0
 		for _, r := range st.Ranks {
@@ -60,14 +63,45 @@ func cleanFitSteps(steps []MixtureStep, s0, v float64) []MixtureStep {
 			out = append(out, st)
 		}
 	}
-	if len(out) < minCleanFitSteps {
-		return steps
+	clean, overloaded = len(out), len(steps)-len(out)
+	if clean < minCleanFitSteps {
+		return steps, clean, overloaded
 	}
-	return out
+	return out, clean, overloaded
+}
+
+// fitStepsAssumed is the fit-step fixes in words, for Assumed; "" where
+// neither is on.
+func (m RankMixture) fitStepsAssumed() string {
+	var parts []string
+	switch {
+	case m.CleanSteps+m.OverloadedSteps == 0:
+	case m.CleanSteps < minCleanFitSteps:
+		parts = append(parts, fmt.Sprintf("KV-deferral and prompt slopes fitted on every step: %d under busiest-rank utilization %.2g, "+
+			"too few to fit on", m.CleanSteps, MaxCleanFitRho))
+	default:
+		parts = append(parts, fmt.Sprintf("KV-deferral and prompt slopes fitted on the %d steps under busiest-rank utilization %.2g "+
+			"(%d left out)", m.CleanSteps, MaxCleanFitRho, m.OverloadedSteps))
+	}
+	switch {
+	case m.ShareRows == nil:
+	case len(m.ShareRows) < nearShareSteps:
+		parts = append(parts, fmt.Sprintf("shares the fit window's mean: %d steps read them, too few to read them at the load",
+			len(m.ShareRows)))
+	default:
+		parts = append(parts, fmt.Sprintf("shares read at the priced rate, the mean of the %d of %d fit steps nearest it",
+			nearShareSteps, len(m.ShareRows)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "; " + strings.Join(parts, "; ")
 }
 
 // shareRowsOf is steps' share profiles: each step with all n ranks and a
-// positive rate, its ranks' shares busiest first.
+// positive rate whose ranks carried at least one request a second, as
+// ShareProfile reads them, its ranks' shares busiest first. A quieter step's
+// profile is a handful of requests.
 func shareRowsOf(steps []MixtureStep, n int) []ShareRow {
 	var out []ShareRow
 	for _, st := range steps {
@@ -80,7 +114,7 @@ func shareRowsOf(steps []MixtureStep, n int) []ShareRow {
 			r[i] = max(rk.Rate, 0)
 			tot += r[i]
 		}
-		if !(tot > 0) {
+		if !(tot > 1) || !Finite(tot) {
 			continue
 		}
 		slices.SortFunc(r, func(a, b float64) int { return cmp.Compare(b, a) })

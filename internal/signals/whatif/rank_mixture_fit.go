@@ -341,7 +341,7 @@ func FitCore(steps []MixtureStep, o RankMixtureOptions) (RankMixture, float64, e
 	}
 	fitOn := steps
 	if o.CleanFitSteps {
-		fitOn = cleanFitSteps(steps, s0, v)
+		fitOn, m.CleanSteps, m.OverloadedSteps = cleanFitSteps(steps, s0, v)
 	}
 	if !o.NoKV {
 		if kv, err := FitKVDeferral(fitOn, s0, v, len(shares)); err == nil {
