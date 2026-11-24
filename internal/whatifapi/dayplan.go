@@ -183,7 +183,7 @@ type DayPlanRequest struct {
 	Step string `json:"step,omitempty"`
 	// SizeFor is the rate of a bucket the fleet is sized for: "mean", "p95",
 	// "p95-modulation" (the p95 less counting noise) or "max" of its cycles'
-	// rates; default p95. A bucket of fewer than MinPercentileCycles cycles
+	// rates; default p95-modulation (#295). A bucket of fewer than MinPercentileCycles cycles
 	// asked for its p95 or its p95 less counting noise is sized for its mean.
 	SizeFor string `json:"sizeFor,omitempty"`
 	// Lead is each role's scale-up lead time asked, seconds: how long before
@@ -671,7 +671,7 @@ func dayQuestionOfRequest(req DayPlanRequest) (*dayQuestion, error) {
 	if t := req.Traffic; t != nil && t.Classes != nil {
 		return nil, InputErrorf("traffic.classes: a day plan sizes each bucket for its own observed rate; give the mix and arrivalCV2 only")
 	}
-	q := &dayQuestion{step: DefaultDayPlanStep, minRequests: DefaultMinRequests, sizeFor: SizeForP95}
+	q := &dayQuestion{step: DefaultDayPlanStep, minRequests: DefaultMinRequests, sizeFor: SizeForP95Modulation}
 	if req.Step != "" {
 		d, err := time.ParseDuration(req.Step)
 		if err != nil || d < minDayPlanStep || d > maxDayPlanStep {
@@ -959,7 +959,9 @@ func (q *dayQuestion) sizedRate(r *DayRate, samples []SeriesSample) (string, flo
 		for i, x := range samples {
 			rates[i] = x.Rate
 		}
-		m := ModulationP95(rates, r.Mean, r.P95)
+		// The bucket's readings overlap where they are closer than the
+		// rate's window: only the share of the noise they hold comes out.
+		m := ModulationP95Every(rates, r.Mean, r.P95, sampleStep(samples, 0).Seconds())
 		r.P95Modulation = &m
 		return SizeForP95Modulation, m
 	case q.sizeFor == SizeForMax:
@@ -1074,7 +1076,7 @@ func (q *dayQuestion) group(ctx context.Context, k Knobs, refused *[]DayRefusal)
 	add := func(r DayRefusal) { addRefusal(refused, r) }
 	sc := q.sc
 	g := &dayGroup{limits: map[int]whatif.Result{}}
-	// The sizer has no experimental TTFT model: a day plan is the
+	// The sizer has no experimental model, TTFT or TPOT: a day plan is the
 	// default's, as its decode-alone limits are.
 	newSizer := func() *sizer {
 		return &sizer{e: q.e, sc: sc, k: k, bound: q.bound, seen: map[FleetCounts]sizeEval{}, plain: map[FleetCounts]sizeEval{}}
@@ -1563,7 +1565,7 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	}
 	what := q.sizeFor
 	if what == SizeForP95Modulation {
-		what = "p95 less counting noise (the p95 less a steady one-minute rate's Poisson spread, var - mean/60)"
+		what = "p95 less counting noise (the p95 less a steady one-minute rate's Poisson spread, var - share x mean/60, the share of it readings closer than a minute hold)"
 	}
 	out.Notes = append(out.Notes,
 		steady,

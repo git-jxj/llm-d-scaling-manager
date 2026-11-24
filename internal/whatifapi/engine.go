@@ -162,6 +162,26 @@ type Fleet interface {
 	Class() whatif.FigureClass
 }
 
+// TPOTRatioFleet is a Fleet whose TPOT percentile is its mean TPOT times a
+// ratio R_q, and which can price it at a ratio an experimental model gives
+// in place of its own (tpot_model_main.go): its percentile curve, its point
+// and decode's limit at a percentile target alike.
+type TPOTRatioFleet interface {
+	Fleet
+	// WithTPOTRatio is the fleet with its TPOT percentile priced at r.
+	WithTPOTRatio(r ModelRatio) Fleet
+}
+
+// ModelRatio is R_q as an experimental model gives it: Value, the Flag on
+// every figure priced with it, the Source the plan's ratio names, and the
+// Assumed line the fleet adds.
+type ModelRatio struct {
+	Value   float64
+	Flag    whatif.Flag
+	Source  string
+	Assumed string
+}
+
 // LimitSet is slo-to-rate's rates at one set of targets. Notes is what the
 // CLI's assumed row adds of them.
 type LimitSet struct {

@@ -232,8 +232,8 @@ type limitEntry struct {
 	// one more decode replica: decode, prefill and fleet each.
 	plusOne [2][3]whatif.Result
 	// plusOneExtrapolated says each step's fleet limit is one the
-	// experimental TTFT model set past the highest load served
-	// (markExtrapolatedRate).
+	// experimental TTFT or TPOT model set past the highest load served
+	// (inputsEntry.markLimit).
 	plusOneExtrapolated [2]bool
 	// buckets is each bucket line's rate at its target, with the view asked.
 	buckets map[string]whatif.Result
@@ -285,10 +285,10 @@ func (p *planner) priceLimits(ctx context.Context, k Knobs, fl Fleet) (*limitEnt
 		if err != nil {
 			return nil, err
 		}
-		more = p.e.ttftModel.fleet(more, kk)
+		more = p.e.modelFleet(more, kk)
 		d, pr, f := more.PlainLimits(sc.TTFT.Target, tpot, sc.Headroom)
 		le.plusOne[i] = [3]whatif.Result{d, pr, f}
-		le.plusOneExtrapolated[i] = markExtrapolatedRate(more, figureOf(f, unitRate, false)).Extrapolated
+		le.plusOneExtrapolated[i] = p.e.markLimit(more, kk, figureOf(f, unitRate, false)).Extrapolated
 	}
 	if sc.Views.AllTrafficPerBucket {
 		le.buckets = map[string]whatif.Result{}
@@ -335,7 +335,7 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	// The experimental TTFT model, where the source was resolved with one,
 	// prices the TTFT curve and point A; every other figure is the
 	// planner's.
-	fl = p.e.ttftModel.fleet(fl, k)
+	fl = p.e.modelFleet(fl, k)
 	cs, err := p.curves(ctx, k, fl)
 	if err != nil {
 		return nil, err
@@ -369,13 +369,18 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 		if pct != nil {
 			at = pct
 		}
+		// The experimental TPOT model, where the source was resolved with
+		// one, prices the percentile; a figure it prices past the highest
+		// load measured is marked.
+		tm := p.e.tpotModel
 		tv := &TPOTView{Statistic: sc.TPOT.Statistic, Target: sc.TPOT.Target, Floor: p.note("tpot.floor", cs.tpotFloor),
-			Curve: p.points("tpot.curve", cs.tpot), Markers: Markers{DecodeKnee: markers.DecodeKnee}}
+			Curve: p.points("tpot.curve", tm.markPoints(k, cs.tpot)), Markers: Markers{DecodeKnee: markers.DecodeKnee},
+			Model: tm.view(fl, k)}
 		if r := fl.TPOTRatio(); r.Value != nil || r.Refused != nil {
 			tv.Ratio = &r
 		}
-		tv.AtRate = RatePoint{Rate: rate, Figure: p.note("tpot.atRate", figureOf(at, unitSeconds, true))}
-		tv.AtTarget = TargetPoint{Seconds: sc.TPOT.Target, Rate: p.note("tpot.atTarget", figureOf(ls.Decode, unitRate, false))}
+		tv.AtRate = RatePoint{Rate: rate, Figure: p.note("tpot.atRate", tm.mark(k, rate, figureOf(at, unitSeconds, true)))}
+		tv.AtTarget = TargetPoint{Seconds: sc.TPOT.Target, Rate: p.note("tpot.atTarget", tm.mark(k, 0, figureOf(ls.Decode, unitRate, false)))}
 		out.TPOT = tv
 	}
 
@@ -385,6 +390,12 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	out.Limits.Prefill = markExtrapolatedRate(fl, out.Limits.Prefill)
 	out.Limits.Fleet.Figure = markExtrapolatedRate(fl, out.Limits.Fleet.Figure)
 	out.Limits.Fleet.WithoutHeadroom = markExtrapolatedRate(fl, out.Limits.Fleet.WithoutHeadroom)
+	// So is one the experimental TPOT model set.
+	if d := out.Limits.Decode; d != nil {
+		*d = p.e.tpotModel.mark(k, 0, *d)
+	}
+	out.Limits.Fleet.Figure = p.e.tpotModel.mark(k, 0, out.Limits.Fleet.Figure)
+	out.Limits.Fleet.WithoutHeadroom = p.e.tpotModel.mark(k, 0, out.Limits.Fleet.WithoutHeadroom)
 	validatePlan(out, k, fl.Class(), cs, rate)
 	out.Marginal = p.marginal(le, ls.Fleet)
 	if sc.Views.AllTrafficPerBucket {

@@ -1,22 +1,22 @@
 ns-01/model-02  P/D 1 prefill (variant-02) + 1 decode (variant-01)  window 2026-11-05 21:16-21:36Z, cycle 83 of 83
 decode engine   vLLM release not recorded
 prefill engine  vLLM release not recorded
-load judged     26.90 r/s, the p95 of the 80 of 83 cycles with traffic
+load judged     26.89 r/s, the p95 less counting noise of the 80 of 83 cycles with traffic
 load seen       per cycle (1-minute rates): mean 6.91, p95 26.90, peak 30.04 r/s; p95 less counting noise 26.89; busiest 2m0s (8 cycles): 25.94 r/s
 SLO             TPOT mean 5.0 ms (asked)
 cell = TTFT p90 ms / TPOT mean ms @ the rate priced, r/s; - refused (the shape's table says why)
 mark = the SLO (TPOT mean 5.0 ms (asked)) at that rate: ok met, MISS missed, MISS* missed past the prefill flow-control onset (the router queues) though the figure is within, SAT saturated, ? not judged
 summary  50%              80%              100%            seen
-  load   -/2.5 @19.00 ok  -/2.9 @30.40 ok  -/- @38.00 SAT  -/2.8 @26.90 ok
+  load   -/2.5 @19.00 ok  -/2.9 @30.40 ok  -/- @38.00 SAT  -/2.8 @26.89 ok
 verdicts
-  load    NOT JUDGED: decode only: decode alone holds every target at the p95 load of 26.9 r/s; no fewer than its 1 decode would hold it; prefill was not sized (the recording learned no fixed prefill latency; --assume-a states one), so this is not a fleet recommendation.
+  load    NOT JUDGED: decode only: decode alone holds every target at the p95 less counting noise load of 26.9 r/s; no fewer than its 1 decode would hold it; prefill was not sized (the recording learned no fixed prefill latency; --assume-a states one), so this is not a fleet recommendation.
 
 shape load: IL 1000 OL 500, prefix hit 0.00 (the load's cycles)
-  the load's cycles (the p95 and above: 5, cycles 79-83): IL 1000 OL 500, prefix hit 0.00
+  the load's cycles (the p95's cycles, the p95 and above: 5, cycles 79-83): IL 1000 OL 500, prefix hit 0.00
 utilization at the load judged
-  decode        KV fill 0.379 (band top 0.7), slots 37 of 64, wait p 0.001
+  decode        KV fill 0.378 (band top 0.7), slots 37 of 64, wait p 0.001
   prefill       utilization pooled no fixed prefill latency learned, worst pod no fixed prefill latency learned
-  verdict       NOT JUDGED: decode only: decode alone holds every target at the p95 load of 26.9 r/s; no fewer than its 1 decode would hold it; prefill was not sized (the recording learned no fixed prefill latency; --assume-a states one), so this is not a fleet recommendation.
+  verdict       NOT JUDGED: decode only: decode alone holds every target at the p95 less counting noise load of 26.9 r/s; no fewer than its 1 decode would hold it; prefill was not sized (the recording learned no fixed prefill latency; --assume-a states one), so this is not a fleet recommendation.
 capacity            req/s     out tok/s   bound by
   prefill knee      no fixed prefill latency learned            P1 refused a: NoPromptSpread; pass --assume-a for a flagged answer
   decode knee       38.00     18981       decode batch cap at fill 0.647
@@ -28,9 +28,9 @@ SLO vs load        r/s    TTFT p50/90 ms                    TPOT mean/p90 ms    
   50% of knee      19.00  no fixed prefill latency learned  2.48/TPOT bucket too wide       no fixed prefill latency learned
   80% of knee      30.40  no fixed prefill latency learned  2.95/TPOT bucket too wide       no fixed prefill latency learned
   100% of knee     38.00  no fixed prefill latency learned  saturated/TPOT bucket too wide  no fixed prefill latency learned
-  load seen (71%)  26.90  no fixed prefill latency learned  2.79/TPOT bucket too wide       no fixed prefill latency learned
+  load seen (71%)  26.89  no fixed prefill latency learned  2.79/TPOT bucket too wide       no fixed prefill latency learned
 checks
-  1 prefill + 1 decode  holds: 26.90 r/s within 0.85 x the fleet knee 38.00 r/s = 32.30 r/s; prefill not priced (no fixed prefill latency learned); TPOT mean 2.8 ms meets 5.0 ms
+  1 prefill + 1 decode  holds: 26.89 r/s within 0.85 x the fleet knee 38.00 r/s = 32.30 r/s; prefill not priced (no fixed prefill latency learned); TPOT mean 2.8 ms meets 5.0 ms
 flags: DecodeOnly; AssumedShape; BatchBeyondFit; ExtrapolatedFill; CoarseTPOTBucket; EngineTPOTHistogram
 
 not validated:
