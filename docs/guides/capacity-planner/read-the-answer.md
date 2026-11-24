@@ -271,8 +271,13 @@ With `--prefill 3 --decode 3`:
 With `--prefill 4 --decode 4`:
 
 ```text
-  measured  OVER-PROVISIONED: at the p95 load of 41.7 r/s, decode: no spare: 6 decode if the decode knee reads 99% high; prefill: one fewer holds even at the peak 43.2 r/s; needs 3 prefill + 4 decode (has 4 + 4), 6 decode if the decode knee reads 99% high; at f 1 needs 3 + 4, at f 1.5 needs 4 + 4 (decode knee outside its validated region; prefill f 1 assumed at 4 pods; prefill f 1 assumed at 3 pods).
+  measured  OVER-PROVISIONED: at the p95 load of 41.7 r/s, decode: one fewer holds even at the peak 43.2 r/s; prefill: one fewer holds even at the peak 43.2 r/s; needs 3 prefill + 3 decode (has 4 + 4), 6 decode if the decode knee reads 99% high; at f 1 needs 3 + 3, at f 1.5 needs 4 + 3 (decode knee outside its validated region; prefill f 1 assumed at 4 pods; prefill f 1 assumed at 3 pods).
 ```
+
+From the release after v0.12.3, decode reads `no spare: 6 decode if the
+decode knee reads 99% high` here and the fleet needed is 3 prefill + 4
+decode: a decode cut must also hold if the decode knee reads as high as its
+label allows ([outside validated region](#outside-validated-region)).
 
 And with no prefill speed: the first command, with `--decode 3`:
 
