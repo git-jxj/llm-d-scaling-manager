@@ -12,8 +12,9 @@ Each release attaches rendered manifests, pinned to its image by digest:
 ([in a namespace](../guides/install-in-namespace/),
 [cluster-wide](../guides/install-cluster-wide/)). A release will also
 attach `scaling-manager.yaml`, one manifest for the whole cluster, with
-`scaling-manager-grants.yaml`, `scaling-manager-monitoring.yaml` and
-`scaling-manager-label-guard.yaml` beside it
+`scaling-manager-keda.yaml`, `scaling-manager-grants.yaml`,
+`scaling-manager-monitoring.yaml`, and the scripts `scaling-manager-admin.sh`
+and `scaling-manager-owner.sh` beside it
 ([install with kubectl, from one manifest](../guides/kubectl-install/);
 a draft, in no release yet). What each file holds:
 [the release process](../developer-guide/release-process.md). The capacity

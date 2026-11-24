@@ -2562,56 +2562,61 @@ make test-e2e-manifest-install
 Run it on its own cluster, not after the release-files e2e: KEDA keeps the
 scaler CA of its first connection.
 
-`test/manifest-install/e2e.sh` copies the manifest to a scratch directory and
-works there. In order, and a step that fails stops the run:
+`test/manifest-install/e2e.sh` copies the release files to a scratch
+directory and works there, with the two scripts of the guide,
+`scaling-manager-admin.sh` and `scaling-manager-owner.sh`. No file is edited:
+KEDA runs in `keda-system`, and the files' sums are checked again at the end.
+In order, and a step that fails stops the run:
 
-1. Checks the manifest against `SHA256SUMS`, and runs the header's `sed` for
-   KEDA in `keda-system`. No mention of `keda` may be left.
-2. The three commands: `kubectl apply --server-side` of the manifest and of
-   a settings file (`prometheusURL`, `caFromSecret`, `namespaceSelector`
-   requiring the opt-in label and an admin label,
-   `e2e.scaling-manager.llmd.ai/admitted`), then both labels on `llm-d-sim`. The Prometheus CA goes
-   in Secret `scaling-manager-prometheus-ca` first, and the model-server
-   PodMonitor of the release's model-namespace file is applied.
+1. Checks every file against `SHA256SUMS`, then `scaling-manager-admin.sh
+   upgrade --keda-namespace keda-system`: the manifest and
+   `scaling-manager-keda.yaml` in `keda-system`, with no settings yet.
+2. `scaling-manager-admin.sh install` with the Prometheus CA (`caFromSecret`),
+   `kedaNamespace` and `watchNamespaces` `llm-d-sim`; then
+   `scaling-manager-owner.sh monitor llm-d-sim`.
 3. Waits for the rollout, for `settingsSources` to show `prometheusURL` from
    the settings (the controller waits for it and starts in place, with no
-   restart), and for the
-   status `ready: ok`. The checks that are not `ok` go to the summary. There
-   must be an Event on the status ConfigMap, and `namespacesManaged` must be
-   `llm-d-sim`.
+   restart), and for the status `ready: ok`. The checks that are not `ok` go
+   to the summary. There must be an Event on the status ConfigMap,
+   `namespacesManaged` must be `llm-d-sim`, and `namespace.llm-d-sim` must
+   be there.
 4. `scalerTLS` must start with `mutual TLS`, with no step by a person. KEDA's
    copy in `keda-system` must hold the client certificate,
    `kedaCopyStale` must be `false`, no marker ConfigMap may exist, and
-   `preflight.keda.mtls` must turn `ok`. Then it patches `logVerbosity`, a
-   restart setting: the controller must restart itself, show
-   `logVerbosity=settings` in `settingsSources`, and be `ready` again.
-5. Patches `utilizationShare: shadow`, then applies both files again
-   server-side. The scaler CA, KEDA's copy and the patched key must not
-   change.
-6. The negative control: a namespace with no label, a Deployment and a
-   ScaledObject on the scaler. `namespacesRefused` must name it. Labelled,
-   it is still outside `namespaceSelector`, and must stay refused for that
-   reason.
-7. The smoke suite with passive off (`RELEASE_E2E_SMOKE=true`, the default),
-   with `E2E_NAMESPACE_LABELS` set to both labels, so the specs that create
-   their own namespace (Basic Autoscaling, Error Handling) label it and run. Then
-   `kedaConnection` must be `current`.
-8. The uninstall of the guide: ScaledObjects, the label, `kubectl delete -f`.
-   Nothing labelled `app.kubernetes.io/instance=scaling-manager-system` may be
-   left, and the namespace must be gone.
+   `preflight.keda.mtls` must turn `ok`. Then `scaling-manager-admin.sh set
+   logVerbosity=3`, a restart setting: the controller must restart itself,
+   show `logVerbosity=settings` in `settingsSources`, and be `ready` again.
+5. Patches `utilizationShare: shadow`, then `scaling-manager-admin.sh
+   upgrade`. The scaler CA, KEDA's copy and the patched key must not change.
+6. `scaling-manager-owner.sh grant` of each grant gives the controller its
+   right in the model namespace only once applied there.
+7. The plan: a model-server Deployment appears in
+   `scaling-manager-scaledobjects-plan`; the suggestion, registered with
+   `scaling-manager-owner.sh register`, becomes a Ready ScaledObject, and
+   `scaling-manager-owner.sh status` shows a `ScalingManagerNamespace` Event
+   in the model namespace.
+8. The negative control: a namespace `watchNamespaces` leaves out, with a
+   Deployment and a ScaledObject on the scaler. `namespacesRefused` must name
+   it, and its owner must read a `ScalingManagerNamespaceNotManaged` Event
+   there. Then `scaling-manager-admin.sh namespaces` lists it: it must be
+   managed and its ScaledObject Ready, with no controller restart.
+9. The smoke suite with `watchNamespaces` empty (every namespace, since its
+   specs make namespaces with generated names) and passive off
+   (`RELEASE_E2E_SMOKE=true`, the default). Then `kedaConnection` must be
+   `current`.
+10. `scaling-manager-admin.sh uninstall`. Nothing labelled
+    `app.kubernetes.io/instance=scaling-manager-system` may be left, the
+    namespace must be gone, KEDA's namespace unlabelled, and every release
+    file as downloaded.
 
-Between those steps the run also checks:
+Before the settings exist, the controller must wait with 0 restarts and the
+reason in `ready`, then start with no restart.
 
-- before the settings exist, the controller waits with 0 restarts and the
-  reason in `ready`, and then starts with no restart;
-- `scaling-manager-monitoring.yaml` applied in the model namespace;
-- each grant of `scaling-manager-grants.yaml` gives the controller its right
-  in the model namespace only once applied there;
-- `scaling-manager-label-guard.yaml`: a tenant who may edit namespaces is
-  denied the opt-in label, and the admin is not;
-- the plan: a model-server Deployment appears in
-  `scaling-manager-scaledobjects-plan`, and the suggestion, applied as is,
-  becomes a Ready ScaledObject.
+The scripts themselves are checked without a cluster by
+`hack/check-kubectl-scripts.sh` (in `make lint-deploy-scripts`): `--print` of
+every command against `hack/testdata/kubectl-scripts/` (`UPDATE=1` rewrites
+it), the same calls in run mode against a stub `kubectl` with nothing else on
+`PATH`, and the refusals.
 
 The summary and the smoke log are in `dist/manifest-e2e-logs`
 (`MANIFEST_E2E_LOGS`). Not in CI yet. Not covered: the upgrade from the
@@ -2626,8 +2631,9 @@ same prerequisites and on a cluster where no scaling manager was installed:
    install --scope cluster` from it.
 2. Applies a probe Deployment and a ScaledObject on the scaler over mutual
    TLS, and waits until KEDA reports it Ready with the scaler's metric.
-3. Applies `scaling-manager.yaml` server-side over the `smt` install, adds
-   `namespaceSelector`, and labels the model namespace.
+3. `scaling-manager-admin.sh move` over the `smt` install (the manifest
+   with `--force-conflicts`, KEDA's side in `keda-system`), then `upgrade`
+   without it, and `namespaces llm-d-sim`.
 4. The controller's new Opaque CA Secret must hold the `smt` CA, the log must
    say it copied it, KEDA's copy must be unchanged, and `scalerTLS` must be
    mutual TLS.

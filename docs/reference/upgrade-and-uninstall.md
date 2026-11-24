@@ -8,7 +8,7 @@ in.
 > [After the install](operations.md); symptoms in [Troubleshooting](troubleshooting.md).
 
 Installed with kubectl from the one manifest? Its
-[upgrade](../guides/kubectl-install/README.md#upgrade) and
+[upgrade and rollback](../guides/kubectl-install/README.md#upgrade-and-rollback) and
 [uninstall](../guides/kubectl-install/README.md#uninstall) are in its guide.
 This page covers the `smt`, release-file and checkout installs.
 

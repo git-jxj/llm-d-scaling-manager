@@ -43,8 +43,8 @@ patch` of the settings ConfigMap, read live.
    with the quota from
    [Utilization share in passive mode](../../guides/try-in-passive-mode/README.md#utilization-share-in-passive-mode).
    Once a release carries the one manifest, the
-   [kubectl install](../../guides/kubectl-install/) does this step with three
-   commands: the quota is the settings keys `limiter`, `quotas` and
+   [kubectl install](../../guides/kubectl-install/) does this step with
+   `scaling-manager-admin.sh install` and `set`: the quota is the settings keys `limiter`, `quotas` and
    `quotaScope`, as in the [README](../../../README.md#with-kubectl-from-one-manifest).
 2. **Watch.** Leave it through each model's busy period. Compare what it would
    order with what runs:

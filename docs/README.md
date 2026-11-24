@@ -38,8 +38,9 @@ follow the guide that path links to. Nothing installed yet? The
    `flowControl` feature gate on, plus KEDA and Prometheus on the cluster.
    Nothing serving yet? [Install a small llm-d model](guides/install-small-model/) first.
 2. **Install the scaling manager.** The new way is one manifest for the
-   whole cluster: `kubectl apply` it, apply your settings, and label each
-   model namespace
+   whole cluster: the cluster admin applies the signed files with one script
+   and lists the model namespaces in `watchNamespaces`; each namespace owner
+   registers ScaledObjects with another
    ([install with kubectl, from one manifest](guides/kubectl-install/)).
    It is a draft: no release carries `scaling-manager.yaml` yet, and it is
    tested on kind only.

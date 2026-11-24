@@ -15,7 +15,7 @@ teams, install [one controller per namespace](../install-in-namespace/) instead:
 failure domains, policy and upgrades stay separate.
 
 **A newer cluster-wide install is coming:** [install with kubectl, from one
-manifest](../kubectl-install/), where a namespace opts in with a label. It is
+manifest](../kubectl-install/), where the admin lists the managed namespaces in `watchNamespaces`, live. It is
 a draft, not in a release yet. Until a release carries it, install with this
 guide; that guide also moves an install made here onto the manifest.
 

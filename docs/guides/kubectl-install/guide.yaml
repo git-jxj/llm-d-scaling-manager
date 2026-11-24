@@ -1,93 +1,85 @@
 name: kubectl-install
 
-install:
+admin:
   download:
-    note: The manifest and its signature. Pick the release you install.
+    note: The cluster admin. The release files and their signatures; every file is applied as downloaded, never edited.
     run: |
       V=<release, v0.13.0 or later>
       URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
-      curl -fsSLO $URL/scaling-manager.yaml && curl -fsSLO $URL/scaling-manager.yaml.sigstore.json
-      cosign verify-blob scaling-manager.yaml --bundle scaling-manager.yaml.sigstore.json \
-        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-        --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/$V"
-  kedans:
-    note: Only when KEDA does not run in namespace keda. The file header gives the same edit. Repeat it on every upgrade.
+      for f in scaling-manager.yaml scaling-manager-keda.yaml scaling-manager-grants.yaml scaling-manager-monitoring.yaml \
+          scaling-manager-admin.sh scaling-manager-owner.sh; do
+        curl -fsSLO $URL/$f && curl -fsSLO $URL/$f.sigstore.json
+        cosign verify-blob $f --bundle $f.sigstore.json \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          --certificate-identity "https://github.com/llm-d-incubation/llm-d-scaling-manager/.github/workflows/ci-release.yaml@refs/tags/$V"
+      done
+  install:
+    note: The manifest, KEDA's side in its namespace, the settings. Passive. Leave out --keda-namespace for keda, --prometheus-ca for a public CA.
     run: |
-      KEDA_NS=<the namespace KEDA runs in>
-      sed -i -e "s/^\(  *namespace: \)keda\$/\1$KEDA_NS/" \
-        -e "s/kubernetes.io\/metadata.name: keda\$/kubernetes.io\/metadata.name: $KEDA_NS/" \
-        -e "s/--keda-namespace=keda\$/--keda-namespace=$KEDA_NS/" scaling-manager.yaml
-  manifest:
-    note: Command 1. The namespace, the RBAC, the controller and KEDA's side.
+      bash scaling-manager-admin.sh install --prometheus-url https://prometheus.monitoring.svc:9090 \
+        --prometheus-ca prometheus-ca.crt --keda-namespace keda --watch-namespaces team-a,team-b
+  print:
+    note: The same, as the kubectl commands it runs, for git.
     run: |
-      kubectl apply --server-side -f scaling-manager.yaml
-  settings:
-    note: Command 2. Write settings.yaml as shown above, then apply it.
+      bash scaling-manager-admin.sh --print install --prometheus-url https://prometheus.monitoring.svc:9090 \
+        --keda-namespace keda --watch-namespaces team-a,team-b
+  namespaces:
+    note: Later, which namespaces the controller manages. Takes effect without a restart.
     run: |
-      kubectl apply --server-side -f settings.yaml
-  label:
-    note: Command 3. Opt a namespace in. The selector in the settings must admit it too.
+      bash scaling-manager-admin.sh namespaces team-a,team-b,team-c
+  epp:
+    note: Only where the router chart did not let the EPP review tokens; its /metrics answers 500 to the controller otherwise.
     run: |
-      kubectl label namespace <model namespace> scaling-manager.llmd.ai/managed=true
+      bash scaling-manager-admin.sh grant-epp team-a <the EPP's ServiceAccount>
+  active:
+    note: Once the readiness and the published counts look right, let it scale.
+    run: |
+      bash scaling-manager-admin.sh set passive=false
 
-check:
-  ready:
-    note: ok once every check passes; a failing check's key says what to fix.
-    run: |
-      kubectl get configmap scaling-manager-controller-status -n scaling-manager-system \
-        -o jsonpath='{.data.ready}{"\n"}{.data.namespacesManaged}{"\n"}{.data.namespacesRefused}{"\n"}{.data.scalerTLS}{"\n"}'
-  checks:
-    note: Each preflight check, and the Events when one changes.
-    run: |
-      kubectl get configmap scaling-manager-controller-status -n scaling-manager-system -o json \
-        | jq -r '.data | to_entries[] | select(.key | startswith("preflight.")) | "\(.key) \(.value)"'
-      kubectl get events -n scaling-manager-system --field-selector involvedObject.name=scaling-manager-controller-status
-
-register:
-  plan:
-    note: The controller's suggested ScaledObjects for one namespace. Review min and max, then apply them.
-    run: |
-      NS=<model namespace>
-      kubectl get configmap scaling-manager-scaledobjects-plan -n scaling-manager-system \
-        -o jsonpath="{.data.$NS}" > so-$NS.yaml
-      kubectl apply -n $NS -f so-$NS.yaml
-
-extras:
-  monitoring:
+owner:
+  monitor:
     note: Only where nothing scrapes the model servers yet (llm-d's monitoring components scrape the same port).
     run: |
-      kubectl apply -n <model namespace> -f scaling-manager-monitoring.yaml -l scaling-manager.llmd.ai/monitor=modelserver
-  podwriter:
-    note: Per namespace that shares GPUs, before utilizationShare active. Never in git.
+      bash scaling-manager-owner.sh monitor team-a
+  network:
+    note: Only where a default-deny ingress policy is in place.
     run: |
-      kubectl apply -n <model namespace> -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=pod-writer
-  dsetwriter:
-    note: Per namespace with a Static-role DisaggregatedSet, with dsetRoleWriter true. Never in git.
+      bash scaling-manager-owner.sh network team-a
+  register:
+    note: Your ScaledObjects, or without a file the controller's suggestion (which needs read on ConfigMap scaling-manager-scaledobjects-plan in scaling-manager-system).
     run: |
-      kubectl apply -n <model namespace> -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=dset-role-writer
-  guard:
-    note: Optional, Kubernetes 1.30 or later. Only members of system:masters or kubeadm:cluster-admins may then set the opt-in label.
+      bash scaling-manager-owner.sh register team-a scaledobjects.yaml
+  grant:
+    note: Before the admin sets utilizationShare active; dset-role-writer for a Static-role DisaggregatedSet. Never in git.
     run: |
-      kubectl apply --server-side -f scaling-manager-label-guard.yaml
+      bash scaling-manager-owner.sh grant pod-writer team-a
+  status:
+    note: Your namespace's readiness, in your namespace.
+    run: |
+      bash scaling-manager-owner.sh status team-a
+
+check:
+  status:
+    note: The admin. ready, the managed namespaces, each namespace's readiness, each check.
+    run: |
+      bash scaling-manager-admin.sh status
+
+upgrade:
+  apply:
+    note: With the new release's files, downloaded and verified as above. The settings and the ScaledObjects stay. A rollback is the same command with the older release's files.
+    run: |
+      bash scaling-manager-admin.sh upgrade --keda-namespace keda
 
 migrate:
-  apply:
-    note: Over an smt install made with --scope cluster. --force-conflicts takes the controller Deployment over from smt, this once. The settings ConfigMap is the same object; add the selector and label the namespaces.
+  cluster:
+    note: Over a cluster-wide smt install (--scope cluster). --force-conflicts takes the controller Deployment over from smt, this once; then list the namespaces it manages.
     run: |
-      kubectl apply --server-side --force-conflicts -f scaling-manager.yaml
-      kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge \
-        -p '{"data":{"namespaceSelector":"scaling-manager.llmd.ai/managed=true,kubernetes.io/metadata.name in (<model namespace>)"}}'
-      kubectl label namespace <model namespace> scaling-manager.llmd.ai/managed=true
+      bash scaling-manager-admin.sh move --keda-namespace keda
+      bash scaling-manager-admin.sh namespaces team-a,team-b
 
 uninstall:
   all:
-    note: Removes everything this install made, then checks nothing is left. With utilizationShare active, the first line sets it to shadow and waits a cycle, so no transfer marks stay on pods.
+    note: Removes everything this install made, in every namespace. Sharing goes to shadow first, so no transfer mark stays on a pod.
     run: |
-      kubectl patch configmap scaling-manager-settings -n scaling-manager-system --type merge -p '{"data":{"utilizationShare":"shadow"}}' && sleep 15
-      I=app.kubernetes.io/instance=scaling-manager-system
-      kubectl delete scaledobject -A -l "$I,app.kubernetes.io/managed-by=llm-d-scaling-manager"
-      kubectl delete rolebinding,role,podmonitor -A -l "$I"
-      kubectl delete validatingadmissionpolicybinding,validatingadmissionpolicy -l "$I"
-      kubectl label namespace -l scaling-manager.llmd.ai/managed=true scaling-manager.llmd.ai/managed-
-      kubectl delete -f scaling-manager.yaml
-      kubectl get clusterrole,clusterrolebinding,clustertriggerauthentication -l "$I"
+      bash scaling-manager-admin.sh uninstall --keda-namespace keda
+      kubectl get clusterrole,clusterrolebinding,clustertriggerauthentication -l app.kubernetes.io/instance=scaling-manager-system

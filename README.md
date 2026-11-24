@@ -64,8 +64,9 @@ the scaler answers with the current replica count, so nothing moves.
 Both ways install **passive**: it works out what it would do and changes
 nothing, until you switch it on.
 
-- **With kubectl, from one manifest.** One controller for the cluster, three
-  `kubectl` commands, no docker and no checkout. **Draft:** no release
+- **With kubectl, from one manifest.** One controller for the cluster, signed
+  files applied as downloaded by two scripts that run `kubectl` only, no
+  docker and no checkout. **Draft:** no release
   carries `scaling-manager.yaml` yet, and it is tested on kind only. Until a
   release carries it, use the `smt` tools image.
 - **With the `smt` tools image.** In every release today. Also the way to run
@@ -83,67 +84,41 @@ nothing, until you switch it on.
 
 ### With kubectl, from one manifest
 
-You also need cluster-admin rights, and KEDA 2.18 or later in namespace `keda`.
-If KEDA runs elsewhere, or to verify the download's signature, see
-[install with kubectl](docs/guides/kubectl-install/).
+You need cluster-admin rights, and KEDA 2.18 or later in any namespace. The
+release carries the files and two scripts that apply them as downloaded,
+with `kubectl` only; `--print` shows the commands instead, for git. To
+verify the signatures, see [install with kubectl](docs/guides/kubectl-install/).
 
-1. Apply the manifest. It holds the namespace, the RBAC, the controller and
-   KEDA's side.
+1. Download the files, and install: the manifest, KEDA's side in its
+   namespace, and the settings, with the namespaces it manages and the quota.
 
    ```bash
    V=<a release that carries scaling-manager.yaml>
-   curl -fsSLO https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V/scaling-manager.yaml
-   kubectl apply --server-side -f scaling-manager.yaml
-   ```
-
-2. Write the settings, with the quota, and apply them. `namespaceSelector`
-   names the namespaces it may manage.
-
-   ```yaml
-   # settings.yaml
-   apiVersion: v1
-   kind: ConfigMap
-   metadata:
-     name: scaling-manager-settings
-     namespace: scaling-manager-system
-   data:
-     prometheusURL: https://<prometheus>:9090
-     namespaceSelector: "scaling-manager.llmd.ai/managed=true,kubernetes.io/metadata.name in (<ns1>,<ns2>)"
-     limiter: quota
-     quotas: "<gpu product>=<gpus>"
-     quotaScope: cluster
-   ```
-
-   ```bash
-   kubectl apply --server-side -f settings.yaml
-   ```
-
-3. Opt the model namespaces in, and turn sharing on in shadow:
-
-   ```bash
-   export CTRL=scaling-manager-system MODEL_NAMESPACES="<ns1> <ns2>"
-   for ns in $MODEL_NAMESPACES; do
-     kubectl label namespace $ns scaling-manager.llmd.ai/managed=true
+   for f in scaling-manager.yaml scaling-manager-keda.yaml scaling-manager-grants.yaml \
+       scaling-manager-monitoring.yaml scaling-manager-admin.sh scaling-manager-owner.sh; do
+     curl -fsSLO https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V/$f
    done
-   kubectl patch configmap scaling-manager-settings -n $CTRL --type merge \
-     -p '{"data":{"utilizationShare":"shadow"}}'
+   export MODEL_NAMESPACES="<ns1> <ns2>"
+   bash scaling-manager-admin.sh install --prometheus-url https://<prometheus>:9090 \
+     --keda-namespace <the namespace KEDA runs in> --watch-namespaces "$(echo $MODEL_NAMESPACES | tr ' ' ,)"
+   bash scaling-manager-admin.sh set limiter=quota quotas=<gpu product>=<gpus> quotaScope=cluster utilizationShare=shadow
    ```
 
-4. Check it, then register the models. `ready` is `ok` once every check
-   passes. The controller suggests one ScaledObject per model server. Review
+2. Check it, then register the models. `ready` is `ok` once every check
+   passes, and each `namespace.<name>` line says what that namespace still
+   needs. The controller suggests one ScaledObject per model server; review
    min and max, then apply them:
 
    ```bash
-   kubectl get configmap scaling-manager-controller-status -n $CTRL -o jsonpath='{.data.ready}{"\n"}'
+   bash scaling-manager-admin.sh status
    for ns in $MODEL_NAMESPACES; do
-     kubectl get configmap scaling-manager-scaledobjects-plan -n $CTRL -o jsonpath="{.data.$ns}" > so-$ns.yaml
-     kubectl apply -n $ns -f so-$ns.yaml
+     bash scaling-manager-owner.sh register $ns          # or: register $ns <your ScaledObjects file>
    done
    ```
 
    LeaderWorkerSets and DisaggregatedSets are not suggested yet. Where nothing
-   scrapes the model servers, apply the monitoring file too
-   ([monitoring, grants and the label guard](docs/guides/kubectl-install/README.md#monitoring-grants-and-the-label-guard)).
+   scrapes the model servers, `scaling-manager-owner.sh monitor <ns>` adds the
+   PodMonitor ([the namespace owner's part](docs/guides/kubectl-install/README.md#namespace-owner)).
 
 Then [watch what it would do](#watch-what-it-would-do).
 
@@ -266,12 +241,11 @@ Sharing scales a donor down, so each model server must drain on termination
 image, `smt workload-patch -n <ns>` reports what each one still needs).
 
 First give the controller patch on pods in each model namespace. Installed
-with kubectl, the grant is in the release's grants file:
+with kubectl, the namespace owner binds it from the release's grants file:
 
 ```bash
-curl -fsSLO https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V/scaling-manager-grants.yaml
 for ns in $MODEL_NAMESPACES; do
-  kubectl apply -n $ns -f scaling-manager-grants.yaml -l scaling-manager.llmd.ai/grant=pod-writer
+  bash scaling-manager-owner.sh grant pod-writer $ns
 done
 ```
 
