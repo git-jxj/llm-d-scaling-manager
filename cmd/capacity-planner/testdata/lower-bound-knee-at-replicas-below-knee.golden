@@ -18,16 +18,16 @@ utilization at the load judged
   prefill       utilization pooled 0.72, worst pod 0.72 (f 1)
   verdict       NOT JUDGED: at the stated load of 3.0 r/s, TTFT p95 is at most 14.5 s against a 200 ms target: it is priced from a lower bound of V_P, and the true TTFT may be lower, so the miss is not known; --assume-vp states a V_P to price it.
 capacity            req/s     out tok/s   in system   bound by
-  prefill knee      >=4.17    106         unbounded   prefill work served: the 33370 computed tokens/s the prefill pods sustained over 2 min / 8007 tokens; at least: V_P is a lower bound
+  prefill knee      >=4.17    106         not known   prefill work served: the 33370 computed tokens/s the prefill pods sustained over 2 min / 8007 tokens; at least: V_P is a lower bound
   decode knee       134.15    3428        unbounded   decode band top at fill 0.798
                     OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
-  fleet knee        >=4.17    106         unbounded   prefill; at least: V_P is a lower bound
+  fleet knee        >=4.17    106         not known   prefill; at least: V_P is a lower bound
   operating (0.85)  >=3.54    91          <=34        0.85 x fleet knee (scaleUpThreshold); at least: V_P is a lower bound
   max at SLO        target below the floor                        target 0.2 s at or below the TTFT floor 2.787 s; the floor is priced from a lower bound of V_P, so it is at most this, and the target may be reachable
 SLO vs load        r/s   TTFT p50/90 ms           TPOT mean/p90 ms  e2e mean (sum)           in system (mean)
   50% of knee      2.08  <=880.8/<=5228.0         10.82/18.38       <=2.00 s                 <=4.2
   80% of knee      3.33  <=4378.1/<=16201.1       10.82/18.38       <=6.71 s                 <=22
-  100% of knee     4.17  past a lower-bound knee  10.82/18.38       past a lower-bound knee  -
+  100% of knee     4.17  past a lower-bound knee  10.82/18.38       past a lower-bound knee  not known
   load seen (72%)  3.00  <=2748.5/<=11014.8       10.82/18.38       <=4.45 s                 <=13
 checks
   2 prefill + 2 decode  not judged: 3.00 r/s within 0.85 x the fleet knee 4.17 r/s = 3.54 r/s; TTFT p95 is at most 14545.4 ms, over 200.0 ms, but not judged: it is priced from a lower bound of V_P, and the true TTFT may be lower, so the miss is not known

@@ -75,7 +75,7 @@ planner's own terms:
   yet.
 - **Concurrency.** Under the rate, the page says how many requests are in
   the system on average at that rate: "About 30 requests in the system on
-  average (4.0 in prefill, 25 decoding (13 a decode pod))". This is the rate
+  average (1.5 in prefill, 25 decoding (13 a decode pod))". This is the rate
   times a request's mean time in the system, TTFT mean + (OL - 1) x TPOT
   mean (Little's law). It is an average, not a peak. At or past the limit
   the queue grows without bound, and the page says so instead of giving a
@@ -84,7 +84,10 @@ planner's own terms:
   holds that many on the fleet shown, and prices there. If the fleet holds
   fewer requests than that anywhere below its limit, the page prices at the
   limit and says the load saturates the fleet: more open requests add
-  queueing there, not throughput. Moving the rate clears the concurrency.
+  queueing there, not throughput. "In prefill" counts the requests in
+  the prefill engines alone, waiting or computing their prompt; the rest of
+  the time to the first token (the fixed latency, the hop, the KV pull) is
+  in the total but in no role. Moving the rate clears the concurrency.
   The size mode sizes for the rate the concurrency gave: a concurrency is a
   rate only on a given fleet.
 - **Targets the policy does not set.** A TTFT target is needed to read a
@@ -654,8 +657,9 @@ It replays the recording once and answers, for each shape and load:
   each, the operating point, the highest rate that holds the targets, and
   the SLO against each load. `e2e mean (sum)` is TTFT mean + (OL - 1) x TPOT
   mean, not a percentile. `in system` is the rate times it: the requests in
-  the system on average (Little's law), `unbounded` at or past a knee, `-`
-  where the TTFT or TPOT it needs is refused.
+  the system on average (Little's law), `unbounded` at or past a knee (or
+  where a queue saturates short of it), `not known` at or past a knee that
+  is only a lower bound, `-` where the TTFT or TPOT it needs is refused.
 
 The targets are the policy's unless `--ttft` and `--tpot` set them. Exit 0
 means the report answered, whatever the verdict, saturated fleets included;

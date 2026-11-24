@@ -673,20 +673,29 @@ function concurrencyShort(c) {
 // concurrencyNote is what the page says under the rate of a plan: the
 // mean requests in the system there (Little's law), and where a concurrency
 // was typed, the rate it translates into, flagged where the fleet saturates
-// first.
-function concurrencyNote(chosen) {
+// first. limit is the fleet's limit, r/s: a rate short of it is where the
+// time in the system is first refused, not the limit.
+function concurrencyNote(chosen, limit) {
   const c = chosen && chosen.concurrency, from = chosen && chosen.fromConcurrency;
   const parts = [];
   if (from) {
-    parts.push(from.atKnee ?
-      `${concurrencyNumber(from.concurrency)} requests open saturate this fleet: it holds fewer below its limit, so the rate is the limit's ${roundRate(from.rate)} r/s; more concurrency adds queueing, not throughput.` :
-      `${concurrencyNumber(from.concurrency)} requests in the system on average is ${roundRate(from.rate)} r/s on this fleet.`);
+    const n = concurrencyNumber(from.concurrency), r = roundRate(from.rate);
+    if (from.atKnee && limit > 0 && from.rate < limit * (1 - 1e-6)) {
+      parts.push(`This fleet holds fewer than ${n} requests at any rate it prices: the rate is ${r} r/s, short of the limit, where its time in the system is first refused.`);
+    } else if (from.atKnee) {
+      parts.push(`${n} requests open saturate this fleet: it holds fewer below its limit, so the rate is the limit's ${r} r/s; more concurrency adds queueing, not throughput.`);
+    } else if (from.lowerBound) {
+      parts.push(`${n} requests in the system on average is at least ${r} r/s on this fleet: the time in the system is priced from a lower bound of the prefill speed.`);
+    } else {
+      parts.push(`${n} requests in the system on average is ${r} r/s on this fleet.`);
+    }
   }
   if (c && c.unbounded) {
-    parts.push("At or past the limit requests queue without bound: no average holds.");
+    parts.push("Here requests queue without bound: no average holds.");
   } else if (c && c.fleet && c.fleet.value != null) {
     let s = `About ${concurrencyNumber(c.fleet.value)} requests in the system on average`;
     const role = [];
+    if (c.routerQueue && c.routerQueue.value != null) role.push(`${concurrencyNumber(c.routerQueue.value)} held at the router`);
     if (c.prefill && c.prefill.value != null) role.push(`${concurrencyNumber(c.prefill.value)} in prefill`);
     if (c.decode && c.decode.value != null) {
       role.push(`${concurrencyNumber(c.decode.value)} decoding` + (c.decodePerPod && c.decodePerPod.value != null ? ` (${concurrencyNumber(c.decodePerPod.value)} a decode pod)` : ""));

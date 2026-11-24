@@ -225,7 +225,7 @@
               "unit": "requests"
             },
             "prefill": {
-              "value": 5.913191932940853,
+              "value": 3.3893648314191034,
               "unit": "requests"
             },
             "decode": {
@@ -269,7 +269,7 @@
               "unit": "requests"
             },
             "prefill": {
-              "value": 5.314089659967495,
+              "value": 2.9292694452101857,
               "unit": "requests"
             },
             "decode": {
@@ -372,7 +372,7 @@
               "unit": "requests"
             },
             "prefill": {
-              "value": 2.658906937848741,
+              "value": 1.174302760483006,
               "unit": "requests"
             },
             "decode": {
@@ -510,7 +510,7 @@
               "unit": "requests"
             },
             "prefill": {
-              "value": 5.276182584506613,
+              "value": 2.9008159007214376,
               "unit": "requests"
             },
             "decode": {

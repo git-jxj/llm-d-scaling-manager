@@ -18,17 +18,17 @@ utilization at the load judged
   prefill       utilization pooled 1.92, worst pod 1.92 (f 1)
   verdict       NOT JUDGED: at the stated load of 8.0 r/s, 1.9x a prefill knee of at least 4.2 r/s: the prefill knee rests on a lower bound of V_P, and the true knee may be higher, so whether the fleet saturates is not priced; decode holds its operating point; --assume-vp states a V_P to price it.
 capacity            req/s     out tok/s   in system   bound by
-  prefill knee      >=4.17    106         unbounded   prefill work served: the 33370 computed tokens/s the prefill pods sustained over 2 min / 8007 tokens; at least: V_P is a lower bound
+  prefill knee      >=4.17    106         not known   prefill work served: the 33370 computed tokens/s the prefill pods sustained over 2 min / 8007 tokens; at least: V_P is a lower bound
   decode knee       134.15    3428        unbounded   decode band top at fill 0.798
                     OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
-  fleet knee        >=4.17    106         unbounded   prefill; at least: V_P is a lower bound
+  fleet knee        >=4.17    106         not known   prefill; at least: V_P is a lower bound
   operating (0.85)  >=3.54    91          <=34        0.85 x fleet knee (scaleUpThreshold); at least: V_P is a lower bound
   max at SLO        target below the floor                        target 0.2 s at or below the TTFT floor 2.787 s; the floor is priced from a lower bound of V_P, so it is at most this, and the target may be reachable
 SLO vs load         r/s   TTFT p50/90 ms           TPOT mean/p90 ms  e2e mean (sum)           in system (mean)
   50% of knee       2.08  <=880.8/<=5228.0         10.82/18.38       <=2.00 s                 <=4.2
   80% of knee       3.33  <=4378.1/<=16201.1       10.82/18.38       <=6.71 s                 <=22
-  100% of knee      4.17  past a lower-bound knee  10.82/18.38       past a lower-bound knee  -
-  load seen (192%)  8.00  past a lower-bound knee  10.92/18.56       past a lower-bound knee  -
+  100% of knee      4.17  past a lower-bound knee  10.82/18.38       past a lower-bound knee  not known
+  load seen (192%)  8.00  past a lower-bound knee  10.92/18.56       past a lower-bound knee  not known
 checks
   2 prefill + 2 decode  not judged: 8.00 r/s is 1.9x a prefill knee of at least 4.17 r/s (V_P is a lower bound): whether the fleet saturates is not priced; TTFT p95 not judged (past a lower-bound knee)
 assumed: prompt cv 2 (no computed-prompt histogram); router hop 20 ms (no fit: NonPositiveHop); --assume-router-hop supplies one; flow control off (no queue series); Poisson arrivals

@@ -481,6 +481,14 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
     note.includes("About 30 requests in the system on average (4.0 in prefill, 25 decoding (13 a decode pod))"), note);
   const sat = concurrencyNote({concurrency: {unbounded: true, fleet: {}}, fromConcurrency: {concurrency: 500, rate: 9, atKnee: true}});
   check("a concurrency past what the fleet holds says it saturates", sat.includes("saturate this fleet") && sat.includes("queue without bound"), sat);
+  const atLimit = concurrencyNote({concurrency: {unbounded: true, fleet: {}}, fromConcurrency: {concurrency: 500, rate: 9, atKnee: true}}, 9);
+  check("a rate at the limit is the limit's", atLimit.includes("the limit's 9"), atLimit);
+  const short = concurrencyNote({concurrency: {fleet: {value: 40}}, fromConcurrency: {concurrency: 500, rate: 7, atKnee: true}}, 9);
+  check("a rate short of the limit is not called the limit's", short.includes("short of the limit") && !short.includes("limit's"), short);
+  const atLeast = concurrencyNote({concurrency: {fleet: {value: 30, upperBound: true}}, fromConcurrency: {concurrency: 30, rate: 2.5, lowerBound: true}});
+  check("a rate from an upper-bound time in system is at least its figure", atLeast.includes("is at least 2.5 r/s"), atLeast);
+  const gate = concurrencyNote({concurrency: {fleet: {value: 30}, routerQueue: {value: 3}, prefill: {value: 2}, decode: {value: 20}}});
+  check("the router's gate is a term of its own", gate.includes("(3.0 held at the router, 2.0 in prefill, 20 decoding)"), gate);
 
   const slo = {ttft: {statistic: "p95", target: 2}, tpot: {statistic: "mean", target: 0.03}};
   const asked = reportRequest({inputsId: "sha256:x", fleet: {decode: 3}, shapes: [{}, {il: "1k", ol: "1k"}, {il: "16k", ol: "200", hit: "0.3"}, {}],
@@ -785,7 +793,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 370;
+const EXPECTED_CASES = 374;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

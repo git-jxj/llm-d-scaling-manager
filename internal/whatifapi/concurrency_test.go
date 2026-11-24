@@ -93,28 +93,49 @@ func TestRateAtConcurrency_Refused(t *testing.T) {
 }
 
 // The concurrency at a rate is Little's law on the mean time in system, by
-// role; refused where a mean it rests on is, and unbounded past the knee.
+// role: prefill is the time in the prefill engine alone, the router's gate a
+// term of its own; refused where a mean it rests on is, and unbounded past
+// the knee or where a mean is refused as saturated.
 func TestConcurrencyAt(t *testing.T) {
-	ttft := whatif.TTFT{Seconds: 0.5, Parts: whatif.TTFTParts{EngineWait: 0.1, OwnPrefill: 0.3, DecodeWait: 0.1}}
+	// OwnPrefill 0.3 holds a, the transfer and the prompt's own work 0.15:
+	// only the work and the engine's wait are on the prefill pod.
+	ttft := whatif.TTFT{Seconds: 0.5, Parts: whatif.TTFTParts{EngineWait: 0.1, OwnPrefill: 0.3, PrefillWork: 0.15, DecodeWait: 0.1}}
 	tpot := whatif.Answer{Value: 0.01}
 	c := ConcurrencyAt(2, ttft, tpot, 101, 2, false)
 	require.NotNil(t, c.Fleet.Value)
 	assert.Equal(t, unitRequests, c.Fleet.Unit)
 	assert.InDelta(t, 2*(0.5+100*0.01), *c.Fleet.Value, 1e-12, "rate x (TTFT + (OL-1) x TPOT)")
 	require.NotNil(t, c.Prefill)
-	assert.InDelta(t, 2*0.4, *c.Prefill.Value, 1e-12, "rate x (prefill wait + own prefill)")
+	assert.InDelta(t, 2*(0.1+0.15), *c.Prefill.Value, 1e-12, "rate x (prefill wait + the prompt's own work), not a or the transfer")
+	assert.Nil(t, c.RouterQueue, "no gate priced")
 	require.NotNil(t, c.Decode)
 	assert.InDelta(t, 2*101*0.01, *c.Decode.Value, 1e-12, "rate x OL x TPOT")
 	require.NotNil(t, c.DecodePerPod)
 	assert.InDelta(t, 2*101*0.01/2, *c.DecodePerPod.Value, 1e-12)
 	assert.False(t, c.Unbounded)
-	assert.Contains(t, ConcurrencyWords(c), "about 3.0 requests in the system on average")
+
+	// The router's gate holds requests outside every engine: a term of its
+	// own, in the fleet and not in prefill. A tier load is the prefill
+	// engine's.
+	gated := ttft
+	gated.Parts.RouterWait, gated.Parts.BurstWait, gated.Parts.TierLoad = 0.2, 0.05, 0.02
+	c = ConcurrencyAt(2, gated, tpot, 101, 2, false)
+	require.NotNil(t, c.RouterQueue)
+	assert.InDelta(t, 2*0.25, *c.RouterQueue.Value, 1e-12)
+	assert.InDelta(t, 2*(0.1+0.02+0.15), *c.Prefill.Value, 1e-12)
+
+	// No prefill work: no prefill side to count.
+	decodeOnly := whatif.TTFT{Seconds: 0.05, Parts: whatif.TTFTParts{DecodeEngine: 0.05}}
+	c = ConcurrencyAt(2, decodeOnly, tpot, 101, 2, false)
+	assert.Nil(t, c.Prefill)
+	assert.NotNil(t, c.Fleet.Value)
 
 	refusedTTFT := whatif.Unanswerable{Reason: whatif.NoPrefillCapacity, Detail: "no V_P"}
 	c = ConcurrencyAt(2, refusedTTFT, tpot, 101, 2, false)
 	assert.Nil(t, c.Fleet.Value)
 	require.NotNil(t, c.Fleet.Refused)
 	assert.Equal(t, string(whatif.NoPrefillCapacity), c.Fleet.Refused.Reason)
+	assert.False(t, c.Unbounded)
 	assert.Nil(t, c.Prefill, "no TTFT parts to read")
 	assert.NotNil(t, c.Decode, "decode's own figure stands on TPOT alone")
 
@@ -130,10 +151,33 @@ func TestConcurrencyAt(t *testing.T) {
 	assert.Nil(t, c.Fleet.Value, "no number past the knee")
 	require.NotNil(t, c.Fleet.Refused)
 	assert.Equal(t, string(whatif.Saturated), c.Fleet.Refused.Reason)
-	assert.Contains(t, ConcurrencyWords(c), "unbounded")
+
+	// A queue that saturates short of the knee (the KV pull) refuses the
+	// mean TTFT as saturated: requests queue without bound there too.
+	for _, sat := range []struct{ ttft, tpot whatif.Result }{
+		{whatif.Unanswerable{Reason: whatif.Saturated, Detail: "no finite mean TTFT"}, tpot},
+		{ttft, whatif.Unanswerable{Reason: whatif.Saturated, Detail: "no decode fill"}},
+	} {
+		c = ConcurrencyAt(10, sat.ttft, sat.tpot, 101, 2, false)
+		assert.True(t, c.Unbounded)
+		require.NotNil(t, c.Fleet.Refused)
+		assert.Equal(t, string(whatif.Saturated), c.Fleet.Refused.Reason)
+		assert.Contains(t, c.Fleet.Refused.Detail, "without bound")
+	}
 
 	c = ConcurrencyAt(2, ttft, tpot, 0, 2, false)
 	assert.Nil(t, c.Fleet.Value, "no output length, no time in system")
+}
+
+// A knee known only as a lower bound is not known to be where requests
+// queue without bound: its concurrency is refused, not unbounded.
+func TestLowerBoundKneeConcurrency(t *testing.T) {
+	c := LowerBoundKneeConcurrency()
+	assert.False(t, c.Unbounded)
+	assert.Nil(t, c.Fleet.Value)
+	require.NotNil(t, c.Fleet.Refused)
+	assert.Equal(t, string(whatif.PastLowerBoundKnee), c.Fleet.Refused.Reason)
+	assert.Contains(t, c.Fleet.Refused.Detail, "at least the knee")
 }
 
 // A load may be a concurrency: "64c".

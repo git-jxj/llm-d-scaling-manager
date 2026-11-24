@@ -1598,6 +1598,7 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 	out.Parts.TierLoad = pl.pf.p.TierLoadSeconds
 	out.PrefillUtilization = rho
 	out.Parts.OwnPrefill = a + own.mean
+	out.Parts.PrefillWork = pf.work
 	// side is block 1 for a plan's own time: the worst pod's wait and the own
 	// time, or the PS stages; old at the old sum's transfer; pooled, the pods
 	// pooled with no imbalance. Under processor sharing each of the four is

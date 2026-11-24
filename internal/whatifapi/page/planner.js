@@ -1135,7 +1135,7 @@ function render() {
   renderNotice(p.flags, p.banner);
   fitRateSlider(lowerKnee(p.ttft.markers));
   el("ratenote").textContent = rateNote(p.limits.chosen.rateSource);
-  el("concnote").textContent = concurrencyNote(p.limits.chosen);
+  el("concnote").textContent = concurrencyNote(p.limits.chosen, lowerKnee(p.ttft.markers));
   el("limitsfor").textContent = `(at ${shapeOf(p)})`;
   renderSize();
   renderAtTarget();

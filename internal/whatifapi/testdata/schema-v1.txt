@@ -762,10 +762,12 @@ plan.limits.chosen.concurrency.decode Figure
 plan.limits.chosen.concurrency.decodePerPod Figure
 plan.limits.chosen.concurrency.fleet Figure
 plan.limits.chosen.concurrency.prefill Figure
+plan.limits.chosen.concurrency.routerQueue Figure
 plan.limits.chosen.concurrency.unbounded boolean
 plan.limits.chosen.fromConcurrency object
 plan.limits.chosen.fromConcurrency.atKnee boolean
 plan.limits.chosen.fromConcurrency.concurrency number
+plan.limits.chosen.fromConcurrency.lowerBound boolean
 plan.limits.chosen.fromConcurrency.rate number
 plan.limits.chosen.headroom Figure
 plan.limits.chosen.rate number
@@ -1193,6 +1195,7 @@ report.shapes[].capacity.decodeKnee.concurrency.decode Figure
 report.shapes[].capacity.decodeKnee.concurrency.decodePerPod Figure
 report.shapes[].capacity.decodeKnee.concurrency.fleet Figure
 report.shapes[].capacity.decodeKnee.concurrency.prefill Figure
+report.shapes[].capacity.decodeKnee.concurrency.routerQueue Figure
 report.shapes[].capacity.decodeKnee.concurrency.unbounded boolean
 report.shapes[].capacity.decodeKnee.lowerBound boolean
 report.shapes[].capacity.decodeKnee.outputTokensPerSecond number
@@ -1204,6 +1207,7 @@ report.shapes[].capacity.fleetKnee.concurrency.decode Figure
 report.shapes[].capacity.fleetKnee.concurrency.decodePerPod Figure
 report.shapes[].capacity.fleetKnee.concurrency.fleet Figure
 report.shapes[].capacity.fleetKnee.concurrency.prefill Figure
+report.shapes[].capacity.fleetKnee.concurrency.routerQueue Figure
 report.shapes[].capacity.fleetKnee.concurrency.unbounded boolean
 report.shapes[].capacity.fleetKnee.lowerBound boolean
 report.shapes[].capacity.fleetKnee.outputTokensPerSecond number
@@ -1217,6 +1221,7 @@ report.shapes[].capacity.maxAtSLO.concurrency.decode Figure
 report.shapes[].capacity.maxAtSLO.concurrency.decodePerPod Figure
 report.shapes[].capacity.maxAtSLO.concurrency.fleet Figure
 report.shapes[].capacity.maxAtSLO.concurrency.prefill Figure
+report.shapes[].capacity.maxAtSLO.concurrency.routerQueue Figure
 report.shapes[].capacity.maxAtSLO.concurrency.unbounded boolean
 report.shapes[].capacity.maxAtSLO.lowerBound boolean
 report.shapes[].capacity.maxAtSLO.outputTokensPerSecond number
@@ -1228,6 +1233,7 @@ report.shapes[].capacity.operating.concurrency.decode Figure
 report.shapes[].capacity.operating.concurrency.decodePerPod Figure
 report.shapes[].capacity.operating.concurrency.fleet Figure
 report.shapes[].capacity.operating.concurrency.prefill Figure
+report.shapes[].capacity.operating.concurrency.routerQueue Figure
 report.shapes[].capacity.operating.concurrency.unbounded boolean
 report.shapes[].capacity.operating.lowerBound boolean
 report.shapes[].capacity.operating.outputTokensPerSecond number
@@ -1239,6 +1245,7 @@ report.shapes[].capacity.prefillKnee.concurrency.decode Figure
 report.shapes[].capacity.prefillKnee.concurrency.decodePerPod Figure
 report.shapes[].capacity.prefillKnee.concurrency.fleet Figure
 report.shapes[].capacity.prefillKnee.concurrency.prefill Figure
+report.shapes[].capacity.prefillKnee.concurrency.routerQueue Figure
 report.shapes[].capacity.prefillKnee.concurrency.unbounded boolean
 report.shapes[].capacity.prefillKnee.lowerBound boolean
 report.shapes[].capacity.prefillKnee.outputTokensPerSecond number
@@ -1332,11 +1339,13 @@ report.shapes[].table[].concurrency.decode Figure
 report.shapes[].table[].concurrency.decodePerPod Figure
 report.shapes[].table[].concurrency.fleet Figure
 report.shapes[].table[].concurrency.prefill Figure
+report.shapes[].table[].concurrency.routerQueue Figure
 report.shapes[].table[].concurrency.unbounded boolean
 report.shapes[].table[].e2eMeanSum Figure
 report.shapes[].table[].fromConcurrency object
 report.shapes[].table[].fromConcurrency.atKnee boolean
 report.shapes[].table[].fromConcurrency.concurrency number
+report.shapes[].table[].fromConcurrency.lowerBound boolean
 report.shapes[].table[].fromConcurrency.rate number
 report.shapes[].table[].label string
 report.shapes[].table[].load string

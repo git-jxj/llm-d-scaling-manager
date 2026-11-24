@@ -1058,7 +1058,13 @@ func (r *reporter) capacityConcurrency(c *whatifapi.ReportLimits, ev fleetEval) 
 	}
 	ol := r.pv.shape.AvgOutputTokens
 	for _, k := range []*whatifapi.ReportRate{&c.PrefillKnee, &c.DecodeKnee, &c.FleetKnee} {
-		if k.Value != nil {
+		switch {
+		case k.Value == nil:
+		case k.LowerBound:
+			// At least the knee: the true knee, past which requests queue
+			// without bound, may be higher (#280).
+			k.Concurrency = whatifapi.LowerBoundKneeConcurrency()
+		default:
 			k.Concurrency = whatifapi.ConcurrencyAt(*k.Value, nil, nil, ol, 0, true)
 		}
 	}
@@ -1388,7 +1394,15 @@ func (r *reporter) rateAtConcurrency(mean *servedFleet, n float64, ev fleetEval)
 		return cr, "the mean time in the system is refused: " + refusalWords(refused)
 	case err != nil:
 		return cr, err.Error()
+	case cr.AtKnee && ev.lowerBound && cr.Rate >= ev.knee:
+		// The fleet holds fewer below a knee that is only a lower bound:
+		// whether it saturates there is not known (#280).
+		return whatifapi.ConcurrencyRate{}, fmt.Sprintf("the fleet holds fewer below its prefill knee of at least %.2f r/s, "+
+			"which rests on a lower bound of V_P: the true knee may be higher, so the rate that holds them is not priced; "+
+			"--assume-vp states a V_P", ev.knee)
 	}
+	t, _ := mean.TTFTPoint(cr.Rate)
+	cr.LowerBound = upperBoundTTFT(t)
 	return cr, ""
 }
 

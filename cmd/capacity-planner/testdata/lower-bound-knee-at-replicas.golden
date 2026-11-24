@@ -19,7 +19,7 @@ utilization at the load judged
   prefill       utilization pooled 0.39, worst pod 0.39 (f 1)
   verdict       UNDER-PROVISIONED: at the p95 load of 12.5 r/s, the fleet runs past its operating point of 11.3 r/s (0.85 of its 13.3 r/s knee); needs at least 3 decode (has 2), 5 decode if the decode knee reads 99% high.
 capacity            req/s     out tok/s   in system   bound by
-  prefill knee      >=32.37   36680       unbounded   prefill compute: N_p 2 x V_P x (1 - 0.05 margin) / (f 1.000 x 1000 tokens); at least: V_P is a lower bound
+  prefill knee      >=32.37   36680       not known   prefill compute: N_p 2 x V_P x (1 - 0.05 margin) / (f 1.000 x 1000 tokens); at least: V_P is a lower bound
   decode knee       13.35     15124       unbounded   decode batch cap at fill 0.551
                     OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
   fleet knee        13.35     15124       unbounded   decode

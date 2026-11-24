@@ -571,10 +571,20 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 		fmt.Fprintf(b, "  %s concurrent: no rate, %s\n", u.Load, u.Reason)
 	}
 	for _, row := range s.Table {
-		if fc := row.FromConcurrency; fc != nil && fc.AtKnee {
+		fc := row.FromConcurrency
+		switch {
+		case fc == nil:
+		case fc.AtKnee && c.FleetKnee.Value != nil && fc.Rate < *c.FleetKnee.Value:
+			fmt.Fprintf(b, "  %s: the fleet holds fewer requests than that at any rate it prices; a load kept at %s requests open runs at "+
+				"%.2f r/s, short of the knee, where the mean time in the system is first refused\n",
+				row.Load, whatifapi.ConcurrencyNumber(fc.Concurrency), fc.Rate)
+		case fc.AtKnee:
 			fmt.Fprintf(b, "  %s: the fleet holds fewer requests than that below its knee; a load kept at %s requests open saturates it "+
 				"at the knee's %.2f r/s, and more concurrency adds queueing, not throughput\n",
 				row.Load, whatifapi.ConcurrencyNumber(fc.Concurrency), fc.Rate)
+		case fc.LowerBound:
+			fmt.Fprintf(b, "  %s: at least %.2f r/s: the time in the system is priced from a lower bound of V_P, so it is at most its figure\n",
+				row.Load, fc.Rate)
 		}
 	}
 	b.WriteString("checks\n")
@@ -714,14 +724,17 @@ func tableText(rows []whatifapi.ReportRow) string {
 }
 
 // concurrencyText is a mean concurrency in a column: the requests in the
-// system on average, "unbounded" at or past the knee, "-" where refused
-// (the latency columns say why).
+// system on average, "unbounded" at or past the knee, "not known" at or
+// past a knee known only as a lower bound (the true knee may be higher),
+// "-" where refused otherwise (the latency columns say why).
 func concurrencyText(c *whatifapi.Concurrency) string {
 	switch {
 	case c == nil:
 		return ""
 	case c.Unbounded:
 		return "unbounded"
+	case c.Fleet.Refused != nil && c.Fleet.Refused.Reason == string(whatif.PastLowerBoundKnee):
+		return "not known"
 	case c.Fleet.Value == nil:
 		return "-"
 	}

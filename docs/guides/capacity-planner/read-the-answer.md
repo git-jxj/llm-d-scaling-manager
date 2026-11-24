@@ -223,7 +223,9 @@ at 36.98 r/s, when its KV cache fills to 0.8.
 - `in system`: how many requests are in the system on average at that
   rate, see [the SLO against load](#6-the-slo-against-load-and-the-checks).
   At a knee the queue grows without bound, so there is no average:
-  `unbounded`.
+  `unbounded`. At a knee that is only a lower bound (`>=`) it reads
+  `not known`: the queue grows without bound only past the true knee,
+  which may be higher.
 - `prefill knee ... refused`: this sample has no measurement of prefill
   speed (V_P), so prefill is not priced. `--assume-vp` states one, and
   every figure on it is flagged as assumed.
@@ -250,9 +252,19 @@ the rate times `e2e mean (sum)` (Little's law), so it is an average, not a
 peak. It needs the mean TTFT and the mean TPOT: here TTFT is not priced, so
 it reads `-`. At or past the knee it reads `unbounded`: the queue grows
 there, and no average holds. In `-o json` each row's `concurrency` also
-splits it by role: `prefill` (the rate times the prefill wait and the
-prefill itself), `decode` (the rate times OL times the mean TPOT, the
-sequences decoding at once) and `decodePerPod`.
+splits it by where the requests are: `prefill` (in the prefill engine:
+waiting there or computing their prompt), `routerQueue` (held at the
+router's flow-control gate, when that gate is priced), `decode` (the rate
+times OL times the mean TPOT, the sequences decoding at once) and
+`decodePerPod`. The fleet figure is more than their sum: it also holds
+the fixed latency, the hop and the KV pull.
+
+To check `prefill` against a running fleet, do not sum vLLM's
+`num_requests_running` and `num_requests_waiting` gauges on the prefill
+pods: vLLM sets them after each step has dropped the requests it
+finished, so a prompt prefilled in one step never shows in them, and they
+read low. Use the pods' own histograms instead: the request rate times
+the mean queue time plus the mean prefill time.
 
 If you drive load at a fixed concurrency, ask for it as a load:
 `--load 64c` is the rate at which the fleet holds 64 requests on average.

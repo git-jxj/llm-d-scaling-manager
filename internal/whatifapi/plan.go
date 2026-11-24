@@ -447,11 +447,18 @@ func (cs *curveSet) saturatedAt(rate float64) bool {
 	if !cs.kneeOK || rate < cs.lowerKnee {
 		return false
 	}
-	if a, ok := cs.prefillKnee.(whatif.Answer); ok && a.Value == cs.lowerKnee && slices.Contains(a.Flags, whatif.VPLowerBound) {
+	if cs.lowerKneeIsLowerBound() {
 		d, ok := valueOf(cs.decodeKnee)
 		return ok && rate >= d
 	}
 	return true
+}
+
+// lowerKneeIsLowerBound says the lower knee is a prefill knee priced from a
+// V_P known only as a lower bound: the true knee is at least it.
+func (cs *curveSet) lowerKneeIsLowerBound() bool {
+	a, ok := cs.prefillKnee.(whatif.Answer)
+	return ok && a.Value == cs.lowerKnee && slices.Contains(a.Flags, whatif.VPLowerBound)
 }
 
 // planRateAtConcurrency is the rate at which mean, the fleet at the mean
@@ -483,7 +490,14 @@ func planRateAtConcurrency(mean Fleet, n float64, cs *curveSet, ol float64) (Con
 		return cr, InputErrorf("traffic.classes.critical.concurrency: the mean time in the system is refused (%s): give a rate", reasonOf(refused))
 	case err != nil:
 		return cr, InputErrorf("traffic.classes.critical.concurrency: %v", err)
+	case cr.AtKnee && cr.Rate >= cs.lowerKnee && cs.lowerKneeIsLowerBound():
+		// Whether the fleet saturates at a knee that is only a lower bound
+		// is not known (#280).
+		return cr, InputErrorf("traffic.classes.critical.concurrency: the fleet holds fewer than %g requests below its prefill knee of at least %.4g r/s, "+
+			"which rests on a lower bound of V_P: the true knee may be higher, so the rate that holds them is not priced; give a rate or assume.vp", n, cs.lowerKnee)
 	}
+	t, _ := mean.TTFTPoint(cr.Rate)
+	cr.LowerBound = upperBoundTTFT(t)
 	return cr, nil
 }
 
