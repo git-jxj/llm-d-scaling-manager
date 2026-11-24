@@ -22,13 +22,9 @@ import (
 // experimentalTTFTV2 is the flag's value that asks for the rank mixture.
 const experimentalTTFTV2 = "v2"
 
-// experimentalTTFTV2NL is the flag's value that asks for the rank mixture's
-// non-linear variant (whatif.QueueRankMixtureNL): the attention service law
-// and the non-queue part measured part by part. Backtest only.
-const experimentalTTFTV2NL = "v2nl"
-
-// experimentalTTFTV2NLLine is =v2nl with v2's service line, no attention
-// term (whatif.QueueRankMixtureNLLine). Backtest only.
+// experimentalTTFTV2NLLine is the flag's value that asks for the rank
+// mixture's variant with Z measured part by part on v2's service line
+// (whatif.QueueRankMixtureNLLine). Backtest only.
 const experimentalTTFTV2NLLine = "v2nl-line"
 
 // experimentalTTFTV2Usage is backtest's and predict's help for the flag: the
@@ -42,18 +38,15 @@ const experimentalTTFTV2Usage = experimentalTTFTUsage + ". On backtest, =v2 inst
 // false neither.
 type experimentalTTFTValue struct {
 	switches, v2 *bool
-	// nl, where set, takes =v2nl: v2 and nl both true; line, where set,
-	// takes =v2nl-line: v2, nl and line true.
-	nl, line *bool
+	// nlLine, where set, takes =v2nl-line: v2 and nlLine both true.
+	nlLine *bool
 }
 
 // String is the value.
 func (v experimentalTTFTValue) String() string {
 	switch {
-	case v.v2 != nil && *v.v2 && v.nl != nil && *v.nl && v.line != nil && *v.line:
+	case v.v2 != nil && *v.v2 && v.nlLine != nil && *v.nlLine:
 		return experimentalTTFTV2NLLine
-	case v.v2 != nil && *v.v2 && v.nl != nil && *v.nl:
-		return experimentalTTFTV2NL
 	case v.v2 != nil && *v.v2:
 		return experimentalTTFTV2
 	case v.switches != nil && *v.switches:
@@ -64,12 +57,6 @@ func (v experimentalTTFTValue) String() string {
 
 // Set reads one value.
 func (v experimentalTTFTValue) Set(s string) error {
-	if v.nl != nil {
-		*v.nl = s == experimentalTTFTV2NL || (s == experimentalTTFTV2NLLine && v.line != nil)
-	}
-	if v.line != nil {
-		*v.line = s == experimentalTTFTV2NLLine
-	}
 	switch s {
 	case "true", "v1":
 		*v.switches, *v.v2 = true, false
@@ -77,13 +64,16 @@ func (v experimentalTTFTValue) Set(s string) error {
 		*v.switches, *v.v2 = false, false
 	case experimentalTTFTV2:
 		*v.switches, *v.v2 = false, true
-	case experimentalTTFTV2NL, experimentalTTFTV2NLLine:
-		if v.nl == nil || (s == experimentalTTFTV2NLLine && v.line == nil) {
+	case experimentalTTFTV2NLLine:
+		if v.nlLine == nil {
 			return fmt.Errorf("--%s=%s is backtest's only", experimentalTTFTFlag, s)
 		}
 		*v.switches, *v.v2 = false, true
 	default:
 		return fmt.Errorf("want --%s, --%s=false or --%s=%s", experimentalTTFTFlag, experimentalTTFTFlag, experimentalTTFTFlag, experimentalTTFTV2)
+	}
+	if v.nlLine != nil {
+		*v.nlLine = s == experimentalTTFTV2NLLine
 	}
 	return nil
 }
@@ -93,9 +83,10 @@ func (v experimentalTTFTValue) IsBoolFlag() bool { return true }
 
 // withRankMixture is res with the recording's cycles as the rank mixture reads
 // them (learnreplay.MixtureSeriesFrom), read from the file at path in a pass
-// of their own.
-func withRankMixture(path string, res *whatifapi.Resolved) error {
-	src, err := openRecording(path, false)
+// of their own: only the cycles keep holds, where it is not nil, as res
+// was read (a load split's fit).
+func withRankMixture(path string, res *whatifapi.Resolved, keep *whatifapi.CycleSet) error {
+	src, err := openRecordingCycles(path, keep)
 	if err != nil {
 		return err
 	}
@@ -141,24 +132,37 @@ func prefillSlotsOf(res *whatifapi.Resolved) int {
 	return k
 }
 
-// rankMixtureReport prices rep's TTFT tables with the experimental
-// rank-mixture model (--experimental-ttft=v2), fitted on the recording read
-// again with its per-rank series, as serve's POST /v1/report does.
-func (f *answerFlags) rankMixtureReport(ctx context.Context, rep *whatifapi.ReportResponse, q whatifapi.ReportQuery) error {
+// experimentalReport prices rep's tables with the experimental models
+// asked: the TTFT with the rank-mixture model (--experimental-ttft=v2), the
+// TPOT p90 and p95 with the per-request TPOT distribution
+// (--experimental-tpot=v2), each fitted on the recording read again with
+// the series it reads, as serve's POST /v1/report does.
+func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.ReportResponse, q whatifapi.ReportQuery) error {
 	cycle, err := f.cycleNumber()
 	if err != nil {
 		return err
 	}
+	req := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.variant, PrefillVPPlateau: f.vpPlateau,
+		PrefillHitAtCount: f.hitAtCount, Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(f.recording), Cycle: cycle}}
+	if f.rankMixtureTTFT {
+		req.TTFTModel = string(whatif.QueueRankMixture)
+	}
+	if f.tpotDistribution {
+		req.TPOTModel = whatif.TPOTRenewalLognormal
+	}
 	src := &servedSources{warn: f.warn, recordings: filepath.Dir(f.recording)}
-	res, err := src.Resolve(ctx, whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.variant,
-		PrefillVPPlateau: f.vpPlateau, TTFTModel: string(whatif.QueueRankMixture),
-		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(f.recording), Cycle: cycle}})
+	res, err := src.Resolve(ctx, req)
 	if err != nil {
 		if whatifapi.IsInputError(err) {
 			return usageError{err}
 		}
 		return err
 	}
-	rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q)
+	if f.rankMixtureTTFT {
+		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q)
+	}
+	if f.tpotDistribution {
+		rep.TPOTModel = whatifapi.ApplyTPOTModel(res, rep, q)
+	}
 	return nil
 }

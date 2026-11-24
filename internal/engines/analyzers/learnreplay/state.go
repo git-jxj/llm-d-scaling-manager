@@ -95,6 +95,11 @@ type State struct {
 	// clustered arrivals (saturation.SwitchDecodeBurstFill,
 	// whatif.Decode.ArrivalCV2).
 	DecodeBurstFill bool
+	// StepOutputDispersion says a decode figure priced at a stated output
+	// spread (a backtest step's own, whatifapi.Knobs.OutputDispersion) reads
+	// its KV per request at that spread, not the fit's
+	// (saturation.SwitchBacktestStepOutputDispersion).
+	StepOutputDispersion bool
 	// Prefill is each prefill variant at the cycle, by name, as a TTFT
 	// question reads it (state_ttft.go).
 	Prefill []PrefillState
@@ -380,6 +385,23 @@ type shapeSample struct {
 // it, the hold, the lift and the residence all on, other figures still read
 // under what was measured.
 //
+// saturation.SwitchBacktestStepOutputDispersion, planner-only, prices a
+// backtest step at its own output spread, not the fit's (issue
+// llm-d-incubation/llm-d-scaling-manager#274). Only a backtest states one
+// (whatifapi.Knobs.OutputDispersion), so no other answer moves. On the 0.6B
+// staircase's 1000/1000 A phases, fitted on warm-ups that end on short
+// outputs (D 1.26), the predicted decode fill falls from 1.87 to 1.59 times
+// what the pods held (1.57 to 1.26 with the hold and the lift), and the
+// Qwen3-32B A-off phase's from 1.19 to 1.05. On the 8000/200 B and C
+// phases, where the prompt holds most of the KV, no median moves by more
+// than 0.01 with the hold and the lift; alone, the first B-off phase's
+// rises from 1.24 to 1.37, as two steps it refused are now priced. No
+// backtest figure newly reads under what was measured with it alone. With
+// the hold and the lift it deepens two Qwen3-32B A-off TTFT steps already
+// under (mean 0.69 to 0.46 of measured). It is not
+// listed yet: listing it moves the backtest figures of every recording
+// whose decode pods publish an output-length histogram.
+//
 // saturation.SwitchPlannerCapAtStepBudget is planner-only and not listed
 // either: no recording holds an engine whose step budget runs fewer
 // sequences than its cap (MTP, wide EP), so there is no backtest to turn it
@@ -409,6 +431,27 @@ type shapeSample struct {
 // 1500 times what was measured: they sit just under a knee priced from the
 // lower bound. One warm-up's self-check falls from weak to inconsistent with
 // it. It stays off until TTFT under a lower-bound knee is priced.
+//
+// saturation.SwitchPrefillVPPromptCoverage is planner-only and not listed
+// (issue llm-d-incubation/llm-d-scaling-manager#405): it keeps the prompts
+// the minutes V_P rests on read, and prices no TTFT from a V_P at a mean
+// prompt more than whatif.MaxVPShapeRatio outside them
+// (whatif.VPPromptNotCovered). It goes on once the public cross-validation
+// shows no figure newly under what was measured and no worse self-check.
+//
+// saturation.SwitchPrefillVPLoneRate is planner-only and not listed (issue
+// llm-d-incubation/llm-d-scaling-manager#406): it reads V_P from light load,
+// one request's computed tokens over its prefill time at the prompt priced,
+// where no queue gives one and the served peak agrees with it. It goes on
+// once the public cross-validation shows no figure newly under what was
+// measured, no worse self-check, and the prefill knee within 15% of the
+// measured one on the staircases whose knee was measured.
+//
+// saturation.SwitchPrefillHitAtCount is planner-only and not listed (issue
+// llm-d-incubation/llm-d-scaling-manager#384): it prices the prefix hit at a
+// prefill count other than the fit's, the floor hit x N'/N at fewer pods and
+// the fit's hit held at more. It goes on once the public cross-validation
+// shows no figure newly under what was measured.
 //
 // saturation.SwitchPrefillVPWindowBest is planner-only and not listed: it
 // keeps the peak under a queue read anywhere in the recording, not only in
@@ -587,6 +630,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	censored := opts.Switches[PackageSaturation][saturation.SwitchTPOTRatioCensored]
 	residence := opts.Switches[PackageSaturation][saturation.SwitchDecodeResidencePull]
 	burst := opts.Switches[PackageSaturation][saturation.SwitchDecodeBurstFill]
+	stepSpread := opts.Switches[PackageSaturation][saturation.SwitchBacktestStepOutputDispersion]
 	ttft.prefixAttention = opts.Switches[PackageSLO][slo.SwitchTTFTPrefixAttention]
 	ttft.computedHit = opts.Switches[PackageSLO][slo.SwitchTTFTComputedHit]
 	ttft.tierLoad = opts.Switches[PackageSLO][slo.SwitchTTFTTierLoad]
@@ -594,6 +638,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	ttft.psByEngine = opts.Switches[PackageSLO][slo.SwitchTTFTPSByEngine]
 	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
 	ttft.vpAtServed = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPAtServedWork]
+	ttft.hitAtCount = opts.Switches[PackageSaturation][saturation.SwitchPrefillHitAtCount]
 	ttft.cachedTokenCost = opts.Switches[PackageSLO][slo.SwitchTTFTCachedTokenCost]
 	ttft.specHeld = opts.Switches[PackageSLO][slo.SwitchTTFTDecodeSpeculatingHeld]
 	// SwitchITLPerToken is on from the saturation analyzer's constructor: a
@@ -708,6 +753,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	st.FirstAt, st.TPOTWindows, st.EngineTPOTWindows, st.Cycles = firstAt, windows, engine, total
 	st.ArrivalRates, st.ServingReplicas = arrivals, servingUpTo(serving, len(arrivals))
 	st.CycleTimes, st.TPOTRatioCensored, st.DecodeResidencePull, st.DecodeBurstFill = times, censored, residence, burst
+	st.StepOutputDispersion = stepSpread
 	for i := range st.Variants {
 		st.Variants[i].ReadingsFrom, st.Variants[i].ReadingsTo = cyclesSpanned(st.Variants[i].LineReadings, cycleAt)
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
@@ -726,6 +772,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		s.ArrivalRates = slices.Clone(arrivals[:sn.arrived])
 		s.ServingReplicas = servingUpTo(serving, sn.arrived)
 		s.TPOTRatioCensored, s.DecodeResidencePull, s.DecodeBurstFill = censored, residence, burst
+		s.StepOutputDispersion = stepSpread
 		s.CycleTimes = slices.Clone(times[:sn.arrived])
 		for i := range s.Variants {
 			s.Variants[i].ReadingsFrom, s.Variants[i].ReadingsTo = cyclesSpanned(s.Variants[i].LineReadings, cycleAt)

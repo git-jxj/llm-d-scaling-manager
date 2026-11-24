@@ -451,13 +451,20 @@ type SelfCheckInfo struct {
 	// replays the recording with what of it prices the recording's own
 	// traffic, and names the rest it ran without (Stated).
 	Stated *Stated
+	// TPOTModel is the experimental TPOT model the answer prices its TPOT
+	// percentiles with (InputsRequest.TPOTModel), "" none: the self-check
+	// prices them as the answer does, each fold's fitted on the fold's
+	// own fit window (BacktestRequest.TPOTModel), from res.Decode and
+	// res.Engine.
+	TPOTModel string
 }
 
 // SelfCheckOf checks the planner on the recording res was resolved from,
 // with the fits res.Folds holds.
 func SelfCheckOf(ctx context.Context, res *Resolved, info SelfCheckInfo) *SelfCheck {
 	doc := res.Inputs
-	e := &inputsEntry{id: contentID("inputs", res.Content), doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency, config: res.Config}
+	e := &inputsEntry{id: contentID("inputs", res.Content), doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency, config: res.Config,
+		decode: res.Decode, engine: res.Engine}
 	return selfCheckEntry(ctx, e, res.Folds, info)
 }
 
@@ -501,6 +508,9 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 		return notRun(short)
 	}
 	req, stated := info.Stated.replayed()
+	if info.TPOTModel != "" {
+		req.TPOTModel, req.DecodeSlots, req.SpecTokens = info.TPOTModel, e.engine.DecodeSlots, e.engine.SpecTokens
+	}
 	sc.Stated, sc.WithoutStated, sc.outside = stated, info.Stated.notReplayed(), info.Stated.outside()
 	folds = slices.Clone(folds)
 	slices.SortFunc(folds, func(a, b FoldFit) int { return a.At.Compare(b.At) })
@@ -516,6 +526,11 @@ func selfCheckEntry(ctx context.Context, e *inputsEntry, folds []FoldFit, info S
 			until = folds[i+1].At
 		}
 		fit := &inputsEntry{id: e.id + "#fit", doc: e.doc, pricer: f.Pricer, series: e.series, config: e.config}
+		if info.TPOTModel != "" {
+			// The model fits on the fold's own window: its router TPOT
+			// histograms and decode cycles before the cut (fitTPOTDist).
+			fit.latency, fit.decode, fit.engine = e.latency, e.decode, e.engine
+		}
 		q, err := questionOf(fit, e, req, f.At, until, "self-check", false)
 		if err != nil {
 			refusals = append(refusals, err.Error())

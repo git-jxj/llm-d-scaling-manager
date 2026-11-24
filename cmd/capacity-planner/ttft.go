@@ -367,6 +367,11 @@ type pricedFleet struct {
 	// read it (PrefillState.VPAtServedWork): V_P raised with a knee floored at
 	// the served work, for the TTFT too (atServedWork).
 	vpAtServedOn bool
+	// hitAtCountOn is saturation.SwitchPrefillHitAtCount, as the replay
+	// read it (PrefillState.HitAtCount), and hitAtCount the hit it priced at
+	// the fleet's prefill count (priceHitAtCount); nil where it priced none.
+	hitAtCountOn bool
+	hitAtCount   *prefill.HitAtCount
 	// servedWork is the prefill pods' sustained computed-token work by pod
 	// count over the whole window (learnreplay.PrefillState
 	// .ServedComputedWindow) whatever the prompt
@@ -552,6 +557,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.tierLoadOn = ps.TierLoad
 	pf.tierKVWaitOn = ps.TierKVWait
 	pf.vpAtServedOn = ps.VPAtServedWork
+	pf.hitAtCountOn = ps.HitAtCount
 	pf.servedWork = ps.ServedComputedWindow
 	pf.cachedTokenCost = ps.CachedTokenCost
 	for _, vs := range st.Variants {
@@ -592,7 +598,7 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	pf.promptAssumed = f.set["assume-input-tokens"]
 	pf.hint = f.hintSource()
 	pf.decodeSide()
-	if pf.fleet.Decode != nil && pf.pv.state.Shape.OutputDispersion == 0 {
+	if pf.fleet.Decode != nil && pf.pv.outputDispersion == 0 {
 		pf.assume("%s", outputSpreadUnreadWords)
 	}
 	pf.flowControl(st, f.flowControl)
@@ -732,6 +738,7 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 		}
 		est.VP, est.VPRefused, est.VPLowerBound, est.VPAboveSlopeBound = f.assumeVP, "", false, false
 		est.VPPromptTokens, est.VPWholePromptTokens, est.VPPromptHitRate = 0, 0, 0
+		est.VPPromptLow, est.VPPromptHigh = 0, 0
 		pf.assumedVP = true
 		pf.in.VPSource = shapeAssumed
 		pf.assume("V_P %s tok/s (--assume-vp)", num(f.assumeVP))
@@ -913,6 +920,7 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 		p.WholePromptTokens, pf.in.PromptSource = pv.shape.AvgInputTokens, "decode shape"
 		pf.assume("prompt %s tokens (the decode variant's; no computed-token rate on the prefill rows)", num(round(p.PromptTokens)))
 	}
+	pf.priceHitAtCount(ps)
 	pf.in.PromptTokens = p.PromptTokens
 	if p.WholePromptTokens > 0 {
 		hit := p.PromptHitRate

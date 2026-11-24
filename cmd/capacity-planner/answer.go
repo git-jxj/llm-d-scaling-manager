@@ -47,6 +47,12 @@ type answerFlags struct {
 	noSelfCheck, serveSelfCheck bool
 	folds                       map[int]*learnreplay.State
 	checked                     *whatifapi.SelfCheck
+	// withLatency asks readState to keep each cycle's series and measured
+	// latency, in series and latency (at-replicas withholds an over the
+	// router measured missing, as POST /v1/report does).
+	withLatency bool
+	series      []whatifapi.SeriesSample
+	latency     []whatifapi.LatencySample
 	// cachedCost is phi as fitted on the source (fitCachedCosts), nil where
 	// none was; cachedPhi is the phi priced, and cachedPhiSet says it was
 	// stated by the fit's own pass (whatifapi.Knobs.CachedTokenCost), not
@@ -79,6 +85,11 @@ type answerFlags struct {
 	// read from (whatifapi.Knobs.PromptMaxRatio): a backtest's step. No
 	// flag sets it; 0 is none.
 	statedPromptMaxRatio float64
+	// stepOutputDispersion is a backtest step's own output spread
+	// (whatifapi.Knobs.OutputDispersion), priced in place of the fit's on
+	// saturation.SwitchBacktestStepOutputDispersion. No flag sets it; 0 is
+	// none.
+	stepOutputDispersion float64
 	assumeRouterHop      time.Duration
 	prefill              int
 	set                  map[string]bool
@@ -124,6 +135,9 @@ type answerFlags struct {
 	// vpPlateau is --prefill-vp-plateau: the replay reads V_P from the
 	// occupancy plateau (replayOptions); off by default.
 	vpPlateau bool
+	// hitAtCount is --prefill-hit-at-count: the replay turns
+	// saturation.SwitchPrefillHitAtCount on (replayOptions); off by default.
+	hitAtCount bool
 	// experimentalTTFT is --experimental-ttft: the replay turns the TTFT
 	// model's off-by-default switches on (replayOptions); off by default.
 	experimentalTTFT bool
@@ -131,6 +145,12 @@ type answerFlags struct {
 	// tables' TTFT with the experimental rank-mixture model, fitted on the
 	// recording (experimental_ttft_v2.go); refused elsewhere.
 	rankMixtureTTFT bool
+	// experimentalTPOT is --experimental-tpot (=v2): at-replicas prices its
+	// tables' TPOT p90 and p95 with the experimental per-request TPOT
+	// distribution, fitted on the recording (experimental_tpot.go); refused
+	// elsewhere. tpotDistribution is it read.
+	experimentalTPOT string
+	tpotDistribution bool
 	// fixedImbalance, above zero, is f at every prefill count above one,
 	// assumed: the report's sensitivity to f (fSensitivity). No flag sets
 	// it.
@@ -191,8 +211,12 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.inputBucket, "input-bucket", "", "not supported: per-bucket answers are the planner's M1")
 	fs.BoolVar(&f.loadAwareRouter, "load-aware-router", whatif.DefaultPlannerLoadAwareRouter, "state that the router scores each pod's queue (llm-d's EPP queue scorer): f is held to the load it was learned at, then falls to 1 at full load, so the prefill knee is the pooled one less the margin and f prices only the latency below it; off by default, because no recording says what the router scores")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
+	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
 		". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on the --recording")
+	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "at-replicas only: =v2 prices the measured shape's (--shape measured) TPOT p90 and p95 with an "+
+		"experimental per-request TPOT distribution fitted on the --recording, around the planner's own mean; every percentile it prices "+
+		"is flagged TPOTDistribution and reads OUTSIDE VALIDATED REGION")
 	fs.BoolVar(&f.imbalanceAcrossCounts, "imbalance-across-counts", whatif.DefaultPlannerImbalanceAcrossCounts, fmt.Sprintf("at a prefill count P1 has not learned, price f off a curve fitted to the counts it learned; with none learned, and with =false, max(%g, f) (flagged AssumedImbalance either way)", whatif.ImbalanceFloor))
 	f.window.registerWindow(fs)
 	fs.Lookup("prometheus").Usage = "answer from a window of this Prometheus (base URL), captured and generated in memory, in place of --recording"
@@ -211,7 +235,16 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 	if err := f.checkTTFT(); err != nil {
 		return err
 	}
+	on, err := experimentalTPOTOf(f.experimentalTPOT)
+	if err != nil {
+		return err
+	}
+	f.tpotDistribution = on
 	switch {
+	case f.tpotDistribution && f.question != reportQuestion:
+		return usagef("--%s=%s is backtest's, serve's and at-replicas'", experimentalTPOTFlag, experimentalTPOTV2)
+	case f.tpotDistribution && f.recording == "":
+		return usagef("--%s=%s fits the model on a --recording", experimentalTPOTFlag, experimentalTPOTV2)
 	case f.rankMixtureTTFT && f.question != reportQuestion:
 		return usagef("--%s=%s is backtest's, predict's, serve's and at-replicas'", experimentalTTFTFlag, experimentalTTFTV2)
 	case f.rankMixtureTTFT && f.recording == "":
@@ -319,15 +352,25 @@ func (f *answerFlags) readState(ctx context.Context) (*learnreplay.State, error)
 	// The variants asked; an empty name counts every variant of the role,
 	// rows and replicas alike, where the server counts the variant it
 	// resolved. Both compare a role's rows with its own replicas.
-	cycles, err := learnreplay.SeriesFrom(src.open, learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID},
-		learnreplay.SeriesVariants{Prefill: f.prefillVariant, Decode: f.variant})
+	sq, sv := learnreplay.StateQuery{Namespace: st.Namespace, ModelID: st.ModelID}, learnreplay.SeriesVariants{Prefill: f.prefillVariant, Decode: f.variant}
+	var cycles []learnreplay.CycleSample
+	var lat []learnreplay.CycleLatency
+	if f.withLatency {
+		cycles, lat, err = learnreplay.SeriesWithLatencyFrom(src.open, sq, sv)
+	} else {
+		cycles, err = learnreplay.SeriesFrom(src.open, sq, sv)
+	}
 	if cerr := src.unchanged(); cerr != nil {
 		return nil, cerr
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	if why := whatifapi.EngineRowsShort(seriesSamplesOf(cycles)); why != "" {
+	series := seriesSamplesOf(cycles)
+	if f.withLatency {
+		f.series, f.latency = series, latencySamplesOf(lat)
+	}
+	if why := whatifapi.EngineRowsShort(series); why != "" {
 		// Every per-replica rate and knee would read low by the ranks the
 		// rows leave out (issue llm-d-incubation/llm-d-scaling-manager#331).
 		return nil, usagef("%s: %s; the planner reads a replica as its engine rows, so it answers nothing from this recording; %s", name, why, engineRowsFix)
@@ -474,6 +517,10 @@ type pricedVariant struct {
 	cycles int
 	decode whatif.Decode
 	shape  shape.Shape
+	// outputDispersion is the output spread D the shape was priced at as
+	// read, 0 where none was (shape.Shape holds 1 there): the fit's, or a
+	// backtest step's own (saturation.SwitchBacktestStepOutputDispersion).
+	outputDispersion float64
 	// check is the line against the recording's rows, the zero value with no
 	// line.
 	check whatif.LineCheck
@@ -557,10 +604,12 @@ const (
 // That errs towards more replicas; a reading above shape.AboveContextFactor
 // times the context says so in its source.
 func (pv *pricedVariant) residentKV() float64 {
-	d := pv.shape.OutputDispersion
 	whole := pv.shape.Context()
 	r, m := pv.state.Resident, pv.state.Shape
-	measured := shape.New(m.InputTokens, m.OutputTokens, 0).WithOutputDispersion(d).KVreq
+	// The reading is of the fit's traffic, so its context is at the fit's
+	// spread, which a backtest step may price over with its own
+	// (saturation.SwitchBacktestStepOutputDispersion).
+	measured := shape.New(m.InputTokens, m.OutputTokens, 0).WithOutputDispersion(m.OutputDispersion).KVreq
 	var kv float64
 	switch {
 	case !r.Read() || !(measured > 0):
@@ -640,7 +689,14 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if f.prefixHit != nil {
 			hit, pv.assumedHit, pv.hitRead = *f.prefixHit, true, f.prefixHitRead
 		}
-		pv.shape = shape.New(il, ol, hit).WithOutputDispersion(vs.Shape.OutputDispersion)
+		d := vs.Shape.OutputDispersion
+		if st.StepOutputDispersion && f.stepOutputDispersion >= 1 {
+			// A backtest step's own spread, as its lengths are its own
+			// (saturation.SwitchBacktestStepOutputDispersion): the fit's
+			// last minutes may have carried other traffic.
+			d = f.stepOutputDispersion
+		}
+		pv.shape, pv.outputDispersion = shape.New(il, ol, hit).WithOutputDispersion(d), d
 		replicas := vs.Replicas
 		if f.decode > 0 {
 			replicas = f.decode
@@ -696,7 +752,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		if pv.itlB.Applied {
 			pv.flags = append(pv.flags, assumedITLB)
 		}
-		if vs.Shape.OutputDispersion == 0 {
+		if d == 0 {
 			pv.flags = append(pv.flags, whatif.OutputSpreadUnread)
 		}
 		if vs.BusiestRankFill {
@@ -1172,7 +1228,7 @@ func footer(st *learnreplay.State, variants []pricedVariant) string {
 // shapeText is the shape a variant was priced at and where each length came
 // from, and the spread of its output lengths where one was read.
 func (pv pricedVariant) shapeText() string {
-	if d := pv.state.Shape.OutputDispersion; d > 0 {
+	if d := pv.outputDispersion; d > 0 {
 		return fmt.Sprintf("%s, output spread D %.3f (measured)", pv.lengthsText(), d)
 	}
 	return pv.lengthsText()

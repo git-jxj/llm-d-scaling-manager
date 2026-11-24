@@ -2,19 +2,17 @@ package whatifapi
 
 import (
 	"fmt"
-	"math"
 	"strings"
-	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
-// This file prices a backtest's TTFT with the experimental rank-mixture
-// model's non-linear variant (whatif.QueueRankMixtureNL), where the request
-// asks for it (BacktestRequest.TTFTModel): the attention service law and Z
-// measured part by part (whatif/rank_mixture_nl.go). It is fitted on the
-// backtest's fit window as the rank mixture is, prices each test step the
-// same way, and abstains where its own checks fail.
+// This file holds what the backtest adds for the experimental rank-mixture
+// variant whatif.QueueRankMixtureNLLine (BacktestRequest.TTFTModel): Z
+// measured part by part on v2's queue and service line
+// (whatif/rank_mixture_nl.go). It is fitted on the backtest's fit window as
+// v2 is (fitRankMixtureStepsWith), prices each test step the same way, and
+// abstains where its own checks fail (identifiedNL).
 
 // RankMixtureZParts is Z measured part by part, seconds and seconds a
 // prompt token, and the parts' spreads (whatif.ZParts).
@@ -31,52 +29,13 @@ type RankMixtureZParts struct {
 	DecodeSigma   float64 `json:"decodeSigma"`
 }
 
-// fitRankMixtureNL fits whatif.QueueRankMixtureNL on the fit window's steps
-// (mixtureFitSteps).
-func fitRankMixtureNL(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, model whatif.QueueModel) (*rankMixtureQ, error) {
-	steps, even, backlog, err := mixtureFitSteps(fit, fitIdx, step, model)
-	if err != nil {
-		return nil, err
-	}
-	m, diag, err := whatif.FitRankMixtureNL(steps, whatif.RankMixtureOptions{Slots: slots,
-		LineService: model == whatif.QueueRankMixtureNLLine})
-	if err != nil {
-		return nil, InputErrorf("the experimental TTFT model %s did not fit: %v", model, err)
-	}
-	rq := reportOf(m, whatif.RankMixtureFit{Steps: diag.Steps, ShareCV: diag.ShareCV, FitP90: diag.FitP90}, slots, even, backlog)
-	r := &rq.report
-	r.Model, r.Law, r.B, r.CleanSteps, r.FitMean = string(model), string(m.Law), m.B, diag.CleanSteps, diag.FitMean
-	if r.Law == "" {
-		r.Law = "line"
-	}
-	r.SpreadDefaulted = diag.Span < whatif.MinSpreadFitWindow
-	if math.IsInf(m.V, 1) {
-		// No term linear in the computed tokens: the attention term holds
-		// them all. JSON has no infinity; 0 reads as none.
-		r.V = 0
-	}
-	if p := m.Parts; p != nil {
-		r.ZParts = &RankMixtureZParts{OverheadA: p.Overhead.A, OverheadB: p.Overhead.B, DecodeA: p.Decode.A, DecodeB: p.Decode.B,
-			RemainderA: p.Remainder.A, RemainderB: p.Remainder.B, OverheadSigma: p.Overhead.Sigma, DecodeSigma: p.Decode.Sigma}
-	}
-	return rq, nil
-}
-
-// abstainedMixtureNL is a variant model abstaining for why.
-func abstainedMixtureNL(why string, model whatif.QueueModel) *rankMixtureQ {
-	rq := abstainedMixture(why)
-	rq.report.Model = string(model)
-	return rq
-}
-
-// identifiedNL is rq, or rq abstaining where a check of the non-linear
-// variant fails. Its Z is measured, not calibrated, so v2's checks on the
-// spread and on A0 do not apply (A0 is a sum of non-negative intercepts);
-// in their place the fit window must price its own router mean within
-// [whatif.MinNLFitMean, whatif.MaxNLFitMean] of measured and its own p90
-// within [whatif.MinNLFitP90, whatif.MaxNLFitMean], since nothing was
-// calibrated to either: a model that misses the window it was fitted on is
-// not extrapolated from it.
+// identifiedNL is identified for the variant. Its Z is measured, not
+// calibrated, so v2's checks on the spread and on A0 do not apply (A0 is a
+// sum of non-negative intercepts); in their place the fit window must price
+// its own router mean within [whatif.MinNLFitMean, whatif.MaxNLFitMean] of
+// measured and its own p90 within [whatif.MinNLFitP90, whatif.MaxNLFitMean],
+// since nothing was calibrated to either: a model that misses the window it
+// was fitted on is not extrapolated from it.
 func (rq *rankMixtureQ) identifiedNL() *rankMixtureQ {
 	r := rq.report
 	var why []string

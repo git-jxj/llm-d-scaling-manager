@@ -34,6 +34,11 @@ type InputsRequest struct {
 	// prefill pod queued (the CLI's --prefill-vp-plateau): experimental and
 	// off by default. Every figure priced from it is flagged VPFromPlateau.
 	PrefillVPPlateau bool `json:"prefillVPPlateau,omitempty"`
+	// PrefillHitAtCount prices the prefix hit at a prefill count other than
+	// the source's (the CLI's --prefill-hit-at-count): off by default. At
+	// fewer pods the hit is the floor hit x N'/N, flagged PrefixHitAtCount;
+	// at more it is held, flagged PrefixHitHeld.
+	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
 	// ExperimentalTTFT prices TTFT with the TTFT model's switches that are
 	// off by default (the CLI's --experimental-ttft): for demonstration,
 	// not validated. Every prefill and TTFT figure is flagged
@@ -45,6 +50,13 @@ type InputsRequest struct {
 	// source's window and abstains where it is not identified; the
 	// planner's TTFT then stands.
 	TTFTModel string `json:"ttftModel,omitempty"`
+	// TPOTModel prices the main view's TPOT p90 and p95 with an
+	// experimental per-request TPOT distribution: "" is the server's
+	// default (serve --experimental-tpot=v2), and
+	// whatif.TPOTRenewalLognormal the only other. It is fitted on the
+	// source's window and abstains where its checks fail; the planner's
+	// percentile then stands. The mean TPOT is the planner's either way.
+	TPOTModel string `json:"tpotModel,omitempty"`
 }
 
 // The source kinds.
@@ -65,6 +77,10 @@ type SourceRequest struct {
 	To        string `json:"to,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Cycle     int    `json:"cycle,omitempty"`
+	// Cycles, when set, reads the recording with only these cycles
+	// (learnreplay.CyclesOf): a load split's fit (LoadFitCycles). Never
+	// sent: a backtest sets it.
+	Cycles *CycleSet `json:"-"`
 }
 
 // InputsResponse is a source resolved: every term the plans price from, each
@@ -92,12 +108,23 @@ type InputsResponse struct {
 	// PrefillVPPlateau says the source was read with V_P from the occupancy
 	// plateau (InputsRequest.PrefillVPPlateau); absent otherwise.
 	PrefillVPPlateau bool `json:"prefillVPPlateau,omitempty"`
+	// PrefillHitAtCount says the source was read with the prefix hit priced
+	// at each prefill count (InputsRequest.PrefillHitAtCount); absent
+	// otherwise.
+	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
 	// ExperimentalTTFT says the source was read with the experimental TTFT
 	// model (InputsRequest.ExperimentalTTFT); absent otherwise.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
 	// TTFTModel is the experimental TTFT model the main view prices with,
 	// as fitted on the source (InputsRequest.TTFTModel); absent otherwise.
 	TTFTModel *TTFTModelInfo `json:"ttftModel,omitempty"`
+	// TPOTModel is the experimental TPOT model the main view prices with,
+	// as fitted on the source (InputsRequest.TPOTModel); absent otherwise.
+	TPOTModel *TPOTModelInfo `json:"tpotModel,omitempty"`
+	// Measured is the source's busiest UTC hour and the TTFT and TPOT the
+	// router measured over it (BusiestHourMeasured); absent with no router
+	// histogram. It is measured, never priced.
+	Measured *MeasuredHour `json:"measured,omitempty"`
 }
 
 // SourceInfo is what the inputs were read from. Prometheus is the URL's
@@ -264,9 +291,10 @@ type Figure struct {
 	// is met; one it misses is not known to be missed (issue
 	// llm-d-incubation/llm-d-scaling-manager#369).
 	UpperBound bool `json:"upperBound,omitempty"`
-	// Extrapolated says the figure, priced by the experimental TTFT model,
-	// is at a rate above the highest load the source's fit window served
-	// (TTFTModelView.MeasuredUpTo).
+	// Extrapolated says the figure, priced by the experimental TTFT or
+	// TPOT model, is at a rate above the highest load the source's fit
+	// window served (TTFTModelView.MeasuredUpTo,
+	// TPOTModelView.MeasuredUpTo).
 	Extrapolated bool `json:"extrapolated,omitempty"`
 }
 
@@ -334,9 +362,13 @@ type Classes struct {
 	Batch    *ClassRate `json:"batch,omitempty"`
 }
 
-// ClassRate is one class's rate, requests per second over the model.
+// ClassRate is one class's rate, requests per second over the model, or its
+// load as a concurrency, the mean number of requests in the system: a plan
+// translates it into the rate at which the scenario's fleet holds that many
+// (Little's law), below the fleet's knee. Give one of the two.
 type ClassRate struct {
-	Rate *float64 `json:"rate,omitempty"`
+	Rate        *float64 `json:"rate,omitempty"`
+	Concurrency *float64 `json:"concurrency,omitempty"`
 }
 
 // Mix is the traffic's lengths: "observed", or stated mean lengths, priced as
@@ -490,14 +522,18 @@ type Scenario struct {
 	Fleet    FleetCounts `json:"fleet"`
 	// Rate is the rate asked; absent, the chosen rate is the operating
 	// point, headroom times the lower knee (limits.chosen.rate).
-	Rate       *float64           `json:"rate,omitempty"`
-	Mix        Mix                `json:"mix"`
-	ArrivalCV2 *float64           `json:"arrivalCV2,omitempty"`
-	TTFT       ResolvedObjective  `json:"ttft"`
-	TPOT       *ResolvedObjective `json:"tpot,omitempty"`
-	Headroom   float64            `json:"headroom"`
-	Assume     Assume             `json:"assume"`
-	Views      ViewRequest        `json:"views"`
+	Rate *float64 `json:"rate,omitempty"`
+	// Concurrency is the concurrency asked in place of a rate: the rate is
+	// the one at which the fleet holds that many requests on average
+	// (limits.chosen.fromConcurrency).
+	Concurrency *float64           `json:"concurrency,omitempty"`
+	Mix         Mix                `json:"mix"`
+	ArrivalCV2  *float64           `json:"arrivalCV2,omitempty"`
+	TTFT        ResolvedObjective  `json:"ttft"`
+	TPOT        *ResolvedObjective `json:"tpot,omitempty"`
+	Headroom    float64            `json:"headroom"`
+	Assume      Assume             `json:"assume"`
+	Views       ViewRequest        `json:"views"`
 	// BucketEdges are the request's edges; absent with the default ones,
 	// asked or not, so that they hash to the same scenarioId.
 	BucketEdges []int `json:"bucketEdges,omitempty"`
@@ -599,6 +635,9 @@ type TPOTView struct {
 	AtRate    RatePoint   `json:"atRate"`
 	AtTarget  TargetPoint `json:"atTarget"`
 	Markers   Markers     `json:"markers"`
+	// Model is the experimental TPOT model at the plan's fleet, where the
+	// source was resolved with one (InputsResponse.TPOTModel).
+	Model *TPOTModelView `json:"model,omitempty"`
 }
 
 // Ratio is R_q, a TPOT percentile over its mean: its value and source
@@ -635,12 +674,22 @@ type Chosen struct {
 	// RateSource is what set Rate: one of the RateSource constants.
 	RateSource string `json:"rateSource"`
 	Headroom   Figure `json:"headroom"`
+	// Concurrency is the mean number of requests in the system at Rate
+	// (Little's law), by role: unbounded at or past the knee.
+	Concurrency *Concurrency `json:"concurrency,omitempty"`
+	// FromConcurrency is the concurrency asked (scenario.concurrency) and
+	// the rate it translates into; AtKnee says the fleet holds fewer
+	// requests than that below its knee, so Rate is the knee's.
+	FromConcurrency *ConcurrencyRate `json:"fromConcurrency,omitempty"`
 }
 
 // The values of Chosen.RateSource.
 const (
 	// RateSourceRequest is a rate the scenario gave.
 	RateSourceRequest = "request"
+	// RateSourceConcurrency is the rate at which the fleet holds the
+	// concurrency the scenario gave (Chosen.FromConcurrency).
+	RateSourceConcurrency = "concurrency"
 	// RateSourceOperatingPoint is headroom times the lower of both knees,
 	// where the scenario gave no rate.
 	RateSourceOperatingPoint = "operating point"

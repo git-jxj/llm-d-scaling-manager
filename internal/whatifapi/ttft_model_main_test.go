@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -216,4 +217,238 @@ func TestCurveCap(t *testing.T) {
 		assert.Equal(t, c.ok, ok, c.name)
 		assert.InDelta(t, c.want, got, 1e-12, c.name)
 	}
+}
+
+// v2SizeOf sizes the entry's fleet for rate with the policy's TTFT target.
+func v2SizeOf(t *testing.T, s *Server, id string, rate float64) SizeResponse {
+	t.Helper()
+	body, err := s.size(context.Background(), SizeRequest{InputsID: id, Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(rate)}}},
+		SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}}})
+	require.NoError(t, err)
+	var out SizeResponse
+	require.NoError(t, json.Unmarshal(body, &out))
+	return out
+}
+
+// Where the planner refuses prefill, so that no fleet is sized, the
+// experimental model sizes one: its prefill limit is the rate whose TTFT
+// meets the target, and the fleet's the lowest of that, headroom times the
+// curve's end and decode's. The same rate grown by a quarter and by half is
+// sized too, never on fewer replicas. Each limit the model set is flagged
+// RankMixtureTTFT, and the plan the answer carries reads the same.
+func TestMainView_ExperimentalModelSizesWhereThePlannerRefuses(t *testing.T) {
+	s0, e0 := mainEntry(t, false)
+	base := v2SizeOf(t, s0, e0.id, 4)
+	assert.Nil(t, base.Answer, "the planner sizes no fleet without V_P")
+
+	s, e := mainEntry(t, true)
+	var prev *SizeAnswer
+	for _, x := range []float64{1, 1.25, 1.5} {
+		out := v2SizeOf(t, s, e.id, 4*x)
+		require.NotNil(t, out.Answer, "sized at %g r/s: %+v", 4*x, out.Unmet)
+		a := out.Answer
+		require.NotNil(t, a.Limit.Value)
+		assert.GreaterOrEqual(t, *a.Limit.Value, 4*x*(1-reachTolerance))
+		assert.Contains(t, a.Limit.Flags, string(whatif.RankMixtureTTFT))
+		top := *e.ttftModel.info.MeasuredUpTo * float64(a.Fleet.Prefill) / float64(e.ttftModel.prefill)
+		assert.Equal(t, *a.Limit.Value > top, a.Limit.Extrapolated, "a limit past the load served at %d prefill is extrapolated", a.Fleet.Prefill)
+		require.NotNil(t, a.Plan.Limits.Prefill.Value)
+		assert.Contains(t, a.Plan.Limits.Prefill.Flags, string(whatif.RankMixtureTTFT))
+		if prev != nil {
+			assert.GreaterOrEqual(t, a.Fleet.Prefill+a.Fleet.Decode, prev.Fleet.Prefill+prev.Fleet.Decode)
+		}
+		prev = a
+	}
+}
+
+// The model's prefill limit is where its curve meets the target: the TTFT
+// just under it meets the target, and just over it does not.
+func TestMixtureFleet_PrefillLimitIsWhereTheCurveMeetsTheTarget(t *testing.T) {
+	_, e := mainEntry(t, true)
+	k := Knobs{Prefill: 1, Decode: 2, TTFTPercentile: 0.9}
+	fl, ok := e.ttftModel.fleet(stubFleetFor(t, e, 1), k).(*mixtureFleet)
+	require.True(t, ok)
+	lo, _ := fl.price(1)
+	hi, okHi := fl.price(fl.knee * 0.8)
+	require.True(t, okHi)
+	target := (lo + hi) / 2
+	r, atEnd, ok := fl.rateAtTarget(target)
+	require.True(t, ok)
+	assert.False(t, atEnd)
+	// The draws are fixed but finite: the curve is monotone to within a
+	// percent or so, not exactly.
+	at, _ := fl.price(r)
+	assert.LessOrEqual(t, at, target)
+	assert.InEpsilon(t, target, at, 0.02)
+	assert.Less(t, r, fl.knee*0.8, "under the rate whose TTFT is over the target")
+	_, atEnd, ok = fl.rateAtTarget(1e6)
+	assert.True(t, ok)
+	assert.True(t, atEnd, "a target the whole curve meets is met at its end")
+	_, _, ok = fl.rateAtTarget(lo / 10)
+	assert.False(t, ok, "a target under the floor is met nowhere")
+}
+
+// A limit the curve's end sets is "at least" (VPLowerBound) only where that
+// end is a prefill knee known as a lower bound; decode's knee, or a priced
+// prefill knee, is no lower bound.
+func TestMixtureFleet_AtLeastOnlyOnALowerBoundPrefillKnee(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		f    mixtureFleet
+		want bool
+	}{
+		{"decode's knee ends the curve", mixtureFleet{lowerBound: true, endAtLeast: false}, false},
+		{"a lower-bound prefill knee ends it", mixtureFleet{lowerBound: true, endAtLeast: true}, true},
+	} {
+		got := slices.Contains(c.f.limitFlags(true), whatif.VPLowerBound)
+		assert.Equal(t, c.want, got, c.name)
+		assert.NotContains(t, c.f.limitFlags(false), whatif.VPLowerBound, "%s: a limit the target set is no bound", c.name)
+	}
+	_, e := mainEntry(t, true)
+	fl, ok := e.ttftModel.fleet(stubFleetFor(t, e, 1), Knobs{Prefill: 1, Decode: 2, TTFTPercentile: 0.9}).(*mixtureFleet)
+	require.True(t, ok)
+	assert.True(t, fl.lowerBound, "the stub refuses the prefill knee")
+	assert.False(t, fl.endAtLeast, "the curve ends at decode's knee there")
+}
+
+// The curve's end is "at least" only where a prefill knee that is only a
+// lower bound ends it: not decode's knee, not a tie with it (the fleet stops
+// at decode's), and not a refused or a priced prefill knee.
+func TestEndAtLeast(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		pv         float64
+		pok, lower bool
+		dv         float64
+		dok        bool
+		served     float64
+		want       bool
+	}{
+		{"a lower-bound prefill knee under decode's", 10, true, true, 20, true, 8, true},
+		{"raised to the load served, still under decode's", 10, true, true, 20, true, 15, true},
+		{"raised past decode's: decode's ends it", 10, true, true, 12, true, 15, false},
+		{"a tie with decode's: decode's ends it", 12, true, true, 12, true, 8, false},
+		{"a priced prefill knee", 10, true, false, 20, true, 8, false},
+		{"a refused prefill knee: decode's", 0, false, true, 12, true, 15, false},
+		{"decode refused: the lower-bound prefill knee", 10, true, true, 0, false, 15, true},
+	} {
+		assert.Equal(t, c.want, endAtLeast(c.pv, c.pok, c.lower, c.dv, c.dok, c.served), c.name)
+	}
+}
+
+// The model's fleet limit is the lowest of headroom times the curve's end,
+// the prefill limit and decode's, named by what binds; a refused decode or
+// prefill limit is the fleet's. Decode's bound is named as the planner names
+// it, and only a binding curve's end that is "at least" carries
+// VPLowerBound.
+func TestMixtureFleet_FleetLimit(t *testing.T) {
+	f := &mixtureFleet{knee: 10, kneeOK: true, endAtLeast: true}
+	prefill := whatif.Answer{Value: 7, Flags: []whatif.Flag{whatif.RankMixtureTTFT}}
+	prefill.Basis.BoundBy = []whatif.Bound{"TTFT"}
+	decode := whatif.Answer{Value: 6}
+	decode.Basis.BoundBy = []whatif.Bound{"TPOT p90"}
+
+	a, ok := f.fleetLimit(0.85, decode, prefill).(whatif.Answer)
+	require.True(t, ok)
+	assert.InDelta(t, 6, a.Value, 1e-12, "decode binds")
+	assert.Equal(t, []whatif.Bound{"decode TPOT p90"}, a.Basis.BoundBy)
+	assert.Equal(t, []whatif.Flag{whatif.RankMixtureTTFT}, a.Flags)
+
+	a, ok = f.fleetLimit(0.5, decode, prefill).(whatif.Answer)
+	require.True(t, ok)
+	assert.InDelta(t, 5, a.Value, 1e-12, "the cap binds")
+	assert.Equal(t, []whatif.Bound{whatif.BoundOperatingPoint}, a.Basis.BoundBy)
+	assert.Contains(t, a.Flags, whatif.VPLowerBound, "a lower-bound end is at least")
+
+	a, ok = f.fleetLimit(1, nil, prefill).(whatif.Answer)
+	require.True(t, ok)
+	assert.InDelta(t, 7, a.Value, 1e-12, "no TPOT asked: prefill binds")
+	assert.NotContains(t, a.Flags, whatif.VPLowerBound)
+
+	refused := whatif.Unanswerable{Reason: whatif.NoPrefillCapacity}
+	assert.Equal(t, whatif.Result(refused), f.fleetLimit(1, refused, prefill), "a refused decode limit is the fleet's")
+	assert.Equal(t, whatif.Result(refused), f.fleetLimit(1, decode, refused), "a refused prefill limit is the fleet's")
+}
+
+// With no TPOT asked, so that the fleet grows with the rate past the load the
+// source served, every fleet limit the model set reads extrapolated exactly
+// where it passes that load at its own prefill count: the answer's, the
+// plan's +1 steps' and the one-fewer steps'. Some of them do, so the check is
+// not empty.
+func TestMainView_ExperimentalModelMarksEveryExtrapolatedLimit(t *testing.T) {
+	s, e := mainEntry(t, true)
+	none := "none"
+	var checked, extrapolated int
+	check := func(what string, n FleetCounts, f Figure) {
+		t.Helper()
+		if f.Value == nil {
+			return
+		}
+		assert.Contains(t, f.Flags, string(whatif.RankMixtureTTFT), what)
+		top := *e.ttftModel.info.MeasuredUpTo * float64(n.Prefill) / float64(e.ttftModel.prefill)
+		assert.Equal(t, *f.Value > top, f.Extrapolated, "%s at %+v: %g r/s against %g served", what, n, *f.Value, top)
+		checked++
+		if f.Extrapolated {
+			extrapolated++
+		}
+	}
+	var prev *SizeAnswer
+	for _, rate := range []float64{4, 12, 24} {
+		body, err := s.size(context.Background(), SizeRequest{InputsID: e.id, Traffic: &Traffic{Classes: &Classes{Critical: &ClassRate{Rate: f64(rate)}}},
+			SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}, TPOT: &Objective{Statistic: none}}})
+		require.NoError(t, err)
+		var out SizeResponse
+		require.NoError(t, json.Unmarshal(body, &out))
+		require.NotNil(t, out.Answer, "sized at %g r/s: %+v", rate, out.Unmet)
+		a := out.Answer
+		check("the answer", a.Fleet, a.Limit)
+		check("+1 prefill", a.Plan.Marginal.PrefillPlusOne.Fleet, a.Plan.Marginal.PrefillPlusOne.Limit)
+		check("+1 decode", a.Plan.Marginal.DecodePlusOne.Fleet, a.Plan.Marginal.DecodePlusOne.Limit)
+		for _, st := range []*SizeStep{a.FewerPrefill, a.FewerDecode} {
+			if st != nil {
+				check("one fewer", st.Fleet, st.Limit)
+			}
+		}
+		if prev != nil {
+			assert.Greater(t, a.Fleet.Prefill+a.Fleet.Decode, prev.Fleet.Prefill+prev.Fleet.Decode, "%g r/s needs more than the rate before", rate)
+		}
+		prev = a
+	}
+	assert.Positive(t, extrapolated, "some limit is past the load served")
+	assert.Less(t, extrapolated, checked, "and some is not")
+}
+
+// A day plan is the default TTFT model's, also on inputs resolved with the
+// experimental one: its buckets, whose cycles read no lengths, sit at the
+// window's own shape, where the model prices, yet every figure, refusal and
+// count is the default's, so that no plan mixes a model-priced prefill with
+// a default-priced decode. The same inputs' size is the model's, so the
+// check is not empty.
+func TestDayPlan_ExperimentalModelLeavesTheDayPlanToTheDefault(t *testing.T) {
+	plan := func(model bool) DayPlanResponse {
+		t.Helper()
+		s, e := mainEntry(t, model)
+		for i := range e.series {
+			e.series[i].HasShape = false
+		}
+		body, err := s.dayPlan(context.Background(), DayPlanRequest{InputsID: e.id,
+			SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}}})
+		require.NoError(t, err)
+		var out DayPlanResponse
+		require.NoError(t, json.Unmarshal(body, &out))
+		return out
+	}
+	base, v2 := plan(false), plan(true)
+	require.Positive(t, base.Summary.Counts.Sized, "the default sizes some bucket")
+	for _, b := range base.Buckets {
+		assert.Equal(t, "window", b.Shape.Source, "the bucket at %s is at the window's shape", b.Start)
+	}
+	assert.Equal(t, base.Summary.Counts.Sized, base.Summary.Counts.PrefillNotPriced, "the default prices no prefill: V_P is refused")
+
+	s, e := mainEntry(t, true)
+	require.NotNil(t, v2SizeOf(t, s, e.id, 4).Answer, "the model sizes the same inputs")
+
+	assert.Equal(t, base.Refused, v2.Refused)
+	assert.Equal(t, base.Summary, v2.Summary)
+	assert.Equal(t, base.Buckets, v2.Buckets)
 }

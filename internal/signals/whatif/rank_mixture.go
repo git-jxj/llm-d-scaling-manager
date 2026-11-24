@@ -179,29 +179,24 @@ type RankMixture struct {
 	// chunked prefill, 1 without); 0 is not known, and each rank is priced
 	// as plain processor sharing.
 	Slots int
-	// Law is the service law: ServiceLine (S0 + x/V) or ServiceAttention,
-	// which adds B x (c + x/2) for the attention of x computed tokens over
-	// c cached ones (rank_mixture_nl.go).
-	Law ServiceLaw
-	// B is ServiceAttention's seconds per computed token per token of
-	// context; 0 under ServiceLine.
-	B float64
-	// Parts is Z's decomposition where it was measured part by part
-	// (FitRankMixtureNL): A0 and Beta are then their sums and Spread 1.
-	Parts *ZParts
-	// ShareRows is the fit steps' share profiles at their rates, where the
-	// shares are read at the priced load (sharesAt); nil prices Shares.
+	// ShareRows is the fit steps' share profiles at their rates where the
+	// profile is read at the priced load (RankMixtureOptions.SharesAtLoad);
+	// nil prices Shares.
 	ShareRows []ShareRow
-}
-
-// service is the prefill service time of x computed tokens on a prompt of l
-// tokens.
-func (m RankMixture) service(x, l float64) float64 {
-	s := m.S0 + x/m.V
-	if m.Law == ServiceAttention {
-		s += m.B * x * attentionContext(x, l)
-	}
-	return s
+	// CleanSteps and OverloadedSteps are the fit steps under and at or over
+	// MaxCleanFitRho where the KV-deferral lines and the prompt slopes are
+	// fitted on the clean steps (RankMixtureOptions.CleanFitSteps); both 0
+	// without it.
+	CleanSteps, OverloadedSteps int
+	// Stratified reads each rank's mean service and cs^2 integrated over
+	// the computed-token law and draws the ranks stratified
+	// (rank_mixture_stratified.go); false reads them from each rank's own
+	// draws.
+	Stratified bool
+	// Parts is Z measured part by part (FitRankMixtureNL,
+	// QueueRankMixtureNLLine): A0 and Beta are then their sums, Spread is 1
+	// and each request's Z is drawn from the parts; nil is v2's Z.
+	Parts *ZParts
 }
 
 // MaxRelaxationShare is the largest relaxation time, as a share of the step
@@ -341,9 +336,8 @@ func (h cumHist) ppf(u float64) float64 {
 // Spread.
 type RankMixtureDraws struct {
 	QP, L, W []float64
-	// Z is each request's non-queue part where it is drawn (the
-	// non-linear variant's spread parts, ZParts.draws); Stats then adds it
-	// in place of a0 + sb L.
+	// Z is each request's non-queue part where it is drawn (ZParts.draws);
+	// Stats then adds it in place of a0 + sb L.
 	Z []float64
 	// Checks is the assumptions' checks at the rate.
 	Checks RankMixtureChecks
@@ -376,46 +370,31 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 	}
 	shares := m.sharesAt(rate)
 	per := max(n/len(shares), 50)
-	if m.Parts != nil {
-		per = max(per, minStratifiedDraws)
+	pooledES, pooledCS2 := 0.0, 0.0
+	if m.Stratified {
+		per = stratifiedPer(per, len(shares))
+		pooledES, pooledCS2 = m.serviceMoments(hx)
 	}
 	rng := rand.New(rand.NewPCG(mixtureSeed, uint64(len(shares))))
 	out := RankMixtureDraws{QP: make([]float64, 0, per*len(shares)), L: make([]float64, 0, per*len(shares)),
 		W: make([]float64, 0, per*len(shares))}
 	s := make([]float64, per)
 	var rhoSum float64
-	// The pooled moments (serviceMoments): the ranks draw from one law, so
-	// their mean service and its cs^2 are read once, from a sample large
-	// enough not to move each rank's utilization; v2 reads them from each
-	// rank's own draws.
-	pooledES, pooledCS2, pooled := 0.0, 0.0, false
-	if m.Parts != nil {
-		pooledES, pooledCS2 = m.serviceMoments(hx, hl)
-		pooled = pooledES > 0
-	}
 	for i, p := range shares {
 		lam := rate * p
 		var es, es2 float64
 		for j := range s {
-			if m.Law == ServiceAttention {
-				// The request's own prompt sets its context, drawn from
-				// the prompt histogram apart from its computed tokens
-				// (the histograms are marginals).
-				x := hx.ppf(rng.Float64())
-				if m.Parts != nil {
-					// Stratified in the computed tokens (stratifiedDraws).
-					x = hx.ppf((float64(j) + rng.Float64()) / float64(per))
-				}
-				s[j] = m.service(x, hl.ppf(rng.Float64()))
-			} else {
-				s[j] = m.S0 + hx.ppf(rng.Float64())/m.V
+			u := rng.Float64()
+			if m.Stratified {
+				u = (float64(j) + u) / float64(per)
 			}
+			s[j] = m.S0 + hx.ppf(u)/m.V
 			es += s[j]
 			es2 += s[j] * s[j]
 		}
 		es /= float64(per)
 		cs2 := max(es2/float64(per)/(es*es)-1, 0)
-		if pooled {
+		if m.Stratified && pooledES > 0 {
 			es, cs2 = pooledES, pooledCS2
 		}
 		rho := lam * es
@@ -474,9 +453,7 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 			out.W = append(out.W, w)
 		}
 	}
-	if m.Parts != nil {
-		out.Z = m.Parts.draws(out.L)
-	}
+	out.Z = m.Parts.draws(out.L)
 	if m.KV.Known {
 		mean := rhoSum / float64(len(shares))
 		out.Checks.KVOutside = mean < m.KV.RhoLo || mean > m.KV.RhoHi
@@ -616,7 +593,7 @@ func (m RankMixture) Assumed() string {
 	}
 	return fmt.Sprintf("experimental TTFT model %s (OUTSIDE VALIDATED REGION): %s per rank on %d ranks "+
 		"(busiest share %.3g of the mean), S(x) = %.3g s + x / %.4g tok/s; %s; Z = %.3g s + %.3g x %.3g us x L "+
-		"(beta: overhead %.3g, decode %.3g, remainder %.3g us per prompt token)",
+		"(beta: overhead %.3g, decode %.3g, remainder %.3g us per prompt token)%s",
 		QueueRankMixture, queue, len(m.Shares), busiest, m.S0, m.V, kv, m.A0, m.Spread, m.Beta*1e6,
-		m.BetaOverhead*1e6, m.BetaDecode*1e6, m.BetaRemainder*1e6)
+		m.BetaOverhead*1e6, m.BetaDecode*1e6, m.BetaRemainder*1e6, m.fitStepsAssumed())
 }

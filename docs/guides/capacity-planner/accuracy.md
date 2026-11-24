@@ -83,6 +83,8 @@ in its capacity table, says the 0.6B range under `not validated` only when
 the knee is outside, and sizes decode at the label's upper error inside the
 region, or at 99.1% outside it, beside the point answer
 (`needed.decodeAtErrorBound`, at most the search's `maxReplicas`). The
+fleet needed never cuts decode below that count, whatever the verdict:
+decode has a replica to spare only where one fewer still meets it. The
 label's `n=` gives the independent load levels first, then the raw
 readings.
 
@@ -207,7 +209,7 @@ These always read `OUTSIDE VALIDATED REGION`:
   but 2 prefill and 2 decode.
 - Any accelerator but H200.
 - Any TTFT from `backtest --experimental-ttft=v2` (below).
-- Any TPOT percentile from `backtest --experimental-tpot=v2` (below).
+- Any TPOT percentile from `--experimental-tpot=v2`, in a backtest or the main view (below).
 
 ## Experimental: the rank-mixture TTFT model
 
@@ -226,6 +228,31 @@ What it prices, per request: `TTFT = Z + q + P`.
 | `q`, KV wait | none with probability `1 - p_d`, else exponential with mean `m_d`; both lines in the ranks' utilization. Fitted, not derived | the prefill engines' queue-time histogram at 0.3 s and 1 s | priced inside the utilizations it was fitted over, else flagged `KVDeferralOutside` |
 | `Z`, the rest | `a0 + s * beta * L`, `L` drawn from the prompt-length histogram | `beta`: the slopes of the engine's pre-queue overhead, the decode engine's first token and the router's remainder against the prompt. A slope is fitted only where its prompts spread (cv 0.03 or more); at one prompt length it is 0 and named in `betaUnidentified`. `s` is a calibration, fitted on the fit window's self-check folds so that their median p90 ratio is 1; p95 is not fitted. On a fit window under 12 h, `s` is 1, not fitted (`spreadDefaulted`); a fitted `s` under 1 is priced at 1 (`spreadFloored`) | `s` near 1 means `beta` holds the prompt's whole effect; its distance from 1 is what `beta` misses. Fitted `s` follows the fit window's own p90-over-mean, so it is not yet known to carry from one day to the next |
 | each step | priced as if its rate held (pointwise stationary) | | the busiest rank's relaxation, `E[S]/(1 - rho)^2`, well under the step; else the step is not scored (`unsettled`). A step whose arrivals (the router's rate `A`) ran ahead of its completions (the engine rows' rate `D`) by `(A - D)/D` over 0.1 left a backlog adding over a tenth of the step to the wait: it is not stationary. The fit leaves it out (`fitStepsBacklogged`), and the model refuses it as a test step |
+
+Two fixes to the fit are off by default, and `--rank-mixture-fit-steps`
+(`rankMixtureFitSteps`) turns both on:
+- **Clean fit steps.** The KV-deferral lines and the prompt slopes are
+  fitted only on steps whose busiest prefill rank sits under utilization 0.9.
+  Past it, a step's queue time is the overload's, not a wait for KV, and its
+  front end slows with the overload, not with the prompt.
+- **Shares at the load.** A router that balances by load spreads a busy
+  fleet's requests more evenly than a quiet one's. The ranks' shares at a
+  priced rate are the mean of the five fit steps nearest that rate, not the
+  fit window's mean.
+
+With fewer than four steps under 0.9, the two fits read every step; with
+fewer than five steps whose ranks carried a request a second, the shares are
+the fit window's mean. The model's `assumed` line says which it priced.
+
+`--rank-mixture-stratified` (`rankMixtureStratified`, off by default) fixes
+how the draws read each rank's service. Without it, each rank's mean service
+and its spread come from that rank's own few hundred random draws. On a
+computed-token histogram with a long tail (a few requests compute a whole
+uncached prompt), whether those draws catch the tail is chance, and a figure
+moves by several percent with the seed. With the switch, the mean and the
+spread are read once from the histogram itself, and each rank draws one
+request per equal slice of it, so a figure moves far less with the seed. The two switches are
+independent: either, both or neither can be on.
 
 The model prices only what its inputs identify. It abstains on the whole backtest where:
 - a prompt slope is not identified;
@@ -248,18 +275,12 @@ time, TTFT and prompt from a LeaderWorkerSet group's engines
 (`GroupEngines`). In an older recording, a row's ranks share its rate evenly,
 and the answer says so.
 
-### The non-linear variant (`--experimental-ttft=v2nl`)
+### The measured non-queue variant (`--experimental-ttft=v2nl-line`)
 
-`backtest --experimental-ttft=v2nl` prices with the same queue and two changed
-parts. It is off by default, and its figures carry the same flags. The answer's
-`rankMixture.model` reads `rank-mixture-nl`.
+`backtest --experimental-ttft=v2nl-line` prices with v2's queue and service
+line, and fits them another way. It is off by default, and its figures carry
+the same flags. The answer's `rankMixture.model` reads `rank-mixture-nl-line`.
 
-- **Prefill service.** `S(x, c) = s0 + x/V + b x (c + x/2)`, where `c` is the
-  prompt's cached tokens ahead of the `x` computed ones. The added term is the
-  attention of each computed token over the tokens before it, the cost that
-  grows with a long cached prefix. `s0`, `1/V` and `b` are fitted as the line
-  is, all held at 0 or above. The prompt and computed-token histograms are
-  drawn apart, so `c` is the drawn prompt less the drawn computed tokens.
 - **Non-queue part.** `Z` is measured part by part, not calibrated. Each part
   is its own line in the prompt, with an intercept and slope held at 0 or
   above: the engine's pre-queue overhead, the decode engine's first token and
@@ -270,18 +291,10 @@ parts. It is off by default, and its figures carry the same flags. The answer's
   comes from the decode engines' TTFT histogram. The overhead's is the one at
   which the priced prefill-engine TTFT reads the engines' measured p90. The
   router's remainder has no histogram of its own and stays a line.
-- **Shares at the load.** A router that balances by load spreads a busy
-  fleet's requests more evenly than a quiet one's. The ranks' shares at a
-  priced rate are the mean of the five fit steps nearest that rate, not the
-  fit window's mean.
-- **Fit hygiene.** The KV-deferral lines and the parts are fitted only on
-  steps whose busiest rank sits under `rho` 0.9 (`cleanSteps`). Past it, the
-  queue and the front end's time belong to the overload.
-
-`--experimental-ttft=v2nl-line` (`rank-mixture-nl-line`) is the same variant
-with v2's service line in place of the attention term. Use it where TTFT
-matters more than the knee: the attention term moves the knee closer to
-measured, and it also reads TTFT near the knee higher.
+- **v2's switches, always on.** The variant fits as
+  `--rank-mixture-fit-steps` and `--rank-mixture-stratified` do: the
+  KV-deferral lines and the parts on the steps under utilization 0.9, the
+  shares at the priced load, and each rank's service read from the histogram.
 
 Nothing is fitted to the router, so the fit window must price itself. The
 variant abstains where:
@@ -292,7 +305,7 @@ variant abstains where:
 - the computed prompts do not spread (one prompt length);
 - or, as for v2, the ranks' own rates or `--max-num-seqs` are not read.
 
-On the public recordings it abstains, mostly on those checks.
+On the public recordings it abstains, mostly on the fit window's length.
 
 ## Experimental: the per-request TPOT distribution
 

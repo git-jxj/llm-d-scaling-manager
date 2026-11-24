@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
 # Runs the capacity planner page's scenario logic on fixtures
-# (hack/check-planner-scenarios.mjs on internal/whatifapi/page/scenario.js).
+# (hack/check-planner-scenarios.mjs on internal/whatifapi/page/scenario.js), and its day
+# plan, check and first screen (check-planner-dayplan.mjs, -backtest.mjs, -answer.mjs), and
+# the answer panel asked again as the knobs change (check-planner-exec.mjs).
 #
 # The page saves scenarios in the browser and imports them from files, and
 # both are untrusted when read back. The Go tests can only read the page's
@@ -25,3 +27,7 @@ node hack/check-planner-dayplan.mjs internal/whatifapi/page/scenario.js internal
   cmd/capacity-planner/testdata/day-plan-ols-sweep-json.golden cmd/capacity-planner/testdata/day-plan-staircase-b-on-json.golden
 node hack/check-planner-backtest.mjs internal/whatifapi/page/scenario.js internal/whatifapi/page/dayplan.js internal/whatifapi/page/backtest.js \
   cmd/capacity-planner/testdata/backtest-q32-split-json.golden
+node hack/check-planner-answer.mjs internal/whatifapi/page/scenario.js internal/whatifapi/page/dayplan.js internal/whatifapi/page/backtest.js \
+  internal/whatifapi/page/planner.css cmd/capacity-planner/testdata/at-replicas-staircase.json.golden cmd/capacity-planner/testdata/backtest-q32-split-json.golden
+node hack/check-planner-exec.mjs internal/whatifapi/page/scenario.js internal/whatifapi/page/dayplan.js internal/whatifapi/page/backtest.js \
+  internal/whatifapi/page/planner.js

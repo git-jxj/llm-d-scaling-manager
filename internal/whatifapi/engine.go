@@ -117,7 +117,13 @@ type Knobs struct {
 	// Assume.PromptCV, and where the replay did not turn on
 	// slo.SwitchTTFTPromptSupport.
 	PromptMaxRatio float64
-	ArrivalCV2     *float64
+	// OutputDispersion is the spread of the output lengths, D =
+	// E[O^2]/E[O]^2 (shape.Dispersion), that a backtest step's decode rows
+	// read, priced in place of the fit's where the replay turned
+	// saturation.SwitchBacktestStepOutputDispersion on; 0 is the fit's. No
+	// flag sets it.
+	OutputDispersion float64
+	ArrivalCV2       *float64
 	// Headroom is the operating point's fraction of the lower knee.
 	Headroom float64
 }
@@ -160,6 +166,26 @@ type Fleet interface {
 	// Class is the class the envelope judges the fleet's figures by
 	// (whatif.FigureClass): its pods, accelerator, shape and flow control.
 	Class() whatif.FigureClass
+}
+
+// TPOTRatioFleet is a Fleet whose TPOT percentile is its mean TPOT times a
+// ratio R_q, and which can price it at a ratio an experimental model gives
+// in place of its own (tpot_model_main.go): its percentile curve, its point
+// and decode's limit at a percentile target alike.
+type TPOTRatioFleet interface {
+	Fleet
+	// WithTPOTRatio is the fleet with its TPOT percentile priced at r.
+	WithTPOTRatio(r ModelRatio) Fleet
+}
+
+// ModelRatio is R_q as an experimental model gives it: Value, the Flag on
+// every figure priced with it, the Source the plan's ratio names, and the
+// Assumed line the fleet adds.
+type ModelRatio struct {
+	Value   float64
+	Flag    whatif.Flag
+	Source  string
+	Assumed string
 }
 
 // LimitSet is slo-to-rate's rates at one set of targets. Notes is what the

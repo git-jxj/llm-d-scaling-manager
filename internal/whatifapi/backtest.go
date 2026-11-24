@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/shape"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -290,6 +291,18 @@ type BacktestRequest struct {
 	TestInputsID string `json:"testInputsId,omitempty"`
 	Split        string `json:"split,omitempty"`
 	FitUntil     string `json:"fitUntil,omitempty"`
+	// FitBelow and TestAbove split by load, in place of Split and FitUntil:
+	// the fit is read from the steps whose arrival rate is below FitBelow
+	// alone, and only the steps at or above TestAbove are judged. Each is a
+	// rate in requests per second ("12.5") or a percentile of its side's
+	// step rates ("p50"), over the steps that served traffic. With
+	// TestInputsID, FitBelow reads InputsID's steps and TestAbove
+	// TestInputsID's, and a test step the fit read a cycle of is not judged.
+	FitBelow  string `json:"fitBelow,omitempty"`
+	TestAbove string `json:"testAbove,omitempty"`
+	// FitCycles is the cycles the fit was read from, for a split by load
+	// (LoadFitCycles); set by the caller that resolved the fit, never sent.
+	FitCycles *CycleSet `json:"-"`
 	// Step is a step's length, 1m to 1h; absent, 5m. Settle is how long
 	// after a change of replicas, and after the test's first cycle, a step
 	// is not judged; absent, 2m.
@@ -309,10 +322,23 @@ type BacktestRequest struct {
 	// every figure it moves is flagged, and the answer lists it.
 	Assume *Assume `json:"assume,omitempty"`
 	// TTFTModel prices TTFT with an experimental model in place of the
-	// planner's: "" is the planner's, and whatif.QueueRankMixture the only
-	// other (backtest_rank_mixture.go). Every TTFT it prices reads OUTSIDE
-	// VALIDATED REGION.
+	// planner's: "" is the planner's, whatif.QueueRankMixture
+	// (backtest_rank_mixture.go) and its variant
+	// whatif.QueueRankMixtureNLLine (backtest_rank_mixture_nl.go) the
+	// others. Every TTFT it prices reads OUTSIDE VALIDATED REGION.
 	TTFTModel string `json:"ttftModel,omitempty"`
+	// RankMixtureFitSteps turns on the rank mixture's fit-step fixes: its
+	// KV-deferral lines and prompt slopes fitted on the steps under rho 0.9
+	// only, and the ranks' shares read at the priced load
+	// (whatif.RankMixtureOptions CleanFitSteps, SharesAtLoad). Off by
+	// default; read only with TTFTModel rank-mixture.
+	RankMixtureFitSteps bool `json:"rankMixtureFitSteps,omitempty"`
+	// RankMixtureStratified prices the rank mixture with stratified service
+	// moments (whatif.RankMixtureOptions.StratifiedMoments): each rank's
+	// mean service and cs^2 integrated over the computed-token law, not
+	// from its own draws. Off by default; read only with TTFTModel
+	// rank-mixture.
+	RankMixtureStratified bool `json:"rankMixtureStratified,omitempty"`
 	// PrefillSlots is the prefill engine's max-num-seqs, read by
 	// TTFTModel's limited-PS check; 0 not known.
 	PrefillSlots int `json:"prefillSlots,omitempty"`
@@ -346,11 +372,14 @@ type BacktestResponse struct {
 	Fit          BacktestWindow `json:"fit"`
 	Test         BacktestWindow `json:"test"`
 	// Split is how one source was split ("60%", or the time), "" with two.
-	Split    string         `json:"split,omitempty"`
-	Config   BacktestConfig `json:"config"`
-	Step     float64        `json:"step"`
-	Settle   float64        `json:"settle"`
-	Measured string         `json:"measured"`
+	Split string `json:"split,omitempty"`
+	// LoadSplit is the split by load, where the request asked one
+	// (FitBelow, TestAbove); Split then says it in words.
+	LoadSplit *BacktestLoadSplit `json:"loadSplit,omitempty"`
+	Config    BacktestConfig     `json:"config"`
+	Step      float64            `json:"step"`
+	Settle    float64            `json:"settle"`
+	Measured  string             `json:"measured"`
 	// MeasuredNote says what the measured figures are.
 	MeasuredNote string `json:"measuredNote"`
 	// Assumed is every input of the prediction the test did not give.
@@ -548,6 +577,9 @@ type BacktestExcluded struct {
 	NotPriced     int `json:"notPriced"`
 	OtherVariants int `json:"otherVariants"`
 	Burst         int `json:"burst"`
+	// Load is the steps of the test's span outside a load split's test
+	// (ExcludedLoad).
+	Load int `json:"load,omitempty"`
 }
 
 // BacktestScore is one statistic's score.
@@ -654,14 +686,30 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 	fit := test
 	var cutoff time.Time
 	split := ""
-	if req.TestInputsID != "" {
+	if err := checkLoadSplit(req); err != nil {
+		return nil, err
+	}
+	switch {
+	case loadSplitAsked(req):
+		// The fit is InputsID's source read again from its steps below
+		// FitBelow alone; the test, TestInputsID's or InputsID's whole.
+		if req.TestInputsID != "" {
+			if test, ok = s.inputs.get(req.TestInputsID); !ok {
+				return nil, errUnknownInputs
+			}
+		}
+		var err error
+		if fit, req.FitCycles, err = s.loadFit(ctx, fit, req); err != nil {
+			return nil, err
+		}
+	case req.TestInputsID != "":
 		if req.Split != "" || req.FitUntil != "" {
 			return nil, InputErrorf("split and fitUntil split one source: give them without testInputsId")
 		}
 		if test, ok = s.inputs.get(req.TestInputsID); !ok {
 			return nil, errUnknownInputs
 		}
-	} else {
+	default:
 		var cycle int
 		var err error
 		if cycle, cutoff, split, err = splitOf(test, req.Split, req.FitUntil); err != nil {
@@ -671,20 +719,9 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 		if err != nil {
 			return nil, err
 		}
-		if !acquire(s.inputSlots) {
-			return nil, errBusy
-		}
-		res, err := s.resolver.Resolve(ctx, in)
-		<-s.inputSlots
-		if err != nil {
+		if fit, err = s.refit(ctx, in); err != nil {
 			return nil, err
 		}
-		doc := res.Inputs
-		doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
-		doc.InputsID = contentID("inputs", res.Content)
-		fit = &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
-			config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode, engine: res.Engine}
-		fit = s.inputs.add(doc.InputsID, fit)
 	}
 	// The engines' flags the models read are the fit's, as the source gives
 	// them, where the request does not state them.
@@ -718,6 +755,43 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 	}
 	out.SchemaVersion, out.WhatifSchema = SchemaVersion, s.whatifSchema
 	return out, nil
+}
+
+// refit resolves in, the fit of a split, on one input slot, and keeps it.
+func (s *Server) refit(ctx context.Context, in InputsRequest) (*inputsEntry, error) {
+	if !acquire(s.inputSlots) {
+		return nil, errBusy
+	}
+	res, err := s.resolver.Resolve(ctx, in)
+	<-s.inputSlots
+	if err != nil {
+		return nil, err
+	}
+	doc := res.Inputs
+	doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
+	doc.InputsID = contentID("inputs", res.Content)
+	fit := &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
+		config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode, engine: res.Engine}
+	return s.inputs.add(doc.InputsID, fit), nil
+}
+
+// loadFit is the fit of a split by load: e's recording read again from its
+// steps below req.FitBelow alone (LoadFitCycles), and those cycles.
+func (s *Server) loadFit(ctx context.Context, e *inputsEntry, req BacktestRequest) (*inputsEntry, *CycleSet, error) {
+	if e.doc.Source.Kind != SourceRecording {
+		return nil, nil, InputErrorf("a split by load reads the fit from a recording's steps: a %q source is split by time (split, fitUntil)", e.doc.Source.Kind)
+	}
+	cs, err := LoadFitCycles(&Resolved{Series: e.series}, req)
+	if err != nil {
+		return nil, nil, err
+	}
+	in, err := refitRequest(e, 0, time.Time{})
+	if err != nil {
+		return nil, nil, err
+	}
+	in.Source.Cycles = cs
+	fit, err := s.refit(ctx, in)
+	return fit, cs, err
 }
 
 // Backtest answers req against sources resolved outside a server: the CLI's
@@ -803,7 +877,8 @@ func splitOf(e *inputsEntry, split, fitUntil string) (int, time.Time, string, er
 // cycle's time.
 func refitRequest(e *inputsEntry, cycle int, cutoff time.Time) (InputsRequest, error) {
 	d := e.doc
-	in := InputsRequest{Model: d.Model, DecodeVariant: d.Fleet.Decode.Variant, PrefillVPPlateau: d.PrefillVPPlateau, ExperimentalTTFT: d.ExperimentalTTFT}
+	in := InputsRequest{Model: d.Model, DecodeVariant: d.Fleet.Decode.Variant, PrefillVPPlateau: d.PrefillVPPlateau, PrefillHitAtCount: d.PrefillHitAtCount,
+		ExperimentalTTFT: d.ExperimentalTTFT}
 	if d.Fleet.Prefill != nil {
 		in.PrefillVariant = d.Fleet.Prefill.Variant
 	}
@@ -857,6 +932,8 @@ type backtestQuestion struct {
 	// tpotDist is the experimental TPOT distribution fitted on the fit
 	// window, nil unless the request asked for it.
 	tpotDist *tpotDistQ
+	// load is the split by load, nil unless the request asked one.
+	load *loadSplit
 }
 
 // backtestQuestionOf checks req against fit and test, and refuses a test
@@ -923,6 +1000,19 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 			testIdx = append(testIdx, i)
 		}
 	}
+	if err := checkLoadSplit(req); err != nil {
+		return nil, err
+	}
+	if loadSplitAsked(req) {
+		if !cutoff.IsZero() {
+			return nil, InputErrorf("fitBelow and testAbove split by load, split and fitUntil by time: give one")
+		}
+		oneSource := fit.doc.Source.Kind == test.doc.Source.Kind && fit.doc.Source.Name == test.doc.Source.Name
+		if q.load, testIdx, err = loadSplitOf(fit, test, req, q.step, oneSource); err != nil {
+			return nil, err
+		}
+		q.split = q.load.words()
+	}
 	q.config = compareConfig(withFlowControl(fit.config, fit.series, fitIdx), withFlowControl(test.config, test.series, testIdx))
 	if !q.config.Match {
 		if !req.AllowConfigMismatch {
@@ -932,12 +1022,20 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		}
 		q.config.Allowed = true
 	}
-	for i, x := range test.series {
-		if (q.cutoff.IsZero() || x.At.After(q.cutoff)) && (until.IsZero() || !x.At.After(until)) {
-			q.testIndices = append(q.testIndices, i)
+	if q.load != nil {
+		q.testIndices = testIdx
+	} else {
+		for i, x := range test.series {
+			if (q.cutoff.IsZero() || x.At.After(q.cutoff)) && (until.IsZero() || !x.At.After(until)) {
+				q.testIndices = append(q.testIndices, i)
+			}
 		}
 	}
-	if len(q.testIndices) == 0 {
+	switch {
+	case len(q.testIndices) == 0 && q.load != nil:
+		return nil, InputErrorf("testAbove %s (%.4g r/s): no step of the test at or above it that the fit did not read, nothing to test on",
+			req.TestAbove, q.load.testRate)
+	case len(q.testIndices) == 0:
 		return nil, InputErrorf("no test cycle after the split")
 	}
 	slices.SortStableFunc(q.testIndices, func(a, b int) int { return test.series[a].At.Compare(test.series[b].At) })
@@ -945,7 +1043,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	if int(span/q.step)+1 > maxBacktestSteps {
 		return nil, InputErrorf("the test spans %s: at a step of %s that is more than %d steps; ask a longer step", span, q.step, maxBacktestSteps)
 	}
-	if cutoff.IsZero() {
+	if cutoff.IsZero() && q.load == nil {
 		// Two sources: the fit must end before the test starts. A fit that
 		// reaches into the test's time saw its latency; one recorded after
 		// it may open with learned state (an ITL line) the controller
@@ -980,38 +1078,28 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	}
 	switch req.TTFTModel {
 	case "":
-	case string(whatif.QueueRankMixture):
+		if req.RankMixtureFitSteps {
+			return nil, InputErrorf("rankMixtureFitSteps changes the fit of ttftModel %q: give it with that model", whatif.QueueRankMixture)
+		}
+	case string(whatif.QueueRankMixture), string(whatif.QueueRankMixtureNLLine):
 		// The model prices only where its identifiability checks pass;
 		// otherwise it abstains, and every TTFT is the planner's own.
+		sw := rankMixtureSwitchesOf(req)
 		switch {
 		case len(test.mixture) != len(test.series):
 			q.mixture = abstainedMixture("the test source did not give the per-rank series")
 		default:
-			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots)
+			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots, sw)
 			if ferr != nil {
 				q.mixture = abstainedMixture(ferr.Error())
 			} else {
 				q.mixture = fitted.identified()
 			}
 		}
-		q.assumed = append(q.assumed, q.mixture.assumedLines()...)
-	case string(whatif.QueueRankMixtureNL), string(whatif.QueueRankMixtureNLLine):
-		model := whatif.QueueModel(req.TTFTModel)
-		switch {
-		case len(test.mixture) != len(test.series):
-			q.mixture = abstainedMixtureNL("the test source did not give the per-rank series", model)
-		default:
-			fitted, ferr := fitRankMixtureNL(fit, fitIdx, q.step, req.PrefillSlots, model)
-			if ferr != nil {
-				q.mixture = abstainedMixtureNL(ferr.Error(), model)
-			} else {
-				q.mixture = fitted.identifiedNL()
-			}
-		}
+		q.mixture.report.Model = string(sw.model())
 		q.assumed = append(q.assumed, q.mixture.assumedLines()...)
 	default:
-		return nil, InputErrorf("ttftModel %q, want %q, %q, %q or none", req.TTFTModel, whatif.QueueRankMixture, whatif.QueueRankMixtureNL,
-			whatif.QueueRankMixtureNLLine)
+		return nil, InputErrorf("ttftModel %q, want %q, %q or none", req.TTFTModel, whatif.QueueRankMixture, whatif.QueueRankMixtureNLLine)
 	}
 	switch req.TPOTModel {
 	case "":
@@ -1233,7 +1321,11 @@ func (q *backtestQuestion) predictSteps(ctx context.Context) ([]stepOf, []Backte
 		if st.anchor < 0 {
 			fl.reset()
 		}
-		out = append(out, q.stepOf(p, st, changes, first, &fl))
+		s := q.stepOf(p, st, changes, first, &fl)
+		if q.load != nil && st.anchor < 0 {
+			q.load.excluded(&s, st.start)
+		}
+		out = append(out, s)
 	}
 	return steps, out, nil
 }
@@ -1252,6 +1344,10 @@ func (q *backtestQuestion) run(ctx context.Context) (*BacktestResponse, error) {
 		Steps: []BacktestStep{}, Notes: []string{}}
 	out.Fit = windowOf(q.fit, nil, q.cutoff)
 	out.Test = windowOf(test, q.testIndices, time.Time{})
+	if q.load != nil {
+		r := q.load.report
+		out.LoadSplit = &r
+	}
 	if c := q.fit.doc.CachedTokenCost; c != nil {
 		// The fit's phi prices every step (slo.SwitchTTFTCachedTokenCost).
 		cc := *c
@@ -1316,6 +1412,12 @@ func (q *backtestQuestion) finish(out *BacktestResponse) {
 	if q.tpotDist != nil {
 		out.BacktestID = contentID("backtest", struct{ ID, TPOTModel, Assumed, Abstained string }{out.BacktestID, q.tpotDist.report.Model,
 			q.tpotDist.report.Assumed, q.tpotDist.report.Abstained})
+	}
+	if q.load != nil {
+		out.BacktestID = contentID("backtest", struct {
+			ID   string
+			Load BacktestLoadSplit
+		}{out.BacktestID, q.load.report})
 	}
 }
 
@@ -1606,6 +1708,10 @@ type stepInputs struct {
 	// histograms bound (whatif.PromptSpread.MaxRatio), raised to
 	// promptCVGrid; 0 with none.
 	promptMaxRatio float64
+	// outputDispersion is the step's own output spread, D = E[O^2]/E[O]^2
+	// over its decode rows (outputDispersionOf), on outputDispersionGrid;
+	// 0 where a cycle of the step read none.
+	outputDispersion float64
 	// otherPods says variants other than the priced ones served in it.
 	otherPods bool
 }
@@ -1618,6 +1724,7 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 	in.prefill, in.decode = a.Prefill, a.Decode
 	in.prompt, in.output, _, in.hasShape = bucketShape(samples)
 	in.otherPods = slices.ContainsFunc(samples, func(x SeriesSample) bool { return x.OtherPods > 0 })
+	in.outputDispersion = outputDispersionOf(samples)
 	pooled := map[float64]float64{}
 	var computed, requests float64
 	for _, x := range samples {
@@ -1643,6 +1750,41 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 // steps of nearly one spread share a fleet.
 const promptCVGrid = 0.05
 
+// outputDispersionGrid is the grid a step's output spread is priced on, so
+// that steps of nearly one spread share a fleet.
+const outputDispersionGrid = 0.05
+
+// outputDispersionOf is the step's output spread, D = E[O^2]/E[O]^2 over
+// its cycles' decode rows, each cycle weighted by its rate as bucketShape
+// weights the lengths, rounded to outputDispersionGrid: 0 where a cycle
+// that read an output length read no E[O^2] (the two must be one reading of
+// the same rows), or none read a length. Pooled over the step, not the
+// mean of each cycle's D: lengths that vary from cycle to cycle are a
+// spread the step's requests hold too.
+func outputDispersionOf(samples []SeriesSample) float64 {
+	var w, ol, sq float64
+	for _, x := range samples {
+		if !x.HasShape {
+			continue
+		}
+		if !(x.OutputTokensSquared > 0) || !(x.OutputTokens > 0) {
+			return 0
+		}
+		wx := x.Rate
+		if !(wx > 0) {
+			wx = 1e-9
+		}
+		w += wx
+		ol += wx * x.OutputTokens
+		sq += wx * x.OutputTokensSquared
+	}
+	if !(w > 0) {
+		return 0
+	}
+	d := shape.Dispersion(ol/w, sq/w)
+	return math.Round(d/outputDispersionGrid) * outputDispersionGrid
+}
+
 // maxRatioOnGrid is a prompt bound raised to promptCVGrid, so that steps of
 // nearly one bound share a fleet: raised, as a higher bound prices more of
 // the gamma's tail, never less than the histogram allows. 0 stays 0.
@@ -1656,11 +1798,12 @@ func maxRatioOnGrid(r float64) float64 {
 
 // predictKey is one fleet a backtest prices.
 type predictKey struct {
-	np, nd         int
-	prompt, output float64
-	promptCV       float64
-	promptMaxRatio float64
-	q              float64
+	np, nd           int
+	prompt, output   float64
+	promptCV         float64
+	promptMaxRatio   float64
+	outputDispersion float64
+	q                float64
 }
 
 // predictor prices steps from the fit alone: the Pricer, and the inputs of
@@ -1704,7 +1847,7 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		return out, errors.New("no fleet to price")
 	}
 	for _, q := range backtestStats {
-		k := predictKey{np: in.prefill, nd: in.decode, q: q, promptCV: -1}
+		k := predictKey{np: in.prefill, nd: in.decode, q: q, promptCV: -1, outputDispersion: in.outputDispersion}
 		if in.hasShape {
 			k.prompt, k.output = shapeKnob(in.prompt), shapeKnob(in.output)
 		}
@@ -1730,6 +1873,7 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 			kn.Assume = p.assume
 			kn.Assume.PromptCV = cv
 			kn.PromptMaxRatio = k.promptMaxRatio
+			kn.OutputDispersion = k.outputDispersion
 			kn.CachedTokenCost = p.cachedCost
 			var err error
 			if fl, err = p.pricer.Fleet(kn); err != nil {
@@ -2125,6 +2269,8 @@ func summarize(steps []BacktestStep, target bool) BacktestSummary {
 			s.Excluded.OtherVariants++
 		case ExcludedBurst:
 			s.Excluded.Burst++
+		case ExcludedLoad:
+			s.Excluded.Load++
 		}
 	}
 	s.TTFT, s.TPOT = scoresOf(steps)
@@ -2432,7 +2578,8 @@ func backtestHint(reason string, only bool) string {
 			"and the true knee may be higher, so the planner gave no price there and does not call it overloaded"
 	case string(whatif.NoPrefillCapacity):
 		return "no prefill speed was learned to price a TTFT from: none under a queue, or, where the prefill pods never queued, " +
-			"only the rate a pod computed, which prices the knee as a lower bound and no TTFT; fit on more (a larger split, or a longer recording)"
+			"only the rate a pod computed, which prices the knee as a lower bound and no TTFT, or one read only at prompts other than the step's " +
+			"(VPPromptNotCovered); fit on more (a larger split, or a longer recording)"
 	case string(whatif.NoFixedLatency), string(whatif.PinnedDefaultB), string(whatif.NoLine):
 		return "the fitted part held too few busy minutes to learn from; fit on more (a larger split, or a longer recording)"
 	}
@@ -2663,7 +2810,8 @@ func verdictOf(out *BacktestResponse, step time.Duration) ([]string, string) {
 		n    int
 		what string
 	}{{e.WarmUp, "warm-up"}, {e.Scaling, "replicas changing"}, {e.NoTraffic, "no traffic"}, {e.NoMeasurement, "no measured requests"},
-		{e.NotPriced, "not priced"}, {e.OtherVariants, "other variants serving"}, {e.Burst, "a burst near the knee in its window"}} {
+		{e.NotPriced, "not priced"}, {e.OtherVariants, "other variants serving"}, {e.Burst, "a burst near the knee in its window"},
+		{e.Load, "outside the test's load"}} {
 		if x.n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", x.n, x.what))
 		}

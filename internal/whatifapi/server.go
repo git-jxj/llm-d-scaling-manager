@@ -85,8 +85,10 @@ type Config struct {
 	Uploader       Uploader
 	UploadMaxBytes int64
 	// TTFTModel and TPOTModel are the experimental models a backtest that
-	// names none is priced with (BacktestRequest.TTFTModel, TPOTModel): ""
-	// is the planner's own. The CLI's serve sets them with
+	// names none is priced with (BacktestRequest.TTFTModel, TPOTModel), and
+	// the main view of a source whose inputs request names none
+	// (InputsRequest.TTFTModel, TPOTModel): "" is the planner's own. The
+	// CLI's serve sets them with
 	// --experimental-ttft=v2 and --experimental-tpot=v2; its Resolver then
 	// gives the cycles they read (Resolved.Mixture, Decode).
 	TTFTModel, TPOTModel string
@@ -192,6 +194,9 @@ type inputsEntry struct {
 	// ttftModel is the experimental TTFT model the main view prices with,
 	// fitted on the source; nil unless asked (InputsRequest.TTFTModel).
 	ttftModel *mainMixture
+	// tpotModel is the experimental TPOT model the main view prices with,
+	// fitted on the source; nil unless asked (InputsRequest.TPOTModel).
+	tpotModel *mainTPOT
 	// bytes is the entry's weight in the inputs cache (Resolved.Bytes).
 	bytes int
 }
@@ -315,7 +320,12 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	req.TTFTModel = model
+	tpotModel, err := tpotModelOf(req.TPOTModel, s.tpotModel)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	req.TTFTModel, req.TPOTModel = model, tpotModel
 	res, err := s.resolver.Resolve(r.Context(), req)
 	if err != nil {
 		writeErr(w, err)
@@ -324,6 +334,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	doc := res.Inputs
 	doc.SchemaVersion, doc.WhatifSchema = SchemaVersion, s.whatifSchema
 	doc.InputsID = contentID("inputs", res.Content)
+	doc.Measured = BusiestHourMeasured(res.Series, res.Latency)
 	var mm *mainMixture
 	if model != "" {
 		// The same source priced with the model is another entry: its id
@@ -336,18 +347,29 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 		info := mm.info
 		doc.TTFTModel = &info
 	}
+	var mt *mainTPOT
+	if tpotModel != "" {
+		// So is the source priced with the TPOT model: its id names both.
+		doc.InputsID = contentID("inputs", struct {
+			Content              any
+			TTFTModel, TPOTModel string
+		}{res.Content, model, tpotModel})
+		mt = fitMainTPOT(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
+		info := mt.info
+		doc.TPOTModel = &info
+	}
 	if check && (doc.Source.Kind == SourceRecording || doc.Source.Kind == SourcePrometheus) {
 		// The self-check is bounded as a plan is; out of time it is not run,
 		// and the inputs are still answered.
 		sctx, cancel := context.WithTimeoutCause(r.Context(), s.planBudget, errPlanBudget)
-		doc.SelfCheck = SelfCheckOf(sctx, res, SelfCheckInfo{PlannerVersion: s.plannerVersion})
+		doc.SelfCheck = SelfCheckOf(sctx, res, SelfCheckInfo{PlannerVersion: s.plannerVersion, TPOTModel: tpotModel})
 		cancel()
 	}
 	// The entry kept is the first caller's, but each caller is answered with
 	// its own source: two recordings of the same bytes share an id, not a
 	// name.
 	s.inputs.add(doc.InputsID, &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency,
-		config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode, engine: res.Engine, ttftModel: mm})
+		config: res.Config, bytes: res.Bytes, mixture: res.Mixture, decode: res.Decode, engine: res.Engine, ttftModel: mm, tpotModel: mt})
 	body, err := marshal(doc)
 	if err != nil {
 		writeErr(w, err)
