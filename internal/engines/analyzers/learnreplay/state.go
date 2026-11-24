@@ -636,6 +636,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	ttft.tierLoad = opts.Switches[PackageSLO][slo.SwitchTTFTTierLoad]
 	ttft.tierKVWait = opts.Switches[PackageSLO][slo.SwitchTTFTTierKVWait]
 	ttft.psByEngine = opts.Switches[PackageSLO][slo.SwitchTTFTPSByEngine]
+	ttft.pullWork = opts.Switches[PackageSLO][slo.SwitchTTFTPullWork]
 	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
 	ttft.vpAtServed = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPAtServedWork]
 	ttft.hitAtCount = opts.Switches[PackageSaturation][saturation.SwitchPrefillHitAtCount]

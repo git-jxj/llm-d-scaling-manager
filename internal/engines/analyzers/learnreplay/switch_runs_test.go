@@ -303,6 +303,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// holds it (heldBy).
 	slo.SwitchTTFTQuietTransfer: nil,
 
+	// The KV pull's work read from each decode row at its request rate
+	// (issue llm-d-incubation/llm-d-scaling-manager#301). It moves no golden:
+	// no committed recording prices a line in the analyzer (the decode term's
+	// reason, above). Its unit tests hold it (heldBy).
+	slo.SwitchTTFTPullWork: nil,
+
 	// llm-d-incubation/llm-d-scaling-manager#302 on the slo price: off from
 	// the constructor, so every golden replay runs it off. On, it moves
 	// nothing either: no committed recording runs a step budget under its
@@ -2040,6 +2046,15 @@ var heldBy = map[string][]heldTest{
 	},
 	// Runs the switch on and off and asserts both.
 	slo.SwitchTTFTQuietTransfer: {{"../slo", "TestTTFT_TheQuietTransferSwitch"}, {"../slo", "TestTTFT_TheHeldTransferAgesOut"}},
+	// Issue llm-d-incubation/llm-d-scaling-manager#301: the window's reading on
+	// and off, in the analyzer and in the planner's replay, and the planner's
+	// KV pull at the staircase's load on and off.
+	slo.SwitchTTFTPullWork: {
+		{"../../../signals/prefill", "TestTransferWindow_PullWorkTakesTheStretchOut"},
+		{"../slo", "TestTTFT_ThePullWorkSwitch"},
+		{".", "TestStateAt_ThePullWorkSwitchReachesTheTransfer"},
+		{"../../../../cmd/capacity-planner", "TestAtReplicas_PullWorkPricesTheMeasuredPull"},
+	},
 	// llm-d-incubation/llm-d-scaling-manager#302: off from the constructor,
 	// and the price's cap on and off.
 	slo.SwitchCapAtStepBudget: {{"../slo", "TestCapAtStepBudget_TheSwitch"}},

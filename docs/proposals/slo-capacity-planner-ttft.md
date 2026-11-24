@@ -1809,6 +1809,23 @@ always in the CLI:
 - `T_X` is the KV pull, work `I·κ`, as a processor-sharing stage on the decode
   pod it lands on, the `N_d` pods sharing the arrivals evenly. A pull that
   saturates its pods is refused (`Saturated`).
+- `κ` is read from the decode rows' NIXL transfer time `T`
+  (`vllm:nixl_xfer_time_seconds`), which is the pull's time on a loaded pod,
+  already stretched. Read as the work, the stage stretches it a second time.
+  On the public P/D staircase with flow control on, the transfer window's last
+  cycles read 60 ms at about 21 r/s a decode pod. At 30.8 r/s the pull was
+  priced at utilization 0.93 and a wait of 0.78 s, and the mean TTFT at 1.02 s.
+  The router measured a p50 of 0.16 s and a p90 of 0.28 s, and the rows' own
+  transfer read 40 ms. The pull also set the decode count for a TTFT target:
+  4 decode pods where decode's own knee needs 3 (issue #301). With the
+  replay switch `slo-ttft-pull-work` on, each row's reading is the work at the
+  row's request rate `λ`, `S = T/(1 + λT)`: the work whose processor-sharing
+  time at `λ` is the `T` measured (the identity the joint sizing section below
+  checks on the Qwen3-32B 2+2 phases, 24.4-24.8 ms at every step). On the 0.6B
+  staircase it reads 25-28 ms at every load from 4 to 22 r/s a decode pod. It
+  takes Poisson arrivals: a burstier stream stretches the same work more, so
+  the work it reads is the larger, the safe side. Off by default; the planner's
+  replay does not turn it on yet.
 - `D`'s per-token part comes net of the pull, since `D` was fitted with the pull
   inside it. On the staircase's warm-up that is 5.616e-6 less 2.541e-6, 3.074e-6
   s a token: at 8000 tokens `D`'s per-token part falls from 44.9 to 24.6 ms, and

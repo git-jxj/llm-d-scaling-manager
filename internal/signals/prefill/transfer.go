@@ -27,11 +27,33 @@ type transferRead struct {
 // floor under the priced TTFT, and a quiet figure from long ago must not lower it.
 // Past that the fleet's every-row figure stands, which reads high, and with no
 // reading at all there is none: the caller's TransferOmitted.
+//
+// With PullWork set, each row's reading is the pull's own work, not the time
+// it took: the KV pull is priced as a processor-sharing stage on the decode pod
+// (whatif.TTFTFleet.ProcessorSharing), so the time a row measured at its request
+// rate lambda is already that stage's stretched time, T = S/(1 - lambda S).
+// Pricing T as the work S stretched it a second time. The row's work is
+// S = T/(1 + lambda T), the work whose processor-sharing time at lambda is T.
 type TransferWindow struct {
+	// PullWork reads each row's work from its time at its own request rate
+	// (pullWork). The SLO analyzer's switch slo-ttft-pull-work, off by default.
+	PullWork          bool
 	quiet, all        []transferRead
 	now               time.Time
 	readThisCycle     bool
 	accelerator, args string
+}
+
+// pullWork is the processor-sharing work S of a stage whose mean time at
+// arrival rate lambda is t: t = S/(1 - lambda S), so S = t/(1 + lambda t).
+// Poisson arrivals: a burstier stream stretches the same work more, so S read
+// at Poisson is the larger, the safe side. A rate not read, or not above 0,
+// is no stretch: t.
+func pullWork(t, lambda float64) float64 {
+	if !(lambda > 0) || math.IsInf(lambda, 0) {
+		return t
+	}
+	return t / (1 + lambda*t)
 }
 
 // TransferReading is a TransferWindow at its latest cycle.
@@ -78,7 +100,11 @@ func (w *TransferWindow) Observe(now time.Time, rows []domain.ReplicaMetrics) {
 			math.IsInf(rm.AvgKVTransferTime, 0) || !(rm.AvgKVTransferTime > 0) {
 			continue
 		}
-		sum += rm.AvgKVTransferTime
+		t := rm.AvgKVTransferTime
+		if w.PullWork && rm.RequestRateKnown {
+			t = pullWork(t, rm.RequestRate)
+		}
+		sum += t
 		n++
 		queued = queued || rm.QueueLength > 0
 	}
