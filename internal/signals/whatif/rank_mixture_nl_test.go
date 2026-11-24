@@ -169,3 +169,36 @@ func TestFitSigmas_DecodeFromItsHistogram(t *testing.T) {
 	assert.InDelta(t, sigma, m.Parts.Decode.Sigma, 1e-9)
 	assert.Zero(t, m.Parts.Overhead.Sigma, "no prefill TTFT histogram: no overhead spread")
 }
+
+// The overhead's sigma is the one at which the priced prefill-engine TTFT
+// (overhead + queue + prefill) reads the engines' measured p90 on the steps
+// given: a p90 the line already reaches leaves it at 0, and one no sigma
+// reaches leaves it at MaxPartSigma.
+func TestFitSigmas_OverheadReadsThePrefillP90(t *testing.T) {
+	const want = 0.6
+	m := RankMixture{S0: 0.1, V: 10000, Shares: []float64{0.6, 0.4}, Parts: &ZParts{Overhead: ZPart{A: 0.5, B: 2e-6}}}
+	stepsAt := func(sigma, scale float64) []MixtureStep {
+		steps := make([]MixtureStep, 0, 5)
+		for i := range 5 {
+			st := MixtureStep{Rate: 1 + float64(i), Computed: expHist(2000), Prompt: expHist(40000)}
+			d, u := m.Draws(st.Rate, st.Computed, st.Prompt, DefaultMixtureDraws)
+			require.Nil(t, u)
+			part := m.Parts.Overhead
+			part.Sigma = sigma
+			d.Z = drawParts(d.L, []ZPart{part})
+			_, q := d.Stats(0, 0, 0.9)
+			p90 := q[0] * scale
+			st.PrefillTTFTHist = map[float64]float64{p90 / 2: 0.5, p90: 0.9, 2 * p90: 1, math.Inf(1): 1}
+			steps = append(steps, st)
+		}
+		return steps
+	}
+	m.fitSigmas(stepsAt(want, 1))
+	assert.InDelta(t, want, m.Parts.Overhead.Sigma, 0.01)
+	assert.Zero(t, m.Parts.Decode.Sigma, "no decode TTFT histogram: no decode spread")
+	m.Parts.Overhead.Sigma = 0
+	m.fitSigmas(stepsAt(0, 0.95))
+	assert.Zero(t, m.Parts.Overhead.Sigma, "the line already reads the p90")
+	m.fitSigmas(stepsAt(MaxPartSigma, 1.5))
+	assert.Equal(t, MaxPartSigma, m.Parts.Overhead.Sigma, "no sigma reaches the p90: the bound")
+}
