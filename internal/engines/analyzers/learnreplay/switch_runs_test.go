@@ -1291,8 +1291,13 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// request sees beside clustered arrivals. Planner-only, off; read by the
 	// planner's answer at a stated Ca^2, not the replay, so no learner
 	// golden moves. Its unit tests hold it.
-	saturation.SwitchDecodeBurstFill:      nil,
-	saturation.SwitchPrefillVPFloorServed: nil,
+	saturation.SwitchDecodeBurstFill: nil,
+	// llm-d-incubation/llm-d-scaling-manager#274: a backtest step priced at
+	// its own output spread. Planner-only, off; read by the planner's
+	// answer at a spread the backtest states, not the replay, so no learner
+	// golden moves. Its unit tests hold it.
+	saturation.SwitchBacktestStepOutputDispersion: nil,
+	saturation.SwitchPrefillVPFloorServed:         nil,
 	// The planner's V_P on a fleet that never queued (served peak as a
 	// lower bound). Planner-only, off; the controller's replays never run
 	// it, so no learner golden moves. Its unit tests hold it.
@@ -1930,6 +1935,13 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestDecode_RateForTPOTInvertsTheClusteredFill"},
 		{"../../../signals/whatif", "TestDecode_TheClusteredFillStopsAtTheFullBatch"},
 		{"../../../../cmd/capacity-planner", "TestDecodeBurst_TheStatedCa2OnTheSwitch"},
+		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
+	},
+	saturation.SwitchBacktestStepOutputDispersion: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../../cmd/capacity-planner", "TestStepOutputDispersion_TheStepsSpreadOnTheSwitch"},
+		{"../../../whatifapi", "TestBacktestStep_ReadsItsOwnOutputSpread"},
+		{".", "TestSeries_TheDecodeRowsOutputSpread"},
 		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
 	},
 	saturation.SwitchITLBaselineFromFloor: {

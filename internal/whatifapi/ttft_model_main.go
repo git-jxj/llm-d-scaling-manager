@@ -191,7 +191,7 @@ func fitMainMixture(e *inputsEntry, stratified bool) *mainMixture {
 			idx = append(idx, i)
 		}
 	}
-	rq, steps, err := fitRankMixtureSteps(e, idx, DefaultBacktestStep, e.engine.PrefillSlots, stratified)
+	rq, steps, err := fitRankMixtureSteps(e, idx, DefaultBacktestStep, e.engine.PrefillSlots, rankMixtureSwitches{stratified: stratified})
 	if err != nil {
 		return abstain(err.Error())
 	}

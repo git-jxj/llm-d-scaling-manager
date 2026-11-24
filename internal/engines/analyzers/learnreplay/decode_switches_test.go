@@ -10,7 +10,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
 )
 
-// Each of the three decode-term switches, on alone, sets only its own
+// Each of the four decode-term switches, on alone, sets only its own
 // State field, at the cycle answered at and at every earlier cycle a
 // self-check reads in the same replay; off, none is set.
 func TestDecodeSwitches_EachSetsOnlyItsOwnField(t *testing.T) {
@@ -19,12 +19,13 @@ func TestDecodeSwitches_EachSetsOnlyItsOwnField(t *testing.T) {
 		name            string
 		sw              map[string]bool
 		censored, resid bool
-		burst           bool
+		burst, step     bool
 	}{
 		{name: "off", sw: map[string]bool{}},
 		{name: "censored", sw: map[string]bool{saturation.SwitchTPOTRatioCensored: true}, censored: true},
 		{name: "residence", sw: map[string]bool{saturation.SwitchDecodeResidencePull: true}, resid: true},
 		{name: "burst", sw: map[string]bool{saturation.SwitchDecodeBurstFill: true}, burst: true},
+		{name: "step spread", sw: map[string]bool{saturation.SwitchBacktestStepOutputDispersion: true}, step: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			opts := Options{Switches: map[string]map[string]bool{PackageSaturation: c.sw}}
@@ -36,6 +37,7 @@ func TestDecodeSwitches_EachSetsOnlyItsOwnField(t *testing.T) {
 				assert.Equal(t, c.censored, st.TPOTRatioCensored, "cycle %d", st.Cycle)
 				assert.Equal(t, c.resid, st.DecodeResidencePull, "cycle %d", st.Cycle)
 				assert.Equal(t, c.burst, st.DecodeBurstFill, "cycle %d", st.Cycle)
+				assert.Equal(t, c.step, st.StepOutputDispersion, "cycle %d", st.Cycle)
 			}
 		})
 	}

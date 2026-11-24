@@ -299,6 +299,11 @@ type RankMixtureOptions struct {
 	// is raised to it (RankMixtureFit.SpreadFloored); 0 none.
 	SpreadFloor                         float64
 	NoMixture, NoKV, NoPrompt, NoSpread bool
+	// CleanFitSteps fits the KV-deferral lines and the prompt slopes on the
+	// steps under MaxCleanFitRho only; SharesAtLoad prices the share profile
+	// of the fit steps nearest the priced rate (rank_mixture_fitsteps.go).
+	// Both default off.
+	CleanFitSteps, SharesAtLoad bool
 	// StratifiedMoments prices with stratified service moments
 	// (RankMixture.Stratified). The zero value is off; the planner sets it
 	// from DefaultRankMixtureStratified unless the caller says otherwise.
@@ -336,13 +341,20 @@ func FitCore(steps []MixtureStep, o RankMixtureOptions) (RankMixture, float64, e
 	}
 	m := RankMixture{S0: s0, V: v, ServiceProportional: proportional, Shares: shares, Spread: 1, Slots: o.Slots,
 		Stratified: o.StratifiedMoments}
+	if o.SharesAtLoad && !o.NoMixture {
+		m.ShareRows = shareRowsOf(steps, len(shares))
+	}
+	fitOn := steps
+	if o.CleanFitSteps {
+		fitOn, m.CleanSteps, m.OverloadedSteps = cleanFitSteps(steps, s0, v)
+	}
 	if !o.NoKV {
-		if kv, err := FitKVDeferral(steps, s0, v, len(shares)); err == nil {
+		if kv, err := FitKVDeferral(fitOn, s0, v, len(shares)); err == nil {
 			m.KV = kv
 		}
 	}
 	if !o.NoPrompt {
-		if m.BetaOverhead, m.BetaDecode, m.BetaRemainder, m.BetaUnidentified, err = FitBeta(steps); err != nil {
+		if m.BetaOverhead, m.BetaDecode, m.BetaRemainder, m.BetaUnidentified, err = FitBeta(fitOn); err != nil {
 			return RankMixture{}, 0, err
 		}
 		m.Beta = m.BetaOverhead + m.BetaDecode + m.BetaRemainder
