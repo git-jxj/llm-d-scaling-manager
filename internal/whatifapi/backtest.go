@@ -318,6 +318,11 @@ type BacktestRequest struct {
 	// AllowConfigMismatch prices a test whose configuration differs from
 	// the fit's, with the difference as a caveat; without it, refused.
 	AllowConfigMismatch bool `json:"allowConfigMismatch,omitempty"`
+	// FitOutputDispersion prices every step at the fit's output spread D,
+	// the older way (the CLI's --fit-output-dispersion). Absent, each
+	// step is priced at the D its own decode rows read, where they read one
+	// (saturation.SwitchBacktestStepOutputDispersion, on in the planner).
+	FitOutputDispersion bool `json:"fitOutputDispersion,omitempty"`
 	// Assume types a term the fit did not learn, as a plan's assume does;
 	// every figure it moves is flagged, and the answer lists it.
 	Assume *Assume `json:"assume,omitempty"`
@@ -909,10 +914,13 @@ type backtestQuestion struct {
 	promptCV  *float64
 	// promptMaxRatio is promptCV's bound (stepInputs.promptMaxRatio).
 	promptMaxRatio float64
-	config         BacktestConfig
-	assumed        []string
-	testIndices    []int
-	assume         Assume
+	// fitOutputDispersion is BacktestRequest.FitOutputDispersion: every
+	// step priced at the fit's output spread.
+	fitOutputDispersion bool
+	config              BacktestConfig
+	assumed             []string
+	testIndices         []int
+	assume              Assume
 	// targetAsked is the target as the answer names it.
 	targetAsked *Objective
 	// source is the latency scored against; measureWindow, when above 0,
@@ -945,7 +953,7 @@ func backtestQuestionOf(fit, test *inputsEntry, req BacktestRequest, cutoff time
 // test, and a non-zero until ends the test at that time.
 func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.Time, split string, predictOnly bool) (*backtestQuestion, error) {
 	q := &backtestQuestion{fit: fit, test: test, cutoff: cutoff, split: split, step: DefaultBacktestStep,
-		settle: DefaultBacktestSettle, measured: MeasuredAuto, cv2: req.ArrivalCV2}
+		settle: DefaultBacktestSettle, measured: MeasuredAuto, cv2: req.ArrivalCV2, fitOutputDispersion: req.FitOutputDispersion}
 	var err error
 	if req.Step != "" {
 		if q.step, err = time.ParseDuration(req.Step); err != nil || q.step < minBacktestStep || q.step > maxBacktestStep {
@@ -1410,6 +1418,12 @@ func (q *backtestQuestion) finish(out *BacktestResponse) {
 		out.BacktestID = contentID("backtest", struct{ ID, TPOTModel, Assumed, Abstained string }{out.BacktestID, q.tpotDist.report.Model,
 			q.tpotDist.report.Assumed, q.tpotDist.report.Abstained})
 	}
+	if q.fitOutputDispersion {
+		out.BacktestID = contentID("backtest", struct {
+			ID                  string
+			FitOutputDispersion bool
+		}{out.BacktestID, true})
+	}
 	if q.load != nil {
 		out.BacktestID = contentID("backtest", struct {
 			ID   string
@@ -1525,6 +1539,9 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		return out
 	}
 	in := stepInputsOf(seriesAt(q.test.series, st.window))
+	if q.fitOutputDispersion {
+		in.outputDispersion = 0
+	}
 	out.Rate, out.Prefill, out.Decode = in.rate, in.prefill, in.decode
 	if in.hasShape {
 		out.PromptTokens, out.OutputTokens = ptr(in.prompt), ptr(in.output)

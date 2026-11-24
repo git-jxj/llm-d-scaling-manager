@@ -166,7 +166,7 @@ bucket, steps it called overloaded marked in red at the top, and steps not
 judged in grey.
 
 The prediction uses each step's request rate, prompt and output lengths, the
-spread of prompt lengths, and the replicas each role ran. Unless you give
+spread of prompt and of output lengths, and the replicas each role ran. Unless you give
 `--arrival-cv2` (1 is random arrivals, higher is burstier), it assumes random
 arrivals. It is compared with the router's TTFT and TPOT histograms in the
 same recording, over the window its histogram covers (the router's rate
@@ -363,6 +363,7 @@ Size from the planner when, below the load it thinks the fleet can carry:
 | `--assume-prompt-cv` | each step's | The prompts' spread, 0 to 3, in place of the one each step reads from the histogram, which is coarse on long prompts. Flagged. |
 | `--assume-router-hop`, `--assume-itl-b` | | The router hop, and decode's ITL B (`12ms`, or `floor`), as an answer's flags of the same names: check an answer with the inputs it stated. Flagged. |
 | `--allow-config-mismatch` | off | Score a test of another configuration, with the difference printed. |
+| `--fit-output-dispersion` | off | Price every step at the spread of output lengths the fit read, the older way. By default each step is priced at the spread its own decode pods read, where they read one ([accuracy](accuracy.md)). |
 | `--flow-control` | inferred | `on` or `off`: the router's flow control, in place of what the fit's queue series says. To score a test that ran with flow control on against a fit that ran with it off, add `--allow-config-mismatch` too. |
 | `--router-wait-in-prefill`, `--price-router-wait` | on, off | How a step past the prefill flow-control onset carries the router's wait: `--router-wait-in-prefill` (on by default) for router v1.0.0, `--price-router-wait` for v0.11.0, which turns the default off. With `--router-wait-in-prefill=false` and no `--price-router-wait`, the step is flagged `AboveFlowControlOnset`; use that on router v0.11.0. Set both and they are refused. |
 | `-o json` | text | The same answer as `POST /v1/backtest` ([the API](api.md#the-backtest)). |

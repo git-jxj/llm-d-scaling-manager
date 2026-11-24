@@ -1029,8 +1029,10 @@ few minutes of 8 to 26-token outputs whose histograms read an output spread
 `D` of 1.26 (`SwitchKVPerRequestOutputDispersion`), and the backtest priced
 every step at it, though it prices each step's own lengths: on 1000-token
 outputs that is 11% more KV per request than the A phases' pods held.
-`saturation.SwitchBacktestStepOutputDispersion`, planner-only and off,
-prices each step at the `D` its own decode rows read
+`saturation.SwitchBacktestStepOutputDispersion`, planner-only (off from the
+constructor, on in `learnreplay.PlannerSwitches`; a backtest asked with
+`fitOutputDispersion` turns it off for its steps), prices each step at the
+`D` its own decode rows read
 (`whatifapi.Knobs.OutputDispersion`, read from the series'
 `OutputTokensSquared`); with it the A phases read 1.26 (1.21 on the second
 warm-up), and no figure reads newly under what was measured with it alone.

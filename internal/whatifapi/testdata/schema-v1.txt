@@ -450,6 +450,7 @@ backtestRequest.assume.tpotRatio number
 backtestRequest.assume.vp number
 backtestRequest.decodeSlots number
 backtestRequest.fitBelow string
+backtestRequest.fitOutputDispersion boolean
 backtestRequest.fitUntil string
 backtestRequest.inputsId string
 backtestRequest.measured string

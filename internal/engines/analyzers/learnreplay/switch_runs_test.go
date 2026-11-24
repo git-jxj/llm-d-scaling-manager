@@ -1293,9 +1293,10 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// golden moves. Its unit tests hold it.
 	saturation.SwitchDecodeBurstFill: nil,
 	// llm-d-incubation/llm-d-scaling-manager#274: a backtest step priced at
-	// its own output spread. Planner-only, off; read by the planner's
-	// answer at a spread the backtest states, not the replay, so no learner
-	// golden moves. Its unit tests hold it.
+	// its own output spread. Planner-only, off from the constructor and on
+	// in the planner; read by the planner's answer at a spread the backtest
+	// states, not the replay, so no learner golden moves (the planner's
+	// backtest goldens do). Its unit tests hold it.
 	saturation.SwitchBacktestStepOutputDispersion: nil,
 	saturation.SwitchPrefillVPFloorServed:         nil,
 	// The planner's V_P on a fleet that never queued (served peak as a
@@ -1941,6 +1942,8 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../../cmd/capacity-planner", "TestStepOutputDispersion_TheStepsSpreadOnTheSwitch"},
 		{"../../../whatifapi", "TestBacktestStep_ReadsItsOwnOutputSpread"},
+		{"../../../whatifapi", "TestBacktestStep_FitOutputDispersionKeepsTheFits"},
+		{".", "TestPlannerSwitches_TheStepOutputDispersionIsOn"},
 		{".", "TestSeries_TheDecodeRowsOutputSpread"},
 		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
 	},
