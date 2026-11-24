@@ -48,11 +48,6 @@ type SharedConfig struct {
 
 	// Controller isolation
 	ControllerInstance string // Controller instance label for multi-controller filtering
-
-	// NamespaceLabels are put on every namespace a spec creates for itself
-	// (E2E_NAMESPACE_LABELS, k=v,k=v): an install that manages namespaces by
-	// label (the one-manifest install) refuses one without them.
-	NamespaceLabels map[string]string
 }
 
 // LoadSharedConfig reads the shared test configuration from environment variables.
@@ -90,7 +85,6 @@ func LoadSharedConfig() SharedConfig {
 		OutputTokens: GetEnvInt("OUTPUT_TOKENS", 50),
 
 		ControllerInstance: GetEnv("CONTROLLER_INSTANCE", ""),
-		NamespaceLabels:    ParseEndpointSelector(GetEnv("E2E_NAMESPACE_LABELS", "")),
 	}
 }
 
