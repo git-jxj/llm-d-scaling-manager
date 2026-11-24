@@ -92,7 +92,7 @@ func TestPromptCoverage_PlateauCarriesItsRange(t *testing.T) {
 // 1800 to 2350 tokens time 20k. V_P is the lone rate, and speaks for 1850
 // to 2300 (the nearest-rank 10th and 90th of the thirteen).
 func TestPromptCoverage_LoneRateCarriesItsRange(t *testing.T) {
-	var cs []Cycle
+	cs := make([]Cycle, 0, 16)
 	for range 3 {
 		rm := queued("p-0", 10000, 3)
 		rm.RequestRate = 10000.0 / 8000
