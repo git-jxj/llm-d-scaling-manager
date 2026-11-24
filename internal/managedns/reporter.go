@@ -219,12 +219,12 @@ func (r *Reporter) Once(ctx context.Context) {
 	if r.Grants != nil {
 		grants = r.Grants()
 	}
-	readiness := map[string]string{}
+	readiness, events := map[string]string{}, map[string]string{}
 	for ns, v := range views {
 		if !v.managed && len(v.refusedSOs) == 0 {
 			continue // listed in watchNamespaces' complement, and nothing of ours there
 		}
-		readiness[ns] = r.readiness(ctx, ns, v, grants)
+		readiness[ns], events[ns] = r.readiness(ctx, ns, v, grants)
 	}
 	if r.Sink != nil {
 		managed := names
@@ -234,25 +234,28 @@ func (r *Reporter) Once(ctx context.Context) {
 		r.Sink.SetNamespaces(managed, all, refusedNS)
 		r.Sink.SetNamespaceReadiness(readiness)
 	}
-	r.recordEvents(views, readiness)
+	r.recordEvents(views, events)
 	if changed && r.OnChange != nil {
 		r.OnChange(ctx)
 	}
 }
 
 // readiness is one namespace's readiness line: a state word, then what was
-// found and what to do.
-func (r *Reporter) readiness(ctx context.Context, ns string, v *nsView, grants []Grant) string {
+// found and what to do. event is the same line without what changes while
+// nothing needs doing (the counts, the refused ScaledObjects, an error's
+// wording), so an Event is recorded when the state or a problem changes,
+// not on every registration.
+func (r *Reporter) readiness(ctx context.Context, ns string, v *nsView, grants []Grant) (line, event string) {
 	if !v.managed {
 		so := ""
 		if len(v.refusedSOs) > 0 {
 			sort.Strings(v.refusedSOs)
 			so = "; the scaler refuses ScaledObjects " + strings.Join(v.refusedSOs, ", ")
 		}
-		return fmt.Sprintf("%s: %s%s. A cluster admin adds it to watchNamespaces (scaling-manager-admin.sh namespaces)",
-			StateNotManaged, v.refusal, so)
+		const todo = ". A cluster admin adds it to watchNamespaces (scaling-manager-admin.sh namespaces)"
+		return StateNotManaged + ": " + v.refusal + so + todo, StateNotManaged + ": " + v.refusal + todo
 	}
-	var problems, notes []string
+	var problems, notes, eventNotes []string
 	for _, g := range grants {
 		if r.Access == nil {
 			break
@@ -261,11 +264,13 @@ func (r *Reporter) readiness(ctx context.Context, ns string, v *nsView, grants [
 		switch {
 		case err != nil:
 			notes = append(notes, fmt.Sprintf("grant %s not checked: %v", g.Name, err))
+			eventNotes = append(eventNotes, fmt.Sprintf("grant %s not checked", g.Name))
 		case ok:
 		case g.Required:
 			problems = append(problems, fmt.Sprintf("grant %s missing (%s): scaling-manager-owner.sh grant %s %s", g.Name, g.Why, g.Name, ns))
 		default:
 			notes = append(notes, fmt.Sprintf("no %s grant (%s): skipped here until scaling-manager-owner.sh grant %s %s", g.Name, g.Why, g.Name, ns))
+			eventNotes = append(eventNotes, notes[len(notes)-1])
 		}
 	}
 	found := fmt.Sprintf("%d ScaledObjects registered, %d InferencePools", len(v.scaledObjects), len(v.pools))
@@ -279,13 +284,18 @@ func (r *Reporter) readiness(ctx context.Context, ns string, v *nsView, grants [
 		state = StateWaiting
 		parts = append(parts, "no ScaledObject here has called the scaler yet (scaling-manager-owner.sh register "+ns+")")
 	}
+	eventParts := append(append([]string{}, parts...), eventNotes...)
 	parts = append(parts, found)
 	parts = append(parts, notes...)
-	return state + ": " + strings.Join(parts, "; ")
+	line = state + ": " + strings.Join(parts, "; ")
+	if len(eventParts) == 0 {
+		return line, state + ": managed, and its ScaledObjects call the scaler"
+	}
+	return line, state + ": " + strings.Join(eventParts, "; ")
 }
 
-// recordEvents records each namespace's readiness on its ScaledObjects and
-// InferencePools when it changed for that object.
+// recordEvents records each namespace's event line (readiness) on its
+// ScaledObjects and InferencePools when it changed for that object.
 func (r *Reporter) recordEvents(views map[string]*nsView, readiness map[string]string) {
 	if r.Recorder == nil {
 		return

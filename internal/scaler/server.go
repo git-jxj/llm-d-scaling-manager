@@ -86,8 +86,10 @@ type Server struct {
 	OnReachability func(unreachable bool, detail string)
 
 	// Admit, when set, refuses every call from a namespace it does not admit
-	// (PermissionDenied), before the call registers anything: the install that
-	// opts namespaces in by label (internal/managedns). Nil serves every
+	// (PermissionDenied), before the call registers anything, and ends an open
+	// StreamIsActive stream at its next message once the namespace is refused:
+	// the install whose watchNamespaces setting is live (internal/managedns).
+	// Nil serves every
 	// namespace, as every other install does.
 	Admit AdmitFunc
 

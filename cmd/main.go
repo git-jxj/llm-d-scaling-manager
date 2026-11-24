@@ -1228,6 +1228,12 @@ func main() {
 		}
 		names, all := cfg.ManagedNamespaces()
 		setupLog.Info("Managing the namespaces the watchNamespaces setting names, live", "watchNamespaces", names, "every", all)
+	} else if cfg.WatchNamespacesLive() {
+		// WATCH_NAMESPACES_LIVE from the environment or config.yaml, without
+		// the flag: the setting would be read live and the cache left
+		// cluster-wide, with nothing here to enforce it. Refuse to start.
+		setupLog.Error(nil, "WATCH_NAMESPACES_LIVE is set but --watch-namespaces-live is not: set the flag, or leave the key out")
+		os.Exit(1)
 	}
 	var admit scaler.AdmitFunc
 	if nsAdmission != nil {

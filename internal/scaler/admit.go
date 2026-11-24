@@ -62,7 +62,24 @@ func (a *admitting) StreamIsActive(ref *pb.ScaledObjectRef, stream pb.ExternalSc
 	if err := a.check(stream.Context(), ref, "StreamIsActive"); err != nil {
 		return err
 	}
-	return a.inner.StreamIsActive(ref, stream)
+	return a.inner.StreamIsActive(ref, &admittedStream{ExternalScaler_StreamIsActiveServer: stream, ref: ref, a: a})
+}
+
+// admittedStream checks the namespace again before each message on an open
+// StreamIsActive stream, so a namespace left out of the setting after the
+// stream opened is refused at the next push or keepalive, not served until
+// KEDA reopens the stream.
+type admittedStream struct {
+	pb.ExternalScaler_StreamIsActiveServer
+	ref *pb.ScaledObjectRef
+	a   *admitting
+}
+
+func (s *admittedStream) Send(resp *pb.IsActiveResponse) error {
+	if err := s.a.check(s.Context(), s.ref, "StreamIsActive"); err != nil {
+		return err
+	}
+	return s.ExternalScaler_StreamIsActiveServer.Send(resp)
 }
 
 func (a *admitting) GetMetricSpec(ctx context.Context, ref *pb.ScaledObjectRef) (*pb.GetMetricSpecResponse, error) {

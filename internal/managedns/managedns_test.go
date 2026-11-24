@@ -171,7 +171,7 @@ func TestReporterReadinessAndEvents(t *testing.T) {
 	}
 	ev := drain(rec)
 	want := []string{
-		"Normal " + EventNamespaceReady + " ok: 1 ScaledObjects registered, 1 InferencePools",
+		"Normal " + EventNamespaceReady + " ok: managed, and its ScaledObjects call the scaler",
 		"Warning " + EventNamespaceNotManaged + " not managed: ",
 	}
 	for _, w := range want {
@@ -189,6 +189,17 @@ func TestReporterReadinessAndEvents(t *testing.T) {
 	}
 	if changes != 0 {
 		t.Errorf("OnChange called %d times with no change", changes)
+	}
+
+	// Another registration changes the counts in the status, not the Event:
+	// only the new ScaledObject gets one, never so-a and pool-a again.
+	reg.entries = append(reg.entries, registry.Entry{Namespace: "team-a", Name: "so-a2"})
+	r.Once(ctx)
+	if got := sink.readiness["team-a"]; got != "ok: 2 ScaledObjects registered, 1 InferencePools" {
+		t.Errorf("team-a after a registration %q", got)
+	}
+	if ev := drain(rec); len(ev) != 1 {
+		t.Errorf("a registration recorded %d Events, want 1 on the new ScaledObject: %q", len(ev), ev)
 	}
 
 	ws.set(true)

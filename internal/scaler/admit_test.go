@@ -18,7 +18,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/scaler"
 )
 
-// The install that opts namespaces in by label refuses KEDA's calls for any
+// The install whose watchNamespaces setting is live refuses KEDA's calls for any
 // other namespace before they register anything: the controller never
 // manages a workload there. Without Admit every namespace is served, as on
 // every other install.
