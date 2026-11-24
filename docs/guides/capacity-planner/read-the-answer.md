@@ -35,8 +35,19 @@ The lines, top down:
   Prefill was not sized, so this is not a fleet recommendation."
 - **Headroom**: how far the load can grow before each role's limit. "at
   least" marks a limit known only as a lower bound.
-- **+25% / +50% traffic**: the fleet the grown load needs, at the same SLO.
-  It reads "Pending" until the server sizes those rates.
+- **+25% / +50% traffic**: the fleet the busiest load grown by a quarter
+  and by a half needs, at the same SLO and shape, as "N prefill + M decode
+  (G GPUs)". The page sizes each with `POST /v1/size` once the busiest load
+  is judged. A size past the highest load measured says "extrapolated past
+  the tested range"; one resting on a prefill limit known only as a lower
+  bound says fewer prefill may do. Where no fleet serves the rate the row
+  says why. Under the default model, where prefill's limit is not measured,
+  the row says it cannot size more traffic and what to do: load a busier
+  window, or use the speed the pods were seen at. A source with no prefill
+  variant is not sized: the page sizes prefill and decode together.
+  Change the SLO targets, their percentiles or the shape and the page asks
+  the verdict and these sizes again; until the answers arrive those rows
+  read "Judging..." or "Sizing...", never the answer for the old targets.
 - **Accuracy**: how many held-out five-minute steps the planner predicted
   within 20%, which way it leans, and the rates and fleet that check
   covers. Outside that range an answer is an extrapolation.
