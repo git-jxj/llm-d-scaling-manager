@@ -40,8 +40,14 @@ func heavierLoadState(t *testing.T, inX, outX float64) *learnreplay.State {
 // own shape; with the load's cycles 1.5x longer in output, or in prompt,
 // than the shape priced the verdict is NOT JUDGED and names --shape load.
 // Three + three, right-sized at its own shape, is NOT JUDGED too. An UNDER
-// keeps its verdict: a heavier load only makes it more true.
+// keeps its verdict: a heavier load only makes it more true. The guard is
+// on the measured shape asked (--shape measured): the default prices the
+// load at its own cycles' shape, and judges.
 func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
+	measured := func(q whatifapi.ReportQuery) whatifapi.ReportQuery {
+		q.Shapes = []whatifapi.ReportShapeAsk{{Measured: true, Label: "measured"}}
+		return q
+	}
 	own := stairReport(t, stairQuery(4, 4, 0)).Shapes[0]
 	require.Equal(t, whatifapi.VerdictOver, own.Verdict.Verdict, own.Verdict.Summary)
 	require.Equal(t, whatifapi.VerdictRight, stairReport(t, stairQuery(3, 3, 0)).Shapes[0].Verdict.Verdict)
@@ -52,7 +58,7 @@ func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			st := heavierLoadState(t, c.inX, c.outX)
 			for _, f := range [][2]int{{4, 4}, {3, 3}} {
-				s := priceReport(t, st, stairQuery(f[0], f[1], 0)).Shapes[0]
+				s := priceReport(t, st, measured(stairQuery(f[0], f[1], 0))).Shapes[0]
 				require.NotNil(t, s.LoadShape)
 				assert.True(t, s.LoadShape.Mismatch, "the load's cycles ran at another shape")
 				v := s.Verdict
@@ -61,14 +67,27 @@ func TestAtReplicas_ALighterShapePricedGivesNoShrink(t *testing.T) {
 				assert.Contains(t, v.Summary, "--shape load", v.Summary)
 				assert.Empty(t, v.Shrink, v.Summary)
 				assert.Nil(t, v.Needed, "no fleet is sized on a knee that reads high: %s", v.Summary)
+				// A growth line is of the same traffic: no shrink there either.
+				gq := measured(stairQuery(f[0], f[1], 0))
+				gq.LoadSeenX = 1.1
+				grown := priceReport(t, st, gq).Shapes[0].Growth
+				require.NotEmpty(t, grown)
+				for _, g := range grown {
+					assert.NotContains(t, []string{whatifapi.VerdictRight, whatifapi.VerdictOver}, g.Verdict.Verdict, "%s: %s", g.Load, g.Verdict.Summary)
+				}
+				// Asked for no shape, the report prices the load at its own
+				// cycles' shape: no mismatch, and a verdict.
+				d := priceReport(t, st, stairQuery(f[0], f[1], 0)).Shapes[0].Verdict
+				assert.NotEqual(t, whatifapi.VerdictNotJudged, d.Verdict, "%d + %d at the load's shape: %s", f[0], f[1], d.Summary)
+				assert.NotContains(t, d.Summary, phasesWords, d.Summary)
 			}
 			// Under-provisioned at its own shape, and still so at a heavier
 			// load.
-			v := priceReport(t, st, stairQuery(2, 2, 0)).Shapes[0].Verdict
+			v := priceReport(t, st, measured(stairQuery(2, 2, 0))).Shapes[0].Verdict
 			assert.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Summary)
 		})
 	}
 	// Within the tolerance the verdict stands.
-	v := priceReport(t, heavierLoadState(t, 1.1, 1.1), stairQuery(4, 4, 0)).Shapes[0].Verdict
+	v := priceReport(t, heavierLoadState(t, 1.1, 1.1), measured(stairQuery(4, 4, 0))).Shapes[0].Verdict
 	assert.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
 }

@@ -1413,6 +1413,7 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 	if !r.brief {
 		lead = "at " + r.loadWords + ", "
 	}
+	lighter := r.phasesLighter()
 	switch {
 	case !base.kneeOK:
 		v.Verdict = whatifapi.VerdictNotJudged
@@ -1464,11 +1465,10 @@ func (r *reporter) verdict(np, nd int, base fleetEval) (whatifapi.ReportVerdict,
 		v.Summary = fmt.Sprintf("%s: decode only: decode alone holds %s%s; %s; prefill was not sized (%s), so this is not a fleet recommendation.",
 			v.Verdict, r.targetWords(), strings.TrimSuffix(" "+lead, ", "), need, refusalWords(base.prefillKnee))
 		return v, nil
-	case r.phasesLighter() != "":
-		why := r.phasesLighter()
+	case lighter != "":
 		v.Verdict = whatifapi.VerdictNotJudged
-		v.Reason += ". " + why
-		v.Summary = fmt.Sprintf("%s: %s %s.", v.Verdict, phasesWords, why)
+		v.Reason += ". " + lighter
+		v.Summary = fmt.Sprintf("%s: %s %s.", v.Verdict, phasesWords, lighter)
 		return v, nil
 	}
 	roles, restsOnDecode, notes, err := r.roles(np, nd, base, &v)

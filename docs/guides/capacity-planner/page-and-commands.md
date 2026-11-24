@@ -665,8 +665,8 @@ cases, and no fleet is sized:
 
 Only an UNDER is withheld: neither case shows the fleet holding.
 
-The reverse case withholds the other verdicts. Where the measured shape priced
-is more than 20% shorter, in prompt or output, than the cycles the load was read
+The reverse case withholds the other verdicts. Where the measured shape asked
+(`--shape measured`) is more than 20% shorter, in prompt or output, than the cycles the load was read
 from, its knee reads high for that load. A verdict that the fleet holds,
 RIGHT-SIZED or OVER-PROVISIONED, could then cut replicas the load needs. Such a
 verdict is NOT JUDGED instead, no fleet is sized, and the summary gives both

@@ -802,10 +802,13 @@ are SKIPPED for that refusal, or for no saturated window off a ramp:
   line at all, and the other three are on the default intercept, reading 18.7% to
   22.1% fast. So the four staircase goldens validate nothing of decode.
 
-**A shape priced lighter than the load (#361).** `at-replicas` prices the load at
-the measured shape, the decode variant's last cycles. Where the cycles the load
-was read from ran more than 20% heavier, in prompt or output, than that shape,
-the knee reads high for the load. An OVER-PROVISIONED or RIGHT-SIZED verdict on
+**A shape priced lighter than the load (#361).** Asked for the measured shape
+(`--shape measured`), `at-replicas` prices the load at the decode variant's last
+cycles; by default it prices the load at its own cycles' shape, and this rule
+does not apply. Where the measured shape is more than 20% shorter, in prompt or
+output, than the cycles the load was read from (the same tolerance, read against
+the load's shape, as `ShapeLoadMismatch`), the knee reads high for the load. An
+OVER-PROVISIONED or RIGHT-SIZED verdict on
 it can cut replicas the load needs, so neither is given: the verdict is NOT
 JUDGED, no fleet is sized, and the summary names both shapes and `--shape load`.
 An UNDER-PROVISIONED verdict stands, as a heavier load only makes it more true.
