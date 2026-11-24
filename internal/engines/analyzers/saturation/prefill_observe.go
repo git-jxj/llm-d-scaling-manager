@@ -166,6 +166,16 @@ const SwitchPrefillVPAtServedWork = "prefill-vp-at-served-work"
 // SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillVPOccupancyPlateau = "prefill-vp-occupancy-plateau"
 
+// SwitchPrefillVPPromptCoverage is the replay switch for the prompts a V_P
+// speaks for (prefill.Cycle.VPPromptCoverage). On, V_P carries the range of
+// effective prompts its minutes read (prefill.Estimate.VPPromptLow,
+// VPPromptHigh), and a price at a mean prompt more than whatif.MaxVPShapeRatio
+// outside it is flagged whatif.VPPromptNotCovered, out of the region V_P
+// was learned in, and prices no TTFT. Off, V_P is priced at any prompt, as
+// before this switch (issue llm-d-incubation/llm-d-scaling-manager#405).
+// Planner-only, as SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillVPPromptCoverage = "prefill-vp-prompt-coverage"
+
 // SwitchPrefillVPLoneRate is the replay switch for V_P read from light
 // load (prefill.Cycle.VPLoneRate, prefill/lonerate.go). On, V_P refused for
 // want of a queue, or a lower bound, is read from the lone rate: one
@@ -405,7 +415,8 @@ func (c *cycle) observePrefill() {
 			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming,
 			QueueByCapacity: a.prefillQueueByCapacity, FBusyMinutes: a.prefillFBusyMinutes,
 			VPFloorServed: a.prefillVPFloorServed, VPServedUnqueued: a.prefillVPServedUnqueued, VPWindowBest: a.prefillVPWindowBest,
-			VPOccupancyPlateau: a.prefillVPOccupancyPlateau, VPLoneRate: a.prefillVPLoneRate, ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
+			VPOccupancyPlateau: a.prefillVPOccupancyPlateau, VPPromptCoverage: a.prefillVPPromptCoverage, VPLoneRate: a.prefillVPLoneRate,
+			ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
 		})
 		a.stashPrefillEstimate(c.input.Namespace, c.input.ModelID, variant, est, now)
 		logger := c.logger
@@ -422,6 +433,7 @@ func (c *cycle) observePrefill() {
 			"vpServedPeak", est.VPServedPeak, "vpFlooredAtServed", est.VPFlooredAtServed,
 			"vpPlateau", est.VPPlateau, "vpPlateauFlat", est.VPPlateauFlat,
 			"vpPlateauMinutes", est.VPPlateauMinutes, "vpPlateauSpan", est.VPPlateauSpan,
+			"vpPromptLow", est.VPPromptLow, "vpPromptHigh", est.VPPromptHigh,
 			"slopeBound", est.SlopeBound, "vpAboveSlopeBound", est.VPAboveSlopeBound,
 			"a", est.A, "aIntercept", est.AIntercept, "aOverhead", est.AOverhead,
 			"aOverheadKnown", est.AOverheadKnown, "aRefused", string(est.ARefused), "aSamples", est.ASamples,
