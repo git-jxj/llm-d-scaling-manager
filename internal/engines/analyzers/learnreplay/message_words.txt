@@ -31,6 +31,7 @@
 -m
 -pp
 -t
+-token
 -tp
 -unlisted-product
 .jsonl
@@ -58,6 +59,7 @@
 0.34
 0.95
 1
+1/
 1/muChoice.maxRatio
 100ms
 12m
@@ -115,6 +117,7 @@ BaseURL
 BelowFittedBand
 BorrowedLine
 Bound
+C
 C0-agree
 C1-single
 C4-no-signal
@@ -173,6 +176,7 @@ Deployment
 Deployments
 DisaggregatedSet
 Discarding
+E
 E1-const
 E2-query
 ENABLE_SCALE_TO_ZERO
@@ -180,6 +184,7 @@ EPP
 EffectiveMaxBatchedTokens
 EngineParams
 EngineTPOTHistogram
+Erlang
 ErrImagePull
 Error
 Events
@@ -249,6 +254,7 @@ Kind
 Kubernetes
 Kueue
 L
+L-1
 LEADER_ELECT
 LEADER_ELECTION_ID
 LEADER_ELECTION_LEASE_DURATION
@@ -629,6 +635,7 @@ ago
 agree
 agreeCycles
 agreed
+ahead
 aim
 alignment
 aligns
@@ -681,6 +688,7 @@ applying
 are
 args
 arguments
+around
 arrivalRate
 arrivals
 arrived
@@ -828,6 +836,7 @@ cache
 cacheKey.name
 cacheKey.namespace
 cached
+calibrated
 called
 callers
 calm
@@ -884,6 +893,7 @@ cluster-scoped
 cluster-wide
 clustering
 code
+coefficient
 cohort
 cohorts
 cold
@@ -941,6 +951,7 @@ confirmedFor
 consecutive
 consecutiveFailures
 considered
+constant
 constrained
 constrains
 constraint
@@ -1120,6 +1131,7 @@ discover
 discovery
 disk
 distinctPods
+distribution
 do
 docs/developer-guide/testing.md
 docs/reference/operations.md
@@ -1514,6 +1526,7 @@ https://prometheus.monitoring.svc:9090
 huge
 hysteresis
 id
+identified
 idle
 idle-line-band
 idleAfterReady
@@ -1567,6 +1580,7 @@ integer
 intercept
 interface
 interval
+interval-censored
 into
 invalid
 inventory
@@ -1839,6 +1853,7 @@ levels
 liftReason
 lifted
 light
+likelihood
 likely
 limit
 limited
@@ -1952,10 +1967,12 @@ loadImbalance.idleKvUsage
 loaded
 localQueueDemand
 locator.New
+log-variance
 logVerbosity
 log_balancedness
 log_balancedness_interval
 logged
+lognormal
 lone-rate
 long
 longer
@@ -2249,6 +2266,7 @@ nodes
 nominal
 nominal-lent-out
 non-nil
+non-queue
 none
 noneArrivedSince
 none|
@@ -2339,6 +2357,7 @@ out
 outcome
 outlived
 output
+output-length
 output-tokens-histogram
 outputDispersion
 outputDispersionRead
@@ -2348,6 +2367,7 @@ outputTokensWas
 outside
 outstanding
 over
+over-budget
 over-ordered
 over-priced
 over-state
@@ -2456,6 +2476,7 @@ placement-timeout
 placementTimeout
 plan
 planned
+planner
 planner-cap-at-step-budget
 planning
 planningFrom
@@ -2463,6 +2484,7 @@ plans
 plateauCycles
 platform
 plugin
+plus
 pod
 pod-template-hash
 pod/
@@ -2697,6 +2719,7 @@ redirected
 redistribution
 reduce
 refilled
+refitted
 refresh
 refreshInterval
 refused
@@ -3128,6 +3151,7 @@ slopeAgeSeconds
 slopeBound
 slopeHeld
 slopes
+slot
 slots
 slow
 slower
