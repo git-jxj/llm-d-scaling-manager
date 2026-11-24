@@ -182,8 +182,11 @@ func TestPageAsksSize(t *testing.T) {
 // hack/check-planner-exec.mjs runs it.
 func TestPageStatesALoadAwareRouter(t *testing.T) {
 	html, js := pageText(t, "index.html"), pageText(t, "planner.js")
-	box := html[strings.Index(html, `id="assumebox"`):]
-	box = box[:strings.Index(box, "</details>")]
+	start := strings.Index(html, `id="assumebox"`)
+	require.GreaterOrEqual(t, start, 0, "no assume box")
+	end := strings.Index(html[start:], "</details>")
+	require.Positive(t, end, "the assume box does not end")
+	box := html[start : start+end]
 	assert.Contains(t, box, `<input type="checkbox" id="a-lar"> My router balances prefill by load`)
 	for _, want := range []string{`el("a-lar").onchange = () => {`, "k().assume.loadAwareRouter = true;", "delete k().assume.loadAwareRouter;",
 		`if (k.assume.loadAwareRouter) p.set("loadAwareRouter", "1");`, `if (g("loadAwareRouter") === "1") k.assume.loadAwareRouter = true;`,

@@ -185,7 +185,6 @@ func TestLoadAware_TheSweepsCatchANonMonotoneF(t *testing.T) {
 	}
 }
 
-
 // A pod hotter than the router can steer away from: f 1.8 read at 0.5 has
 // an excess of 0.8 against 0.5 of idle capacity, and saturates first, at
 // rho 0.625 (k = 1.6: the smaller root of 1.6 rho^2 - 2.6 rho + 1).
