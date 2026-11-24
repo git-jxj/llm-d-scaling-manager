@@ -254,3 +254,40 @@ func TestBatchBeyondFit_Q32ShapeAStepsPastTheFit(t *testing.T) {
 		assert.Equal(t, whatif.BatchBeyondFit{Priced: c.batch, Fitted: 210}, *a.Basis.Batch, c.step.at)
 	}
 }
+
+// With saturation.SwitchBacktestStepOutputDispersion on, a step is priced at
+// its own output spread, and the batch its figure is flagged at is the one
+// that pricing runs: its own fill over its own KV a request, at the same
+// rate fewer sequences than the fit's spread prices on the 0.6B staircase's
+// A phase, and never the fit's batch carried over.
+func TestBatchBeyondFit_AtTheStepsOwnOutputSpread(t *testing.T) {
+	batch := func(on bool) (whatif.BatchBeyondFit, pricedVariant, float64) {
+		f := answerFlags{set: map[string]bool{"assume-input-tokens": true, "assume-output-tokens": true},
+			inputTokens: 1000, outputTokens: 1000, stepOutputDispersion: 1}
+		st := stepSpreadState(on)
+		st.Variants[0].FitRows = []whatif.LineRow{{K: 0.05, Sequences: 10}}
+		vs, err := f.decodeVariants(st)
+		require.NoError(t, err)
+		require.Len(t, vs, 1)
+		pv := vs[0]
+		a, ok := whatif.FillAtRate(pv.decode, 32).(whatif.Answer)
+		require.True(t, ok)
+		q, ok := pv.qualify(atFill(a.Value)).(whatif.Answer)
+		require.True(t, ok)
+		require.True(t, q.HasFlag(batchBeyondFit), "on=%v", on)
+		require.NotNil(t, q.Basis.Batch)
+		return *q.Basis.Batch, pv, pv.decode.SeenFill(a.Value)
+	}
+	off, pvOff, kOff := batch(false)
+	on, pvOn, kOn := batch(true)
+	for _, c := range []struct {
+		b  whatif.BatchBeyondFit
+		pv pricedVariant
+		k  float64
+	}{{off, pvOff, kOff}, {on, pvOn, kOn}} {
+		assert.Equal(t, int64(math.Floor(c.k*c.pv.decode.CapacityTokens/c.pv.decode.KVPerRequest)), c.b.Priced,
+			"the figure's own fill over its own KV a request")
+		assert.Equal(t, int64(10), c.b.Fitted)
+	}
+	assert.Less(t, on.Priced, off.Priced, "the step's spread runs fewer sequences at the same rate")
+}
