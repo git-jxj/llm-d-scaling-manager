@@ -23,7 +23,7 @@ func TestSLOV2Inputs_OffByDefault(t *testing.T) {
 	e := &Engine{}
 	groups := map[string][]llmdvariant.Variant{"m": {{ObjectMeta: metav1.ObjectMeta{Namespace: "ns"}}}}
 	assert.Nil(t, e.predictionNamespaces(groups))
-	e.observeModelInputs(context.Background(), &modelData{namespace: "ns", modelID: "m"})
+	e.observeModelInputs(context.Background(), &modelData{namespace: "ns", modelID: "m"}, nil)
 	assert.Empty(t, e.sloModelInputs)
 	e.retainModelInputs(nil)
 }
