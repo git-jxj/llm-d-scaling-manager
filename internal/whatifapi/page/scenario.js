@@ -970,8 +970,8 @@ function kneeLowerBound(f) {
 // screen and a report judged at the traffic's own shape (execReportRequest),
 // which the page asks after a load; the accuracy is the held-out check the
 // server ran at load (inputs.ttftModel.heldOut), else the page's own check
-// of the source's last half. Every string is plain text, put on the page as
-// text.
+// of the source's last half, which runs only when asked. Every string is
+// plain text, put on the page as text.
 
 // EXEC_BADGES are the trust badges of the panel's lines.
 const EXEC_BADGES = {measured: "Measured", checked: "Checked on your data", estimate: "Estimate"};
@@ -1316,7 +1316,10 @@ function execView(o) {
 
   // Accuracy: the page's own check where it ran, the one score the check
   // view shows, at the SLO's statistic; else the server's held-out mean.
+  // The page's check runs only when asked: until then the row says it has
+  // not run and offers it, never a score it does not have.
   let trust = "";
+  const ask = f.prefill && !o.btPending ? [{act: "check", label: EXEC_CHECK_LABEL}] : [];
   if (bt) {
     const a = execAccuracy(bt, k);
     lines.push({label: "Accuracy", text: a.text + (a.range ? " " + a.range.replace("Valid range", "Tested range") : ""), badge: EXEC_BADGES.checked});
@@ -1329,16 +1332,34 @@ function execView(o) {
     const range = held.rateFrom != null ? ` Tested range: ${fleet} at ${roundRate(held.rateFrom)}-${roundRate(held.rateTo)} r/s; outside that is an extrapolation.` : "";
     // The server's quick check is not the page's: its folds refit at 50%
     // and 75% of the window and score their own steps. Each is named.
-    const other = k.ttftStat !== st ? ` The full check, at TTFT ${k.ttftStat}, is in Check the planner.` : "";
+    const other = k.ttftStat === st ? "" : o.btPending ? ` The full check, at TTFT ${k.ttftStat}, is running.` : " " + fullCheckNotRun(k.ttftStat);
     lines.push({label: "Accuracy", badge: EXEC_BADGES.checked,
-      text: `Quick check on held-out steps of your traffic: TTFT ${st} within 20% in ${n} of ${held.steps} five-minute steps${lean}.${other}${range}`});
+      text: `Quick check on held-out steps of your traffic: TTFT ${st} within 20% in ${n} of ${held.steps} five-minute steps${lean}.${other}${range}`,
+      actions: ask});
     trust = `Quick check on your traffic: TTFT ${st} ${n}/${held.steps} within 20%`;
   } else if (o.btPending) {
     lines.push({label: "Accuracy", text: "Checking the planner on your held-out hours...", badge: EXEC_BADGES.checked});
   } else if (inputs.selfCheck && inputs.selfCheck.line) {
-    lines.push({label: "Accuracy", text: inputs.selfCheck.line, badge: EXEC_BADGES.checked});
+    lines.push({label: "Accuracy", text: inputs.selfCheck.line, badge: EXEC_BADGES.checked, actions: ask});
+    if (f.prefill) trust = "Self-check only: full accuracy check not run yet";
+  } else if (f.prefill) {
+    // No badge: nothing was checked.
+    lines.push({label: "Accuracy", badge: "", text: EXEC_NOT_CHECKED, actions: ask});
+    trust = "Accuracy not checked yet";
   }
   return {lines, slo: execSLO(k), trust, note: "Rows are estimates unless marked."};
+}
+
+// EXEC_CHECK_LABEL is the button that runs the page's check on the source.
+const EXEC_CHECK_LABEL = "Check accuracy on this recording";
+
+// EXEC_NOT_CHECKED is the Accuracy row before any check ran.
+const EXEC_NOT_CHECKED = "Not checked yet: the planner has not been checked on this recording. The check takes seconds to a minute and runs only when asked.";
+
+// fullCheckNotRun says the page's full check, at the SLO's TTFT statistic,
+// has not run.
+function fullCheckNotRun(stat) {
+  return `The full check, at TTFT ${stat}, has not been run yet: ${EXEC_CHECK_LABEL} runs it.`;
 }
 
 // execSawShort is what users saw in one sentence, at the SLO's statistics:

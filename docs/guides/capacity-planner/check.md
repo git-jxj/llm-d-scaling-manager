@@ -48,7 +48,10 @@ a test step that the fit read a cycle of is not judged.
 
 On the page: load the recording in Source, open **Check the planner against
 a period it did not see**, set the slider, and press **Run**. To test on
-another recording, pick **another recording** and choose it.
+another recording, pick **another recording** and choose it. The page never
+runs the check by itself: **Check accuracy on this recording**, in the
+answer panel's Accuracy row or on this tab, runs it with the slider's split
+(half, unless you move it).
 
 ## Read the answer
 
