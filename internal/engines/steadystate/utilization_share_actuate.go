@@ -782,6 +782,9 @@ func (e *Engine) decideV2(ctx context.Context, optimizer allocation.ScalingOptim
 		e.admitPassInFlight(requests, decisions, scaleTargets, time.Now())
 	}
 	e.reportQuotaAloneAllocation(ctx, optimizer, requests, allocation.WithholdPromised(constraints, promised), decisions)
+	// What the pass left short, before the share sets its targets over it.
+	gaps := planReplicaGaps(ctx, requests, decisions, constraints)
+	defer func() { e.cycleGaps = gaps }()
 	// The share plans on what the pass left for the models it does not plan,
 	// and plans its own models afresh: it overrides their targets, so what the
 	// pass ordered for them is not spent. What the pass left includes its
@@ -797,6 +800,7 @@ func (e *Engine) decideV2(ctx context.Context, optimizer allocation.ScalingOptim
 	if len(overrides) > 0 {
 		applied := applyUtilizationShareOverrides(decisions, overrides)
 		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Utilization share: set planned targets", "variants", applied)
+		gaps.noteShare(decisions)
 	}
 	// Republish the warm pool's headroom with this pass's promises withheld,
 	// so a transfer that started filling this cycle is not open to the pool

@@ -1036,6 +1036,74 @@ max by (exported_namespace, variant_name) (llmsm_desired_replicas)
   }
   ```
 
+### Suggested and provided replicas
+
+For each variant the scaling manager decided this cycle, these series show
+how many replicas the analyzers asked for (X, **suggested**), how many the
+variant gets (Y, **provided**), and why the two differ. Quotas and a short GPU
+inventory can make Y smaller than X. The utilization share can make it smaller
+(it lent the variant's GPUs to another model) or larger (it gave the variant
+another model's GPUs).
+
+Y is `llmsm_desired_replicas`: the target KEDA reads. For a passive model it is
+the count the scaling manager would set. In utilization-share shadow mode the
+share sets nothing, so Y is what the ordinary optimizer sets, and no series
+names the share.
+
+The numbers always add up: X − Y equals the sum of `llmsm_replicas_short` minus
+`llmsm_replicas_borrowed`. These series only report. They change no decision.
+
+Every series below also carries `controller_instance` when `CONTROLLER_INSTANCE`
+is set, and the workload's namespace is scraped as `exported_namespace`. A
+variant with no decision this cycle (its metrics could not be collected) has
+none of them. A variant, reason or quota pool that goes away loses its series
+in the next cycle.
+
+| metric | type | labels | meaning |
+| --- | --- | --- | --- |
+| `llmsm_replicas_suggested` | gauge | `namespace`, `model_name`, `variant_name`, `role` | X: the replicas the analyzers ask for before any limiter, the variant's `maxReplicaCount` and the utilization share. Equal to `llmsm_replicas_provided` unless one of those changed the target. |
+| `llmsm_replicas_provided` | gauge | same | Y: the replicas the scaling manager sets, after the limiters and the utilization share. The same value as `llmsm_desired_replicas`. |
+| `llmsm_replicas_short` | gauge | same, plus `reason`, `limiter_name` | How many of the suggested replicas one reason took away. Present only while positive. |
+| `llmsm_replicas_borrowed` | gauge | same as `llmsm_replicas_suggested` | Y − X when the utilization share gave the variant more than the analyzers asked for; `0` otherwise. This is not Kueue cohort borrowing. |
+| `llmsm_quota_remaining_after_suggested_gpus` | gauge | `limiter_name`, `scope`, `accelerator` | GPUs a quota pool would have left if every variant it covers got its suggestion: the pool's limit, minus what is held now, minus the GPUs the suggestions add (or plus the GPUs they free). Negative means the suggestions do not fit in the quota. `scope` is the namespace for a namespace-scoped quota, `cluster` otherwise. An unlimited pool has no series. |
+
+`role` is `prefill` or `decode` for a P/D model, `both` otherwise.
+
+The `reason` values of `llmsm_replicas_short`:
+
+| reason | what took the replicas | `limiter_name` |
+| --- | --- | --- |
+| `quota` | a quota entry ran out, or a Kueue borrowing rule held the replica back | the quota entry's `name`, or `pd-pair-borrows-whole` / `lender-cannot-reclaim` for the borrowing rules |
+| `gpu` | the physical GPU inventory ran out | empty |
+| `node-fit` | the pools had the GPUs, but no node had room for a whole replica | empty |
+| `max-replicas` | the variant's own `maxReplicaCount`, when no other variant of the same role took the replicas instead | empty |
+| `share-lent` | the utilization share lowered the variant to give its GPUs to another model | empty |
+
+A passive model's would-be target is computed without node fit, so a passive
+model is never short for `node-fit`.
+
+Models short of what they need, and by how much:
+
+```promql
+sum by (exported_namespace, model_name) (llmsm_replicas_short) > 0
+```
+
+The same, split by cause, which tells you what to change (a bigger quota, more
+GPUs, a higher `maxReplicaCount`):
+
+```promql
+sum by (exported_namespace, model_name, reason, limiter_name) (llmsm_replicas_short)
+```
+
+Quota pools that cannot hold every model's suggestion:
+
+```promql
+llmsm_quota_remaining_after_suggested_gpus < 0
+```
+
+The `ResourceConstrained` Event carries the same two numbers, for example
+`... (limited by team-quota): suggested 5 replicas, provided 3`.
+
 ### `llmsm_gpu_discovery_up`
 - **Type**: Gauge
 - **Description**: Indicates whether GPU discovery is on (1) or off (0). GPU discovery is enabled when a physical (`gpu-inventory`) limiter is declared in `limiters:`. This metric helps operators understand whether the scaling manager is actively discovering GPU resources.
@@ -1801,7 +1869,7 @@ when a figure changes.
 
 ### `llmsm_desired_replicas`
 - **Type**: Gauge
-- **Description**: Desired number of replicas for each variant
+- **Description**: Desired number of replicas for each variant: the target KEDA reads. It is Y, the replicas **provided** after the limiters and the utilization share, not X, what the analyzers asked for. See [Suggested and provided replicas](#suggested-and-provided-replicas) for X and the reasons the two differ.
 - **Labels**:
   - `variant_name`: Name of the variant
   - `namespace`: Kubernetes namespace
