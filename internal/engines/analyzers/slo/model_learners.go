@@ -93,10 +93,9 @@ const (
 
 // Sources of the v2 learners' reports.
 const (
-	modelSourceFitted   learn.Source = "fitted"
-	modelSourceHeld     learn.Source = "held"
-	modelSourceRestored learn.Source = "restored"
-	modelSourceNone     learn.Source = "none"
+	modelSourceFitted learn.Source = "fitted"
+	modelSourceHeld   learn.Source = "held"
+	modelSourceNone   learn.Source = "none"
 )
 
 // modelWindow is one model's v2 learners: the window of cycles they fit on,
@@ -146,13 +145,12 @@ type ttftLearner struct {
 	// fit is the fit in use, fittedAt when it was fitted (zero: none), and
 	// prefill the serving prefill pods it was fitted at. last is the last
 	// refit's outcome, held whether fit is that refit's or an earlier one
-	// held; restored says fit came from a snapshot.
+	// held.
 	fit      whatif.MixtureWindowFit
 	fittedAt time.Time
 	prefill  int
 	last     whatif.MixtureWindowFit
 	held     bool
-	restored bool
 }
 
 // tpotLearner is the v2 TPOT learner's fit, and the default model's R_q read
@@ -162,7 +160,6 @@ type tpotLearner struct {
 	fittedAt time.Time
 	last     whatif.TPOTWindowFit
 	held     bool
-	restored bool
 	// defaultRatio is the default model's R_q at 0.9 and 0.95
 	// (whatif.TPOTRatioFromWindows over the window), 0 where not read.
 	defaultRatio [2]float64
@@ -349,19 +346,21 @@ func (a *Analyzer) refitModel(namespace, modelID string, w *modelWindow, now tim
 		w.counts[modelRefitted]++
 	}
 	w.ttft.last = tt
-	if tt.Abstained() == "" && HeldOutPasses(tt.HeldOut) {
-		w.ttft.fit, w.ttft.fittedAt, w.ttft.prefill, w.ttft.held, w.ttft.restored = tt, now, prefillPods, false, false
-	} else if w.ttft.fittedAt.IsZero() || now.Sub(w.ttft.fittedAt) > ModelHoldFor {
-		w.ttft.fit, w.ttft.fittedAt, w.ttft.held, w.ttft.restored = tt, time.Time{}, false, false
-	} else {
+	switch {
+	case tt.Abstained() == "" && HeldOutPasses(tt.HeldOut):
+		w.ttft.fit, w.ttft.fittedAt, w.ttft.prefill, w.ttft.held = tt, now, prefillPods, false
+	case w.ttft.fittedAt.IsZero() || now.Sub(w.ttft.fittedAt) > ModelHoldFor:
+		w.ttft.fit, w.ttft.fittedAt, w.ttft.held = tt, time.Time{}, false
+	default:
 		w.ttft.held = true
 	}
 	w.tpot.last, w.tpot.defaultRatio = tp, defaultRatio
-	if tp.Abstained == "" && tpotFoldsPass(tp.Fitted.Report) {
-		w.tpot.fit, w.tpot.fittedAt, w.tpot.held, w.tpot.restored = tp, now, false, false
-	} else if w.tpot.fittedAt.IsZero() || now.Sub(w.tpot.fittedAt) > ModelHoldFor {
-		w.tpot.fit, w.tpot.fittedAt, w.tpot.held, w.tpot.restored = tp, time.Time{}, false, false
-	} else {
+	switch {
+	case tp.Abstained == "" && tpotFoldsPass(tp.Fitted.Report):
+		w.tpot.fit, w.tpot.fittedAt, w.tpot.held = tp, now, false
+	case w.tpot.fittedAt.IsZero() || now.Sub(w.tpot.fittedAt) > ModelHoldFor:
+		w.tpot.fit, w.tpot.fittedAt, w.tpot.held = tp, time.Time{}, false
+	default:
 		w.tpot.held = true
 	}
 }
@@ -501,14 +500,12 @@ func (a *Analyzer) modelReportsLocked(namespace, modelID string, w *modelWindow)
 	if n := len(w.cycles); n > 0 {
 		last = w.cycles[n-1].At
 	}
-	report := func(name, variant, role string, fitted time.Time, held, restored bool) learn.Report {
+	report := func(name, variant, role string, fitted time.Time, held bool) learn.Report {
 		r := learn.Report{Learner: name, Namespace: namespace, ModelID: modelID, Variant: variant, Role: role,
 			Counts: maps.Clone(w.counts), Samples: len(w.cycles), LastAdmitted: last, Writes: w.counts[modelAdmitted],
 			Source: modelSourceNone}
 		switch {
 		case fitted.IsZero():
-		case restored:
-			r.PricingKey, r.Source = key, modelSourceRestored
 		case held:
 			r.PricingKey, r.Source = key, modelSourceHeld
 			r.Counts[modelHeld]++
@@ -518,8 +515,8 @@ func (a *Analyzer) modelReportsLocked(namespace, modelID string, w *modelWindow)
 		return r
 	}
 	return []learn.Report{
-		report(learn.TTFTMixture, w.prefill, domain.RolePrefill, w.ttft.fittedAt, w.ttft.held, w.ttft.restored),
-		report(learn.TPOTDistribution, w.decode, domain.RoleDecode, w.tpot.fittedAt, w.tpot.held, w.tpot.restored),
+		report(learn.TTFTMixture, w.prefill, domain.RolePrefill, w.ttft.fittedAt, w.ttft.held),
+		report(learn.TPOTDistribution, w.decode, domain.RoleDecode, w.tpot.fittedAt, w.tpot.held),
 	}
 }
 

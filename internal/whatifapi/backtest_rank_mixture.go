@@ -108,11 +108,6 @@ func fitRankMixture(fit *inputsEntry, fitIdx []int, step time.Duration, slots in
 	return rq, err
 }
 
-// fitRankMixtureSteps is fitRankMixture, and the steps it fitted on.
-func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slots int) (*rankMixtureQ, []whatif.MixtureStep, error) {
-	return fitRankMixtureStepsWith(fit, fitIdx, step, slots, rankMixtureSwitches{})
-}
-
 // rankMixtureSwitches are the rank mixture's off-by-default switches
 // (whatif.RankMixtureSwitches): fitSteps is BacktestRequest.RankMixtureFitSteps,
 // stratified BacktestRequest.RankMixtureStratified.
@@ -126,8 +121,9 @@ func rankMixtureSwitchesOf(req BacktestRequest) rankMixtureSwitches {
 	return rankMixtureSwitches{fitSteps: req.RankMixtureFitSteps, stratified: req.RankMixtureStratified}
 }
 
-// fitRankMixtureStepsWith is fitRankMixtureSteps, with the switches sw turns
-// on: whatif.FitRankMixtureCycles on the fit entry's cycles.
+// fitRankMixtureStepsWith is fitRankMixture, and the steps it fitted on,
+// with the switches sw turns on: whatif.FitRankMixtureCycles on the fit
+// entry's cycles.
 func fitRankMixtureStepsWith(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, sw rankMixtureSwitches) (
 	*rankMixtureQ, []whatif.MixtureStep, error) {
 	if len(fit.mixture) != len(fit.series) {
