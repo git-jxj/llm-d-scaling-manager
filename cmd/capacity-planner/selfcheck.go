@@ -146,6 +146,9 @@ func (f *answerFlags) stated() (*whatifapi.Stated, error) {
 	if f.vpPlateau {
 		st.Replayed, st.Outside = append(st.Replayed, "--"+vpPlateauFlag), true
 	}
+	if f.hitAtCount {
+		st.Replayed = append(st.Replayed, "--"+hitAtCountFlag)
+	}
 	if f.experimentalTTFT {
 		st.Replayed, st.Outside = append(st.Replayed, "--"+experimentalTTFTFlag), true
 	}

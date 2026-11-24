@@ -64,6 +64,13 @@ flagged `VPLowerBound` as well. It gets its own `inputsId`, so plans,
 reports, backtests and day plans on it never mix with the default's
 ([the page](page-and-commands.md#when-a-term-is-refused)).
 
+`prefillHitAtCount: true` prices the prefix hit at each prefill count asked
+for, not the one measured (the CLI's `--prefill-hit-at-count`; off by
+default). At fewer prefill replicas than the source's the hit is the floor
+hit x N'/N and each request computes more prompt tokens, flagged
+`PrefixHitAtCount`; at more it is kept, flagged `PrefixHitHeld`. The answer
+carries `prefillHitAtCount: true` and its own `inputsId`.
+
 `experimentalTTFT: true` prices TTFT with the experimental TTFT model (the
 CLI's `--experimental-ttft`): the seven TTFT switches that are off by
 default, on for this source. It is for demonstration and not validated:

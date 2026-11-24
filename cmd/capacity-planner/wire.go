@@ -157,6 +157,11 @@ type wireTTFT struct {
 	// the GPU, as slo.SwitchTTFTTierLoad prices it (tierLoad); absent with
 	// the switch off, or where it prices none.
 	TierLoad *wireTierLoad `json:"tierLoad,omitempty"`
+	// HitAtCount is the prefix hit priced at a prefill count other than
+	// the recorded one, as saturation.SwitchPrefillHitAtCount prices it
+	// (priceHitAtCount); absent with the switch off, or at the recorded
+	// count.
+	HitAtCount *wireHitAtCount `json:"hitAtCount,omitempty"`
 	// DecodeSide is how decode's part was priced: line, "decode engine" or
 	// omitted; the two figures are the decode engine's measured pair.
 	DecodeSide             string  `json:"decodeSide,omitempty"`

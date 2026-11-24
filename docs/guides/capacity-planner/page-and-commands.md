@@ -270,6 +270,34 @@ fleet that never queued would need, for example
 `capacity-planner at-replicas --recording run.jsonl.gz --ttft 2s@p90 --prefill-vp-plateau`;
 do not size from it alone.
 
+**Pricing another prefill pod count when prompts share prefixes.** With a
+cache-aware router, each shared prefix stays on one prefill pod. More pods
+split the shared prefixes, so each pod's cache holds more of its own and the
+prefix hit rises; fewer pods lower it. By default the planner keeps the hit
+it measured at every count, which reads the prompt tokens a pod computes too
+low when you price fewer pods. `--prefill-hit-at-count` prices the hit at
+the count you ask for:
+
+- fewer pods: the hit times the new count over the recorded one, a safe
+  floor (each request computes more tokens, so the prefill knee falls),
+  flagged `PrefixHitAtCount`;
+- more pods: the measured hit, kept, flagged `PrefixHitHeld` (the real hit
+  is likely higher, so capacity reads low);
+- the recorded count: nothing changes.
+
+The floor assumes the router keeps each shared prefix on one pod at both
+counts. Where load breaks that at fewer pods, the hit can fall below the
+floor. The recorded count is the most prefill pods in the 20 cycles (five
+minutes at the default cycle) the hit was read over, so a recording made just after a scale-down is priced
+from the larger count.
+
+The assumed line names the rule and the range the real hit lies in, and
+`-o json` carries it as `hitAtCount`. It is off by default; `slo-to-rate`,
+`replicas-to-slo`, `at-replicas`, `backtest`, `predict` and `day-plan` take
+it, and `POST /v1/inputs` takes `prefillHitAtCount` ([API](api.md)). For
+example, from a recording on 2 prefill pods:
+`capacity-planner slo-to-rate --recording run.jsonl.gz --ttft 2s@p90 --prefill 1 --prefill-hit-at-count`.
+
 **An experimental TTFT model (`--experimental-ttft`, for demonstration).**
 The TTFT model has seven switches that are off by default, because none of
 them has passed the release's validation. `--experimental-ttft` turns all

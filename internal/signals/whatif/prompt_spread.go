@@ -78,6 +78,8 @@ type promptSample struct {
 	cycle             int
 	at                time.Time
 	computed, request float64
+	// pods is the serving rows counted (PromptWindow.MaxPods).
+	pods int
 	// wholeComputed and whole are the computed and the whole prompt tokens
 	// a second of the counted rows that also read a whole prompt over the
 	// computed rate's minute (domain.ReplicaMetrics.AvgInputTokensRecent):
@@ -122,6 +124,7 @@ func (w *PromptWindow) Note(rows []domain.ReplicaMetrics, cycle int, at time.Tim
 	if !(s.computed > 0) {
 		return
 	}
+	s.pods = len(counted)
 	if pooled := PoolComputedBuckets(nil, counted); len(pooled) > 0 {
 		s.buckets = pooled
 	}
@@ -151,6 +154,21 @@ func (w *PromptWindow) Prompt() (tokens float64, from, to, cycles int) {
 		requests += s.request
 	}
 	return computed / requests, w.samples[0].cycle, w.samples[len(w.samples)-1].cycle, len(w.samples)
+}
+
+// MaxPods is the most serving pods one cycle of the window counted, 0 for
+// a nil or empty window. ComputedHit is read over the whole window, so a
+// window that spans a change of prefill count reads a hit from up to that
+// many pods, not only from the count of its last cycle.
+func (w *PromptWindow) MaxPods() int {
+	if w == nil {
+		return 0
+	}
+	n := 0
+	for _, s := range w.samples {
+		n = max(n, s.pods)
+	}
+	return n
 }
 
 // ComputedHit is the share of the whole prompt the prefill engines did not

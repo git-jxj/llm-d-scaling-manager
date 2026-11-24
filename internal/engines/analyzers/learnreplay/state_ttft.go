@@ -93,6 +93,10 @@ type PrefillState struct {
 	// prices a TTFT from V_P raised with a knee floored at the served work.
 	// Off unless the replay's options turn it on.
 	VPAtServedWork bool
+	// HitAtCount is saturation.SwitchPrefillHitAtCount: the planner prices
+	// the prefix hit at a prefill count other than the fit's
+	// (prefill.HitAtCountOf). Off unless the replay's options turn it on.
+	HitAtCount bool
 	// ServedComputedWindow is ServedComputed over the whole window replayed,
 	// read with VPAtServedWork alone (servedWork.windowPeaks); nil otherwise.
 	ServedComputedWindow map[int]float64
@@ -213,6 +217,9 @@ type ttftSamples struct {
 	// vpAtServed is saturation.SwitchPrefillVPAtServedWork
 	// (PrefillState.VPAtServedWork).
 	vpAtServed bool
+	// hitAtCount is saturation.SwitchPrefillHitAtCount
+	// (PrefillState.HitAtCount).
+	hitAtCount bool
 }
 
 // servedWorkOf is variant v's served work: its peaks over prefill.Retention
@@ -545,6 +552,7 @@ func (r *replayer) fillTTFT(st *State, in domain.AnalyzerInput, t *ttftSamples) 
 		ps.TierKVWait = t.tierKVWait
 		ps.PSByEngine = t.psByEngine
 		ps.VPAtServedWork = t.vpAtServed
+		ps.HitAtCount = t.hitAtCount
 		ps.ServedComputed, ps.ServedComputedWindow = t.servedWorkOf(v)
 		ps.CachedTokenCost = t.cachedTokenCost
 		ps.Estimate, ps.EstimateRead = estimateAt(r.sat.PrefillEstimate, in.Namespace, in.ModelID, v, st.At)

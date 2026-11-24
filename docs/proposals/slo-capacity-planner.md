@@ -2090,6 +2090,16 @@ roles[].ttft.fixedLatencyLearned number
 roles[].ttft.fixedLatencySeconds number
 roles[].ttft.fixedLatencySource string
 roles[].ttft.flowControl string
+roles[].ttft.hitAtCount object
+roles[].ttft.hitAtCount.count number
+roles[].ttft.hitAtCount.fitCount number
+roles[].ttft.hitAtCount.fitHit number
+roles[].ttft.hitAtCount.fitPromptTokens number
+roles[].ttft.hitAtCount.hi number
+roles[].ttft.hitAtCount.hit number
+roles[].ttft.hitAtCount.lo number
+roles[].ttft.hitAtCount.promptTokens number
+roles[].ttft.hitAtCount.rule string
 roles[].ttft.imbalance number
 roles[].ttft.imbalanceSource string
 roles[].ttft.percentile number

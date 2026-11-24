@@ -49,6 +49,9 @@ type backtestFlags struct {
 	// vpPlateau is --prefill-vp-plateau, as answerFlags' (vp_plateau.go):
 	// both sides are read with V_P from the occupancy plateau.
 	vpPlateau bool
+	// hitAtCount is --prefill-hit-at-count, as answerFlags'
+	// (hit_at_count.go): both sides are read with the switch on.
+	hitAtCount bool
 	// experimentalTTFT is --experimental-ttft, as answerFlags'
 	// (experimental_ttft.go): both sides are read with its switches on.
 	// rankMixtureTTFT is --experimental-ttft=v2 (experimental_ttft_v2.go),
@@ -71,6 +74,7 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.routerWaitInPrefill, "router-wait-in-prefill", whatif.DefaultRouterWaitInPrefill, "as slo-to-rate's, on by default: take the router's wait past the prefill onset as inside the prefill price (router v1.0.0); =false for router v0.11.0")
 	fs.BoolVar(&f.priceRouterWait, "price-router-wait", whatif.DefaultPriceRouterWait, "as slo-to-rate's: price the flow-control gate past the prefill onset as a stage (router v0.11.0); set, it turns the default --router-wait-in-prefill off")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
+	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTV2Usage)
 }
 
@@ -330,7 +334,7 @@ var resolveBacktest = func(ctx context.Context, f *backtestFlags, path string, c
 func resolveCycles(ctx context.Context, f *backtestFlags, path string, cycle int, cycles *whatifapi.CycleSet, warn io.Writer) (*whatifapi.Resolved, error) {
 	src := &servedSources{warn: warn, recordings: filepath.Dir(path)}
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant,
-		PrefillVPPlateau: f.vpPlateau, ExperimentalTTFT: f.experimentalTTFT,
+		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, ExperimentalTTFT: f.experimentalTTFT,
 		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(path), Cycle: cycle, Cycles: cycles}}
 	res, err := src.Resolve(ctx, in)
 	if err != nil && whatifapi.IsInputError(err) {
