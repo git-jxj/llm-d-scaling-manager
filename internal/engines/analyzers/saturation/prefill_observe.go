@@ -178,6 +178,18 @@ const SwitchPrefillVPOccupancyPlateau = "prefill-vp-occupancy-plateau"
 // SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillVPLoneRate = "prefill-vp-lone-rate"
 
+// SwitchPrefillHitAtCount is the replay switch for the prefix hit at a
+// prefill count other than the one the hit was read on
+// (prefill.HitAtCountOf; issue llm-d-incubation/llm-d-scaling-manager#384).
+// On, a planner question priced at fewer prefill pods than the fit's prices
+// the floor hit x N'/N, or the reuse-gap rule where the KV residency
+// histograms are read, and the computed prompt tokens a request with it,
+// flagged PrefixHitAtCount; one at more pods holds the fit's hit, flagged
+// PrefixHitHeld. Off, as before: the fit's hit at every count. The saturation
+// analyzer reads nothing with it; it holds it for the name. Planner-only, as
+// SwitchPrefillALowLoadPerRank is.
+const SwitchPrefillHitAtCount = "prefill-hit-at-count"
+
 // SwitchPrefillALowLoadByRate is the replay switch for which minutes the fit
 // of a reads as low load (prefill.Cycle.ALowLoadByRate). On, a quiet minute
 // (no queue) is low load when its request rate times its prompt cluster's

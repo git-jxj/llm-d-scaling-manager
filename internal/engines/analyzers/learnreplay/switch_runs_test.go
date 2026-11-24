@@ -1314,6 +1314,11 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// it off and off alone from all on moves nothing. Its unit tests hold
 	// it (heldBy).
 	saturation.SwitchPrefillVPLoneRate: nil,
+	// llm-d-incubation/llm-d-scaling-manager#384: the prefix hit at another
+	// prefill count. Planner-only, off from the constructor, so every golden
+	// replay runs it off and off alone from all on moves nothing. Its unit
+	// tests hold it (heldBy).
+	saturation.SwitchPrefillHitAtCount: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1784,6 +1789,16 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestPlateau_RaisesALowerBoundUnderIt"},
 		{"../../../signals/prefill", "TestPlateau_ARisingPlateauIsFlooredAtTheServedPeak"},
 		{"../saturation", "TestPrefillVPOccupancyPlateau_ThroughAnalyze"},
+	},
+	saturation.SwitchPrefillHitAtCount: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{".", "TestStateAt_TheHitAtCountSwitchReachesThePrefillState"},
+		{"../../../signals/prefill", "TestHitAtCount_TheLabRunFittedOnTwoPods"},
+		{"../../../signals/prefill", "TestHitAtCount_TheSameCountMovesNothing"},
+		{"../../../signals/prefill", "TestHitAtCount_Edges"},
+		{"../../../signals/prefill", "TestHitAtCount_TheFloor"},
+		{"../../../signals/prefill", "TestHitAtCount_TheReuseGapRule"},
+		{"../../../signals/prefill", "TestHitAtCount_TheReuseGapRuleFallsBackToTheFloor"},
 	},
 	saturation.SwitchPrefillVPLoneRate: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},

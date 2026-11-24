@@ -57,6 +57,11 @@ var (
 		// each figure priced from it is then flagged VPFromPlateau, which
 		// no envelope row allows, so it, and it alone, reads outside.
 		vpPlateauFlag,
+		// Set, it moves nothing at the recorded prefill count, where the
+		// run priced; at another count every prefill and TTFT figure it
+		// moves is flagged PrefixHitAtCount or PrefixHitHeld, which no
+		// envelope row allows, and carries the priced hit in its class.
+		hitAtCountFlag,
 		// The same: every prefill and TTFT figure it prices is flagged
 		// ExperimentalTTFT, which no envelope row allows.
 		experimentalTTFTFlag}
@@ -116,6 +121,11 @@ func (pf *pricedFleet) class() whatif.FigureClass {
 		if domain.CanonicalRole(pf.pv.state.Role) == domain.RoleBoth {
 			c.Topology = whatif.TopologyAggregated
 		}
+	}
+	if r := pf.hitAtCount; r != nil && r.Moved() {
+		// The hit priced at this count, not the one read: a priced hit
+		// outside the measured span reads outside by it.
+		c.PrefixHitRate = r.Hit
 	}
 	return c
 }

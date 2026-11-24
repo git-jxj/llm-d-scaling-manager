@@ -26,6 +26,8 @@ const FLAG_WORDS = {
   VPAboveSlopeBound: ["V_P is above what the low-load fit allows: one of the two readings is wrong.", "more low-load readings, or a busy-minutes reading of V_P"],
   VPScaledToPrompt: ["V_P was read at another prompt length and rescaled along the fitted curve.", "a V_P reading at this prompt length"],
   VPShapeMoved: ["V_P was read at a prompt length far from this one and held: on longer prompts it over-promises.", "a V_P reading at this prompt length"],
+  PrefixHitAtCount: ["The prefix-cache hit was measured at another prefill pod count. With fewer pods each pod's cache holds less of the shared prompts, so the hit is priced lower, at a safe floor, and each request computes more prompt tokens.", "a recording at this prefill pod count"],
+  PrefixHitHeld: ["The prefix-cache hit was measured at fewer prefill pods and is kept as it was. With more pods each pod's cache holds more of the shared prompts, so the real hit is likely higher and the capacity shown is likely low.", "a recording at this prefill pod count"],
   AssumedImbalance: ["The load imbalance f between prefill pods is assumed, not learned.", "a window with per-pod prefill load"],
   AssumedPromptSpread: ["The prompt-length spread (cv) is assumed, not read from a histogram.", "a prompt-length histogram (recorder R1)"],
   SpreadBeyondProcessorSharing: ["The prompt spread is wider than processor sharing was validated at: TTFT is the larger of the processor-sharing and first-come prices.", "nothing: a property of the traffic"],

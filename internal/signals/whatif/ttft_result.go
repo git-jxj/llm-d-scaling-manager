@@ -150,6 +150,20 @@ const (
 	// P1's curve to a longer one (Prefill.shapedVP): V_P * s(I_vp)/s(I),
 	// s(I) = b + c*I.
 	VPScaledToPrompt Flag = "VPScaledToPrompt"
+	// PrefixHitAtCount is a prefill figure priced at fewer prefill pods than
+	// the prefix hit was read on, whose priced hit moved from the read one
+	// by more than MaterialPrefixHitMove/2 (prefill.HitAtCountOf; the
+	// planner's prefill-hit-at-count switch): the hit, and so the computed
+	// tokens a request, are extrapolated, by the floor hit x N'/N or the
+	// reuse-gap rule. The floor reads the computed tokens at or over the
+	// truth wherever the prefixes do not fit one pod's cache.
+	PrefixHitAtCount Flag = "PrefixHitAtCount"
+	// PrefixHitHeld is a prefill figure priced at more prefill pods than the
+	// prefix hit was read on, with the hit above MaterialPrefixHitMove/2:
+	// the read hit is held. A cache-aware router spreads the prefixes over
+	// more caches, so the true hit is likely higher and the capacity reads
+	// low.
+	PrefixHitHeld Flag = "PrefixHitHeld"
 	// VPShapeMoved is a V_P read at a mean prompt more than MaxVPShapeRatio
 	// from the one asked, either way, or at one not known, with no curve to
 	// rescale it by: the V_P is held, and on a longer prompt it reads high
