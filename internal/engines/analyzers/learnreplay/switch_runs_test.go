@@ -1309,6 +1309,11 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// replay runs it off and off alone from all on moves nothing. Its unit
 	// tests hold it (heldBy).
 	saturation.SwitchPrefillVPOccupancyPlateau: nil,
+	// llm-d-incubation/llm-d-scaling-manager#405: the prompts V_P speaks
+	// for. Planner-only, off from the constructor, so every golden replay
+	// runs it off and off alone from all on moves nothing. Its unit tests
+	// hold it (heldBy).
+	saturation.SwitchPrefillVPPromptCoverage: nil,
 	// llm-d-incubation/llm-d-scaling-manager#406: V_P from the lone rate.
 	// Planner-only, off from the constructor, so every golden replay runs
 	// it off and off alone from all on moves nothing. Its unit tests hold
@@ -1799,6 +1804,16 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestHitAtCount_TheFloor"},
 		{"../../../signals/prefill", "TestHitAtCount_TheReuseGapRule"},
 		{"../../../signals/prefill", "TestHitAtCount_TheReuseGapRuleFallsBackToTheFloor"},
+	},
+	saturation.SwitchPrefillVPPromptCoverage: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestPromptCoverage_BusyMinutesCarryTheirRange"},
+		{"../../../signals/prefill", "TestPromptCoverage_OffCarriesNone"},
+		{"../../../signals/prefill", "TestPromptCoverage_PlateauCarriesItsRange"},
+		{"../../../signals/prefill", "TestPromptCoverage_LoneRateCarriesItsRange"},
+		{"../../../signals/whatif", "TestPromptNotCovered_PricesNoTTFTOutsideTheRange"},
+		{"../../../signals/whatif", "TestPromptNotCovered_InsideTheRangeIsPriced"},
+		{"../saturation", "TestPrefillVPPromptCoverage_ThroughAnalyze"},
 	},
 	saturation.SwitchPrefillVPLoneRate: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},

@@ -66,9 +66,10 @@ func (v experimentalTTFTValue) IsBoolFlag() bool { return true }
 
 // withRankMixture is res with the recording's cycles as the rank mixture reads
 // them (learnreplay.MixtureSeriesFrom), read from the file at path in a pass
-// of their own.
-func withRankMixture(path string, res *whatifapi.Resolved) error {
-	src, err := openRecording(path, false)
+// of their own: only the cycles keep holds, where it is not nil, as res
+// was read (a load split's fit).
+func withRankMixture(path string, res *whatifapi.Resolved, keep *whatifapi.CycleSet) error {
+	src, err := openRecordingCycles(path, keep)
 	if err != nil {
 		return err
 	}

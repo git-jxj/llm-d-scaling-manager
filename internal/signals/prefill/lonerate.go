@@ -88,6 +88,9 @@ type lone struct {
 	rate               float64
 	minutes            int
 	prompt, whole, hit float64
+	// lo and hi are the range of the minutes' prompts (promptRange): the
+	// prompts a lone-rate V_P speaks for, with Cycle.VPPromptCoverage.
+	lo, hi float64
 }
 
 // loneSpeed is the row's lone speed: its computed tokens a request over its
@@ -124,6 +127,7 @@ func loneRate(ks *keyState, ref float64) (lone, int, bool) {
 	}
 	out := lone{rate: median(speeds), minutes: len(speeds), prompt: meanPrompt(prompts)}
 	out.whole, out.hit = meanWhole(minutes)
+	out.lo, out.hi = promptRange(prompts)
 	return out, out.minutes, true
 }
 
@@ -163,4 +167,9 @@ func (est *Estimate) loneFill(ks *keyState, c Cycle, ref float64) {
 	est.VP, est.VPSource, est.VPRefused, est.VPSamples = vp, SourceLoneRate, "", ln.minutes
 	est.VPLowerBound, est.VPLowerBoundReason, est.VPFlooredAtServed = false, "", false
 	est.VPPromptTokens, est.VPWholePromptTokens, est.VPPromptHitRate = ln.prompt, ln.whole, ln.hit
+	// The range is the lone minutes', not the source V_P replaced: a lone
+	// rate speaks for the prompts it was timed at, within LonePromptBand of
+	// the prompt priced (Estimate.VPPromptLow; zeroed in Observe without
+	// Cycle.VPPromptCoverage).
+	est.VPPromptLow, est.VPPromptHigh = ln.lo, ln.hi
 }

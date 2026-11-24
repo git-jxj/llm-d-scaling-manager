@@ -124,6 +124,9 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	}
 	defer func() { _ = data.Close() }()
 	data.onPass = s.onPass
+	if src.Cycles != nil {
+		data.open = learnreplay.CyclesOf(data.open, src.Cycles.Keeps)
+	}
 	st, err := f.stateOf(ctx, name, data)
 	if err != nil {
 		return nil, hidePath(apiError(err), hide, info.Name)
