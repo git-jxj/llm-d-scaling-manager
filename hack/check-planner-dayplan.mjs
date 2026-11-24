@@ -177,6 +177,29 @@ try {
   nothing.buckets.forEach(b => { if (b.status === "sized") { b.status = "refused"; delete b.needed; b.verdict = "refused"; } });
   nothing.summary.peakNeeded = null;
   check("a plan with nothing sized says so", daySummaryText(nothing)[0].startsWith("No bucket was sized"));
+  // Prefill was not sized: decode is judged alone, and nothing says waste.
+  // The golden's decode-only overs stand though their TTFT was measured over
+  // its target: decode has a replica to spare, which is no fleet's.
+  const spare = half;
+  const over = half.buckets.find(x => x.verdict === "over");
+  check("the decode-only golden has a decode-only over", !!over && over.scope === "decode only" && !(over.flags || []).includes("MeasuredTTFTOverTarget"),
+    JSON.stringify(over && [over.scope, over.flags]));
+  check("a decode-only over is a decode replica to spare", dayTip(spare, over).rows.some(r => r[0] === "verdict" && r[1] === "decode only: a decode replica to spare"));
+  const missed = copy(half);
+  const mb = missed.buckets.find(x => x.verdict === "over");
+  delete mb.verdict;
+  delete mb.scope;
+  mb.flags = (mb.flags || []).concat("MeasuredTTFTOverTarget");
+  check("a whole fleet's over withheld on a measured TTFT miss says so", dayTip(missed, mb).rows.some(r => r[0] === "verdict" && r[1] === "not judged: measured TTFT over target"));
+  check("the summary counts the measured TTFT misses", daySummaryText(half).some(l => /^Measured TTFT was over its target in 16 of the 16 buckets measured/.test(l)),
+    daySummaryText(half).join(" | "));
+  for (const [name, text] of [["the bucket table", dayBucketsTable(spare)], ["the hour table", dayHoursTable(spare)], ["the summary", daySummaryText(spare).join(" ")]]) {
+    check(`${name} of a decode-only plan says no waste`, !text.includes("waste"), text.slice(0, 160));
+  }
+  check("the decode-only summary is no fleet recommendation", daySummaryText(half).some(l => l.includes("Prefill was not sized, so this is not a fleet recommendation.")));
+  const fleetOver = copy(spare);
+  fleetOver.buckets.forEach(x => { delete x.scope; });
+  check("the same over on a whole fleet is waste", dayTip(fleetOver, fleetOver.buckets.find(x => x.verdict === "over")).rows.some(r => r[0] === "verdict" && r[1] === "over: waste"));
 
   // The tooltip names every value of the bucket under the pointer.
   const b = sized[0], t = Date.parse(b.start) / 1000 + plan.step / 2;

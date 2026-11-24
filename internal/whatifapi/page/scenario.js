@@ -477,23 +477,25 @@ function reportShapeProblem(s) {
 }
 
 // shapeText writes one shape row's boxes as the report reads it: IL and OL
-// in tokens, and the hit rate when one is typed. Blank boxes are "measured".
+// in tokens, and the hit rate when one is typed. Blank boxes are "load": the
+// shape of the traffic the load judged at ran at.
 function shapeText(row) {
   const il = String(row.il || "").trim(), ol = String(row.ol || "").trim(), hit = String(row.hit || "").trim();
-  if (!il && !ol && !hit) return "measured";
+  if (!il && !ol && !hit) return "load";
   return hit ? `${il}/${ol}/${hit}` : `${il}/${ol}`;
 }
 
 // reportShapes is the rows' shapes, each once, in order: a blank row is the
-// measured shape, and the same shape typed twice is asked once.
+// load's own shape, and the same shape typed twice is asked once. Only blank
+// rows, or none, is the empty list: the server's default, the load's shape,
+// or the measured one where the load read none.
 function reportShapes(rows) {
   const out = [];
   for (const row of rows || []) {
     const s = shapeText(row);
     if (!out.includes(s)) out.push(s);
   }
-  if (out.length === 0) out.push("measured");
-  return out;
+  return out.length === 1 && out[0] === "load" ? [] : out;
 }
 
 // parseReportLoads reads the loads box: comma separated, each 80%, 5r/s or
@@ -526,7 +528,8 @@ function reportRequest(o) {
   }
   const loads = parseReportLoads(o.loads);
   if (loads.problem) return {body: null, problem: loads.problem};
-  const body = {inputsId: o.inputsId, shapes};
+  const body = {inputsId: o.inputsId};
+  if (shapes.length) body.shapes = shapes;
   if (o.fleet && Object.keys(o.fleet).length) body.fleet = Object.assign({}, o.fleet);
   if (loads.loads.length) body.loads = loads.loads;
   const growth = String(o.growth == null ? "" : o.growth).trim();
@@ -568,7 +571,7 @@ const REFUSAL_WORDS = {
   Saturated: "saturated: no steady state at this load",
   PastLowerBoundKnee: "past a prefill knee priced from a lower bound of V_P: not priced (assume V_P to price it)",
   AboveDecodeOnset: "past the decode flow-control onset: not priced",
-  NoPrefillCapacity: "no prefill speed learned (assume V_P to price it)",
+  NoPrefillCapacity: "prefill capacity unknown: no prefill speed learned (assume one to price it)",
   NoFixedLatency: "no prefill fixed latency learned (assume a to price it)",
   NoTPOTHistogram: "no TPOT histogram to read a percentile from",
   TPOTBucketTooWide: "the TPOT histogram is too coarse for a percentile",
@@ -581,6 +584,9 @@ const REFUSAL_WORDS = {
 // refusalText is a refused figure in words.
 function refusalText(f) {
   const reason = f && f.refused ? f.refused.reason : "";
+  if (reason === "NoPrefillCapacity" && (f.refused.flags || []).includes("VPLowerBound")) {
+    return "prefill capacity unknown: the prefill pods never queued, so their speed is only a lower bound (assume one to price it)";
+  }
   return REFUSAL_WORDS[reason] || (reason ? `not priced (${reason})` : "not priced");
 }
 
@@ -836,7 +842,7 @@ function prefillUse(p) {
 }
 
 // REASON_WORDS replace the refusal codes in a verdict's reason.
-const REASON_WORDS = {AboveDecodeOnset: "router-queued", NoPrefillCapacity: "unpriced (no prefill speed)",
+const REASON_WORDS = {AboveDecodeOnset: "router-queued", NoPrefillCapacity: "unpriced (prefill capacity unknown)",
   NoFixedLatency: "unpriced (no prefill latency)", NoTPOTHistogram: "unpriced (no TPOT histogram)"};
 
 // plainReason is a verdict's reason with its refusal codes in words.
@@ -928,4 +934,22 @@ function loadLine(l) {
   const peakNote = l.p95IsPeak && l.statistic === "p95" ? " (= peak: fewer than 20 cycles)"
     : l.p95IsPeak && l.statistic === "p95-modulation" ? " (from the peak: fewer than 20 cycles)" : "";
   return `Judged at ${at}${peakNote}` + (seen.length ? `; the source saw ${seen.join(", ")} r/s over ${l.cyclesWithTraffic} busy cycles.` : ".");
+}
+
+// noPrefillWords is a NoPrefillCapacity refusal in the page's one wording,
+// the same in the plan view and in size mode: the V_P the source learned
+// only as a lower bound (flag VPLowerBound, the prefill pods never queued),
+// or none learned. The reason's code follows in brackets.
+function noPrefillWords(r) {
+  const lb = (r.flags || []).includes("VPLowerBound");
+  const m = /V_P ([0-9.]+) tokens\/s/.exec(r.detail || "");
+  const vp = m ? Number(m[1]).toLocaleString("en-US", {maximumFractionDigits: 0}) + " tokens/s" : "the speed it saw";
+  return (lb ? `Prefill capacity unknown: the prefill pods never queued, so a prefill pod computes at least ${vp} (a lower bound), and its limit was not observed.` :
+    "Prefill capacity unknown: the source learned no prefill speed per pod (it saw no prefill pod busy enough).") + " (NoPrefillCapacity)";
+}
+
+// kneeLowerBound says a knee figure rests on a lower bound of V_P: the true
+// knee is at least its rate.
+function kneeLowerBound(f) {
+  return !!f && (f.flags || []).some(x => x === "VPLowerBound" || x === "KneeAtServedWork");
 }

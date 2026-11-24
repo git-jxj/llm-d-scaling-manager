@@ -288,6 +288,20 @@ const DAY_STATUS = {sized: "sized", tooLittleData: "too little data", noData: "n
   refused: "not sized: the source refused a term"};
 // DAY_VERDICT is a verdict in words.
 const DAY_VERDICT = {under: "under: SLO risk", over: "over: waste", match: "matches", refused: "refused"};
+// DAY_VERDICT_DECODE is a verdict on decode alone (scope "decode only"): the
+// source did not price prefill, so a decode replica to spare is no fleet's
+// waste.
+const DAY_VERDICT_DECODE = {under: "under: SLO risk (decode only)", over: "decode only: a decode replica to spare", match: "decode only: matches"};
+// DAY_DECODE_ONLY says why a decode-only verdict is not a recommendation.
+const DAY_DECODE_ONLY = "Prefill was not sized, so this is not a fleet recommendation.";
+
+// dayVerdict is a bucket's or an hour's verdict in words, "" with none: a
+// bucket the model would call over whose measured TTFT missed its target
+// says so in place of a verdict.
+function dayVerdict(x) {
+  if (!x.verdict) return (x.flags || []).includes("MeasuredTTFTOverTarget") ? "not judged: measured TTFT over target" : "";
+  return (x.scope === "decode only" ? DAY_VERDICT_DECODE[x.verdict] : null) || DAY_VERDICT[x.verdict] || x.verdict;
+}
 
 // dayBucketAt is the bucket that holds t, seconds since the epoch, or null.
 function dayBucketAt(plan, t) {
@@ -322,7 +336,7 @@ function dayTip(plan, b) {
   if (b.actual) row("had", `${b.actual.prefill} prefill, ${b.actual.decode} decode`);
   if (b.notServing) row("asked, not serving", `${b.notServing.prefill} prefill, ${b.notServing.decode} decode`);
   if (b.hadLimit && b.hadLimit.value != null) row("had fleet serves", dayFmt(b.hadLimit.value) + " r/s");
-  if (b.verdict) row("verdict", DAY_VERDICT[b.verdict] || b.verdict);
+  if (dayVerdict(b)) row("verdict", dayVerdict(b));
   if (b.trust) row("self-check", b.trust);
   if (b.unmet) row("beyond the bound", `${b.unmetRole || "fleet"}: ${b.unmet.reason}`);
   if (b.shape && b.shape.promptTokens != null) row("prompt, output", `${b.shape.promptTokens.toFixed(0)}, ${b.shape.outputTokens != null ? b.shape.outputTokens.toFixed(0) : "-"} tokens (${b.shape.source})`);
@@ -352,7 +366,7 @@ function dayHoursTable(plan) {
     (lead ? "<th>held (with the scale-up lead)</th>" : "") + "<th>had P</th><th>had D</th><th>beyond the bound</th><th></th></tr>";
   for (const h of plan.hours) {
     const busiest = !h.busiest ? "-" : h.busiest.prefill != null ? `${h.busiest.prefill}+${h.busiest.decode}` : `D>=${h.busiest.decode}`;
-    const verdict = (h.verdict ? DAY_VERDICT[h.verdict] : "not sized") + (h.notConfirmed ? ", need not confirmed" : "");
+    const verdict = (dayVerdict(h) || "not sized") + (h.notConfirmed ? ", need not confirmed" : "");
     const atLeast = h.needed && h.needed.atLeast ? ">=" : "";
     const had = role => h.actual == null ? null : h.actual[role] + (h.notServing && h.notServing[role] ? `(+${h.notServing[role]})` : "");
     s += `<tr><td>${esc(h.start.slice(0, 16).replace("T", " "))}</td><td>${h.rate ? dayFmt(h.rate.mean) : "-"}</td><td>${h.rate ? dayFmt(h.rate.p95) : "-"}</td>` +
@@ -376,7 +390,7 @@ function dayBucketsTable(plan) {
       `<td>${b.rate ? dayFmt(b.rate.mean) : "-"}</td><td>${b.rate ? dayFmt(b.rate.p95) : "-"}</td>` +
       `<td>${b.sizedRate != null ? dayFmt(b.sizedRate) + " (" + esc(b.sizedFor) + ")" : "-"}</td>` +
       `<td>${n(b.needed && b.needed.prefill)}</td><td>${n(b.needed && b.needed.decode)}</td><td>${n(b.actual && b.actual.prefill)}</td><td>${n(b.actual && b.actual.decode)}</td>` +
-      `<td>${esc((b.verdict ? DAY_VERDICT[b.verdict] || b.verdict : "") + (b.trust ? "; " + b.trust.split(":")[0] : ""))}</td><td>${esc(why)}</td><td>${esc((b.flags || []).join(", "))}</td></tr>`;
+      `<td>${esc(dayVerdict(b) + (b.trust ? "; " + b.trust.split(":")[0] : ""))}</td><td>${esc(why)}</td><td>${esc((b.flags || []).join(", "))}</td></tr>`;
   }
   return s + "</table>";
 }
@@ -402,7 +416,14 @@ function daySummaryText(plan) {
         `${r.prefill != null ? r.prefill.toFixed(2) + " prefill + " : ""}${r.decode.toFixed(2)} decode replica-hours` +
         `${s.heldGpuHours != null ? ", " + s.heldGpuHours.toFixed(1) + " GPU-hours" : ""}.`);
     }
-    out.push(`Hours under (SLO risk): ${hours(s.underHours)}. Hours over (waste): ${hours(s.overHours)}.`);
+    const decodeOver = s.decodeOverHours || [];
+    if (c.prefillNotPriced === c.sized) {
+      // Prefill priced in no bucket: no fleet is judged over, only decode.
+      out.push(`Hours under (SLO risk): ${hours(s.underHours)}. Decode only: hours decode had a replica to spare: ${hours(decodeOver)}. ${DAY_DECODE_ONLY}`);
+    } else {
+      out.push(`Hours under (SLO risk): ${hours(s.underHours)}. Hours over (waste): ${hours(s.overHours)}.` +
+        (decodeOver.length ? ` Decode only (prefill not sized in them): hours decode had a replica to spare: ${hours(decodeOver)}.` : ""));
+    }
   } else {
     out.push("No bucket was sized: see the refusals above.");
   }
@@ -410,6 +431,11 @@ function daySummaryText(plan) {
   const p95 = plan.sizeFor === "p95-modulation" ? `${c.sizedForP95Modulation || 0} for their p95 less counting noise` : `${c.sizedForP95} for their p95`;
   out.push(`${c.sized} buckets sized (${p95}, ${c.sizedForMean} for their mean, ${c.sizedForMax} for their max), ` +
     `${c.unmet} beyond the bound, ${c.refused} refused, ${c.tooLittleData} with too little data, ${c.noData} with no data.`);
+  // The SLO as the router measured it, whatever the plan priced.
+  if (c.measuredTTFT && plan.ttft) {
+    out.push(`Measured TTFT was over its target in ${c.measuredTTFTOver} of the ${c.measuredTTFT} buckets measured ` +
+      `(TTFT ${plan.ttft.statistic} ${dayFmt(plan.ttft.target)} s)` + (c.prefillNotPriced ? "; prefill was not sized." : "."));
+  }
   if (c.untrusted) out.push(`Self-check: ${c.untrusted} bucket(s) not trusted: their verdicts rest on figures the self-check found inconsistent with this recording (see each bucket).`);
   if (c.notCovered) out.push(`Self-check: ${c.notCovered} bucket(s) not covered: it did not test the rate, fleet or shape each was priced at.`);
   return out;

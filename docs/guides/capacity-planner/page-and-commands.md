@@ -407,7 +407,7 @@ with `--prefill` and `--decode`; without them it judges the recorded counts.
 ```bash
 # On the staircase sample, downloaded as the first sample was: two prefill and two decode replicas, judged at the
 # load it saw, with what that load grown by a fifth does beside it, for its own shape and two it never saw. The
-# sample learned no prefill speed, so V_P and a are assumed. Leave out --shape and --load for the measured shape at
+# sample learned no prefill speed, so V_P and a are assumed. Leave out --shape and --load for the shape the load ran at,
 # 50%, 80% and 100% of the knee and the load seen.
 curl -fsSL -o recordings/ttft-staircase-b-on.jsonl.gz \
   https://raw.githubusercontent.com/llm-d-incubation/llm-d-scaling-manager/${V}/internal/engines/analyzers/learnreplay/testdata/goldens/ttft-staircase-b-on/recording.jsonl.gz
@@ -436,22 +436,24 @@ It replays the recording once and answers, for each shape and load:
   cycles the load was read from (for the p95, every cycle at or above it).
   When the mix moved in the window, the measured shape (the last cycles')
   is not that traffic: a measured shape more than 20% off it in prompt or
-  output length is flagged `ShapeLoadMismatch`, and `--shape load` prices
-  the load at its own cycles' shape. On the guide's sample the p95, 29.7
-  r/s, ran at 1000/500 tokens while the measured shape is 4569/1855: the
-  report gives no verdict on the measured shape (NOT JUDGED, exit 3), and
-  `--shape load` needs 4 + 2, what `day-plan` sizes the same rate at.
-- **Not the default.** `--shape load` and `p95-modulation` (here and in
-  `day-plan --size-for`) are opt-in. A model change becomes the default only
-  where the recordings show it moves no figure to read under what was
-  measured. `--shape load` fails that: on the decode-only sample
-  (`throughput-sweep`) it prices TPOT at the p95 load, 26.9 r/s, at 2.79 ms
-  against 3.14 ms at the measured shape, and the decode engines measured
-  3.34 to 3.65 ms in those very cycles. It does read closer on the Qwen3-32B
-  warm-up (TTFT p90 941 ms at the load's 1k prompts, where the measured
-  shape saturates; the run measured 287 ms at that rate). Before it can be
-  the default, decode's TPOT at the load's own shape must stop reading
-  under there. `p95-modulation` moved the judged load by at most 0.06 r/s
+  output length is flagged `ShapeLoadMismatch`. So the report prices the
+  load at its own cycles' shape by default (`load`), and the measured shape
+  only where no cycle of the load read one (a stated `--load-seen`).
+  `--shape measured` asks for the last cycles' shape. On the guide's sample
+  the p95, 29.7 r/s, ran at 1000/500 tokens while the measured shape is
+  4569/1855: asked at the measured shape the report gives no verdict (NOT
+  JUDGED, exit 3); at the load's own shape it needs 4 + 2, what `day-plan`
+  sizes the same rate at.
+- **The load's shape as the default.** A model change becomes the default
+  only where it moves no figure on the public recordings to under 0.8 of what
+  was measured. On the decode-only sample (`throughput-sweep`) the load's
+  shape prices TPOT at the p95 load, 26.9 r/s, at 2.79 ms against 3.14 ms at
+  the measured shape; the decode engines measured 3.34 to 3.65 ms in those
+  very cycles, so it reads 0.84 of measured at worst. It reads closer on the
+  Qwen3-32B warm-up (TTFT p90 941 ms at the load's 1k prompts, where the
+  measured shape saturates; the run measured 287 ms at that rate).
+- **Not the default.** `p95-modulation` (here and in `day-plan --size-for`)
+  is opt-in. `p95-modulation` moved the judged load by at most 0.06 r/s
   (0.2%) on every recording we hold, and no verdict or need. In `day-plan`
   it sizes for up to 23% less at a bucket and moved one bucket's need on
   three of seven recordings, by one replica (two Qwen3-32B warm-ups, sized
@@ -816,6 +818,13 @@ alone. A higher `--ttft` sizes them.
   bucket's rate: UNDER (SLO risk) when its limit falls short, over (waste)
   when one replica fewer of either role would still serve it. An hour is
   UNDER when any of its buckets is, and over when every sized bucket is.
+  Where prefill was not sized, decode is judged alone: the verdict reads
+  "decode only", a spare decode replica is "decode only: a decode replica to
+  spare" (listed under "hours decode only had a replica to spare", never
+  under waste), and the summary says it is not a fleet recommendation. A
+  bucket the model calls over whose TTFT the router measured over its target
+  gets no verdict and the flag `MeasuredTTFTOverTarget`: a fleet that missed
+  its target has nothing to spare.
   Had counts what served. Replicas asked for and not serving, those that
   exist and are not ready (starting, unschedulable, or held by an admission
   gate such as Kueue's; a rolling update's surge pods count too), show

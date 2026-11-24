@@ -456,11 +456,12 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("one length is not a shape", reportShapeProblem("8k") !== "");
   check("a hit of 1 is not a shape", reportShapeProblem("1k/1k/1") !== "");
   check("a length past 1024k is refused", reportShapeProblem("2000k/200") !== "");
-  check("blank boxes are the measured shape", shapeText({il: "", ol: " ", hit: ""}) === "measured");
+  check("blank boxes are the load's own shape", shapeText({il: "", ol: " ", hit: ""}) === "load");
   check("a row with a hit", shapeText({il: "1k", ol: "4k", hit: "0.3"}) === "1k/4k/0.3");
-  check("blank rows are one measured shape", JSON.stringify(reportShapes([{}, {il: "1k", ol: "1k"}, {}, {il: "1k", ol: "1k"}])) ===
-    JSON.stringify(["measured", "1k/1k"]), JSON.stringify(reportShapes([{}, {il: "1k", ol: "1k"}, {}])));
-  check("no rows is the measured shape", JSON.stringify(reportShapes([])) === JSON.stringify(["measured"]));
+  check("blank rows beside a typed one are one load shape", JSON.stringify(reportShapes([{}, {il: "1k", ol: "1k"}, {}, {il: "1k", ol: "1k"}])) ===
+    JSON.stringify(["load", "1k/1k"]), JSON.stringify(reportShapes([{}, {il: "1k", ol: "1k"}, {}])));
+  check("no rows is the server's default shape", JSON.stringify(reportShapes([])) === JSON.stringify([]));
+  check("blank rows alone are the server's default shape", JSON.stringify(reportShapes([{}, {}])) === JSON.stringify([]));
   check("empty loads are the server's default", parseReportLoads("").loads.length === 0 && parseReportLoads("").problem === "");
   check("loads are read in order", JSON.stringify(parseReportLoads("50%, 5r/s ,seen").loads) === JSON.stringify(["50%", "5r/s", "seen"]));
   check("a share past 100% is refused", parseReportLoads("150%").problem !== "");
@@ -469,12 +470,12 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   const slo = {ttft: {statistic: "p95", target: 2}, tpot: {statistic: "mean", target: 0.03}};
   const asked = reportRequest({inputsId: "sha256:x", fleet: {decode: 3}, shapes: [{}, {il: "1k", ol: "1k"}, {il: "16k", ol: "200", hit: "0.3"}, {}],
     loads: "50%, 80%, 5r/s, seen", growth: "1.2", loadStatistic: "p95", headroom: 0.8, slo, assume: {vp: 200000}});
-  const want = {inputsId: "sha256:x", shapes: ["measured", "1k/1k", "16k/200/0.3"], fleet: {decode: 3}, loads: ["50%", "80%", "5r/s", "seen", "seen x1.2"],
+  const want = {inputsId: "sha256:x", shapes: ["load", "1k/1k", "16k/200/0.3"], fleet: {decode: 3}, loads: ["50%", "80%", "5r/s", "seen", "seen x1.2"],
     loadStatistic: "p95", headroom: 0.8, slo, ttftStatistics: ["p95"], tpotStatistic: "mean", assume: {vp: 200000}};
   check("the body carries every control", asked.problem === "" && JSON.stringify(asked.body) === JSON.stringify(want), JSON.stringify(asked));
   check("the headroom knob is sent", reportRequest({inputsId: "i", headroom: 0.7}).body.headroom === 0.7);
   check("a headroom of 1 is left to the policy", !("headroom" in reportRequest({inputsId: "i", headroom: 1}).body));
-  check("no rows asks for the measured shape", JSON.stringify(reportRequest({inputsId: "i"}).body) === JSON.stringify({inputsId: "i", shapes: ["measured"]}));
+  check("no rows leaves the shape to the server", JSON.stringify(reportRequest({inputsId: "i"}).body) === JSON.stringify({inputsId: "i"}));
   check("a growth of 1 is left out", !("loads" in reportRequest({inputsId: "i", growth: "1"}).body));
   check("a bad growth is refused", reportRequest({inputsId: "i", growth: "-2"}).body === null);
   check("a bad shape is refused before asking", reportRequest({inputsId: "i", shapes: [{il: "8k"}]}).body === null);
@@ -706,6 +707,23 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
     check(`${source}: asks for a rate`, n.includes("Type your request rate."), n);
   }
 }
+// One wording for a prefill capacity the source could not learn, in size
+// mode and the plan view alike: a lower bound says "at least", and neither
+// says the source learned nothing when it learned a lower bound.
+{
+  const {noPrefillWords, kneeLowerBound, refusalText} = ctx;
+  const lb = {reason: "NoPrefillCapacity", flags: ["VPLowerBound"],
+    detail: "V_P 18000 tokens/s is only the rate a prefill pod was seen to compute (it never queued for capacity): no TTFT is priced from it; pass --assume-vp for a flagged answer"};
+  const none = {reason: "NoPrefillCapacity", detail: "V_P 0 tokens/s"};
+  const w = noPrefillWords(lb);
+  check("a lower-bound V_P is at least its speed", w.includes("at least 18,000 tokens/s (a lower bound)"), w);
+  check("a lower-bound V_P never reads as nothing learned", !w.includes("learned no"), w);
+  check("a lower-bound V_P names no CLI flag", !w.includes("--assume-vp"), w);
+  check("no V_P learned says so", noPrefillWords(none).includes("learned no prefill speed per pod"), noPrefillWords(none));
+  check("both open alike", w.startsWith("Prefill capacity unknown") && noPrefillWords(none).startsWith("Prefill capacity unknown"));
+  check("the report says a lower bound too", refusalText({refused: lb}).includes("only a lower bound"), refusalText({refused: lb}));
+  check("a knee on a lower-bound V_P is at least", kneeLowerBound({value: 20.5, flags: ["VPLowerBound"]}) && !kneeLowerBound({value: 20.5}));
+}
 
 // measuredSplit: the experimental TTFT model's curve is solid up to the
 // highest load measured and dashed beyond it, the dashed part starting at
@@ -752,7 +770,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 353;
+const EXPECTED_CASES = 361;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);
