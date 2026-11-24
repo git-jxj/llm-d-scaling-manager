@@ -190,13 +190,21 @@ func backlogged(e *inputsEntry, idx []int, from, to time.Time) string {
 // window, its mean and p90 the router's at the anchor. A step that is not
 // stationary (backlogged) is left out: no queue model's steady state is what
 // it measured, and its TTFT would pass into the fit as cost.
-func fitRankMixture(fit *inputsEntry, fitIdx []int, step time.Duration, slots int) (*rankMixtureQ, error) {
-	rq, _, err := fitRankMixtureSteps(fit, fitIdx, step, slots)
+func fitRankMixture(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, stratified bool) (*rankMixtureQ, error) {
+	rq, _, err := fitRankMixtureStepsWith(fit, fitIdx, step, slots, stratified)
 	return rq, err
 }
 
 // fitRankMixtureSteps is fitRankMixture, and the steps it fitted on.
 func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slots int) (*rankMixtureQ, []whatif.MixtureStep, error) {
+	return fitRankMixtureStepsWith(fit, fitIdx, step, slots, false)
+}
+
+// fitRankMixtureStepsWith is fitRankMixtureSteps, with the stratified
+// service moments (whatif.RankMixtureOptions.StratifiedMoments) where
+// stratified.
+func fitRankMixtureStepsWith(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, stratified bool) (
+	*rankMixtureQ, []whatif.MixtureStep, error) {
 	if len(fit.mixture) != len(fit.series) {
 		return nil, nil, InputErrorf("the experimental TTFT model %s needs the recording's per-rank series, which this source did not give",
 			whatif.QueueRankMixture)
@@ -250,7 +258,7 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 			"and %d were not stationary", whatif.QueueRankMixture, len(order), noRouter, noRanks, backlog)
 	}
 	m, diag, err := whatif.FitRankMixture(steps, whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
-		SpreadFloor: whatif.MinSpread})
+		SpreadFloor: whatif.MinSpread, StratifiedMoments: stratified})
 	if err != nil {
 		return nil, nil, InputErrorf("the experimental TTFT model %s did not fit: %v", whatif.QueueRankMixture, err)
 	}

@@ -313,6 +313,12 @@ type BacktestRequest struct {
 	// other (backtest_rank_mixture.go). Every TTFT it prices reads OUTSIDE
 	// VALIDATED REGION.
 	TTFTModel string `json:"ttftModel,omitempty"`
+	// RankMixtureStratified prices the rank mixture with stratified service
+	// moments (whatif.RankMixtureOptions.StratifiedMoments): each rank's
+	// mean service and cs^2 from a fixed grid of the computed-token law, not
+	// from its own draws. Off by default; read only with TTFTModel
+	// rank-mixture.
+	RankMixtureStratified bool `json:"rankMixtureStratified,omitempty"`
 	// PrefillSlots is the prefill engine's max-num-seqs, read by
 	// TTFTModel's limited-PS check; 0 not known.
 	PrefillSlots int `json:"prefillSlots,omitempty"`
@@ -987,7 +993,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		case len(test.mixture) != len(test.series):
 			q.mixture = abstainedMixture("the test source did not give the per-rank series")
 		default:
-			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots)
+			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots, req.RankMixtureStratified)
 			if ferr != nil {
 				q.mixture = abstainedMixture(ferr.Error())
 			} else {
