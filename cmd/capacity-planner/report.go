@@ -83,7 +83,7 @@ func decodeKneeOutside() string {
 }
 
 // e2eNote says what the e2e column is.
-const e2eNote = "e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile"
+const e2eNote = "e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile; in system is the rate times it (Little's law), the requests in the system on average"
 
 // noSLONote is the verdict's basis with no target at all.
 const noSLONote = "no SLO target (the policy sets none; pass --ttft or --tpot): judged on headroom alone"
@@ -138,6 +138,8 @@ type reporter struct {
 	// kneeOutside whether any shape's decode knee priced outside its region.
 	kneeV       whatif.Validation
 	kneeOutside bool
+	// untranslated is each concurrency load the shape found no rate for.
+	untranslated []whatifapi.ReportUntranslated
 }
 
 // fleetKey names a fleet priced: the shape, the counts and the statistics.
@@ -286,6 +288,10 @@ func (r *reporter) shapeReport(ctx context.Context, np, nd int) (whatifapi.Repor
 	r.capacity(&rs.Capacity, base, ev)
 	r.use(&rs.Utilization, base, ev)
 	if rs.Table, err = r.table(ctx, ev); err != nil {
+		return rs, 0, false, err
+	}
+	rs.Untranslated = r.untranslated
+	if err := r.capacityConcurrency(&rs.Capacity, ev); err != nil {
 		return rs, 0, false, err
 	}
 	if rs.Verdict, err = r.verdict(np, nd, ev); err != nil {
@@ -1042,6 +1048,38 @@ func (r *reporter) capacity(c *whatifapi.ReportLimits, base *servedFleet, ev fle
 	plateauValidation(&c.MaxAtSLO, whatif.FigureRateAtTTFT, maxRate)
 }
 
+// capacityConcurrency adds the mean concurrency to each capacity rate: at a
+// knee, unbounded; at the operating point and the most at the SLO, priced on
+// the fleet at the mean TTFT.
+func (r *reporter) capacityConcurrency(c *whatifapi.ReportLimits, ev fleetEval) error {
+	mean, err := r.fleet(r.q.Prefill, r.q.Decode, 0, r.q.TPOTPercentile)
+	if err != nil {
+		return err
+	}
+	ol := r.pv.shape.AvgOutputTokens
+	for _, k := range []*whatifapi.ReportRate{&c.PrefillKnee, &c.DecodeKnee, &c.FleetKnee} {
+		if k.Value != nil {
+			k.Concurrency = whatifapi.ConcurrencyAt(*k.Value, nil, nil, ol, 0, true)
+		}
+	}
+	if !ev.kneeOK {
+		// The operating point and the most at the SLO are the fleet knee's
+		// figure here (capacity).
+		c.Operating.Concurrency, c.MaxAtSLO.Concurrency = c.FleetKnee.Concurrency, c.FleetKnee.Concurrency
+		return nil
+	}
+	for _, x := range []*whatifapi.ReportRate{&c.Operating, &c.MaxAtSLO} {
+		if x.Value == nil {
+			continue
+		}
+		rate := *x.Value
+		t, _ := mean.TTFTPoint(rate)
+		tm, _ := mean.TPOTAt(rate)
+		x.Concurrency = whatifapi.ConcurrencyAt(rate, t, tm, ol, mean.pv.decode.Replicas, r.pastKnee(rate, ev))
+	}
+	return nil
+}
+
 // rate is a rate row: the figure, the output tokens it carries, what binds.
 func (r *reporter) rate(res whatif.Result, ol float64, binds string) whatifapi.ReportRate {
 	out := whatifapi.ReportRate{Figure: whatifapi.FigureOf(res, unitRate, false), Binds: binds}
@@ -1245,6 +1283,7 @@ func (r *reporter) table(ctx context.Context, ev fleetEval) ([]whatifapi.ReportR
 		return nil, err
 	}
 	rows := []whatifapi.ReportRow{}
+	r.untranslated = nil
 	for _, l := range r.q.Loads {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -1265,6 +1304,16 @@ func (r *reporter) table(ctx context.Context, ev fleetEval) ([]whatifapi.ReportR
 			}
 		case l.Share > 0:
 			continue
+		case l.Concurrency > 0:
+			cr, why := r.rateAtConcurrency(mean, l.Concurrency, ev)
+			if why != "" {
+				r.untranslated = append(r.untranslated, whatifapi.ReportUntranslated{Load: l.Label, Reason: why})
+				continue
+			}
+			row.Rate, row.Label, row.FromConcurrency = cr.Rate, l.Label+" concurrent", &cr
+			if cr.AtKnee {
+				row.Label += ", saturates"
+			}
 		default:
 			row.Rate, row.Label = l.Rate, l.Label
 		}
@@ -1295,10 +1344,52 @@ func (r *reporter) table(ctx context.Context, ev fleetEval) ([]whatifapi.ReportR
 		row.E2EMeanSum = whatifapi.FigureOf(e2eSum(ttftMean, tm, r.pv.shape.AvgOutputTokens), unitSeconds, true)
 		// A sum of an upper bound is one too (#369).
 		row.E2EMeanSum.UpperBound = row.E2EMeanSum.Value != nil && upperBoundTTFT(ttftMean)
+		row.Concurrency = whatifapi.ConcurrencyAt(row.Rate, ttftMean, tm, r.pv.shape.AvgOutputTokens, mean.pv.decode.Replicas,
+			r.pastKnee(row.Rate, ev))
 		row.Cell = r.cell(slo, cellTTFT, row, ev)
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+// pastKnee says rate is at or past the fleet knee, where requests queue
+// without bound; past a knee that is only a lower bound, short of decode's,
+// it is not known to be (#280).
+func (r *reporter) pastKnee(rate float64, ev fleetEval) bool {
+	if !ev.kneeOK || rate < ev.knee {
+		return false
+	}
+	return !ev.lowerBound || rate >= ev.decodeKneeRate()
+}
+
+// rateAtConcurrency is the rate at which the fleet holds n requests in the
+// system on average, on mean, the fleet priced at the mean TTFT: the rate
+// at which rate x (TTFT mean + (OL - 1) x TPOT mean) is n, below the fleet
+// knee. why says, in words, why there is none.
+func (r *reporter) rateAtConcurrency(mean *servedFleet, n float64, ev fleetEval) (whatifapi.ConcurrencyRate, string) {
+	if !ev.kneeOK {
+		return whatifapi.ConcurrencyRate{}, "no fleet knee to translate a concurrency below"
+	}
+	ol := r.pv.shape.AvgOutputTokens
+	var refused whatif.Result
+	w := func(rate float64) (float64, bool) {
+		t, _ := mean.TTFTPoint(rate)
+		tm, _ := mean.TPOTAt(rate)
+		sum := e2eSum(t, tm, ol)
+		v, ok := valueOf(sum)
+		if !ok && refused == nil {
+			refused = sum
+		}
+		return v, ok
+	}
+	cr, err := whatifapi.RateAtConcurrency(n, ev.knee, w)
+	switch {
+	case whatifapi.ConcurrencyUnpriced(err):
+		return cr, "the mean time in the system is refused: " + refusalWords(refused)
+	case err != nil:
+		return cr, err.Error()
+	}
+	return cr, ""
 }
 
 // ttftStat is the TTFT at q and rate on sf, flagged where the tail rests on

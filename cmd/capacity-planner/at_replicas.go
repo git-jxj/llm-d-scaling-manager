@@ -59,7 +59,8 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	var rf reportFlags
 	fs.Var(&rf.shapes, "shape", "a request shape to answer for, repeatable: load (the default: the shape of the cycles the load judged at was read from, "+
 		"or measured where none read one), measured (the decode variant's latest cycles), or IL/OL[/hit] in tokens, k for 1024 (8k/200, 1k/4k/0.3)")
-	fs.Var(&rf.loads, "load", "a rate the tables price, repeatable: 5r/s, 80% of the shape's fleet knee, seen, or seen x1.5 (a growth what-if with its own verdict); default 50%, 80%, 100% and seen")
+	fs.Var(&rf.loads, "load", "a rate the tables price, repeatable: 5r/s, 80% of the shape's fleet knee, 64c (a mean of 64 requests in the system, "+
+		"translated into the rate that holds them), seen, or seen x1.5 (a growth what-if with its own verdict); default 50%, 80%, 100% and seen")
 	fs.StringVar(&rf.loadStatistic, "load-statistic", whatifapi.DefaultLoadStatistic,
 		"the statistic of the window's per-cycle arrival rate to judge at: mean, p95, peak, or p95-modulation (the p95 less the one-minute rate's counting noise, "+
 			"which the queueing model already prices)")
@@ -540,15 +541,15 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 	}
 
 	c := s.Capacity
-	const capLayout = "  %-18s%-10s%-12s%s\n"
-	fmt.Fprintf(b, "%-20s%-10s%-12s%s\n", "capacity", "req/s", "out tok/s", "bound by")
+	const capLayout = "  %-18s%-10s%-12s%-12s%s\n"
+	fmt.Fprintf(b, "%-20s%-10s%-12s%-12s%s\n", "capacity", "req/s", "out tok/s", "in system", "bound by")
 	for _, row := range []struct {
 		label string
 		rate  whatifapi.ReportRate
 	}{{"prefill knee", c.PrefillKnee}, {"decode knee", c.DecodeKnee}, {"fleet knee", c.FleetKnee},
 		{fmt.Sprintf("operating (%s)", num(c.Headroom)), c.Operating}, {"max at SLO", c.MaxAtSLO}} {
 		if row.rate.Value == nil {
-			fmt.Fprintf(b, capLayout, row.label, figText(row.rate.Figure, "", 1), "", refusedDetail(row.rate.Figure))
+			fmt.Fprintf(b, capLayout, row.label, figText(row.rate.Figure, "", 1), "", "", refusedDetail(row.rate.Figure))
 			continue
 		}
 		tok := ""
@@ -560,12 +561,22 @@ func shapeText(b *strings.Builder, s whatifapi.ReportShape) {
 			// V_P is known only as a lower bound: the rate is at least this.
 			value, binds = ">="+value, binds+"; at least: V_P is a lower bound"
 		}
-		fmt.Fprintf(b, capLayout, row.label, value, tok, binds)
+		fmt.Fprintf(b, capLayout, row.label, value, tok, concurrencyText(row.rate.Concurrency), binds)
 		if row.rate.Validation != nil {
 			fmt.Fprintf(b, "  %-18s%s\n", "", row.rate.Validation.Label)
 		}
 	}
 	b.WriteString(tableText(s.Table))
+	for _, u := range s.Untranslated {
+		fmt.Fprintf(b, "  %s concurrent: no rate, %s\n", u.Load, u.Reason)
+	}
+	for _, row := range s.Table {
+		if fc := row.FromConcurrency; fc != nil && fc.AtKnee {
+			fmt.Fprintf(b, "  %s: the fleet holds fewer requests than that below its knee; a load kept at %s requests open saturates it "+
+				"at the knee's %.2f r/s, and more concurrency adds queueing, not throughput\n",
+				row.Load, whatifapi.ConcurrencyNumber(fc.Concurrency), fc.Rate)
+		}
+	}
 	b.WriteString("checks\n")
 	for _, ch := range s.Verdict.Checks {
 		state := "holds"
@@ -690,16 +701,31 @@ func tableText(rows []whatifapi.ReportRow) string {
 	if p := rows[0].TPOTPercentile; p != nil {
 		tpotHead = "TPOT mean/" + p.Statistic + " ms"
 	}
-	cells := [][]string{{"SLO vs load", "r/s", ttftHead, tpotHead, "e2e mean (sum)"}}
+	cells := [][]string{{"SLO vs load", "r/s", ttftHead, tpotHead, "e2e mean (sum)", "in system (mean)"}}
 	for _, row := range rows {
 		label := "  " + row.Label
 		if strings.HasPrefix(row.Label, "load seen") && row.ShareOfKnee != nil {
 			label = fmt.Sprintf("  %s (%.0f%%)", row.Label, 100**row.ShareOfKnee)
 		}
 		cells = append(cells, []string{label, fmt.Sprintf("%.2f", row.Rate), statsText(row.TTFT, "%.1f"),
-			tpotText(row), figText(row.E2EMeanSum, "%.2f s", 1)})
+			tpotText(row), figText(row.E2EMeanSum, "%.2f s", 1), concurrencyText(row.Concurrency)})
 	}
 	return columns(cells)
+}
+
+// concurrencyText is a mean concurrency in a column: the requests in the
+// system on average, "unbounded" at or past the knee, "-" where refused
+// (the latency columns say why).
+func concurrencyText(c *whatifapi.Concurrency) string {
+	switch {
+	case c == nil:
+		return ""
+	case c.Unbounded:
+		return "unbounded"
+	case c.Fleet.Value == nil:
+		return "-"
+	}
+	return atMostText(c.Fleet) + whatifapi.ConcurrencyNumber(*c.Fleet.Value)
 }
 
 // statsText is a row's figures at its statistics, "/" between them; one

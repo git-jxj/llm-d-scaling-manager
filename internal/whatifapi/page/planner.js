@@ -420,7 +420,7 @@ async function loadInputs() {
 
 // PLAN_FIGURES are the elements a plan fills: the limits, the bars, the +1
 // steps, the points at the rate, the charts and the tables.
-const PLAN_FIGURES = ["fleet", "fleetn", "chosen", "bars", "barsdesc", "limits", "marginal", "ratenote", "limitsfor",
+const PLAN_FIGURES = ["fleet", "fleetn", "chosen", "bars", "barsdesc", "limits", "marginal", "ratenote", "concnote", "limitsfor",
   "ttftat", "tpotat", "rationote", "ttftchart", "ttftlegend", "ttftpoints", "buckettable",
   "tpotchart", "tpotlegend", "tpotpoints", "curvetable", "flags", "flagcount"];
 
@@ -572,7 +572,7 @@ function setInputs(inputs) {
   state.k = {
     prefill: inputs.fleet.prefill ? Math.max(1, inputs.fleet.prefill.replicas) : 0,
     decode: Math.max(1, inputs.fleet.decode.replicas),
-    rate: null,
+    rate: null, concurrency: null,
     ttftStat: ttft.statistic, ttftTarget: ttft.seconds, ttftDefault: !p.ttft,
     tpotStat: tpot.statistic, tpotTarget: tpot.seconds, tpotDefault: !p.tpot,
     ratio: null, headroom: p.headroom || 0.85,
@@ -867,7 +867,10 @@ function planRequest() {
   if (k.decode !== inputs.fleet.decode.replicas) fleet.decode = k.decode;
   if (Object.keys(fleet).length) req.fleet = fleet;
   const traffic = {};
-  if (k.rate != null) traffic.classes = {critical: {rate: k.rate}};
+  // A concurrency typed is a rate only on a given fleet: a plan translates
+  // it, and a size, whose fleet is the answer, takes the rate it gave.
+  if (k.concurrency != null && state.mode !== "size") traffic.classes = {critical: {concurrency: k.concurrency}};
+  else if (k.rate != null) traffic.classes = {critical: {rate: k.rate}};
   const mix = {};
   const bucket = inputs.observed.buckets.find(b => b.name === k.priceAs);
   if (bucket) mix.promptTokens = bucket.upperTokens;
@@ -1014,7 +1017,7 @@ async function plan() {
     if (stale()) return;
     state.plan = out;
     state.priceFailed = false;
-    if (state.k.rate == null) state.k.rate = out.limits.chosen.rate;
+    if (state.k.rate == null || state.k.concurrency != null) state.k.rate = out.limits.chosen.rate;
     render();
     writeLink();
     setStatus(`Updated in ${Math.round(performance.now() - t0)} ms.`);
@@ -1132,6 +1135,7 @@ function render() {
   renderNotice(p.flags, p.banner);
   fitRateSlider(lowerKnee(p.ttft.markers));
   el("ratenote").textContent = rateNote(p.limits.chosen.rateSource);
+  el("concnote").textContent = concurrencyNote(p.limits.chosen);
   el("limitsfor").textContent = `(at ${shapeOf(p)})`;
   renderSize();
   renderAtTarget();
@@ -2130,6 +2134,8 @@ function wire() {
     if (!ready()) return;
     state.dragging = true;
     k().rate = +el("rate").value;
+    k().concurrency = null;
+    el("concbox").value = "";
     el("ratebox").value = Number(k().rate.toFixed(2));
     if (state.mode !== "size") schedule(100);
   };
@@ -2166,7 +2172,15 @@ function wire() {
   };
   el("ratebox").onchange = () => {
     const v = +el("ratebox").value;
-    if (ready() && v > 0) { k().rate = v; schedule(0); }
+    if (ready() && v > 0) { k().rate = v; k().concurrency = null; el("concbox").value = ""; schedule(0); }
+  };
+  // A concurrency typed prices at the rate that holds it on the fleet shown;
+  // cleared, the rate it gave stays.
+  el("concbox").onchange = () => {
+    if (!ready()) return;
+    const v = +el("concbox").value;
+    k().concurrency = el("concbox").value !== "" && v > 0 ? Math.min(v, MAX_CONCURRENCY) : null;
+    schedule(0);
   };
   // A target prices on release: it reprices the limits, which takes up to
   // seconds on a TTFT fleet.

@@ -73,6 +73,20 @@ planner's own terms:
   knee (or the one knee that priced: see "One knee refused" below). Move the rate slider, step the replicas, pick a statistic, set a target.
   The request rate is the total rate: traffic classes are not priced apart
   yet.
+- **Concurrency.** Under the rate, the page says how many requests are in
+  the system on average at that rate: "About 30 requests in the system on
+  average (4.0 in prefill, 25 decoding (13 a decode pod))". This is the rate
+  times a request's mean time in the system, TTFT mean + (OL - 1) x TPOT
+  mean (Little's law). It is an average, not a peak. At or past the limit
+  the queue grows without bound, and the page says so instead of giving a
+  number. If your load generator keeps a fixed number of requests open,
+  type that number in **Or concurrency**: the page finds the rate that
+  holds that many on the fleet shown, and prices there. If the fleet holds
+  fewer requests than that anywhere below its limit, the page prices at the
+  limit and says the load saturates the fleet: more open requests add
+  queueing there, not throughput. Moving the rate clears the concurrency.
+  The size mode sizes for the rate the concurrency gave: a concurrency is a
+  rate only on a given fleet.
 - **Targets the policy does not set.** A TTFT target is needed to read a
   prefill limit. When the policy sets none, the page uses TTFT p90 1 s and
   TPOT mean 50 ms, and says "targets set by the page, not the policy" above
@@ -547,9 +561,18 @@ It replays the recording once and answers, for each shape and load:
   50% more traffic does: a column of its own and a short `x1.5 (...)` line
   under the verdict. It never changes the verdict at the load seen.
   `--load-seen-x 1.5` is an alias that adds the same column.
+- **Concurrency as a load.** `--load 64c` asks for the rate at which the
+  fleet holds 64 requests in the system on average, as a load generator
+  that keeps 64 requests open drives it. Each shape finds its own rate: the
+  row is `64c concurrent` at that rate. If the fleet holds fewer than 64
+  below its knee, the row is the knee's rate, labelled `saturates`, and a
+  line under the table says so: more open requests add queueing there, not
+  throughput. Where the mean TTFT or TPOT is refused, there is no time in
+  the system to translate with: the row is left out, and a line under the
+  table says why.
 - **Summary.** One row per shape (`--shape`, repeatable: `measured`,
   `load`, or `IL/OL[/hit]` in tokens, `k` for 1024), one column per load (`--load`,
-  repeatable: `80%` of that shape's fleet knee, `5r/s`, `seen`, or
+  repeatable: `80%` of that shape's fleet knee, `5r/s`, `64c`, `seen`, or
   `seen x1.5`). A cell
   such as `617/3.2m @18.49 ok` is the TTFT and TPOT at the statistics the
   SLO judges (here TTFT p90 617 ms and, its p90 refused as host-bound,
@@ -630,7 +653,9 @@ It replays the recording once and answers, for each shape and load:
   prefill, decode and fleet knees in req/s and output tok/s with what binds
   each, the operating point, the highest rate that holds the targets, and
   the SLO against each load. `e2e mean (sum)` is TTFT mean + (OL - 1) x TPOT
-  mean, not a percentile.
+  mean, not a percentile. `in system` is the rate times it: the requests in
+  the system on average (Little's law), `unbounded` at or past a knee, `-`
+  where the TTFT or TPOT it needs is refused.
 
 The targets are the policy's unless `--ttft` and `--tpot` set them. Exit 0
 means the report answered, whatever the verdict, saturated fleets included;

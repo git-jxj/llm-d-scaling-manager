@@ -33,6 +33,8 @@ type ReportRequest struct {
 	// cycle of the load read a shape (a stated load).
 	Shapes []string `json:"shapes,omitempty"`
 	// Loads are the table's rates: "5r/s", "80%" of the shape's fleet knee,
+	// "64c", a mean concurrency (requests in the system, Little's law)
+	// translated into the rate that carries it on each shape's fleet,
 	// "seen", or the load seen grown, "seen x1.5" (also "seen×1.5",
 	// "seen*1.5"): a what-if with its own column and its own verdict, which
 	// never replaces the verdict at the load seen. Absent, 50%, 80%, 100% and
@@ -114,13 +116,15 @@ type ReportShapeAsk struct {
 }
 
 // ReportLoadAsk is one rate of the tables: Rate requests per second, Share
-// of the shape's fleet knee, or Seen, the load judged at, times X when X is
-// above 0 and not 1 (a growth what-if, judged on its own).
+// of the shape's fleet knee, Concurrency, a mean number of requests in the
+// system translated into a rate on each shape's fleet, or Seen, the load
+// judged at, times X when X is above 0 and not 1 (a growth what-if, judged
+// on its own).
 type ReportLoadAsk struct {
-	Rate, Share float64
+	Rate, Share, Concurrency float64
 	Seen        bool
 	X           float64
-	// Label is the load as asked ("5r/s", "80%", "seen", "seen x1.5").
+	// Label is the load as asked ("5r/s", "80%", "64c", "seen", "seen x1.5").
 	Label string
 }
 
@@ -242,6 +246,16 @@ type ReportShape struct {
 	Flags []string `json:"flags"`
 	// Assumed is every input the shape's answer assumed, in words.
 	Assumed []string `json:"assumed"`
+	// Untranslated is each concurrency load ("64c") the shape could not
+	// translate into a rate, and why; its row is left out of Table.
+	Untranslated []ReportUntranslated `json:"untranslated,omitempty"`
+}
+
+// ReportUntranslated is a concurrency load no rate was found for: Load as
+// asked, and Reason in words.
+type ReportUntranslated struct {
+	Load   string `json:"load"`
+	Reason string `json:"reason"`
 }
 
 // ReportSource is what the report was read from.
@@ -403,6 +417,10 @@ type ReportRate struct {
 	Figure
 	OutputTokensPerSecond *float64 `json:"outputTokensPerSecond,omitempty"`
 	Binds                 string   `json:"binds,omitempty"`
+	// Concurrency is the mean number of requests in the system at the rate
+	// (Little's law): unbounded at a knee, where requests queue without
+	// bound; absent where the rate is refused.
+	Concurrency *Concurrency `json:"concurrency,omitempty"`
 	// LowerBound says the rate rests on a prefill speed (V_P) known only as
 	// a lower bound: the true rate is at least Value, and may be higher.
 	LowerBound bool `json:"lowerBound,omitempty"`
@@ -434,6 +452,14 @@ type ReportRow struct {
 	TPOTMean       Figure       `json:"tpotMean"`
 	TPOTPercentile *ReportStat  `json:"tpotPercentile,omitempty"`
 	E2EMeanSum     Figure       `json:"e2eMeanSum"`
+	// Concurrency is the mean number of requests in the system at Rate,
+	// Rate x E2EMeanSum by Little's law, by role; unbounded at or past the
+	// knee.
+	Concurrency *Concurrency `json:"concurrency,omitempty"`
+	// FromConcurrency is the concurrency the row asked in place of a rate
+	// ("64c") and the rate it translates into on the shape's fleet; AtKnee
+	// says the fleet holds fewer requests than that below its knee.
+	FromConcurrency *ConcurrencyRate `json:"fromConcurrency,omitempty"`
 	// Cell is the row in the summary matrix.
 	Cell ReportCell `json:"cell"`
 }
@@ -822,7 +848,8 @@ func tokens(s string) (float64, error) {
 }
 
 // ParseReportLoad reads a load: "seen", the load seen grown ("seen x1.5",
-// "seen×1.5" or "seen*1.5"), "80%" of the knee, or "5r/s".
+// "seen×1.5" or "seen*1.5"), "80%" of the knee, "5r/s", or "64c", a mean
+// concurrency in requests.
 func ParseReportLoad(s string) (ReportLoadAsk, error) {
 	switch {
 	case s == "seen":
@@ -852,8 +879,14 @@ func ParseReportLoad(s string) (ReportLoadAsk, error) {
 			return ReportLoadAsk{}, fmt.Errorf("load %q, want a finite rate above 0", s)
 		}
 		return ReportLoadAsk{Rate: x, Label: s}, nil
+	case strings.HasSuffix(s, "c"):
+		x, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(s, "c")), 64)
+		if err != nil || !usable(x) || math.IsInf(x, 0) || x > MaxConcurrency {
+			return ReportLoadAsk{}, fmt.Errorf("load %q, want a concurrency above 0 and at most %d requests (64c)", s, MaxConcurrency)
+		}
+		return ReportLoadAsk{Concurrency: x, Label: s}, nil
 	}
-	return ReportLoadAsk{}, fmt.Errorf("load %q, want seen, a share of the knee (80%%) or a rate (5r/s)", s)
+	return ReportLoadAsk{}, fmt.Errorf("load %q, want seen, a share of the knee (80%%), a rate (5r/s) or a concurrency (64c)", s)
 }
 
 // reportTarget reads one SLO target; nil with none asked.

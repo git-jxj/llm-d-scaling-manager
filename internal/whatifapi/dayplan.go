@@ -754,7 +754,7 @@ func dayScenarioOf(in *InputsResponse, id string, req DayPlanRequest) (sc Scenar
 	}
 	sc, err = scenarioOf(in, PlanRequest{InputsID: id, Fleet: &FleetKnob{Prefill: &one, Decode: &one},
 		Traffic: traffic, SLO: slo, Assume: req.Assume, Headroom: req.Headroom})
-	sc.Rate = nil
+	sc.Rate, sc.Concurrency = nil, nil
 	return sc, noTTFT, err
 }
 

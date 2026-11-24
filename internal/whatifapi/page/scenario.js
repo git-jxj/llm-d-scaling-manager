@@ -499,17 +499,20 @@ function reportShapes(rows) {
   return out.length === 1 && out[0] === "load" ? [] : out;
 }
 
-// parseReportLoads reads the loads box: comma separated, each 80%, 5r/s or
-// seen. Empty is the server's default (50%, 80%, 100% and seen).
+// parseReportLoads reads the loads box: comma separated, each 80%, 5r/s,
+// 64c (a concurrency) or seen. Empty is the server's default (50%, 80%,
+// 100% and seen).
 function parseReportLoads(text) {
   const loads = String(text || "").split(",").map(s => s.trim()).filter(s => s);
   if (loads.length > MAX_REPORT_LOADS) return {loads: [], problem: `at most ${MAX_REPORT_LOADS} loads`};
   for (const l of loads) {
     if (l === "seen" || /^seen *[x×*] *[0-9]+(\.[0-9]+)?$/.test(l)) continue;
     const pct = /^([0-9]+(\.[0-9]+)?)%$/.exec(l), rate = /^([0-9]+(\.[0-9]+)?)r\/s$/.exec(l);
+    const conc = /^([0-9]+(\.[0-9]+)?)c$/.exec(l);
     if (pct && Number(pct[1]) > 0 && Number(pct[1]) <= 100) continue;
     if (rate && Number(rate[1]) > 0) continue;
-    return {loads: [], problem: `${l}: a load is a share of the knee (80%), a rate (5r/s) or seen`};
+    if (conc && Number(conc[1]) > 0 && Number(conc[1]) <= MAX_CONCURRENCY) continue;
+    return {loads: [], problem: `${l}: a load is a share of the knee (80%), a rate (5r/s), a concurrency (64c) or seen`};
   }
   return {loads, problem: ""};
 }
@@ -648,6 +651,52 @@ function msText(f, tpot) {
   return reason === "Saturated" ? "saturated" : reason === "AboveDecodeOnset" ? "router-queued" : "-";
 }
 
+// MAX_CONCURRENCY is the largest concurrency a load may ask, as the server's
+// whatifapi.MaxConcurrency.
+const MAX_CONCURRENCY = 1048576;
+
+// concurrencyNumber is a mean concurrency as printed: one decimal under 10,
+// else whole requests (whatifapi.ConcurrencyNumber).
+function concurrencyNumber(x) {
+  return x < 10 ? x.toFixed(1) : x.toFixed(0);
+}
+
+// concurrencyShort is a row's mean concurrency for a summary cell: "~12 in
+// system", "unbounded" at or past the knee, "" where refused or absent.
+function concurrencyShort(c) {
+  if (!c) return "";
+  if (c.unbounded) return "in system: unbounded";
+  const v = c.fleet && c.fleet.value;
+  return v != null ? `~${concurrencyNumber(v)} in system` : "";
+}
+
+// concurrencyNote is what the page says under the rate of a plan: the
+// mean requests in the system there (Little's law), and where a concurrency
+// was typed, the rate it translates into, flagged where the fleet saturates
+// first.
+function concurrencyNote(chosen) {
+  const c = chosen && chosen.concurrency, from = chosen && chosen.fromConcurrency;
+  const parts = [];
+  if (from) {
+    parts.push(from.atKnee ?
+      `${concurrencyNumber(from.concurrency)} requests open saturate this fleet: it holds fewer below its limit, so the rate is the limit's ${roundRate(from.rate)} r/s; more concurrency adds queueing, not throughput.` :
+      `${concurrencyNumber(from.concurrency)} requests in the system on average is ${roundRate(from.rate)} r/s on this fleet.`);
+  }
+  if (c && c.unbounded) {
+    parts.push("At or past the limit requests queue without bound: no average holds.");
+  } else if (c && c.fleet && c.fleet.value != null) {
+    let s = `About ${concurrencyNumber(c.fleet.value)} requests in the system on average`;
+    const role = [];
+    if (c.prefill && c.prefill.value != null) role.push(`${concurrencyNumber(c.prefill.value)} in prefill`);
+    if (c.decode && c.decode.value != null) {
+      role.push(`${concurrencyNumber(c.decode.value)} decoding` + (c.decodePerPod && c.decodePerPod.value != null ? ` (${concurrencyNumber(c.decodePerPod.value)} a decode pod)` : ""));
+    }
+    if (role.length) s += ` (${role.join(", ")})`;
+    parts.push(s + ".");
+  }
+  return parts.join(" ");
+}
+
 // rowFigures is a row's two latencies at the SLO's statistics: the TTFT at
 // the TTFT target's, and the TPOT at the TPOT target's, as the row's cell
 // carries them (a table prints p90 whatever the SLO judges); with no target,
@@ -745,6 +794,8 @@ function reportView(r) {
       const tpotMean = slo && slo.tpot && slo.tpot.statistic !== "mean" && f.tpot.statistic === "mean" && f.tpot.value != null ? " (mean)" : "";
       const parts = [`TTFT ${msText(f.ttft, false)}`, `TPOT ${msText(f.tpot, true)}${tpotMean}`];
       if (rate) parts.push(rate.trim());
+      const inSystem = concurrencyShort(row.concurrency);
+      if (inSystem) parts.push(inSystem);
       return {text: parts.join(" · ").replace(" · @", " @"), parts, cls: m[0], word: m[1]};
     }),
   }));

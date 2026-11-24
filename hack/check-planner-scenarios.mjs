@@ -466,6 +466,21 @@ check("retryDelay never retries a 500", retryDelay(500, "1", 0) === -1, retryDel
   check("loads are read in order", JSON.stringify(parseReportLoads("50%, 5r/s ,seen").loads) === JSON.stringify(["50%", "5r/s", "seen"]));
   check("a share past 100% is refused", parseReportLoads("150%").problem !== "");
   check("a load with no unit is refused", parseReportLoads("5").problem !== "");
+  check("a concurrency is a load", JSON.stringify(parseReportLoads("64c, 2.5c").loads) === JSON.stringify(["64c", "2.5c"]),
+    JSON.stringify(parseReportLoads("64c, 2.5c")));
+  check("a concurrency of 0 is refused", parseReportLoads("0c").problem !== "");
+  check("a concurrency past the bound is refused", parseReportLoads("2000000c").problem !== "");
+  const {concurrencyShort, concurrencyNote} = ctx;
+  check("a cell names the requests in the system", concurrencyShort({fleet: {value: 12.4}}) === "~12 in system", concurrencyShort({fleet: {value: 12.4}}));
+  check("a small concurrency keeps a decimal", concurrencyShort({fleet: {value: 2.46}}) === "~2.5 in system");
+  check("a cell past the knee says unbounded", concurrencyShort({unbounded: true, fleet: {}}) === "in system: unbounded");
+  check("a refused concurrency prints nothing", concurrencyShort({fleet: {refused: {reason: "NoLine"}}}) === "");
+  const note = concurrencyNote({concurrency: {fleet: {value: 30}, prefill: {value: 4}, decode: {value: 25}, decodePerPod: {value: 12.5}},
+    fromConcurrency: {concurrency: 30, rate: 2.5}});
+  check("the plan's note gives the asked concurrency, its rate and the roles", note.includes("30 requests in the system on average is 2.5 r/s") &&
+    note.includes("About 30 requests in the system on average (4.0 in prefill, 25 decoding (13 a decode pod))"), note);
+  const sat = concurrencyNote({concurrency: {unbounded: true, fleet: {}}, fromConcurrency: {concurrency: 500, rate: 9, atKnee: true}});
+  check("a concurrency past what the fleet holds says it saturates", sat.includes("saturate this fleet") && sat.includes("queue without bound"), sat);
 
   const slo = {ttft: {statistic: "p95", target: 2}, tpot: {statistic: "mean", target: 0.03}};
   const asked = reportRequest({inputsId: "sha256:x", fleet: {decode: 3}, shapes: [{}, {il: "1k", ol: "1k"}, {il: "16k", ol: "200", hit: "0.3"}, {}],
@@ -770,7 +785,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 361;
+const EXPECTED_CASES = 370;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

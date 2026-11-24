@@ -157,7 +157,16 @@
             "AssumedPromptSpread"
           ],
           "outputTokensPerSecond": 9993.517652865776,
-          "binds": "prefill compute: N_p 2 x V_P / (f 1.000 x 8001 tokens)"
+          "binds": "prefill compute: N_p 2 x V_P / (f 1.000 x 8001 tokens)",
+          "concurrency": {
+            "fleet": {
+              "refused": {
+                "reason": "Saturated",
+                "detail": "at or past the knee requests queue without bound: no mean concurrency holds"
+              }
+            },
+            "unbounded": true
+          }
         },
         "decodeKnee": {
           "value": 36.98725986715774,
@@ -179,19 +188,55 @@
             "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
           },
           "outputTokensPerSecond": 7396.996222484839,
-          "binds": "decode band top at fill 0.798"
+          "binds": "decode band top at fill 0.798",
+          "concurrency": {
+            "fleet": {
+              "refused": {
+                "reason": "Saturated",
+                "detail": "at or past the knee requests queue without bound: no mean concurrency holds"
+              }
+            },
+            "unbounded": true
+          }
         },
         "fleetKnee": {
           "value": 36.98725986715774,
           "unit": "r/s",
           "outputTokensPerSecond": 7396.996222484839,
-          "binds": "decode"
+          "binds": "decode",
+          "concurrency": {
+            "fleet": {
+              "refused": {
+                "reason": "Saturated",
+                "detail": "at or past the knee requests queue without bound: no mean concurrency holds"
+              }
+            },
+            "unbounded": true
+          }
         },
         "operating": {
           "value": 31.439170887084078,
           "unit": "r/s",
           "outputTokensPerSecond": 6287.446789112113,
-          "binds": "0.85 x fleet knee (scaleUpThreshold)"
+          "binds": "0.85 x fleet knee (scaleUpThreshold)",
+          "concurrency": {
+            "fleet": {
+              "value": 94.66604394328964,
+              "unit": "requests"
+            },
+            "prefill": {
+              "value": 5.913191932940853,
+              "unit": "requests"
+            },
+            "decode": {
+              "value": 53.07353528858653,
+              "unit": "requests"
+            },
+            "decodePerPod": {
+              "value": 26.536767644293263,
+              "unit": "requests"
+            }
+          }
         },
         "maxAtSLO": {
           "value": 29.70756999222337,
@@ -217,7 +262,25 @@
             "ExtrapolatedFill"
           ],
           "outputTokensPerSecond": 5941.147946642053,
-          "binds": "TTFT p90, end to end"
+          "binds": "TTFT p90, end to end",
+          "concurrency": {
+            "fleet": {
+              "value": 62.725951388993046,
+              "unit": "requests"
+            },
+            "prefill": {
+              "value": 5.314089659967495,
+              "unit": "requests"
+            },
+            "decode": {
+              "value": 40.961653751293966,
+              "unit": "requests"
+            },
+            "decodePerPod": {
+              "value": 20.480826875646983,
+              "unit": "requests"
+            }
+          }
         },
         "headroom": 0.85,
         "headroomSource": "scaleUpThreshold"
@@ -302,6 +365,24 @@
           "e2eMeanSum": {
             "value": 0.8680151771375593,
             "unit": "s"
+          },
+          "concurrency": {
+            "fleet": {
+              "value": 16.05275146271193,
+              "unit": "requests"
+            },
+            "prefill": {
+              "value": 2.658906937848741,
+              "unit": "requests"
+            },
+            "decode": {
+              "value": 11.661932847151087,
+              "unit": "requests"
+            },
+            "decodePerPod": {
+              "value": 5.830966423575544,
+              "unit": "requests"
+            }
           },
           "cell": {
             "ttft": {
@@ -423,6 +504,24 @@
             "value": 2.074558223659909,
             "unit": "s"
           },
+          "concurrency": {
+            "fleet": {
+              "value": 61.38577930244656,
+              "unit": "requests"
+            },
+            "prefill": {
+              "value": 5.276182584506613,
+              "unit": "requests"
+            },
+            "decode": {
+              "value": 40.29715426706632,
+              "unit": "requests"
+            },
+            "decodePerPod": {
+              "value": 20.14857713353316,
+              "unit": "requests"
+            }
+          },
           "cell": {
             "ttft": {
               "statistic": "p90",
@@ -507,6 +606,15 @@
               "detail": "36.99 r/s at or above the decode gate's onset 35.75 r/s"
             }
           },
+          "concurrency": {
+            "fleet": {
+              "refused": {
+                "reason": "Saturated",
+                "detail": "at or past the knee requests queue without bound: no mean concurrency holds"
+              }
+            },
+            "unbounded": true
+          },
           "cell": {
             "ttft": {
               "statistic": "p90",
@@ -568,6 +676,15 @@
               "reason": "AboveDecodeOnset",
               "detail": "41.7 r/s at or above the decode gate's onset 35.75 r/s"
             }
+          },
+          "concurrency": {
+            "fleet": {
+              "refused": {
+                "reason": "Saturated",
+                "detail": "at or past the knee requests queue without bound: no mean concurrency holds"
+              }
+            },
+            "unbounded": true
           },
           "cell": {
             "ttft": {
@@ -665,7 +782,7 @@
   "notValidated": [
     "decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 43% to 99% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)",
     "TTFT is not a bound, and is validated only where its figure says so: at the assumed prompt cv 2 it read 1.1x to 4.1x the router's percentile on the P2 recordings; at the sent spread (cv 0.06) up to 33% under it. V_P ASSUMED. a ASSUMED.",
-    "e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile"
+    "e2e mean is a sum, TTFT mean + (OL - 1) x TPOT mean, not a percentile; in system is the rate times it (Little's law), the requests in the system on average"
   ],
   "exitCode": 0
 }

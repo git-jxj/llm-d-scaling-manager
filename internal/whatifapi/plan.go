@@ -340,10 +340,24 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The fleet priced at the mean TTFT: a concurrency is a rate times a
+	// mean time in system.
+	mean, err := p.meanFleet(k, fl)
+	if err != nil {
+		return nil, err
+	}
+	ol := p.outputTokens(k)
 	rate, rateSource := 0.0, RateSourceRequest
+	var fromConcurrency *ConcurrencyRate
 	switch {
 	case sc.Rate != nil:
 		rate = *sc.Rate
+	case sc.Concurrency != nil:
+		cr, err := planRateAtConcurrency(mean, *sc.Concurrency, cs, ol)
+		if err != nil {
+			return nil, err
+		}
+		rate, rateSource, fromConcurrency = cr.Rate, RateSourceConcurrency, &cr
 	case cs.kneeOK:
 		rate, rateSource = sc.Headroom*cs.lowerKnee, cs.rateSource()
 	default:
@@ -380,6 +394,10 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 	}
 
 	out.Limits = p.limitsOf(rate, rateSource, ls)
+	tm, _ := mean.TTFTPoint(rate)
+	pm, _ := mean.TPOTAt(rate)
+	out.Limits.Chosen.Concurrency = ConcurrencyAt(rate, tm, pm, ol, k.Decode, cs.saturatedAt(rate))
+	out.Limits.Chosen.FromConcurrency = fromConcurrency
 	// A limit the experimental TTFT model set past the highest load the
 	// source served is an extrapolation.
 	out.Limits.Prefill = markExtrapolatedRate(fl, out.Limits.Prefill)
@@ -405,6 +423,79 @@ func (p *planner) plan(ctx context.Context) (*PlanResponse, error) {
 		out.Flags = append(out.Flags, FlagUse{Flag: name, On: p.flags[name]})
 	}
 	return out, nil
+}
+
+// meanFleet is the fleet at k priced at the mean TTFT: fl itself where k
+// asks the mean.
+func (p *planner) meanFleet(k Knobs, fl Fleet) (Fleet, error) {
+	if k.TTFTPercentile == 0 {
+		return fl, nil
+	}
+	k.TTFTPercentile = 0
+	mean, err := p.e.pricer.Fleet(k)
+	if err != nil {
+		return nil, err
+	}
+	return p.e.ttftModel.fleet(mean, k), nil
+}
+
+// saturatedAt says rate is at or past the lower knee, where requests queue
+// without bound. A prefill knee that is only a lower bound (V_P a lower
+// bound) is not known to saturate there: the figures past it are refused for
+// their own reason.
+func (cs *curveSet) saturatedAt(rate float64) bool {
+	if !cs.kneeOK || rate < cs.lowerKnee {
+		return false
+	}
+	if a, ok := cs.prefillKnee.(whatif.Answer); ok && a.Value == cs.lowerKnee && slices.Contains(a.Flags, whatif.VPLowerBound) {
+		d, ok := valueOf(cs.decodeKnee)
+		return ok && rate >= d
+	}
+	return true
+}
+
+// planRateAtConcurrency is the rate at which mean, the fleet at the mean
+// TTFT, holds n requests in the system on average, below the lower knee.
+func planRateAtConcurrency(mean Fleet, n float64, cs *curveSet, ol float64) (ConcurrencyRate, error) {
+	if !cs.kneeOK {
+		return ConcurrencyRate{}, InputErrorf("traffic.classes.critical.concurrency: no knee answered to translate a concurrency below (prefill: %s; decode: %s): give a rate",
+			reasonOf(cs.prefillKnee), reasonOf(cs.decodeKnee))
+	}
+	if !(ol > 0) {
+		return ConcurrencyRate{}, InputErrorf("traffic.classes.critical.concurrency: no output length to price the time in the system at: give traffic.mix.outputTokens or a rate")
+	}
+	var refused whatif.Result
+	w := func(rate float64) (float64, bool) {
+		t, _ := mean.TTFTPoint(rate)
+		tm, _ := mean.TPOTAt(rate)
+		v, ok := meanTimeInSystem(t, tm, ol)
+		if !ok && refused == nil {
+			refused = t
+			if _, tok := valueOf(t); tok {
+				refused = tm
+			}
+		}
+		return v, ok
+	}
+	cr, err := RateAtConcurrency(n, cs.lowerKnee, w)
+	switch {
+	case ConcurrencyUnpriced(err):
+		return cr, InputErrorf("traffic.classes.critical.concurrency: the mean time in the system is refused (%s): give a rate", reasonOf(refused))
+	case err != nil:
+		return cr, InputErrorf("traffic.classes.critical.concurrency: %v", err)
+	}
+	return cr, nil
+}
+
+// meanTimeInSystem is TTFT mean + (OL - 1) x TPOT mean, the mean time a
+// request spends in the system; ok false where either mean is refused.
+func meanTimeInSystem(ttft, tpot whatif.Result, ol float64) (float64, bool) {
+	t, tok := valueOf(ttft)
+	p, pok := valueOf(tpot)
+	if !tok || !pok {
+		return 0, false
+	}
+	return t + max(ol-1, 0)*p, true
 }
 
 // reasonOf is a refusal's reason, or "answered".
