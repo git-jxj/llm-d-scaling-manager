@@ -233,6 +233,10 @@ type Analyzer struct {
 	// ttftJointInputs is SwitchTTFTJointInputs (ttft_joint.go): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	ttftJointInputs bool
+	// v2Inputs is SwitchV2Inputs (model_inputs.go): off from the
+	// constructor; the v2 latency models' inputs are neither collected nor
+	// reported until the default is flipped on evidence.
+	v2Inputs bool
 	// kvOutputDispersion is SwitchKVPerRequestOutputDispersion (issue ev-shindin/llm-scaling-manager#276,
 	// output_dispersion.go): on from the constructor; a replay turns it off
 	// (SetSwitchesForReplay).

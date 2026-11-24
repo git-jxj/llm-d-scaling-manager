@@ -180,7 +180,7 @@ func (c *ReplicaMetricsCollector) queryReplicaSeries(
 	// - With a TTFT target in the namespace, what the TTFT pricing reads
 	//   (ttftReadReplicaQueries)
 	// - With a learner recording on, every TTFT input (recordOnlyReplicaQueries too)
-	// - With --predicted-latency on, the experimental latency models' inputs
+	// - With slo.SwitchV2Inputs on, the experimental latency models' inputs
 	//   (predictionReadReplicaQueries), which the analyzers never see
 	recording := c.RecordsTTFTInputs()
 	ttftRead := c.readsTTFTInputs(namespace)
@@ -211,14 +211,14 @@ func (c *ReplicaMetricsCollector) queryReplicaSeries(
 	// read, as before.
 	if recording || ttftRead || predict {
 		typeOf := make(map[string]string)
-		// A query the predicted-latency component alone asked for is counted
+		// A query the v2 models alone asked for is counted
 		// under its own type. The TTFT readers' and a recording's types are
 		// set after it and take precedence: those queries would have been
 		// issued without it.
 		if predict && !recording {
 			for _, q := range buildEngineQueryList(engines, filterQueries(engineSpecificReplicaQueries, isPredictionQuery),
 				filterQueries(agnosticReplicaQueries, isPredictionQuery)) {
-				typeOf[q] = constants.QueryTypePredictedLatency
+				typeOf[q] = constants.QueryTypeSLOModelInputs
 			}
 		}
 		if recording || ttftRead {

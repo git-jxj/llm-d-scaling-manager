@@ -256,14 +256,14 @@ last; it is the unit change that makes the other two land.
   An HTTP API served by `capacity-planner serve`, a small web page on it that opens on a
   Prometheus window, and Grafana for monitoring only; why v1 prices the
   critical class alone and the current mix as one TTFT line.
-- **[Predicted latency in the controller](predicted-latency-in-controller.md)**
-  — proposed, part built. The controller publishes the capacity planner's
-  predicted TTFT and TPOT (mean, p90, p95) from the planner's own model code:
-  the models' inputs and which are collected, the package moves, the
-  per-cycle fit and refit, the metrics, the parity test with the planner, and
-  the turn-on rule. Built: the inputs' collection behind `--predicted-latency`
-  (off), the shared per-cycle builders, and the coverage series; the pricing
-  waits for the models' freeze.
+- **[Predicted latency and capacity in the controller](predicted-latency-in-controller.md)**
+  — proposed, skeleton built. The capacity planner's latency and capacity
+  figures carried into the analyzers that own each quantity, from shared
+  model code: per quantity, the signals, the learner (an existing one, or a
+  v2 mode of it), the owning analyzer, its series, the switch, and what waits
+  for the models' freeze; the parity test and the turn-on rule. Built,
+  switched off: the v2 inputs as collector signals, the shared builders, and
+  the slo analyzer's coverage series.
 - **[Record for the capacity planner from the controller](controller-recording.md)**
   — proposed. Makes the learner recorder an operator option: a live
   `plannerRecording` settings key over an always-mounted `emptyDir` (a PVC at

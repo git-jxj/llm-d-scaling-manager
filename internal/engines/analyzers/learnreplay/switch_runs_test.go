@@ -190,6 +190,10 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// no ask, no composite. Its unit tests and the model row hold it
 	// (heldBy).
 	slo.SwitchTTFTJointInputs: nil,
+	// Issue llm-d-incubation/llm-d-scaling-manager#440: the v2 latency
+	// models' inputs. Analyze never reads them: the engine hands them to
+	// ObserveModelInputs, which publishes coverage only. No golden moves.
+	slo.SwitchV2Inputs: nil,
 	// ev-shindin/llm-scaling-manager#495's one slow pod (mu_slow_pod.go), four switches, measured each
 	// alone against all off:
 	//
@@ -2114,6 +2118,12 @@ var heldBy = map[string][]heldTest{
 		{"../slo", "TestTTFTJoint_TheInvertedVPStandsWhereP1Refused"},
 		{"../slo", "TestTTFTJoint_PublishedBesideP1"},
 		{".", "TestGoldens_TTFTJointModelRow"},
+	},
+	// The first runs the switch off from the constructor and on, and asserts
+	// both; the second holds the engine to asking the collector only when on.
+	slo.SwitchV2Inputs: {
+		{"../slo", "TestObserveModelInputs_ReportsWhereEachModelStands"},
+		{"../../steadystate", "TestSLOV2Inputs_NamesEveryNamespaceWhenOn"},
 	},
 	// It runs the switch on and off through Analyze and asserts both.
 	saturation.SwitchITLClearsOnNewRevision: {

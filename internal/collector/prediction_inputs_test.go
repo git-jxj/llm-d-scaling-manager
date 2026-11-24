@@ -23,9 +23,9 @@ import (
 	llmdvariant "github.com/llm-d-incubation/llm-d-scaling-manager/internal/variant"
 )
 
-// The predicted-latency component's inputs
+// The slo analyzer's v2 models' inputs
 // (docs/proposals/predicted-latency-in-controller.md): issued where a cycle
-// names the namespace, read into rows the component alone keeps, and never
+// names the namespace, read into rows the slo analyzer's v2 models alone read, and never
 // seen by an analyzer.
 
 // Each prediction query is a record-only query or a TTFT reader's, never a
@@ -43,7 +43,7 @@ func TestPredictionQueries_AreRecordOnlyOrTTFTReaders(t *testing.T) {
 	}
 }
 
-// The budget: what --predicted-latency adds to a namespace's logical replica
+// The budget: what --slo-v2-inputs adds to a namespace's logical replica
 // queries a cycle. Five beside the scaling queries, four beside a TTFT
 // target's (it issues the computed-token histogram already), none beside a
 // recording's, and each listed once.
@@ -104,7 +104,7 @@ func TestPredictionQueries_OncePerNamedNamespace(t *testing.T) {
 	assert.False(t, c.readsPredictionInputs("ns"), "outside a cycle nothing is held")
 }
 
-// A failed prediction query is counted once, under predicted_latency, and a
+// A failed prediction query is counted once, under slo_model_inputs, and a
 // query a TTFT target issues anyway keeps its own type.
 func TestPredictionQueries_FailureCountedUnderItsOwnType(t *testing.T) {
 	failing := func(q string) *source.MetricResult {
@@ -132,17 +132,17 @@ func TestPredictionQueries_FailureCountedUnderItsOwnType(t *testing.T) {
 		return registry
 	}
 	alone := run(false)
-	assert.Equal(t, float64(len(predictionReadReplicaQueries)), errorsOfType(t, alone, constants.QueryTypePredictedLatency))
+	assert.Equal(t, float64(len(predictionReadReplicaQueries)), errorsOfType(t, alone, constants.QueryTypeSLOModelInputs))
 	assert.Zero(t, errorsOfType(t, alone, constants.QueryTypeTTFTInputs))
 	assert.Zero(t, errorsOfType(t, alone, constants.QueryTypeLearnerRecording))
 
 	withTarget := run(true)
-	assert.Equal(t, float64(len(predictionReadReplicaQueries)-1), errorsOfType(t, withTarget, constants.QueryTypePredictedLatency))
+	assert.Equal(t, float64(len(predictionReadReplicaQueries)-1), errorsOfType(t, withTarget, constants.QueryTypeSLOModelInputs))
 	assert.Equal(t, 3.0, errorsOfType(t, withTarget, constants.QueryTypeTTFTInputs))
 }
 
 // collectPredicting is collectParsedCycle that also returns the rows the
-// cycle kept for the component, read before the cycle ends.
+// cycle kept for the v2 models, read before the cycle ends.
 func collectPredicting(t *testing.T, series map[string]model.Value, begin func(*ReplicaMetricsCollector)) (
 	rows []domain.ReplicaMetrics, kept []domain.ReplicaMetrics, keptOK bool) {
 	t.Helper()
@@ -171,8 +171,8 @@ func collectPredicting(t *testing.T, series map[string]model.Value, begin func(*
 }
 
 // The point of the split: with every model input exported, the rows the
-// analyzers get with --predicted-latency on equal the rows they got with it
-// off, with and without a TTFT target, and the component's rows carry the
+// analyzers get with --slo-v2-inputs on equal the rows they got with it
+// off, with and without a TTFT target, and the v2 models' rows carry the
 // inputs. A recording issues them anyway, so its rows keep them.
 func TestPredictionRows_AnalyzersReadTheRowsOfACollectionWithoutIt(t *testing.T) {
 	series := map[string]model.Value{
@@ -243,7 +243,7 @@ func untimed(rows []domain.ReplicaMetrics) []domain.ReplicaMetrics {
 }
 
 // Clearing a row clears its group's engines too, on a copy: the rows the
-// component keeps share nothing it writes.
+// v2 models keep share nothing it writes.
 func TestClearPredictionOnly_GroupEnginesOnACopy(t *testing.T) {
 	row := domain.ReplicaMetrics{PodName: "g-0", AvgPrefillTime: 0.2, AvgPrefillTimeKnown: true, AvgQueueTime: 0.1, AvgQueueTimeKnown: true,
 		ComputedTokensBuckets: []domain.LengthBucket{{UpperBound: 1, Rate: 1}},
@@ -262,9 +262,9 @@ func TestClearPredictionOnly_GroupEnginesOnACopy(t *testing.T) {
 	assert.Nil(t, out[0].ComputedTokensBuckets)
 }
 
-// The router's reading for the component carries the TPOT histogram and the
+// The router's reading for the v2 models carries the TPOT histogram and the
 // TTFT mean; the slo analyzer's reading in the same cycle is what it was,
-// and the histogram it alone asked for is counted under predicted_latency.
+// and the histogram it alone asked for is counted under slo_model_inputs.
 func TestCollectPredictionLatency_ItsOwnReading(t *testing.T) {
 	src := &askingSource{}
 	c := NewReplicaMetricsCollector(src, nil, nil, nil, nil)
@@ -285,7 +285,7 @@ func TestCollectPredictionLatency_ItsOwnReading(t *testing.T) {
 		return &source.MetricResult{QueryName: q, Error: errors.New("prometheus unreachable")}
 	}}
 	assert.Nil(t, NewReplicaMetricsCollector(failing, nil, nil, nil, nil).CollectPredictionLatency(context.Background(), "model-a", "ns"))
-	assert.Equal(t, 1.0, errorsOfType(t, registry, constants.QueryTypePredictedLatency), "the TPOT histogram")
+	assert.Equal(t, 1.0, errorsOfType(t, registry, constants.QueryTypeSLOModelInputs), "the TPOT histogram")
 	assert.Equal(t, 2.0, errorsOfType(t, registry, constants.QueryTypeTTFTInputs), "the TTFT mean")
 	assert.Equal(t, 3.0, errorsOfType(t, registry, constants.QueryTypeRouterLatency))
 }

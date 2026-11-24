@@ -397,6 +397,7 @@ func DeleteSLOModel(namespace, modelName string) {
 	if sloTarget == nil {
 		return
 	}
+	DeleteSLOModelInputs(namespace, modelName)
 	sloPublishedMu.Lock()
 	defer sloPublishedMu.Unlock()
 	key := namespace + "/" + modelName

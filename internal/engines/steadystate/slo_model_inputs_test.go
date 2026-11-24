@@ -1,0 +1,81 @@
+package steadystate
+
+import (
+	"context"
+	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
+	llmdvariant "github.com/llm-d-incubation/llm-d-scaling-manager/internal/variant"
+)
+
+// Off by default: no namespace is named, so the collector issues no query
+// of the v2 models', and nothing is observed or published.
+func TestSLOV2Inputs_OffByDefault(t *testing.T) {
+	e := &Engine{}
+	groups := map[string][]llmdvariant.Variant{"m": {{ObjectMeta: metav1.ObjectMeta{Namespace: "ns"}}}}
+	assert.Nil(t, e.predictionNamespaces(groups))
+	e.observeModelInputs(context.Background(), &modelData{namespace: "ns", modelID: "m"})
+	assert.Empty(t, e.sloModelInputs)
+	e.retainModelInputs(nil)
+}
+
+// On, every namespace with a model is named, once.
+func TestSLOV2Inputs_NamesEveryNamespaceWhenOn(t *testing.T) {
+	e := &Engine{sloAnalyzer: sloReadingModelInputs(t)}
+	groups := map[string][]llmdvariant.Variant{
+		"a": {{ObjectMeta: metav1.ObjectMeta{Namespace: "ns1"}}},
+		"b": {{ObjectMeta: metav1.ObjectMeta{Namespace: "ns1"}}},
+		"c": {{ObjectMeta: metav1.ObjectMeta{Namespace: "ns2"}}},
+		"d": nil,
+	}
+	assert.Equal(t, map[string]bool{"ns1": true, "ns2": true}, e.predictionNamespaces(groups))
+}
+
+// The v2 models read the replicas the analyzers read, with what the
+// collector kept on them: a pod routing dropped is dropped here too.
+func TestSameReplicas_TheAnalyzersPods(t *testing.T) {
+	kept := []domain.ReplicaMetrics{{PodName: "a", AvgPrefillTimeKnown: true}, {PodName: "b"}, {PodName: "c", AvgPrefillTimeKnown: true}}
+	read := []domain.ReplicaMetrics{{PodName: "c"}, {PodName: "a"}}
+	assert.Equal(t, []domain.ReplicaMetrics{kept[0], kept[2]}, sameReplicas(kept, read))
+	assert.Empty(t, sameReplicas(kept, nil))
+}
+
+// The prune deletes the v2 series of a model no longer active, and keeps
+// the others'.
+func TestSLOV2Inputs_RetainDeletesInactiveModels(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	require.NoError(t, metrics.InitMetrics(registry))
+	a := sloReadingModelInputs(t)
+	e := &Engine{sloAnalyzer: a, sloModelInputs: map[string][2]string{}}
+	for _, m := range []string{"m", "n"} {
+		a.ObserveModelInputs(domain.AnalyzerInput{Namespace: "ns", ModelID: m}, nil)
+		e.sloModelInputs["ns/"+m] = [2]string{"ns", m}
+	}
+	count := func() int {
+		n, err := testutil.GatherAndCount(registry, constants.LLMSMSLOModelCoverage)
+		require.NoError(t, err)
+		return n
+	}
+	require.Equal(t, 4*len(constants.SLOModelReasons), count())
+	e.retainModelInputs(map[string]bool{"ns/n": true})
+	assert.Equal(t, 2*len(constants.SLOModelReasons), count())
+	e.retainModelInputs(nil)
+	assert.Zero(t, count())
+}
+
+// sloReadingModelInputs is an slo analyzer with slo.SwitchV2Inputs on.
+func sloReadingModelInputs(t *testing.T) *slo.Analyzer {
+	t.Helper()
+	a := slo.New(nil, nil)
+	require.NoError(t, a.SetSwitchesForReplay(map[string]bool{slo.SwitchV2Inputs: true}))
+	return a
+}

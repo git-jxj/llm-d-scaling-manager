@@ -75,7 +75,6 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/logging"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/passive"
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/predictedlatency"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/preflight"
 	prometheusutil "github.com/llm-d-incubation/llm-d-scaling-manager/internal/prometheus"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/registry"
@@ -395,13 +394,6 @@ func main() {
 		"The most all recordings in the directory hold together, at least twice the cap (the "+
 			"default, 0). The volume under the directory must hold at least this much: set its "+
 			"emptyDir sizeLimit to no less. Defaults to $LEARNER_RECORDING_DIR_BYTES.")
-
-	// The predicted-latency component (docs/proposals/predicted-latency-in-controller.md):
-	// shadow, off by default.
-	predictedLatency := flag.Bool("predicted-latency", false,
-		"Shadow only: collect the inputs of the capacity planner's latency models every cycle and publish, per "+
-			"model, which are missing (llmsm_predicted_latency_*). Adds a few per-pod queries per namespace; "+
-			"no scaling decision reads them. Off by default.")
 
 	// Leader election timeout configuration flags
 	// These can be overridden in manager.yaml to tune for different environments
@@ -1027,10 +1019,6 @@ func main() {
 		// better reason — these are the namespaces scaling manager has actually been called about.
 		engine.VariantEnricher.Tracker = ds
 		engine.LearnerRecording = learnerRecording
-		if *predictedLatency {
-			engine.PredictedLatency = predictedlatency.New()
-			setupLog.Info("Predicted latency is on (shadow): its inputs are collected and its coverage published")
-		}
 		// Rebuild the limiter live when the saturation ConfigMap's limiters: list
 		// changes — no restart required. The builder re-reads the effective config.
 		engine.SetLimiterBuilder(func() (allocation.Limiter, error) {

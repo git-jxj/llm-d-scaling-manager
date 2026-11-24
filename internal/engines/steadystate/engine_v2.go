@@ -815,7 +815,7 @@ func (e *Engine) pruneAnalyzerSeries(activeKeys map[string]bool) {
 	}
 	// Published before the model reached recordAnalyzerMetrics, so tracked
 	// apart from lastAnalyzerSeries.
-	e.retainPredictedLatency(activeKeys)
+	e.retainModelInputs(activeKeys)
 	e.retainLoadBalance(activeKeys)
 	e.retainSettle(activeKeys)
 	e.retainRouting(activeKeys)
@@ -828,7 +828,7 @@ func (e *Engine) pruneAnalyzerSeries(activeKeys map[string]bool) {
 // Safe to call repeatedly — it empties its own bookkeeping, so subsequent idle
 // cycles are no-ops.
 func (e *Engine) evictAllAnalyzerSeries() {
-	e.retainPredictedLatency(nil)
+	e.retainModelInputs(nil)
 	for modelKey, state := range e.decodePacking {
 		e.metricsEmitter.DeleteDecodePackingForModel(state.namespace, state.modelID)
 		delete(e.decodePacking, modelKey)

@@ -44,13 +44,13 @@ func (c *ReplicaMetricsCollector) CollectRouterLatency(
 	return c.collectRouterLatency(ctx, modelID, namespace, queries, routerQueryType)
 }
 
-// CollectPredictionLatency is the router's latency as the predicted-latency
+// CollectPredictionLatency is the router's latency as the slo analyzer's v2
 // models fit on it (docs/proposals/predicted-latency-in-controller.md): the
 // slo analyzer's three queries, the TTFT _sum and _count, and the TPOT
 // histogram, through the cycle's memo, so a model the slo analyzer or a
 // recording reads too costs nothing more. It is its own reading, never
 // handed to an analyzer: CollectRouterLatency answers them as it did before.
-// A failed query only it sent is counted under predicted_latency. Nil as
+// A failed query only it sent is counted under slo_model_inputs. Nil as
 // CollectRouterLatency is nil.
 func (c *ReplicaMetricsCollector) CollectPredictionLatency(
 	ctx context.Context,
@@ -66,7 +66,7 @@ func (c *ReplicaMetricsCollector) CollectPredictionLatency(
 	}
 	typeOf := func(q string) string {
 		if q == registration.QuerySLORouterTPOTBuckets && !c.RecordsTTFTInputs() {
-			return constants.QueryTypePredictedLatency
+			return constants.QueryTypeSLOModelInputs
 		}
 		return routerQueryType(q)
 	}

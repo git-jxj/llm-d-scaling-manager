@@ -1086,7 +1086,7 @@ func InitMetrics(registry prometheus.Registerer) error {
 	if err := registerDecodePackingMetrics(registry); err != nil {
 		return err
 	}
-	if err := registerPredictedLatencyMetrics(registry); err != nil {
+	if err := registerSLOModelInputMetrics(registry); err != nil {
 		return err
 	}
 

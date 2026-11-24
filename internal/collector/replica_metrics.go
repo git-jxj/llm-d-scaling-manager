@@ -118,7 +118,7 @@ type ReplicaMetricsCollector struct {
 	// cycleRecord.
 	cycleTTFTNamespaces map[string]bool
 	// cyclePredictNamespaces is the namespaces this cycle reads the
-	// predicted-latency component's inputs for (ReadPredictionInputsIn), and
+	// slo analyzer's v2 models' inputs for (ReadPredictionInputsIn), and
 	// cyclePredictRows the rows it read them into, by namespace/model
 	// (PredictionRows). Part of the cycle, like cycleRecord.
 	cyclePredictNamespaces map[string]bool
@@ -347,7 +347,7 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 ) ([]domain.ReplicaMetrics, error) {
 	replicaMetrics, err := c.collectReplicaMetrics(ctx, modelID, namespace, scaleTargets)
 	if err == nil {
-		// The predicted-latency component keeps the rows its queries filled;
+		// The slo analyzer's v2 models keep the rows its queries filled;
 		// everything below, and every analyzer, reads them as a collection
 		// without it would have built them.
 		replicaMetrics = c.splitPredictionRows(namespace, modelID, replicaMetrics)

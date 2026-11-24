@@ -43,7 +43,7 @@ func TestMissingModelInputs_NoneWhenEveryOneIsRead(t *testing.T) {
 }
 
 // What a controller that records nothing collected before
-// predicted-latency (the record-only queries and the router's TPOT
+// slo-v2-inputs (the record-only queries and the router's TPOT
 // histogram off) is reported by name, per objective, in the registry's order.
 func TestMissingModelInputs_TheRecordOnlySignalsByName(t *testing.T) {
 	p := fullPrefill()

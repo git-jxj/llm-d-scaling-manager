@@ -1,55 +1,71 @@
-# Predicted latency in the controller
+# Predicted latency and capacity in the controller
 
-**Status:** proposed; part built (issue #440, refs #169). The collection of
-the models' inputs, the shared per-cycle input builders, and a stub
-component behind `--predicted-latency` (off by default) are built. The
-pricing waits for the models to be frozen (planned for 2026-12-06).
+**Status:** proposed; layer skeleton built (issue #440, refs #169). Built and
+switched off: the models' inputs as collector signals, the shared per-cycle
+input builders in the signals layer, the v2 latency learners registered by
+name in the slo analyzer, and the slo analyzer's coverage series. The fits and
+predictions wait for the models' freeze (planned for 2026-12-06).
 
-**Audience:** contributors to the controller and the capacity planner.
+**Audience:** contributors to the controller, its analyzers and the capacity
+planner.
 
 ## What and why
 
 The capacity planner (`cmd/capacity-planner`) predicts a fleet's TTFT and TPOT
-from a recording. Operators want the same figures live: predicted next to
-measured, per model, and the headroom left before a target is missed. Issue
-#440 asks the controller to publish the planner's predicted TTFT and TPOT
-(mean, p90, p95) at the current load and replicas, computed by the planner's
-own model code, not a copy.
+and its knees from a recording. Operators want the same figures live, next to
+what was measured. Issue #440 asks the controller for them from the planner's
+own model code; #169 sets the rule that a planner fix is carried into the
+controller's learners and analyzers, not copied.
 
-Three rules come from the issue:
+So the planner's models are not added beside the engine. Each quantity is
+**owned by the analyzer that owns it today**, learned by **the learner that
+learns it today** (extended with a mode where the planner's model differs),
+from **ordinary collector signals**, and the planner's replay
+(`learnreplay`) runs the same learners and signal builders, so the two agree
+by construction. Three rules from the issue hold throughout:
 
-1. **One model, two callers.** The controller calls the packages the
-   planner calls. A fix to a model lands in both (the #169 backport problem
-   does not come back).
-2. **Missing is reported, never estimated.** A signal the deployment does not
-   export shows as missing, per model.
-3. **Shadow until validated.** Off by default. No scaling decision reads a
-   prediction until a later switch says so.
+1. **One model, two callers.** Controller and planner call the same packages.
+2. **Missing is reported, never estimated.** Per model, under the owning
+   analyzer's metric family.
+3. **Shadow until validated.** Every addition is behind a switch in the
+   analyzers' existing switch registry (`SetSwitchesForReplay`), off from the
+   constructor, and no sizing reads it until its evidence flips the default.
 
-## The models
+## The engine's layers
 
-| Objective | Default model (planner, no flag) | Experimental model v2 (`--experimental-*=v2`) |
-| --- | --- | --- |
-| TTFT | the queueing model of [what-if capacity: TTFT](slo-capacity-planner-ttft.md): prefill `V_P`, `a`, `f`, decode term, router hop, over the replayed learned state | rank mixture (`whatif.QueueRankMixture`): processor sharing per prefill rank, mixed over the ranks' traffic shares, a fitted KV-deferral wait and a per-prompt-token cost, fitted on a window |
-| TPOT | the ITL line at the fleet's fill, percentile from `R_q` ([what-if capacity](slo-capacity-planner.md#tpot-as-a-percentile-over-requests)) | renewal lognormal (`whatif.TPOTRenewalLognormal`): lognormal around the default model's mean TPOT, its spread from the decode groups plus a renewal term over output lengths, fitted by interval-censored likelihood on the router's TPOT buckets |
+`collector -> signals -> learners -> analyzers -> engine`
+(`docs/developer-guide/signal-dataflow.md`; import order in
+`hack/check-import-direction.sh`: collector 20, signals 30-32, analyzers 40).
+Learners follow the shared rules of [analyzer-learner](analyzer-learner.md):
+observe, admit or refuse, fit, predict with a source and an age, validate,
+keep, refit, hold or forget; each fills a `learn.Report` and is reached by the
+forget annotation through `learn.Learners`.
 
-The v2 models are still moving. Their form is not settled until the freeze;
-their inputs mostly are, and that is what this step builds on.
+## Mapping, per quantity
+
+| Planner quantity | Signals (collector -> signals layer) | Learner | Owning analyzer | Series (existing / new) | Switch | After the freeze |
+| --- | --- | --- | --- | --- | --- | --- |
+| TTFT, default model (mean, objective percentile) | scaling + TTFT-target queries; prefill observation (`signals/prefill`) | existing: `V_P`, `a`, `f` (`signals/prefill`), decode term, router hop | slo | existing `llmsm_slo_predicted_ttft_seconds{statistic}`, `llmsm_slo_ttft_reason`, `_refused`, `_flag`, `_vp_source` | existing TTFT switches | publish `mean`, `p90`, `p95` for every fleet shape the model prices (today: the objective's percentile, prefill variants of P/D) |
+| TTFT, v2 rank mixture | five per-pod queries + router TTFT mean (below); `whatif.MixtureCycleOf` | **v2 mode of the TTFT learner**: `learn.TTFTMixture` (registered by name, learns nothing yet) | slo | existing `llmsm_slo_predicted_ttft_seconds` under a model choice; new `llmsm_slo_model_coverage`, `llmsm_slo_model_input_missing` | `slo-v2-inputs` (built, off) | fit (admit steady steps, robust fit, held-out validate, hold/forget), price, persist the fit in the learned-state snapshot; a second switch for the model choice |
+| TPOT, default model (mean, `R_q` percentile) | scaling queries | existing: the slo analyzer's ITL line (`learn.SLO`), the TPOT percentile ratio | slo | existing `llmsm_slo_predicted_itl_seconds`, `llmsm_slo_fill`; new `llmsm_slo_predicted_tpot_seconds{statistic}` (registered, unset) | existing | publish mean, p90, p95 |
+| TPOT, v2 renewal lognormal | output-length histogram, ITL, running, accepted drafts, router TPOT histogram; `whatif.DecodeCycleOf` | **v2 mode of the TPOT ratio**: `learn.TPOTDistribution` (registered by name) | slo | as above, same coverage series | `slo-v2-inputs` | fit `C` on the router's buckets, price p90/p95 around the default mean, persist `C` |
+| Decode knee (KV, batch, fill; ITL line) | scaling queries | existing: k2, ITL line, mu (`learn.K2`, `ITL`, `Mu`) | saturation | existing `llmsm_learned_state_k2_*`, `llmsm_itl_line_*`, `llmsm_itl_seconds_at_pricing_k`, `llmsm_pricing_k`, `llmsm_service_rate_per_replica`, `llmsm_kv_cache_tokens_capacity` | existing | where the planner's knee differs (#169 items 1, 3), a mode of the existing learner, behind a saturation switch |
+| Prefill knee (`V_P` and its sources) | prefill observation | existing: `V_P` (`signals/prefill`) | slo (TTFT) and saturation (prefill floor) | existing `llmsm_slo_ttft_vp_source`, `llmsm_slo_ttft_replica_requests_per_second` | existing | `f` per pod count (#169 item 5) as a mode of the existing learner |
+| Fleet knee and operating point | the above | the above | saturation (floor), throughput (service rate) | existing `llmsm_required_capacity`, `llmsm_spare_capacity`, `llmsm_saturation_utilization`, `llmsm_analyzer_demand` | existing | the planner's fleet knee read from the same learners; any new figure is a label of an existing family |
+
+Nothing new is planned for knees and capacity: the planner's figures there
+come from the learners the saturation, throughput and slo analyzers already
+run (the planner replays them), so the work after the freeze is the #169
+modes, each in its owning learner.
 
 ## Signals
 
-What each model reads, whether the controller collected it before this
-change, and how. "Scaling" is a query issued every cycle for every
-namespace; "TTFT target" one issued in a namespace whose policy prices TTFT
-(`collector.ReadTTFTInputsIn`); "record-only" one issued only while a learner
-recording is on (`collector.BeginRecordingCycle`). Windows are the PromQL
-range of the query (`internal/collector/registration`). Every per-pod
-figure is per pod, ranks merged (`collector/pod_collapse.go`), and per
-engine for a LeaderWorkerSet group (`domain.EngineReading`).
+What the v2 latency models read, whether the controller collected it before
+this change, and over which window. "Scaling" is a query issued every cycle;
+"TTFT target" one issued in a namespace whose policy prices TTFT; "record-only"
+one issued only while a learner recording is on.
 
-### TTFT v2 (rank mixture)
-
-Built per cycle by `whatif.MixtureCycleOf`; fitted per step on the router.
+### TTFT v2 (rank mixture), built per cycle by `whatif.MixtureCycleOf`
 
 | Signal (`signal` label) | Field | Role | Collected before | Window |
 | --- | --- | --- | --- | --- |
@@ -60,18 +76,14 @@ Built per cycle by `whatif.MixtureCycleOf`; fitted per step on the router.
 | `queue-time-mean` | `AvgQueueTime` | prefill | **record-only** | 1m |
 | `computed-token-rate` | `PrefillComputedTokenRate` | prefill | scaling | 1m |
 | `computed-tokens-histogram` | `ComputedTokensBuckets` (vLLM only) | prefill | TTFT target | 1m |
-| `prompt-tokens-histogram` | `PromptTokensBuckets` (SGLang behind `--collect-tokens-histogram`) | prefill | **record-only** | 5m |
+| `prompt-tokens-histogram` | `PromptTokensBuckets` | prefill | **record-only** | 5m |
 | `queue-time-histogram` | `QueueTimeBuckets` | prefill | **record-only** | 1m |
 | `decode-ttft-mean` | `AvgTTFT` | decode | scaling | 1m |
-| `router-ttft-histogram` | `RouterLatency.TTFTBuckets` | router | slo analyzer listed | 5m |
+| `router-ttft-histogram` | `RouterLatency.TTFTBuckets` | router | slo analyzer | 5m |
 | `router-ttft-mean` | `RouterLatency.TTFTSumRate`/`TTFTCountRate` | router | TTFT target | 5m |
 | (engine flags) | prefill `--max-num-seqs`, chunked prefill | variant | discovered (`llmsm_engine_config`) | start |
-| (series) | router arrival rate, engine completion rate | model | scaling (`CollectModelArrivalRate`) | 1m |
 
-### TPOT v2 (renewal lognormal)
-
-Built per cycle by `whatif.DecodeCycleOf`; on a fleet with no decode role
-the serving rows that are not prefill stand in.
+### TPOT v2 (renewal lognormal), built per cycle by `whatif.DecodeCycleOf`
 
 | Signal | Field | Role | Collected before | Window |
 | --- | --- | --- | --- | --- |
@@ -80,235 +92,148 @@ the serving rows that are not prefill stand in.
 | `itl-mean` | `AvgITL` | decode | scaling | 1m |
 | `output-tokens-histogram` | `OutputTokensBuckets` | decode | scaling | 5m |
 | `running-requests` | `RunningRequests` | decode | scaling | instant |
-| `spec-accepted-per-step` (optional, never missing) | `SpecAcceptedPerStep` | decode | scaling | 1m |
+| `spec-accepted-per-step` (optional) | `SpecAcceptedPerStep` | decode | scaling | 1m |
 | `router-tpot-histogram` | `RouterLatency.TPOTBuckets` | router | **record-only** | 5m |
-| `router-tpot-mean` | `RouterLatency.TPOTSumRate`/`TPOTCountRate` | router | slo analyzer listed | 5m |
-| (engine flags) | decode `--max-num-seqs`, `num_speculative_tokens` | variant | discovered | start |
-| (mean TPOT) | the default TPOT model's mean | learned state | see below | - |
+| `router-tpot-mean` | `RouterLatency.TPOTSumRate`/`TPOTCountRate` | router | slo analyzer | 5m |
+| (mean TPOT) | the default TPOT model's mean | learner | the slo analyzer's ITL line | - |
 
-### Default models
+The default models need no new collection: their inputs are scaling or
+TTFT-target queries, and their learned state is the analyzers' own.
 
-The default models price from learned state, not from one cycle: the ITL
-line (`internal/signals/itl`), prefill `V_P`, `a`, `f`
-(`internal/signals/prefill`), `k2`, the decode intercept `B`, and the
-traffic's lengths and prefix hit rate. The planner gets that state by
-replaying a recording through the analyzers' own learners
-(`learnreplay.StateAt`); the controller's slo and saturation analyzers hold
-the same state live, and the learned-state snapshot
-([learned-state snapshot](learned-state-snapshot.md)) persists it. Every
-input is a scaling query or a TTFT-target one, so the default models need no
-new collection. What they need is the state exposed from the analyzers in
-the shape `learnreplay.State` has (see "Package boundary").
+### Collection, and the proof that no decision moves
 
-### What was missing, and what this change adds
+With `slo-v2-inputs` on, the engine names every namespace with a model
+(`collector.ReadPredictionInputsIn`), and the collector issues the five
+per-pod queries of `predictionReadReplicaQueries` as ordinary replica
+queries: same registration, same per-cycle memo (once per namespace), same
+failure counting (`query_type="slo_model_inputs"`, which
+`LLMSMMetricsCollectionFailing` leaves out). Each is an existing record-only
+or TTFT-target query; the switch adds a third condition under which it is
+issued. The router's TTFT mean and TPOT histogram come from the same router
+queries through `CollectPredictionLatency`.
 
-Missing in a controller that records nothing: `prefill-time-mean`,
-`queue-time-mean`, `prompt-tokens-histogram`, `queue-time-histogram` (all
-record-only), `computed-tokens-histogram` (TTFT target only),
-`router-tpot-histogram` (record-only) and `router-ttft-mean` (TTFT target
-only). `--predicted-latency` adds them:
+The values these queries fill are read today by other analyzers when present
+(`AvgQueueTime` and `AvgPrefillTime` by the saturation analyzer's busy-share
+guard and the prefill signals), so the collector keeps the rows carrying
+them for the slo analyzer's v2 models (`PredictionRows`) and hands the
+analyzers the rows a collection without the switch builds: each field only
+a prediction query filled is cleared (`clearPredictionOnly`).
+`TestPredictionRows_AnalyzersReadTheRowsOfACollectionWithoutIt` compares the
+two through the real Prometheus parse path, with and without a TTFT target and
+with a recording; with the clearing disabled it fails. A recording is
+unaffected: it issues every query already, and nothing is cleared.
 
-- per pod, the five queries of `collector.predictionReadReplicaQueries`,
-  issued through the cycle's memo once per namespace (so a second model in
-  the namespace costs nothing), for every namespace with a model;
-- for the router, `collector.CollectPredictionLatency`: the slo analyzer's
-  three queries plus the TTFT `_sum`/`_count` and the TPOT histogram, again
-  through the memo.
+### Missing signals
 
-Cost: at most five per-pod range queries per namespace and one router query
-per namespace a cycle, fewer where a TTFT target or a recording issues them
-already. The engine TTFT and TPOT histograms (`TTFTBuckets`, `TPOTBuckets`
-per pod) are not added: no v2 fit reads them (both fit on the router).
+`whatif.ModelInputs` lists every input with its objective and role;
+`whatif.MissingModelInputs` reports, per objective, the ones no serving row of
+the role (or the router) read this cycle. It lives beside the models, so the
+planner can report the same names for a recording. The slo analyzer publishes
+`llmsm_slo_model_input_missing{objective,signal}` and the one-hot
+`llmsm_slo_model_coverage{objective,reason}` (`priced`, `abstained`,
+`signal-missing`, `window-short`, `not-built`). A failed query reads the same
+as a series not exported: missing, never zero.
 
-**No scaling decision moves.** The collector keeps the rows with these
-fields for the component (`collector.PredictionRows`) and hands the
-analyzers the rows a collection without the switch would have built: each
-field only a prediction query filled is cleared again
-(`collector.clearPredictionOnly`). `TestPredictionRows_AnalyzersReadTheRowsOfACollectionWithoutIt`
-compares the two through the real Prometheus parse path, with and without a
-TTFT target; with the clearing disabled it fails. This matters because
-`AvgQueueTime` and `AvgPrefillTime` are read by the saturation analyzer's
-busy-share guard and the prefill signals when present. The router reading
-is a separate struct the analyzers never see.
+## Packages and import direction
 
-### How missing signals are reported
+| Code | Layer | Status |
+| --- | --- | --- |
+| model math (rank mixture, TPOT distribution, queues, inversions) | `internal/signals/whatif` (32) | shared already |
+| per-cycle builders `MixtureCycleOf`, `DecodeCycleOf` | `internal/signals/whatif` | **moved** verbatim from `learnreplay`; the planner's series call them |
+| input registry `ModelInputs`, `MissingModelInputs` | `internal/signals/whatif` | **new**, beside the builders |
+| learner names `learn.TTFTMixture`, `learn.TPOTDistribution` | `internal/signals/learn` | **new**, on neither `Learners` nor `Reporters` until each learns and forgets |
+| v2 learner registration, `ObserveModelInputs`, `SwitchV2Inputs` | `internal/engines/analyzers/slo` (40) | **new**, switched off |
+| fits (`fitRankMixture`, `fitTPOTDist`, `fitMainMixture`, `fitMainTPOT`) | `internal/whatifapi` | after the freeze: move the fit cores into `signals/whatif` as learner fits the slo analyzer and `whatifapi` both call |
+| default models' fleet (`servedState`, `servedFleet`, `ttft.go`) | `cmd/capacity-planner` (package `main`) | after the freeze: read from the analyzers' learners through read-only views ([what-if capacity, Packaging](slo-capacity-planner.md#packaging)); nothing is copied |
 
-`whatif.ModelInputs` lists every signal with its objective and role, and
-`whatif.MissingModelInputs` reports, per objective, the ones no serving row
-of the role (or the router) read this cycle. It sits beside the models, so
-the planner can report the same names for a recording. The controller
-publishes them as `llmsm_predicted_latency_missing_signal{objective,signal}`
-and the objective's `llmsm_predicted_latency_coverage{reason="signal-missing"}`.
-A query that failed reads the same as a series not exported (unknown, never
-zero); the failure itself is counted under
-`llmsm_metrics_collection_errors_total{query_type="predicted_latency"}`,
-which `LLMSMMetricsCollectionFailing` leaves out.
-
-## Package boundary
-
-`hack/check-import-direction.sh` orders the pipeline: engine (70) > policy
-(60) > plan (50) > analyzers (40) > `signals/whatif` (32) > `signals/floor`
-(31) > measuring signals (30) > collect (20) > decision (10) > domain (0).
-`internal/whatifapi`, `internal/whatifsource`, `cmd/*` and the new
-`internal/predictedlatency` are outside the layers.
-
-| Code | Where today | Where it goes | Status |
-| --- | --- | --- | --- |
-| model math: rank mixture, TPOT distribution, queues, inversions | `internal/signals/whatif` | stays | shared already |
-| per-cycle input builders (`MixtureCycleOf`, `DecodeCycleOf`) | were `learnreplay` (unexported) | `internal/signals/whatif/cycle_inputs.go` | **moved in this change**, `learnreplay` calls them |
-| input registry, missing-signal report | - | `internal/signals/whatif/model_inputs.go` | **new** |
-| fits and pricing entry points (`fitMainMixture`, `fitMainTPOT`, `ApplyTTFTModel`, `ApplyTPOTModel`, `fitRankMixture`, `fitTPOTDist`) | `internal/whatifapi` | stay; a series-level entry point is added (below) | after freeze |
-| `whatifapi.Resolved` / `inputsEntry` assembly | `internal/whatifapi`, from a recording | an `Inputs` built from the controller's ring of cycles | after freeze |
-| engine flags (`prefillSlotsOf`, `decodeEngineOf`) | `cmd/capacity-planner` (read `servedState`) | `whatifapi.EngineSlotsOf(prefill, decode *capacity.EngineParams)` | small; after freeze, with the first caller |
-| default models' fleet (`servedState`, `servedFleet`, `ttft.go`) | `cmd/capacity-planner`, package `main` (`serve_price.go`, `ttft.go`, `engine.go` and their helpers) | `internal/whatifapi/served` (new), reading a state interface both `learnreplay.State` and the live analyzers satisfy | after freeze; the largest move |
-| live learned state in `learnreplay.State` shape | analyzers (in memory) | read-only views on the slo and saturation analyzers (the accessors listed in [what-if capacity, Packaging](slo-capacity-planner.md#packaging)) | after freeze |
-
-Why not move the planner's entry points now: `whatifapi`'s fits take an
-`inputsEntry` built from a recording, and the v2 fits change shape weekly
-until the freeze. Moving them now would be two moves. The pieces moved here
-are the ones whose form is fixed by the collector, not by the models, and
-they move byte for byte (the planner goldens and the learnreplay goldens are
-unchanged, below).
-
-Import directions after the full move: `predictedlatency` imports
-`whatifapi`, `signals/whatif`, `domain` and `metrics`; the engine (70)
-imports `predictedlatency`; nothing in the layers imports
-`predictedlatency`. `whatifapi` must not import `learnreplay` (it does not
-today) so the controller does not link the replay engine.
+`whatifapi` imports no analyzer and must stay so; after the move the slo
+analyzer (40) imports `signals/whatif` (32), never `whatifapi`.
 
 ## Per-cycle flow
 
-Built (stub):
+Built (switched off):
 
-1. `beginCollectorCycle` names every namespace with a model
-   (`ReadPredictionInputsIn`) when the switch is on.
-2. Each model's collection keeps its full rows; the analyzers get the
-   cleared ones.
-3. After `prepareModelData`, `observePredictedLatency` reads the kept rows,
-   cut to the pods the analyzers read (routing drops unselected pods), the
-   variant states, and `CollectPredictionLatency`, and calls
-   `Predictor.Observe`.
-4. `Observe` reports missing signals per objective and publishes coverage.
-   With every input present the reason is `not-built`.
-5. A model no longer reconciled has its series deleted
-   (`pruneAnalyzerSeries`, `evictAllAnalyzerSeries`).
+1. `beginCollectorCycle` asks the slo analyzer whether it reads the v2
+   inputs (`ReadsModelInputs`) and, if so, names every namespace with a model.
+2. Each model's collection keeps its full rows; the analyzers get the cleared
+   ones.
+3. After `prepareModelData`, the engine hands the slo analyzer the kept rows
+   (cut to the pods the analyzers read), the variant states and the router
+   reading (`ObserveModelInputs`, an optional interface as
+   `TakeLearnerReports` is).
+4. The analyzer reports missing inputs per objective and publishes coverage;
+   with every input present the reason is `not-built`.
+5. A model no longer reconciled has its series deleted (the engine's prune,
+   and `metrics.DeleteSLOModel`).
 
-After the freeze:
+After the freeze, inside the two learners:
 
-- **Ring of cycles.** Per model, the last `W` cycles as `MixtureCycle`,
-  `DecodeCycle`, the series sample and the router reading: the fit window.
-  `W` is the planner's fit window for the v2 models, in steps of
-  `whatifapi.DefaultBacktestStep` (5 minutes); a cycle every 15 s is 20
-  cycles a step. Memory: a `MixtureCycle` is a few hundred bytes plus one
-  rank per prefill engine; 24 h at 15 s is 5,760 cycles, under 10 MB for a
-  large P/D model. Until the ring holds the minimum steps the planner's fit
-  needs, the reason is `window-short`.
-- **Refit cadence.** Refit once per step boundary (every 5 minutes), not
-  every cycle. Between refits, price every cycle at the cycle's load with
-  the last fit: pricing is a closed form or a short search, a fit is an
-  optimisation.
-- **Cost budget.** Budget a refit at 200 ms CPU per model and the pricing
-  at 5 ms per model per cycle; measure on the planner's largest golden
-  before turning anything on. A refit over budget is abandoned and the
-  reason reads `abstained` with the planner's own words, rather than stall
-  the optimize loop. Fits run on the optimize goroutine after the
-  decision, not before it.
-- **Variants.** The planner prices one prefill and one decode variant. A
-  model with several gets one prediction per pair, labelled by variant,
-  where the pairing is unambiguous; otherwise `abstained`.
-- **Learned state.** The fitted parameters (`C` of the TPOT distribution,
-  the rank mixture's wait and per-token cost) join the learned-state
-  snapshot under their own keys, so a restart prices at once and refits at
-  the next step. The ring itself is not persisted: after a restart the
-  window refills, and the reason says `window-short` until then, unless a
-  persisted fit is younger than one window.
+- **Observe and admit.** Each cycle's `MixtureCycle` / `DecodeCycle` is a
+  reading; a step (5 minutes, `whatifapi.DefaultBacktestStep`) is admitted
+  when stationary (the planner's backlog test) and settled
+  ([settled replicas](analyzer-learner.md#4-settled-replicas)).
+- **Fit.** Refit once per step boundary on the window of admitted steps,
+  untrimmed after exclusion by state ([analyzer-learner, 5](analyzer-learner.md#5-fits-exclude-by-state-then-fit-untrimmed));
+  price every cycle with the last fit. Budget: 200 ms CPU per refit per
+  model, 5 ms per pricing; a refit over budget is abandoned and the reason
+  reads `abstained`.
+- **Validate.** The planner's held-out folds (the TPOT model's
+  bucket-inside score, the TTFT model's within-20% share) run on the window;
+  a fit that fails them is held, not used.
+- **Keep, hold, forget.** Keys by prefill/decode pair; forgotten on the
+  annotation and the variant timeout like every learner; each joins
+  `learn.Learners` and `Reporters` then.
+- **Persist.** The fitted parameters join the learned-state snapshot under
+  their learner names, so a restart prices at once; until a window refills,
+  `window-short`.
 
-## Metrics
+## Parity with the planner
 
-Built: registration, lifecycle and the coverage series.
+By construction: the planner's replay (`learnreplay`) builds its cycles with
+the same `whatif` builders, and after the freeze runs the same learners
+through the slo analyzer it already replays. The test:
 
-| Metric | Labels | Value |
-| --- | --- | --- |
-| `llmsm_predicted_ttft_seconds` | `namespace`, `model_name`, `statistic` (`mean`, `p90`, `p95`) | predicted TTFT; present only while coverage is `priced` |
-| `llmsm_predicted_tpot_seconds` | same | predicted TPOT; same |
-| `llmsm_predicted_latency_coverage` | `namespace`, `model_name`, `objective`, `reason` | one-hot: `priced`, `abstained`, `signal-missing`, `window-short`, `not-built` |
-| `llmsm_predicted_latency_missing_signal` | `namespace`, `model_name`, `objective`, `signal` | 1 per missing signal; absent when read |
-
-All carry `controller_instance` when set. Lifecycle: absent while the
-switch is off; set every cycle a model is collected; a signal read again has
-its series deleted the same cycle; a model's series go when it stops being
-reconciled, every series when a cycle reconciles none. A figure is deleted
-the cycle its reason leaves `priced`, so a stale prediction never stands.
-The reference: [Predicted latency metrics](../reference/prometheus.md#predicted-latency-metrics).
-
-After the freeze, per figure: `llmsm_predicted_latency_extrapolated` (1 when
-the load is past the highest the fit window served, as the planner marks
-`Figure.Extrapolated`) and the held-out score of the current fit.
-
-## Parity test
-
-The controller and the planner must give the same figures on the same
-recording. The test, after the freeze:
-
-1. Take a recording the planner goldens use (`cmd/capacity-planner/testdata`).
-2. Feed its Analyze events, in order, to the component as the engine would:
-   each event's `AnalyzerInput` and router latency into `Observe`, with the
-   cycle clock at the event's time.
-3. At cycle `N`, read the component's TTFT and TPOT figures.
-4. Run `capacity-planner at-replicas --recording R --cycle N
-   --experimental-ttft=v2 --experimental-tpot=v2` (the same code path, via
-   `whatifapi`) and compare: equal to the last bit, not within a tolerance,
-   because both call one function on one input.
-5. Negative control: change one model input on the controller side only
-   (drop the router's TPOT histogram); the test must fail.
-
-The pieces that make this possible exist now: the controller builds its
-cycles with the builders the planner's series use
-(`TestMixtureCycleOf_*`, `TestDecodeCycleOf_*` cover both callers), and a
-recording's `AnalyzerInput` is what the collector hands the analyzers. A
-recording's rows always carry every prediction input (a recording issues
-every record-only query, and nothing is cleared while it is on), so the
-test feeds the component the same rows the planner reads.
+1. Replay a golden recording through `learnreplay` with the v2 switches on.
+2. At cycle `N`, read the slo analyzer's v2 figures.
+3. Run `capacity-planner at-replicas --recording R --cycle N
+   --experimental-ttft=v2 --experimental-tpot=v2`; compare equal to the last
+   bit.
+4. Negative control: drop one input on the controller side only (the router's
+   TPOT histogram); the test fails.
 
 ## Turn-on rule
 
-Default off. The metrics turn on (the switch is documented for operators)
-when, on held-out recordings the planner's backtest scores
-(`capacity-planner backtest`, `whatifapi.Backtest` with the v2 models):
+Each switch stays off until, on held-out recordings scored by
+`capacity-planner backtest`, the model passes the planner's own validation
+bar ([calibration envelope](slo-capacity-planner.md#calibration-envelope-as-built)),
+the parity test passes on every golden, and the cost budget holds on the
+largest. Turning `slo-v2-inputs` on publishes coverage only; exporting v2
+predictions is the model-choice switch; sizing with them is a third, later
+decision with its own replay and GPU validation, as #169 requires.
 
-- each objective's held-out score passes the planner's own validation bar
-  for the model ([calibration envelope](slo-capacity-planner.md#calibration-envelope-as-built)):
-  the TPOT model's p90 and p95 in the measured router bucket on the share
-  of held-out steps the planner requires, the TTFT model within
-  `whatifapi.BacktestTolerance` (20%) on the planner's share of steps;
-- the parity test passes on every golden recording;
-- the cost budget above holds on the largest golden.
+## What waits for the Dec 6 freeze
 
-No scaling decision reads a prediction in this issue. Using one in a
-decision is a separate switch, with its own replay and GPU validation as
-#169 requires.
-
-## What waits for the freeze
-
-- The fits and pricing in the controller, and the ring of cycles.
-- The series-level entry point in `whatifapi` (fit and price from cycles,
-  not from an `inputsEntry`), and the `EngineSlotsOf` helper.
-- The move of the default models' fleet out of `cmd/capacity-planner`, and
-  the analyzers' read-only state views.
-- The final input list: a signal a v2 model starts or stops reading changes
-  `whatif.ModelInputs` and, if it is a new per-pod series,
-  `collector.predictionReadReplicaQueries`, in the same change as the model.
+- The two learners' fits, validation, hold/forget and snapshot keys, and
+  their joining `learn.Learners`.
+- The model-choice switch and the predicted figures (`mean`, `p90`, `p95`)
+  on `llmsm_slo_predicted_ttft_seconds` and `llmsm_slo_predicted_tpot_seconds`.
+- Moving the fit cores from `whatifapi` into `signals/whatif`.
+- The #169 modes of the k2, ITL, mu and `V_P` learners for the knees.
+- The final input list: a signal a frozen model adds or drops changes
+  `whatif.ModelInputs` and, for a new per-pod series,
+  `predictionReadReplicaQueries`, in the same change.
 - The parity test and the held-out turn-on run.
-- Persisting fitted parameters in the learned-state snapshot.
 
-## Code map (built)
+## Entities added
 
-- `internal/signals/whatif/cycle_inputs.go`: `MixtureCycleOf`, `DecodeCycleOf`.
-- `internal/signals/whatif/model_inputs.go`: `ModelInputs`, `MissingModelInputs`.
-- `internal/collector/prediction_inputs.go`: the queries, the clearing,
-  `ReadPredictionInputsIn`, `PredictionRows`.
-- `internal/collector/router_latency.go`: `CollectPredictionLatency`.
-- `internal/predictedlatency`: the stub component.
-- `internal/metrics/predicted_latency_metrics.go`, `internal/constants/predicted_latency_metrics.go`.
-- `internal/engines/steadystate/predicted_latency.go`: the wiring.
-- `cmd/main.go`: `--predicted-latency`.
+| Name | Kind | Why an existing one could not carry it |
+| --- | --- | --- |
+| `slo.SwitchV2Inputs` (`slo-v2-inputs`) | switch, in the existing slo switch registry | the collection must be off by default and flippable on evidence; no existing switch gates these inputs. A controller flag was tried first and dropped in favour of the registry |
+| `whatif.MixtureCycleOf`, `whatif.DecodeCycleOf` | functions (moved, not new) | existed unexported in `learnreplay`, which the controller cannot import below the analyzers; moved verbatim to the signals layer |
+| `whatif.ModelInputs`, `MissingModelInputs` | signal registry | presence bits say whether one field was read; nothing lists which fields a model needs, and the planner needs the same list |
+| `learn.TTFTMixture`, `learn.TPOTDistribution` | learner names | the v2 fits differ from the TTFT (`V_P`) and TPOT-ratio learners in what they fit; they are modes of those, but each needs its own report and forget key |
+| `predictionReadReplicaQueries`, `PredictionRows`, `CollectPredictionLatency`, `ReadPredictionInputsIn` | collector query class and accessors | the existing classes (scaling, TTFT target, record-only) are each issued under one condition; the v2 inputs are a union of two of them under a third. The kept rows exist because clearing is the only way to issue them without moving a decision |
+| `query_type="slo_model_inputs"` | label value of an existing counter | a failure must not raise the collection alert, as `ttft_inputs` and `learner_recording` do not |
+| `llmsm_slo_model_coverage`, `llmsm_slo_model_input_missing` | series in the slo family | `llmsm_slo_ttft_reason` is per prefill variant and the default model's; coverage is per model and objective, and covers TPOT |
+| `llmsm_slo_predicted_tpot_seconds` | series in the slo family | asked for by #440 beside `llmsm_slo_predicted_ttft_seconds`; `llmsm_slo_predicted_itl_seconds` is ITL at the priced fill, not a TPOT statistic |
+| `modelInputsObserver` | optional interface in the engine | the engine holds the slo analyzer as `sloStateKeeper`, whose test doubles would all have to grow the methods; an optional interface is how `TakeLearnerReports` is taken |
