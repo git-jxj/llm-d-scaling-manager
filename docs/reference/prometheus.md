@@ -1040,15 +1040,22 @@ max by (exported_namespace, variant_name) (llmsm_desired_replicas)
 
 For each variant the scaling manager decided this cycle, these series show
 how many replicas the analyzers asked for (X, **suggested**), how many the
-variant gets (Y, **provided**), and why the two differ. Quotas and a short GPU
-inventory can make Y smaller than X. The utilization share can make it smaller
-(it lent the variant's GPUs to another model) or larger (it gave the variant
-another model's GPUs).
+variant gets (Y, **provided**), and why the two differ. Quotas, a short GPU
+inventory and the nodes can make Y smaller than X. The utilization share can
+make it smaller (it lent the variant's GPUs to another model) or larger (it
+gave the variant another model's GPUs).
 
-Y is `llmsm_desired_replicas`: the target KEDA reads. For a passive model it is
-the count the scaling manager would set. In utilization-share shadow mode the
-share sets nothing, so Y is what the ordinary optimizer sets, and no series
-names the share.
+The `mode` label says whether Y is applied:
+
+| `mode` | what Y is |
+| --- | --- |
+| `active` | the target the scaling manager sets: the value of `llmsm_desired_replicas`, which KEDA reads |
+| `shadow` | the utilization share plans the variant but sets nothing (the utilization share is in shadow mode, or the group holds a passive model). Y is the target the share would set: where its moves would end. The active share gets there over several cycles, one move at a time. `llmsm_desired_replicas` stays the ordinary optimizer's target |
+| `passive` | the model is passive, so nothing is applied. Y is what the scaling manager would provide if the model were active: its would-be target, fitted to the nodes, and moved as the share would move it. `llmsm_desired_replicas` is the would-be target without node fit |
+
+So shadow and passive figures read the same way as active ones, and you can
+try the share or a model in shadow or passive mode first and see what it would
+do. Filter on `mode="active"` for what is applied now.
 
 The numbers always add up: X − Y equals the sum of `llmsm_replicas_short` minus
 `llmsm_replicas_borrowed`. These series only report. They change no decision.
@@ -1056,16 +1063,16 @@ The numbers always add up: X − Y equals the sum of `llmsm_replicas_short` minu
 Every series below also carries `controller_instance` when `CONTROLLER_INSTANCE`
 is set, and the workload's namespace is scraped as `exported_namespace`. A
 variant with no decision this cycle (its metrics could not be collected) has
-none of them. A variant, reason or quota pool that goes away loses its series
-in the next cycle.
+none of them. A variant, reason or quota pool that goes away, or a variant
+whose `mode` changes, loses its old series in the next cycle.
 
 | metric | type | labels | meaning |
 | --- | --- | --- | --- |
-| `llmsm_replicas_suggested` | gauge | `namespace`, `model_name`, `variant_name`, `role` | X: the replicas the analyzers ask for before any limiter, the variant's `maxReplicaCount` and the utilization share. Equal to `llmsm_replicas_provided` unless one of those changed the target. |
-| `llmsm_replicas_provided` | gauge | same | Y: the replicas the scaling manager sets, after the limiters and the utilization share. The same value as `llmsm_desired_replicas`. |
+| `llmsm_replicas_suggested` | gauge | `namespace`, `model_name`, `variant_name`, `role`, `mode` | X: the replicas the analyzers ask for before any limiter, the variant's `maxReplicaCount` and the utilization share. Equal to `llmsm_replicas_provided` unless one of those changed the target. |
+| `llmsm_replicas_provided` | gauge | same | Y: the replicas the variant gets, after the limiters and the utilization share. With `mode="active"`, the same value as `llmsm_desired_replicas`. |
 | `llmsm_replicas_short` | gauge | same, plus `reason`, `limiter_name` | How many of the suggested replicas one reason took away. Present only while positive. |
 | `llmsm_replicas_borrowed` | gauge | same as `llmsm_replicas_suggested` | Y − X when the utilization share gave the variant more than the analyzers asked for; `0` otherwise. This is not Kueue cohort borrowing. |
-| `llmsm_quota_remaining_after_suggested_gpus` | gauge | `limiter_name`, `scope`, `accelerator` | GPUs a quota pool would have left if every variant it covers got its suggestion: the pool's limit, minus what is held now, minus the GPUs the suggestions add (or plus the GPUs they free). Negative means the suggestions do not fit in the quota. `scope` is the namespace for a namespace-scoped quota, `cluster` otherwise. An unlimited pool has no series. |
+| `llmsm_quota_remaining_after_suggested_gpus` | gauge | `limiter_name`, `scope`, `accelerator` | GPUs a quota pool would have left if every variant it covers got its suggestion: the pool's limit, minus what is held now, minus the GPUs the suggestions add (or plus the GPUs they free). Negative means the suggestions do not fit in the quota. For a Kueue quota the limit is the guaranteed (nominal) figure, so a negative value can still be covered by borrowing from the cohort. `scope` is the namespace for a namespace-scoped quota, `cluster` otherwise. An unlimited pool has no series. |
 
 `role` is `prefill` or `decode` for a P/D model, `both` otherwise.
 
@@ -1076,23 +1083,31 @@ The `reason` values of `llmsm_replicas_short`:
 | `quota` | a quota entry ran out, or a Kueue borrowing rule held the replica back | the quota entry's `name`, or `pd-pair-borrows-whole` / `lender-cannot-reclaim` for the borrowing rules |
 | `gpu` | the physical GPU inventory ran out | empty |
 | `node-fit` | the pools had the GPUs, but no node had room for a whole replica | empty |
-| `max-replicas` | the variant's own `maxReplicaCount`, when no other variant of the same role took the replicas instead | empty |
+| `max-replicas` | the variant's own `maxReplicaCount` | empty |
 | `share-lent` | the utilization share lowered the variant to give its GPUs to another model | empty |
 
-A passive model's would-be target is computed without node fit, so a passive
-model is never short for `node-fit`.
+A shortfall is counted per role: when a limit or `maxReplicaCount` holds one
+variant back and another variant of the same role gets the replicas instead,
+nothing is short.
 
-Models short of what they need, and by how much:
+Models short of what they need now, and by how much:
 
 ```promql
-sum by (exported_namespace, model_name) (llmsm_replicas_short) > 0
+sum by (exported_namespace, model_name) (llmsm_replicas_short{mode="active"}) > 0
 ```
 
 The same, split by cause, which tells you what to change (a bigger quota, more
 GPUs, a higher `maxReplicaCount`):
 
 ```promql
-sum by (exported_namespace, model_name, reason, limiter_name) (llmsm_replicas_short)
+sum by (exported_namespace, model_name, reason, limiter_name) (llmsm_replicas_short{mode="active"})
+```
+
+What the utilization share would move if you turned shadow mode off:
+
+```promql
+sum by (exported_namespace, model_name) (llmsm_replicas_short{mode="shadow", reason="share-lent"})
+sum by (exported_namespace, model_name) (llmsm_replicas_borrowed{mode="shadow"})
 ```
 
 Quota pools that cannot hold every model's suggestion:
@@ -1869,7 +1884,7 @@ when a figure changes.
 
 ### `llmsm_desired_replicas`
 - **Type**: Gauge
-- **Description**: Desired number of replicas for each variant: the target KEDA reads. It is Y, the replicas **provided** after the limiters and the utilization share, not X, what the analyzers asked for. See [Suggested and provided replicas](#suggested-and-provided-replicas) for X and the reasons the two differ.
+- **Description**: Desired number of replicas for each variant: the target KEDA reads. It is Y, the replicas **provided** after the limiters and the utilization share (`llmsm_replicas_provided{mode="active"}`), not X, what the analyzers asked for. See [Suggested and provided replicas](#suggested-and-provided-replicas) for X and the reasons the two differ.
 - **Labels**:
   - `variant_name`: Name of the variant
   - `namespace`: Kubernetes namespace
