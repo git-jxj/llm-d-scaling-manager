@@ -73,8 +73,8 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTV2Usage)
 	fs.BoolVar(&f.rankMixtureStratified, "rank-mixture-stratified", false, "with --experimental-ttft=v2, read each prefill rank's "+
-		"mean service and its spread from a fixed grid of the computed-token histogram, not from the rank's own random draws, "+
-		"so a figure does not move with the draws; off by default")
+		"mean service and its spread from the computed-token histogram itself, not from the rank's own random draws, "+
+		"so a figure moves far less with the draws; off by default")
 }
 
 // parsed records the flags given, once fs is parsed, and lets the default

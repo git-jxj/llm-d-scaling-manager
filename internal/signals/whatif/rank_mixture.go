@@ -179,8 +179,8 @@ type RankMixture struct {
 	// chunked prefill, 1 without); 0 is not known, and each rank is priced
 	// as plain processor sharing.
 	Slots int
-	// Stratified reads each rank's mean service and cs^2 from a fixed grid
-	// of the computed-token law and draws the ranks stratified
+	// Stratified reads each rank's mean service and cs^2 integrated over
+	// the computed-token law and draws the ranks stratified
 	// (rank_mixture_stratified.go); false reads them from each rank's own
 	// draws.
 	Stratified bool
@@ -355,7 +355,7 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 	per := max(n/len(m.Shares), 50)
 	pooledES, pooledCS2 := 0.0, 0.0
 	if m.Stratified {
-		per = max(per, minStratifiedDraws)
+		per = stratifiedPer(per, len(m.Shares))
 		pooledES, pooledCS2 = m.serviceMoments(hx)
 	}
 	rng := rand.New(rand.NewPCG(mixtureSeed, uint64(len(m.Shares))))

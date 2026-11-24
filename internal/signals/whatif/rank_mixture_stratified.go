@@ -1,5 +1,7 @@
 package whatif
 
+import "math"
+
 // Stratified service moments (RankMixture.Stratified, a switch that
 // defaults off).
 //
@@ -10,29 +12,57 @@ package whatif
 // uncached prompt, whether those draws catch that bucket is chance: on a
 // production P/D recording the busiest rank's mean service moved by about
 // 11 % (sd) from one draw set to another, and its cs^2 by more, so a priced
-// figure moved with the seed. With the switch, the moments are read once
-// per priced rate on a fixed grid of momentDraws strata of the law, and
-// each rank draws its requests one per stratum (at least
-// minStratifiedDraws a rank), so the figures no longer move with the draws.
+// figure moved with the seed. With the switch, the moments are integrated
+// once per priced rate from the histogram itself (serviceMoments), and each
+// rank's draws are stratified: rank draw j falls in the j-th of its per
+// equal slices of the law. That leaves the draws' own noise in the
+// percentiles only, so a figure moves far less with the seed.
 
-// momentDraws is the strata serviceMoments reads the moments on.
-const momentDraws = 1 << 16
-
-// minStratifiedDraws is the fewest draws a rank takes with the switch.
+// minStratifiedDraws is the fewest draws a rank takes with the switch, where
+// the fleet's total stays within maxStratifiedDraws.
 const minStratifiedDraws = 4096
 
-// serviceMoments is the service line's mean and cs^2 over momentDraws
-// strata of the computed-token histogram.
+// maxStratifiedDraws bounds what minStratifiedDraws adds over the fleet:
+// a rank takes at least min(minStratifiedDraws, maxStratifiedDraws/ranks),
+// so up to 16 ranks every rank takes 4096, and 64 ranks take 1024 each.
+// Draws holds every draw of a step, and a fit holds every step's draws.
+const maxStratifiedDraws = 1 << 16
+
+// stratifiedPer is the draws a rank takes with the switch, where per is
+// what it takes without it.
+func stratifiedPer(per, ranks int) int {
+	return max(per, min(minStratifiedDraws, maxStratifiedDraws/ranks))
+}
+
+// serviceMoments is the service line's mean and cs^2 under the
+// computed-token histogram, integrated exactly over the law ppf samples:
+// uniform inside a bucket starting at or under 1, log-uniform inside any
+// other. A fixed grid of the law misreads a wide top bucket's share of the
+// second moment (4 % of cs^2 on a bucket from 20k to 1M tokens at 2^16
+// points). es is 0 where the law gives no positive mean.
 func (m RankMixture) serviceMoments(hx cumHist) (es, cs2 float64) {
-	var s1, s2 float64
-	for i := range momentDraws {
-		v := m.S0 + hx.ppf((float64(i)+0.5)/momentDraws)/m.V
-		s1 += v
-		s2 += v * v
+	var ex, ex2, prev float64
+	for b := range hx.cum {
+		w := hx.cum[b] - prev
+		prev = hx.cum[b]
+		lo, hi := hx.lo[b], hx.hi[b]
+		var e1, e2 float64
+		switch {
+		case lo <= 1:
+			e1, e2 = (lo+hi)/2, (lo*lo+lo*hi+hi*hi)/3
+		case hi <= lo:
+			e1, e2 = lo, lo*lo
+		default:
+			r := math.Log(hi / lo)
+			e1, e2 = (hi-lo)/r, (hi*hi-lo*lo)/(2*r)
+		}
+		ex += w * e1
+		ex2 += w * e2
 	}
-	es = s1 / momentDraws
-	if !(es > 0) {
+	es = m.S0 + ex/m.V
+	if !(es > 0) || !Finite(es) {
 		return 0, 0
 	}
-	return es, max(s2/momentDraws/(es*es)-1, 0)
+	es2 := m.S0*m.S0 + 2*m.S0*ex/m.V + ex2/(m.V*m.V)
+	return es, max(es2/(es*es)-1, 0)
 }

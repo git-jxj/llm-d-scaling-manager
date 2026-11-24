@@ -233,8 +233,8 @@ and its spread come from that rank's own few hundred random draws. On a
 computed-token histogram with a long tail (a few requests compute a whole
 uncached prompt), whether those draws catch the tail is chance, and a figure
 moves by several percent with the seed. With the switch, the mean and the
-spread are read once on a fixed grid of the histogram, and each rank draws
-one request per slice of it.
+spread are read once from the histogram itself, and each rank draws one
+request per equal slice of it, so a figure moves far less with the seed.
 
 The model prices only what its inputs identify. It abstains on the whole backtest where:
 - a prompt slope is not identified;

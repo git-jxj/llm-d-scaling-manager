@@ -315,7 +315,7 @@ type BacktestRequest struct {
 	TTFTModel string `json:"ttftModel,omitempty"`
 	// RankMixtureStratified prices the rank mixture with stratified service
 	// moments (whatif.RankMixtureOptions.StratifiedMoments): each rank's
-	// mean service and cs^2 from a fixed grid of the computed-token law, not
+	// mean service and cs^2 integrated over the computed-token law, not
 	// from its own draws. Off by default; read only with TTFTModel
 	// rank-mixture.
 	RankMixtureStratified bool `json:"rankMixtureStratified,omitempty"`
