@@ -2117,7 +2117,7 @@ smt_release_files() {
     src="$(smt_baked_dir)"
     [ -f "$src/SHA256SUMS" ] || smt_usage "this image carries no release files (a development build)"
     mkdir -p "$SMT_OUT" || smt_usage "--out $SMT_OUT: cannot create it"
-    for f in "$src"/scaling-manager.yaml "$src"/scaling-manager-*.yaml "$src"/*.sigstore.json "$src/SHA256SUMS"; do
+    for f in "$src"/scaling-manager.yaml "$src"/scaling-manager-*.yaml "$src"/scaling-manager-*.sh "$src"/*.sigstore.json "$src/SHA256SUMS"; do
         [ -f "$f" ] || continue
         cp "$f" "$SMT_OUT/"
         n=$((n + 1))

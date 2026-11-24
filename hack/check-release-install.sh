@@ -1823,8 +1823,8 @@ else
 fi
 # Every manifest SHA256SUMS lists is written, scaling-manager.yaml (no dash
 # after the prefix) among them: sha256sum --ignore-missing passes without it.
-want="$(awk '$2 ~ /^scaling-manager.*\.yaml$/ {print $2}' "$W/dist/SHA256SUMS" | sort)"
-got="$(cd "$W/rf" && ls -1 scaling-manager*.yaml 2>/dev/null | sort)"
+want="$(awk '$2 ~ /^scaling-manager.*\.(yaml|sh)$/ {print $2}' "$W/dist/SHA256SUMS" | sort)"
+got="$(cd "$W/rf" && ls -1 scaling-manager*.yaml scaling-manager-*.sh 2>/dev/null | sort)"
 if [ -n "$want" ] && [ "$want" = "$got" ] && printf '%s\n' "$got" | grep -qx scaling-manager.yaml; then
     ok "release-files writes every manifest SHA256SUMS lists ($(printf '%s\n' "$got" | grep -c .)), scaling-manager.yaml among them"
 else

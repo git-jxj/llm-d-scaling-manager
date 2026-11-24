@@ -504,23 +504,25 @@ if [ -n "$IMG" ]; then
     # --build-context release=<dist> carries none, and every check below would
     # read an empty directory: that is a failure here, never a pass.
     listing="$(docker run --rm --entrypoint /bin/sh "$IMG" -c 'cd /opt/scaling-manager-tools/release && ls -1' 2>&1)" || listing=""
-    # The manifests the release writes, read from RELEASE_FILES in
-    # deploy/release-manifests.sh rather than matched by name: the one
-    # manifest, scaling-manager.yaml, has no dash after the prefix.
-    want_files="$(tr -d '\r' < "$ROOT/deploy/release-manifests.sh" | sed -n '/^RELEASE_FILES=(/,/^)/s/^[[:space:]]*\(scaling-manager[^[:space:]]*\.yaml\)[[:space:]]*$/\1/p')"
+    # The files the release writes and sums beside the tools tarball, read
+    # from RELEASE_FILES and RELEASE_SCRIPTS in deploy/release-manifests.sh
+    # rather than matched by name: scaling-manager.yaml has no dash after
+    # the prefix, and the scripts are no manifests.
+    want_files="$(tr -d '\r' < "$ROOT/deploy/release-manifests.sh" | sed -n '/^RELEASE_\(FILES\|SCRIPTS\)=(/,/^)/s/^[[:space:]]*\(scaling-manager[^[:space:]]*\.\(yaml\|sh\)\)[[:space:]]*$/\1/p')"
     nwant="$(printf '%s\n' "$want_files" | grep -c . || true)"
-    nyaml="$(printf '%s\n' "$listing" | grep -cE '^scaling-manager(-.*)?\.yaml$' || true)"
+    nscripts="$(printf '%s\n' "$want_files" | grep -c '\.sh$' || true)"
+    nbaked="$(printf '%s\n' "$listing" | grep -cE '^scaling-manager(-.*)?\.(yaml|sh)$' || true)"
     absent="$(printf '%s\n' "$want_files" | grep . | while read -r f; do printf '%s\n' "$listing" | grep -qxF "$f" || printf '%s ' "$f"; done)"
-    if [ "$nwant" -eq 0 ]; then
-        fail "read no release manifest from RELEASE_FILES in deploy/release-manifests.sh"
-    elif [ "$nyaml" = "$nwant" ] && [ -z "$absent" ] && printf '%s\n' "$listing" | grep -qx SHA256SUMS; then
-        ok "the image carries the $nyaml release manifests deploy/release-manifests.sh writes, and SHA256SUMS"
+    if [ "$nwant" -eq 0 ] || [ "$nscripts" -eq 0 ]; then
+        fail "read $nwant release files ($nscripts scripts) from RELEASE_FILES and RELEASE_SCRIPTS in deploy/release-manifests.sh"
+    elif [ "$nbaked" = "$nwant" ] && [ -z "$absent" ] && printf '%s\n' "$listing" | grep -qx SHA256SUMS; then
+        ok "the image carries the $nbaked release files deploy/release-manifests.sh writes ($nscripts scripts), and SHA256SUMS"
     else
-        fail "the image carries $nyaml of the $nwant release manifests${absent:+ (lacks $absent)} (built without --build-context release=<dist>?): $(printf '%s' "$listing" | tr '\n' ' ' | cut -c1-200)"
+        fail "the image carries $nbaked of the $nwant release files${absent:+ (lacks $absent)} (built without --build-context release=<dist>?): $(printf '%s' "$listing" | tr '\n' ' ' | cut -c1-200)"
     fi
     out="$(docker run --rm --entrypoint /bin/sh "$IMG" -c 'cd /opt/scaling-manager-tools/release && sha256sum -c --ignore-missing SHA256SUMS' 2>&1)" && rc=0 || rc=$?
     nok="$(printf '%s\n' "$out" | grep -c ': OK$' || true)"
-    if [ "$rc" = 0 ] && [ "$nok" -gt 0 ] && [ "$nok" = "$nyaml" ]; then ok "the baked SHA256SUMS checks every baked manifest ($nok OK)"; else fail "baked SHA256SUMS: exit $rc, $nok OK of $nyaml: $(printf '%s' "$out" | grep -v ': OK$' | head -3 | tr '\n' ' ')"; fi
+    if [ "$rc" = 0 ] && [ "$nok" -gt 0 ] && [ "$nok" = "$nwant" ]; then ok "the baked SHA256SUMS checks every baked release file ($nok OK)"; else fail "baked SHA256SUMS: exit $rc, $nok OK of $nwant: $(printf '%s' "$out" | grep -v ': OK$' | head -3 | tr '\n' ' ')"; fi
     if grep -qE '^(scaling-manager-tools|capacity-planner)-' <<< "$listing"; then fail "the image carries the tools tarball or a capacity planner binary"; else ok "the image carries neither the tools tarball nor a capacity planner binary"; fi
     if [ -n "${TOOLS_RELEASE_DIST:-}" ]; then
         if out="$(bash "$ROOT/hack/compare-baked-release-files.sh" --image "$IMG" "$TOOLS_RELEASE_DIST" 2>&1)"; then
