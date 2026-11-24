@@ -38,7 +38,11 @@ kubectl patch configmap scaling-manager-settings -n <controller-namespace> --typ
 
 The ConfigMap is optional. Without it, the controller reads the manager
 ConfigMap and the scaling policy as before. Create it once, with
-`kubectl create`; an upgrade never overwrites it.
+`kubectl create`; an upgrade never overwrites it. On the
+[one-manifest install](../guides/kubectl-install/),
+`scaling-manager-admin.sh install` creates it and `set` changes it; there the
+controller waits for it, and a change to a restart key restarts the
+controller by itself.
 
 | Key | Values | Unset means | Replaces | Applies |
 | --- | --- | --- | --- | --- |
@@ -56,8 +60,11 @@ ConfigMap and the scaling policy as before. Create it once, with
 | `kueueBorrow` | `true`, `false` | `true` | `LLMSM_QUOTA_KUEUE_BORROW` | live |
 | `kueueNamespace` | a namespace | `kueue-system` | `KUEUE_NAMESPACE` | live |
 | `scaleToZero` | `true`, `false` | `LLMSM_SCALE_TO_ZERO`, else `false` | `LLMSM_SCALE_TO_ZERO` | restart |
-| `watchNamespaces` | namespaces, comma-separated | the `--watch-namespace` flag: the controller's own namespace (namespaced install) or all (cluster-wide) | `LLMSM_WATCH_NS` | restart. When the Deployment names namespaces, this may only narrow them: a namespace it does not name is rejected. Each namespace needs the model-namespace grant |
+| `watchNamespaces` | namespaces, comma-separated | the `--watch-namespace` flag: the controller's own namespace (namespaced install) or all (cluster-wide) | `LLMSM_WATCH_NS` | restart. When the Deployment names namespaces, this may only narrow them: a namespace it does not name is rejected. Each namespace needs the model-namespace grant. On the [one-manifest install](../guides/kubectl-install/) (`--watch-namespaces-live`) it is live: it selects the namespaces the controller manages, empty is every namespace, and the cache stays cluster-wide. A rejected value keeps the list in force; a rejected first value manages nothing |
 | `logVerbosity` | `0` to `10`; `2` info, `4` debug, `5` trace | `--v`, else `LOG_LEVEL` | `LLMSM_VERBOSITY` | restart. `--zap-log-level` on the Deployment still wins |
+| `kedaNamespace` | a namespace | `--keda-namespace` (`keda` on the one-manifest install) | `LLMSM_KEDA_NAMESPACE` | restart. Where KEDA runs: the controller writes KEDA's copy of the scaler's client certificate there. Only with `--external-scaler-tls-bootstrap` |
+| `caFromSecret` | `true`, `false` | `prometheusCACertPath` | `prometheusCACertPath` set to `/etc/scaling-manager-prometheus-ca/ca.crt` | restart. Reads Prometheus's CA from Secret `scaling-manager-prometheus-ca` (key `ca.crt`), which the Deployment mounts. Rejected beside a `prometheusCACertPath` that names another file |
+| `dsetRoleWriter` | `true`, `false` | `DSET_ROLE_WRITER`, else `false` | `DSET_ROLE_WRITER` | restart. Needs the role writer's grant |
 
 It also takes the [advanced](configuration-advanced.md) keys
 `GLOBAL_OPT_INTERVAL`, `PROMETHEUS_METRICS_CACHE_*` and `LEARNED_STATE_*`

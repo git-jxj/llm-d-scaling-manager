@@ -241,6 +241,34 @@ cluster-scoped Kueue (`kueue-reader`) and policy reads in place. With
 `LLMSM_LIMITER_TYPE=quota` or `all` it revokes the two Kueue reads that go with
 a quota: the Kueue controller read and the cluster-wide borrowing read.
 
+### The one-manifest install
+
+The [kubectl install](../guides/kubectl-install/) runs one controller in
+`scaling-manager-system`, with the cluster-wide reads above and these
+grants of its own, each by name where Kubernetes allows it:
+
+- **Scaler certificates**: a Role in its namespace, `get` and `update` on the
+  three Opaque Secrets `scaling-manager-scaler-{ca,serving,client}` by name,
+  and `get` on the earlier install's Secrets, to copy their CA once. No
+  `create` on Secrets anywhere.
+- **KEDA's copy**: a Role in KEDA's namespace (`scaling-manager-keda.yaml`),
+  `get` and `update` on that one Secret by name.
+- **Suggested plan**: a Role in its namespace, `get` and `update` on ConfigMap
+  `scaling-manager-scaledobjects-plan` by name.
+- **Self-check**: a read-only ClusterRole and Role for the in-controller
+  preflight, including listing RoleBindings, so the role writer finds the
+  namespaces that granted it.
+- **Per namespace, bound by the namespace owner**: `pod-writer` (`patch` on
+  pods) and `dset-role-writer` (`get`, `list`, `patch` on
+  DisaggregatedSets), from `scaling-manager-grants.yaml`. Never cluster-wide.
+- **EPP token reviews**: ClusterRole `scaling-manager-epp-tokenreview-*`
+  (`create` on tokenreviews and subjectaccessreviews), bound by the cluster
+  admin to an EPP's own ServiceAccount, never to the controller's.
+
+The scaler refuses, with `PermissionDenied`, every call from a namespace
+the `watchNamespaces` setting leaves out, and ends an open `StreamIsActive`
+stream at its next message once its namespace is left out.
+
 ## What it writes
 
 The controller **never writes Deployments, StatefulSets, LeaderWorkerSets or

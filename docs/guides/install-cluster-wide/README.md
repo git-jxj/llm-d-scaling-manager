@@ -14,6 +14,11 @@ Use it when one team runs the cluster. Where namespaces belong to different
 teams, install [one controller per namespace](../install-in-namespace/) instead:
 failure domains, policy and upgrades stay separate.
 
+**Or with kubectl, from one manifest** (v0.13.0 and later):
+[install with kubectl](../kubectl-install/), where the admin lists the
+managed namespaces in `watchNamespaces`, live. That guide also moves an
+install made here onto the manifest.
+
 **This scope is work in progress.** The steps are the namespaced guide's, with
 the cluster-wide files; read that guide for what each step does.
 
