@@ -16,8 +16,14 @@ import (
 // knee, N_p V_P / (f E[I_eff]), moves with E[I_eff]. The rule needs no new
 // series: the hit is the recording's total one, 1 - computed / whole prompt
 // over every tier. The reuse-gap rule needs vLLM's KV residency histograms,
-// which no recording carries yet, so the floor prices every count below the
-// recorded one.
+// which nothing here reads yet: every call passes none, so the floor prices
+// every count below the one the hit was read on.
+//
+// The floor is a floor only where the hit is concave in each pod's cache
+// over its working set, which a cache-aware router gives by keeping each
+// prefix on one pod at both counts. Where load breaks that affinity at the
+// smaller count, or a prefix is duplicated there more than at the read one,
+// the hit can fall under it; the flag says the hit is extrapolated.
 
 // wireHitAtCount is the prefix hit as the switch priced it (pricedFleet
 // .hitAtCount): the hit read on FitCount prefill pods and the one priced on
@@ -41,10 +47,14 @@ type wireHitAtCount struct {
 // computed-token hit where the prompt is the measured one (the same window
 // as E[I_eff]), else 1 - E[I_eff] / the whole prompt asked. A hit the
 // question states governs and is not moved, and with no hit read nothing
-// moves.
+// moves. The hit is read over the prompt window, so it was read on the most
+// pods any of its cycles served (hitFitCount): a window that spans a
+// scale-down reads the larger count's hit, and the floor taken from the
+// smaller count would price over the truth at fewer pods.
 func (pf *pricedFleet) priceHitAtCount(ps *learnreplay.PrefillState) {
 	p := &pf.fleet.Prefill
-	if !pf.hitAtCountOn || p.Replicas == ps.Pods || !(p.PromptTokens > 0) {
+	fitCount := pf.hitFitCount(ps)
+	if !pf.hitAtCountOn || p.Replicas == fitCount || !(p.PromptTokens > 0) {
 		return
 	}
 	if pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead {
@@ -54,7 +64,7 @@ func (pf *pricedFleet) priceHitAtCount(ps *learnreplay.PrefillState) {
 	if !ok {
 		return
 	}
-	r, ok := prefill.HitAtCountOf(h, p.PromptTokens, ps.Pods, p.Replicas, nil)
+	r, ok := prefill.HitAtCountOf(h, p.PromptTokens, fitCount, p.Replicas, nil)
 	if !ok {
 		return
 	}
@@ -79,6 +89,15 @@ func (pf *pricedFleet) priceHitAtCount(ps *learnreplay.PrefillState) {
 			"so the hit is likely higher, up to %.3f, and capacity reads low (--%s)",
 			r.FitHit, r.FitCount, r.Count, r.Hi, hitAtCountFlag)
 	}
+}
+
+// hitFitCount is the prefill count the fit's hit was read on: the cycle's
+// serving pods, or the most any cycle of the prompt window counted where
+// that is more (whatif.PromptWindow.MaxPods). The larger count is the
+// conservative one: the floor h x N'/N falls with N, and N' at or above the
+// cycle's count but under it is priced at the floor, not held.
+func (pf *pricedFleet) hitFitCount(ps *learnreplay.PrefillState) int {
+	return max(ps.Pods, pf.promptWindow.MaxPods())
 }
 
 // hitRuleWords is a rule in the answer's words.

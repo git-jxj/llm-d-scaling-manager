@@ -143,3 +143,45 @@ func TestTTFT_HitAtCountLeavesAStatedHit(t *testing.T) {
 	assert.Nil(t, pf.in.HitAtCount, "no hit read: nothing to move")
 	assert.Equal(t, labComputedTwo, pf.fleet.Prefill.PromptTokens)
 }
+
+// A prompt window that spans a scale-down from 4 prefill pods to 2 reads its
+// hit partly on 4, so the hit was read on 4, not on the 2 of the last cycle:
+// priced on 1 pod it is the floor h x 1/4, not h x 1/2, which on a window
+// read mostly at 4 pods would price over what 1 pod hits. On 2 pods, the
+// cycle's own count, it is the floor h x 2/4 too; on 4 nothing moves, and
+// on 6 it is held.
+func TestTTFT_HitAtCountReadsTheWindowsMostPods(t *testing.T) {
+	w := &whatif.PromptWindow{}
+	row := domain.ReplicaMetrics{Ready: true, PrefillComputedTokenRate: labComputedTwo, PrefillComputedTokenRateKnown: true,
+		RequestRate: 1, RequestRateKnown: true, AvgInputTokensRecent: labWholePrompt}
+	for i := range whatif.PromptWindowMinCycles {
+		rows := []domain.ReplicaMetrics{row, row}
+		if i < 3 {
+			rows = append(rows, row, row)
+		}
+		w.Note(rows, i, time.Unix(int64(15*i), 0))
+	}
+	require.Equal(t, 4, w.MaxPods())
+	h := 1 - labComputedTwo/labWholePrompt
+	for _, c := range []struct {
+		pods int
+		hit  float64
+		rule prefill.HitRule
+	}{{1, h / 4, prefill.HitFloor}, {2, h / 2, prefill.HitFloor}, {6, h, prefill.HitHeld}} {
+		st := labState(true)
+		st.Prefill[0].PromptWindow = w
+		pf := fleetOf(t, st, answerFlags{prefill: c.pods}, "prefill")
+		require.Nil(t, pf.refused)
+		require.NotNil(t, pf.in.HitAtCount, "%d pods", c.pods)
+		assert.Equal(t, 4, pf.in.HitAtCount.FitCount, "%d pods", c.pods)
+		assert.Equal(t, string(c.rule), pf.in.HitAtCount.Rule, "%d pods", c.pods)
+		assert.InDelta(t, c.hit, pf.in.HitAtCount.Hit, 1e-12, "%d pods", c.pods)
+		assert.InDelta(t, labWholePrompt*(1-c.hit), pf.fleet.Prefill.PromptTokens, 1e-6, "%d pods", c.pods)
+	}
+	st := labState(true)
+	st.Prefill[0].PromptWindow = w
+	pf := fleetOf(t, st, answerFlags{prefill: 4}, "prefill")
+	require.Nil(t, pf.refused)
+	assert.Nil(t, pf.in.HitAtCount, "the count the hit was read on: nothing moves")
+	assert.Equal(t, labComputedTwo, pf.fleet.Prefill.PromptTokens)
+}
