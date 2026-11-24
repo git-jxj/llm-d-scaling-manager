@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -27,6 +28,44 @@ const experimentalTTFTV2 = "v2"
 const experimentalTTFTV2Usage = experimentalTTFTUsage + ". On backtest, =v2 instead prices TTFT with an experimental model: limited " +
 	"processor sharing per prefill rank, mixed over the ranks' measured traffic shares, with a fitted KV-deferral wait and a cost per " +
 	"prompt token, fitted on the fit window; every TTFT it prices is flagged RankMixtureTTFT and reads OUTSIDE VALIDATED REGION"
+
+// rankMixtureStratifiedFlag is the switch that prices the rank mixture with
+// stratified service moments (whatif.DefaultRankMixtureStratified), on by
+// default wherever =v2 prices.
+const rankMixtureStratifiedFlag = "rank-mixture-stratified"
+
+// rankMixtureStratifiedUsage is its help, the same on every command.
+const rankMixtureStratifiedUsage = "with --experimental-ttft=v2, read each prefill rank's mean service and its spread from the " +
+	"computed-token histogram itself, not from the rank's own random draws, so a figure moves far less with the draws; " +
+	"on by default, =false reads them from the draws"
+
+// offSwitch is a boolean flag on by default (whatif.DefaultRankMixtureStratified)
+// held as its negation, so that a flags struct's zero value is the
+// default: =false sets *off.
+type offSwitch struct {
+	off *bool
+}
+
+// String is the value.
+func (v offSwitch) String() string {
+	if v.off != nil && *v.off {
+		return "false"
+	}
+	return "true"
+}
+
+// Set reads one value.
+func (v offSwitch) Set(s string) error {
+	on, err := strconv.ParseBool(s)
+	if err != nil {
+		return err
+	}
+	*v.off = !on
+	return nil
+}
+
+// IsBoolFlag lets the flag stand without a value: alone it is true.
+func (v offSwitch) IsBoolFlag() bool { return true }
 
 // experimentalTTFTValue is --experimental-ttft where it also takes =v2: alone,
 // true or v1 it sets *switches (the TTFT model's switches), v2 sets *v2,
@@ -142,7 +181,7 @@ func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.Rep
 		return err
 	}
 	if f.rankMixtureTTFT {
-		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q)
+		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q, !f.unstratified)
 	}
 	if f.tpotDistribution {
 		rep.TPOTModel = whatifapi.ApplyTPOTModel(res, rep, q)

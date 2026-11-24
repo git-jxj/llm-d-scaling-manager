@@ -140,6 +140,10 @@ type answerFlags struct {
 	// tables' TTFT with the experimental rank-mixture model, fitted on the
 	// recording (experimental_ttft_v2.go); refused elsewhere.
 	rankMixtureTTFT bool
+	// unstratified is --rank-mixture-stratified=false, read with
+	// rankMixtureTTFT (whatifapi.ApplyTTFTModel): the zero value is the
+	// default, on.
+	unstratified bool
 	// experimentalTPOT is --experimental-tpot (=v2): at-replicas prices its
 	// tables' TPOT p90 and p95 with the experimental per-request TPOT
 	// distribution, fitted on the recording (experimental_tpot.go); refused
@@ -209,6 +213,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
 		". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on the --recording")
+	fs.Var(offSwitch{&f.unstratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "at-replicas only: =v2 prices the measured shape's (--shape measured) TPOT p90 and p95 with an "+
 		"experimental per-request TPOT distribution fitted on the --recording, around the planner's own mean; every percentile it prices "+
 		"is flagged TPOTDistribution and reads OUTSIDE VALIDATED REGION")

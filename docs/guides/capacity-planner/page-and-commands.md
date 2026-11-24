@@ -398,6 +398,11 @@ In a cluster, add both to the StatefulSet's `args`
   and each TPOT p90 and p95 says whether it is in the measured bucket.
 - **What it costs.** Every source the server loads is read once more for
   each model, so loading is slower.
+- **The draws.** The v2 TTFT model reads each prefill rank's service from
+  the computed-token histogram itself, so its figures barely move with the
+  random draws ([accuracy](accuracy.md)). To price from each rank's own
+  draws instead, the older way, add `--rank-mixture-stratified=false` to
+  `serve`, `backtest` or `at-replicas`.
 - Without the flags, the server's answers are the default's, byte for byte.
 
 #### The v2 TTFT curve

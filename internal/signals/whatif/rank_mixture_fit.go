@@ -300,7 +300,8 @@ type RankMixtureOptions struct {
 	SpreadFloor                         float64
 	NoMixture, NoKV, NoPrompt, NoSpread bool
 	// StratifiedMoments prices with stratified service moments
-	// (RankMixture.Stratified); off by default.
+	// (RankMixture.Stratified). The zero value is off; the planner sets it
+	// from DefaultRankMixtureStratified unless the caller says otherwise.
 	StratifiedMoments bool
 }
 

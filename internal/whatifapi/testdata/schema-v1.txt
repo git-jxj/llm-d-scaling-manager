@@ -140,6 +140,7 @@ backtest.rankMixture.spread number
 backtest.rankMixture.spreadAtBound boolean
 backtest.rankMixture.spreadDefaulted boolean
 backtest.rankMixture.spreadFloored boolean
+backtest.rankMixture.stratified boolean
 backtest.rankMixture.v number
 backtest.schemaVersion number
 backtest.settle number
@@ -764,6 +765,7 @@ inputs.ttftModel.fit.spread number
 inputs.ttftModel.fit.spreadAtBound boolean
 inputs.ttftModel.fit.spreadDefaulted boolean
 inputs.ttftModel.fit.spreadFloored boolean
+inputs.ttftModel.fit.stratified boolean
 inputs.ttftModel.fit.v number
 inputs.ttftModel.heldOut object
 inputs.ttftModel.heldOut.decode number
@@ -786,6 +788,7 @@ inputsRequest.model string
 inputsRequest.prefillHitAtCount boolean
 inputsRequest.prefillVPPlateau boolean
 inputsRequest.prefillVariant string
+inputsRequest.rankMixtureStratified boolean
 inputsRequest.selfCheck boolean
 inputsRequest.source object
 inputsRequest.source.cycle number
@@ -1539,6 +1542,7 @@ report.ttftModel.fit.spread number
 report.ttftModel.fit.spreadAtBound boolean
 report.ttftModel.fit.spreadDefaulted boolean
 report.ttftModel.fit.spreadFloored boolean
+report.ttftModel.fit.stratified boolean
 report.ttftModel.fit.v number
 report.ttftModel.heldOut object
 report.ttftModel.heldOut.decode number

@@ -2,8 +2,8 @@ package whatif
 
 import "math"
 
-// Stratified service moments (RankMixture.Stratified, a switch that
-// defaults off).
+// Stratified service moments (RankMixture.Stratified, a switch on by
+// default: DefaultRankMixtureStratified).
 //
 // Each rank's mean service and its cs^2 set its utilization, and the
 // sojourn is steep in both near the knee. Draws reads them from the rank's
@@ -17,6 +17,18 @@ import "math"
 // rank's draws are stratified: rank draw j falls in the j-th of its per
 // equal slices of the law. That leaves the draws' own noise in the
 // percentiles only, so a figure moves far less with the seed.
+
+// DefaultRankMixtureStratified is whether the planner prices the rank
+// mixture with stratified service moments
+// (RankMixtureOptions.StratifiedMoments) where the caller does not say: on.
+// On a production P/D recording, a 50 % time split priced with three draw
+// seeds, a step's figure moved across the seeds by a median 2.4 to 2.9 %
+// and at most 12 to 17 % without them, and by 0.5 to 1.0 % and at most 1.2
+// to 2.6 % with them; the median ratios of priced to measured did not move,
+// and no step newly read under 0.8. The CLI turns it off with
+// --rank-mixture-stratified=false, a request with rankMixtureStratified
+// false.
+const DefaultRankMixtureStratified = true
 
 // minStratifiedDraws is the fewest draws a rank takes with the switch, where
 // the fleet's total stays within maxStratifiedDraws.

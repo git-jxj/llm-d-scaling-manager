@@ -89,6 +89,10 @@ type RankMixtureReport struct {
 	// engine's max-num-seqs (1 without chunked prefill), 0 not known.
 	Queue string `json:"queue"`
 	Slots int    `json:"slots"`
+	// Stratified says each rank's mean service and cs^2 were read from the
+	// computed-token histogram itself, not from the rank's own draws
+	// (BacktestRequest.RankMixtureStratified, on by default).
+	Stratified bool `json:"stratified,omitempty"`
 }
 
 // RankMixtureKV is the fitted KV-deferral wait.
@@ -190,20 +194,24 @@ func backlogged(e *inputsEntry, idx []int, from, to time.Time) string {
 // window, its mean and p90 the router's at the anchor. A step that is not
 // stationary (backlogged) is left out: no queue model's steady state is what
 // it measured, and its TTFT would pass into the fit as cost.
+// Stratified prices with the stratified service moments
+// (whatif.RankMixtureOptions.StratifiedMoments).
 func fitRankMixture(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, stratified bool) (*rankMixtureQ, error) {
-	rq, _, err := fitRankMixtureStepsWith(fit, fitIdx, step, slots, stratified)
+	rq, _, err := fitRankMixtureSteps(fit, fitIdx, step, slots, stratified)
 	return rq, err
 }
 
-// fitRankMixtureSteps is fitRankMixture, and the steps it fitted on.
-func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slots int) (*rankMixtureQ, []whatif.MixtureStep, error) {
-	return fitRankMixtureStepsWith(fit, fitIdx, step, slots, false)
+// stratifiedOf is a request's rankMixtureStratified: the value where it
+// names one, def where it is absent.
+func stratifiedOf(asked *bool, def bool) bool {
+	if asked == nil {
+		return def
+	}
+	return *asked
 }
 
-// fitRankMixtureStepsWith is fitRankMixtureSteps, with the stratified
-// service moments (whatif.RankMixtureOptions.StratifiedMoments) where
-// stratified.
-func fitRankMixtureStepsWith(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, stratified bool) (
+// fitRankMixtureSteps is fitRankMixture, and the steps it fitted on.
+func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, stratified bool) (
 	*rankMixtureQ, []whatif.MixtureStep, error) {
 	if len(fit.mixture) != len(fit.series) {
 		return nil, nil, InputErrorf("the experimental TTFT model %s needs the recording's per-rank series, which this source did not give",
@@ -266,7 +274,7 @@ func fitRankMixtureStepsWith(fit *inputsEntry, fitIdx []int, step time.Duration,
 		Shares: m.Shares, ShareCV: diag.ShareCV, EvenWithinRows: even, A0: m.A0, Beta: m.Beta, BetaOverhead: m.BetaOverhead,
 		BetaDecode: m.BetaDecode, BetaRemainder: m.BetaRemainder, BetaUnidentified: m.BetaUnidentified, Spread: m.Spread, FoldSpread: diag.FoldSpread,
 		SpreadAtBound: diag.SpreadAtBound, SpreadDefaulted: diag.SpreadDefaulted, SpreadFloored: diag.SpreadFloored, FitP90: diag.FitP90, FitSteps: diag.Steps, Slots: slots,
-		FitStepsBacklogged: backlog, Queue: string(whatif.QueueLimitedProcessorSharing)}
+		FitStepsBacklogged: backlog, Queue: string(whatif.QueueLimitedProcessorSharing), Stratified: stratified}
 	if slots <= 0 {
 		r.Queue = string(whatif.QueueProcessorSharing)
 	}

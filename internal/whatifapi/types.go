@@ -50,6 +50,11 @@ type InputsRequest struct {
 	// source's window and abstains where it is not identified; the
 	// planner's TTFT then stands.
 	TTFTModel string `json:"ttftModel,omitempty"`
+	// RankMixtureStratified is BacktestRequest.RankMixtureStratified for
+	// the main view's model: absent, the server's default (on, unless the
+	// server was started with --rank-mixture-stratified=false). Read only
+	// with TTFTModel rank-mixture; false changes the inputsId.
+	RankMixtureStratified *bool `json:"rankMixtureStratified,omitempty"`
 	// TPOTModel prices the main view's TPOT p90 and p95 with an
 	// experimental per-request TPOT distribution: "" is the server's
 	// default (serve --experimental-tpot=v2), and
