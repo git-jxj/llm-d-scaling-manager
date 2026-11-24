@@ -811,10 +811,12 @@ and the fleet needed cuts decode no lower. Otherwise decode reads `no spare: N
 decode if the decode knee reads E% high`. Removing capacity is the costly
 mistake, and a knee outside its region read 43% to 99% high on the goldens, so the
 point estimate alone does not license the cut. The cost: outside the region,
-decode shows a spare only where the load is about half its operating point or
-less, so fewer fleets read OVER-PROVISIONED on decode. An UNDER-PROVISIONED
-verdict is unchanged. It grows to the point estimate and states the bound count
-beside it.
+N decode replicas show a spare only where the load is at most (N-1)/(1.991 N) of
+decode's operating point: a quarter at 2, a third at 3, approaching half on a
+large fleet. So fewer fleets read OVER-PROVISIONED on decode. An
+UNDER-PROVISIONED verdict still grows decode to the point estimate and states
+the bound count beside it; where its fleet needed trades decode for prefill, it
+cuts decode no lower than the bound either.
 
 The rules the page leaves open, chosen here: the row is the unit, as `AvgITL` and
 `generation_tokens` are per pod; a line is asked at the row's fill, clamped to the

@@ -660,9 +660,9 @@ func TestAtReplicas_NeededFleetHolds(t *testing.T) {
 
 // The verdict judges each role on its own: three prefill and seven decode
 // replicas at the staircase's p95 have a decode replica to spare even at the
-// peak (six meet the decode knee's error bound), and no prefill to spare, prefill being 1.9% under its operating
-// point; the sentence says both, and the f the third prefill pod is priced
-// with, which no run learned.
+// peak (six meet the decode knee's error bound), and no prefill to spare,
+// prefill being 1.9% under its operating point; the sentence says both, and
+// the f the third prefill pod is priced with, which no run learned.
 func TestAtReplicas_ShrinkIsPerRole(t *testing.T) {
 	v := stairReport(t, stairQuery(3, 7, 0)).Shapes[0].Verdict
 	assert.Equal(t, whatifapi.VerdictOver, v.Verdict, v.Summary)
@@ -680,11 +680,15 @@ func TestAtReplicas_ShrinkIsPerRole(t *testing.T) {
 
 	// Stated at the peak, decode still has one to spare and prefill is past
 	// its edge: the fleet is under-provisioned, and the fleet it needs has
-	// one decode replica fewer than it runs.
+	// one decode replica fewer than it runs: the six the decode knee's error
+	// bound needs, not the three the point estimate would cut to. An UNDER
+	// verdict's trade cuts decode no lower than an OVER verdict's (#363).
 	v = stairReport(t, stairQuery(3, 7, 43.24)).Shapes[0].Verdict
 	assert.Equal(t, whatifapi.VerdictUnder, v.Verdict, v.Summary)
 	require.NotNil(t, v.Needed)
 	assert.Less(t, v.Needed.Decode, 7, v.Summary)
+	assert.Equal(t, 6, v.Needed.DecodeAtErrorBound, v.Summary)
+	assert.Equal(t, v.Needed.DecodeAtErrorBound, v.Needed.Decode, v.Summary)
 }
 
 // TestNoRoleHint: two variants a capture read as both roles (a P/D fleet with
