@@ -157,9 +157,11 @@ const (
 	LoadPeak = "peak"
 )
 
-// DefaultLoadStatistic is the statistic judged at when none is asked: p95, so
-// that a window whose mean hides its busy part is judged at the busy part.
-const DefaultLoadStatistic = LoadP95
+// DefaultLoadStatistic is the statistic judged at when none is asked: the
+// p95 less counting noise, so that a window whose mean hides its busy part is
+// judged at the busy part, but a steady stream's one-minute counting noise,
+// which the queueing model already prices, is not counted twice (#295).
+const DefaultLoadStatistic = LoadP95Modulation
 
 // The scopes a verdict covers: the whole fleet, or decode alone when the
 // prefill side does not price.

@@ -295,7 +295,9 @@ func TestAtReplicas_LoadStatistics(t *testing.T) {
 	for v, row := range st.ServingReplicas {
 		require.Len(t, row, st.Cycles, "%s: one serving count per cycle", v)
 	}
-	rep := stairReport(t, stairQuery(0, 0, 0))
+	pq := stairQuery(0, 0, 0)
+	pq.LoadStatistic = whatifapi.LoadP95
+	rep := stairReport(t, pq)
 	l := rep.Load
 	require.NotNil(t, l.P95)
 	assert.Equal(t, whatifapi.LoadP95, l.Statistic)
@@ -647,7 +649,7 @@ func TestAtReplicas_NeededFleetHolds(t *testing.T) {
 
 // The verdict judges each role on its own: three prefill and four decode
 // replicas at the staircase's p95 have a decode replica to spare even at the
-// peak, and no prefill to spare, prefill being 1.9% under its operating
+// peak, and no prefill to spare, prefill being 2.0% under its operating
 // point; the sentence says both, and the f the third prefill pod is priced
 // with, which no run learned.
 func TestAtReplicas_ShrinkIsPerRole(t *testing.T) {
@@ -662,7 +664,7 @@ func TestAtReplicas_ShrinkIsPerRole(t *testing.T) {
 	assert.True(t, byRole[roleDecode].Spare)
 	assert.Contains(t, byRole[roleDecode].Detail, "even at the peak 43.2 r/s")
 	assert.False(t, byRole[rolePrefill].Spare)
-	assert.Contains(t, byRole[rolePrefill].Detail, "1.9% under its operating point")
+	assert.Contains(t, byRole[rolePrefill].Detail, "2.0% under its operating point")
 	assert.Contains(t, v.Summary, "prefill f 1.5 assumed at 3 pods")
 
 	// Stated at the peak, decode still has one to spare and prefill is past

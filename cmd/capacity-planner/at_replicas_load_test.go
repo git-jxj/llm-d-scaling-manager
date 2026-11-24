@@ -40,7 +40,9 @@ func TestAtReplicas_JudgedAtTheBusyLoad(t *testing.T) {
 		args := atStair("--prefill", "3", "--decode", "4", "--imbalance-across-counts=false")
 		rep := atReplicasJSON(t, args...)
 		require.NotNil(t, rep.Load.Rate.Value)
-		assert.InDelta(t, 41.70, *rep.Load.Rate.Value, 0.005, "the default load is the p95, not the mean")
+		require.NotNil(t, rep.Load.P95Modulation)
+		assert.Equal(t, *rep.Load.P95Modulation, *rep.Load.Rate.Value, "the default load is the p95 less counting noise (#295)")
+		assert.InDelta(t, 41.66, *rep.Load.Rate.Value, 0.01, "the busy part, not the mean")
 		assert.Equal(t, whatifapi.VerdictOver, rep.Shapes[0].Verdict.Verdict, "decode has one to spare even at the peak: %s",
 			rep.Shapes[0].Verdict.Summary)
 
