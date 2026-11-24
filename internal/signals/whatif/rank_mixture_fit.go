@@ -304,6 +304,9 @@ type RankMixtureOptions struct {
 	// of the fit steps nearest the priced rate (rank_mixture_fitsteps.go).
 	// Both default off.
 	CleanFitSteps, SharesAtLoad bool
+	// StratifiedMoments prices with stratified service moments
+	// (RankMixture.Stratified); off by default.
+	StratifiedMoments bool
 }
 
 // MinSpreadFitWindow is the shortest fit window the planner calibrates the
@@ -335,7 +338,8 @@ func FitCore(steps []MixtureStep, o RankMixtureOptions) (RankMixture, float64, e
 			shares[i] = 1 / float64(len(shares))
 		}
 	}
-	m := RankMixture{S0: s0, V: v, ServiceProportional: proportional, Shares: shares, Spread: 1, Slots: o.Slots}
+	m := RankMixture{S0: s0, V: v, ServiceProportional: proportional, Shares: shares, Spread: 1, Slots: o.Slots,
+		Stratified: o.StratifiedMoments}
 	if o.SharesAtLoad && !o.NoMixture {
 		m.ShareRows = shareRowsOf(steps, len(shares))
 	}

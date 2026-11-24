@@ -78,7 +78,8 @@ func apiError(err error) error {
 func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest) (*whatifapi.Resolved, error) {
 	f := answerFlags{question: "serve", cycle: "last", model: req.Model, variant: req.DecodeVariant, prefillVariant: req.PrefillVariant,
 		serveSelfCheck: req.SelfCheck != nil && *req.SelfCheck,
-		seed:           whatif.DefaultResampling().Seed, vpPlateau: req.PrefillVPPlateau, experimentalTTFT: req.ExperimentalTTFT || s.experimentalTTFT, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
+		seed:           whatif.DefaultResampling().Seed, vpPlateau: req.PrefillVPPlateau, hitAtCount: req.PrefillHitAtCount,
+		experimentalTTFT: req.ExperimentalTTFT || s.experimentalTTFT, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
 		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {
@@ -416,6 +417,11 @@ func (s *servedSources) resolved(ctx context.Context, f *answerFlags, st *learnr
 		// Another replay, so other inputs: never the id of the default's.
 		res.Inputs.PrefillVPPlateau = true
 		res.Content += "\x00" + vpPlateauFlag
+	}
+	if f.hitAtCount {
+		// Another replay, so other inputs: never the id of the default's.
+		res.Inputs.PrefillHitAtCount = true
+		res.Content += "\x00" + hitAtCountFlag
 	}
 	if f.experimentalTTFT {
 		// Another replay, so other inputs: never the id of the default's.

@@ -83,6 +83,8 @@ in its capacity table, says the 0.6B range under `not validated` only when
 the knee is outside, and sizes decode at the label's upper error inside the
 region, or at 99.1% outside it, beside the point answer
 (`needed.decodeAtErrorBound`, at most the search's `maxReplicas`). The
+fleet needed never cuts decode below that count, whatever the verdict:
+decode has a replica to spare only where one fewer still meets it. The
 label's `n=` gives the independent load levels first, then the raw
 readings.
 
@@ -241,6 +243,16 @@ Two fixes to the fit are off by default, and `--rank-mixture-fit-steps`
 With fewer than four steps under 0.9, the two fits read every step; with
 fewer than five steps whose ranks carried a request a second, the shares are
 the fit window's mean. The model's `assumed` line says which it priced.
+
+`--rank-mixture-stratified` (`rankMixtureStratified`, off by default) fixes
+how the draws read each rank's service. Without it, each rank's mean service
+and its spread come from that rank's own few hundred random draws. On a
+computed-token histogram with a long tail (a few requests compute a whole
+uncached prompt), whether those draws catch the tail is chance, and a figure
+moves by several percent with the seed. With the switch, the mean and the
+spread are read once from the histogram itself, and each rank draws one
+request per equal slice of it, so a figure moves far less with the seed. The two switches are
+independent: either, both or neither can be on.
 
 The model prices only what its inputs identify. It abstains on the whole backtest where:
 - a prompt slope is not identified;

@@ -455,6 +455,7 @@ backtestRequest.inputsId string
 backtestRequest.measured string
 backtestRequest.prefillSlots number
 backtestRequest.rankMixtureFitSteps boolean
+backtestRequest.rankMixtureStratified boolean
 backtestRequest.settle string
 backtestRequest.specTokens number
 backtestRequest.split string
@@ -577,6 +578,7 @@ inputs.policy.tpot.statistic string
 inputs.policy.ttft object
 inputs.policy.ttft.seconds number
 inputs.policy.ttft.statistic string
+inputs.prefillHitAtCount boolean
 inputs.prefillVPPlateau boolean
 inputs.schemaVersion number
 inputs.selfCheck object
@@ -732,6 +734,7 @@ inputsRequest object
 inputsRequest.decodeVariant string
 inputsRequest.experimentalTTFT boolean
 inputsRequest.model string
+inputsRequest.prefillHitAtCount boolean
 inputsRequest.prefillVPPlateau boolean
 inputsRequest.prefillVariant string
 inputsRequest.selfCheck boolean

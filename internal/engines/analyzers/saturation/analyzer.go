@@ -593,6 +593,9 @@ type SaturationAnalyzer struct {
 	// prefillVPLoneRate is SwitchPrefillVPLoneRate: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillVPLoneRate bool
+	// prefillHitAtCount is SwitchPrefillHitAtCount: off from the
+	// constructor, planner-only; the analyzer holds it for the name.
+	prefillHitAtCount bool
 	// itlAdaptiveFloor is SwitchITLAdaptiveBandFloor (itl_band_floor.go):
 	// off from the constructor, planner-only. itlFills is each model's
 	// decode engine fills over the horizon, and itlBandFloors the floor

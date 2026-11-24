@@ -35,8 +35,19 @@ The lines, top down:
   Prefill was not sized, so this is not a fleet recommendation."
 - **Headroom**: how far the load can grow before each role's limit. "at
   least" marks a limit known only as a lower bound.
-- **+25% / +50% traffic**: the fleet the grown load needs, at the same SLO.
-  It reads "Pending" until the server sizes those rates.
+- **+25% / +50% traffic**: the fleet the busiest load grown by a quarter
+  and by a half needs, at the same SLO and shape, as "N prefill + M decode
+  (G GPUs)". The page sizes each with `POST /v1/size` once the busiest load
+  is judged. A size past the highest load measured says "extrapolated past
+  the tested range"; one resting on a prefill limit known only as a lower
+  bound says fewer prefill may do. Where no fleet serves the rate the row
+  says why. Under the default model, where prefill's limit is not measured,
+  the row says it cannot size more traffic and what to do: load a busier
+  window, or use the speed the pods were seen at. A source with no prefill
+  variant is not sized: the page sizes prefill and decode together.
+  Change the SLO targets, their percentiles or the shape and the page asks
+  the verdict and these sizes again; until the answers arrive those rows
+  read "Judging..." or "Sizing...", never the answer for the old targets.
 - **Accuracy**: how many held-out five-minute steps the planner predicted
   within 20%, which way it leans, and the rates and fleet that check
   covers. Outside that range an answer is an extrapolation.
@@ -274,6 +285,11 @@ With `--prefill 4 --decode 4`:
   measured  OVER-PROVISIONED: at the p95 load of 41.7 r/s, decode: one fewer holds even at the peak 43.2 r/s; prefill: one fewer holds even at the peak 43.2 r/s; needs 3 prefill + 3 decode (has 4 + 4), 6 decode if the decode knee reads 99% high; at f 1 needs 3 + 3, at f 1.5 needs 4 + 3 (decode knee outside its validated region; prefill f 1 assumed at 4 pods; prefill f 1 assumed at 3 pods).
 ```
 
+From the release after v0.12.3, decode reads `no spare: 6 decode if the
+decode knee reads 99% high` here and the fleet needed is 3 prefill + 4
+decode: a decode cut must also hold if the decode knee reads as high as its
+label allows ([outside validated region](#outside-validated-region)).
+
 And with no prefill speed: the first command, with `--decode 3`:
 
 ```text
@@ -284,7 +300,7 @@ And with no prefill speed: the first command, with `--decode 3`:
 | --- | --- | --- |
 | UNDER-PROVISIONED | The busy load runs past headroom times the knee, or misses a target. | Scale to the fleet it `needs`. Size each role's `maxReplicaCount` at least that high. |
 | RIGHT-SIZED | Every target holds with headroom, and no role has a replica to spare. | Nothing. `no spare (11.6% under its operating point)` says how close each role is. |
-| OVER-PROVISIONED | A role has a replica to spare: one fewer still holds every target at the busy load, and at the peak. | Remove the spare, or lower `minReplicaCount`. It never names a cut that fails at the peak. |
+| OVER-PROVISIONED | A role has a replica to spare: one fewer still holds every target at the busy load, and at the peak. | Remove the spare, or lower `minReplicaCount`. It never names a cut that fails at the peak, nor a decode cut below the count the decode knee's error bound needs. |
 | NOT JUDGED | A figure the verdict needs is refused, the load and the shape priced are different traffic, or the window contradicts the model. The sentence says which. | Do what it names: `--assume-vp` for a missing prefill speed, `--shape load` for a shape mismatch, or a longer recording. |
 
 The first three verdicts above rest on the stated prefill speed, which this

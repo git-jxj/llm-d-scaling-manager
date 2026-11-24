@@ -125,7 +125,7 @@ func (f *answerFlags) rankMixtureReport(ctx context.Context, rep *whatifapi.Repo
 	}
 	src := &servedSources{warn: f.warn, recordings: filepath.Dir(f.recording)}
 	res, err := src.Resolve(ctx, whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.variant,
-		PrefillVPPlateau: f.vpPlateau, TTFTModel: string(whatif.QueueRankMixture),
+		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, TTFTModel: string(whatif.QueueRankMixture),
 		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(f.recording), Cycle: cycle}})
 	if err != nil {
 		if whatifapi.IsInputError(err) {

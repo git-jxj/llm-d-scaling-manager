@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -110,6 +111,40 @@ type mainMixture struct {
 	top     float64
 	prefill int
 	info    TTFTModelInfo
+	// hitAtCount is InputsRequest.PrefillHitAtCount, as the source was
+	// read: the computed-token histogram is priced at each prefill count's
+	// prefix hit (computedAt).
+	hitAtCount bool
+}
+
+// computedAt is the computed-token histogram the model draws from at n
+// prefill replicas, the flag its figures carry and the note that says so.
+// With PrefillHitAtCount on and n not the recorded count, the pooled
+// window's hit h, 1 - E[computed] / E[prompt], is priced at n
+// (prefill.HitAtCountOf) and the histogram's bounds scaled by (1 - h')/(1 - h),
+// capped at the prompt draw (whatif.ComputedAtScale); otherwise the pooled
+// histogram as it is.
+func (mm *mainMixture) computedAt(n int) (map[float64]float64, whatif.Flag, string) {
+	computed := mm.pooled.Computed
+	if !mm.hitAtCount || n == mm.prefill {
+		return computed, "", ""
+	}
+	ec, okc := whatif.CumulativeMean(computed)
+	el, okl := whatif.CumulativeMean(mm.pooled.Prompt)
+	if !okc || !okl || !(el > 0) {
+		return computed, "", ""
+	}
+	r, ok := prefill.HitAtCountOf(max(1-ec/el, 0), ec, mm.prefill, n, nil)
+	if !ok {
+		return computed, "", ""
+	}
+	flag := whatif.HitAtCountFlag(r)
+	if !r.Moved() {
+		return computed, flag, ""
+	}
+	note := fmt.Sprintf("experimental TTFT model's computed tokens at the prefix hit %.3g on %d prefill replicas, from %.3g on %d (%s): "+
+		"its histogram scaled by %.3g, capped at the prompt", r.Hit, n, r.FitHit, mm.prefill, r.Rule, r.ComputedScale)
+	return whatif.ComputedAtScale(computed, mm.pooled.Prompt, r.ComputedScale), flag, note
 }
 
 // ttftModelOf is the model a source is resolved with: the request's, else
@@ -133,6 +168,7 @@ func fitMainMixture(e *inputsEntry) *mainMixture {
 	if p := e.doc.Fleet.Prefill; p != nil {
 		mm.prefill = p.Replicas
 	}
+	mm.hitAtCount = e.doc.PrefillHitAtCount
 	abstain := func(why string) *mainMixture {
 		mm.rq = abstainedMixture(why)
 		mm.info.Abstained = why
@@ -237,6 +273,12 @@ type mixtureFleet struct {
 	// lower bound: a limit it sets is "at least" that rate.
 	endAtLeast bool
 	floor      float64
+	// computed is the computed-token histogram priced at the fleet's
+	// prefill replicas (mainMixture.computedAt), hitFlag the flag its
+	// figures carry and hitNote its assumed line; "" where nothing moved.
+	computed map[float64]float64
+	hitFlag  whatif.Flag
+	hitNote  string
 }
 
 // fleet is inner with the model's TTFT, or inner where the model does not
@@ -246,6 +288,7 @@ func (mm *mainMixture) fleet(inner Fleet, k Knobs) Fleet {
 		return inner
 	}
 	f := &mixtureFleet{Fleet: inner, mm: mm, q: k.TTFTPercentile, scale: float64(mm.prefill) / float64(k.Prefill)}
+	f.computed, f.hitFlag, f.hitNote = mm.computedAt(k.Prefill)
 	pk, dk := inner.PrefillKnee(), inner.DecodeKnee()
 	f.lowerBound = isRefusal(pk) || slices.Contains(figureOf(pk, unitRate, false).Flags, string(whatif.VPLowerBound))
 	pv, pok := valueOf(pk)
@@ -262,7 +305,7 @@ func (mm *mainMixture) fleet(inner Fleet, k Knobs) Fleet {
 
 // price is the model's TTFT at the fleet's rate; ok false where it refused.
 func (f *mixtureFleet) price(rate float64) (float64, bool) {
-	v, _, u := f.mm.rq.m.Price(rate*f.scale, f.mm.pooled.Computed, f.mm.pooled.Prompt, f.q)
+	v, _, u := f.mm.rq.m.Price(rate*f.scale, f.computed, f.mm.pooled.Prompt, f.q)
 	if u != nil || !whatif.Finite(v) || math.IsNaN(v) {
 		return 0, false
 	}
@@ -318,7 +361,16 @@ func (f *mixtureFleet) TTFTAt(rate float64) whatif.Result {
 	if !ok {
 		return f.Fleet.TTFTAt(rate)
 	}
-	return whatif.TTFT{Seconds: v, Independent: v, Pooled: v, Floor: f.floor, Flags: []whatif.Flag{whatif.RankMixtureTTFT}}
+	return whatif.TTFT{Seconds: v, Independent: v, Pooled: v, Floor: f.floor, Flags: f.flags()}
+}
+
+// flags are the flags of a TTFT the model prices: RankMixtureTTFT, and the
+// prefix hit's at another prefill count (mainMixture.computedAt).
+func (f *mixtureFleet) flags() []whatif.Flag {
+	if f.hitFlag != "" {
+		return []whatif.Flag{whatif.RankMixtureTTFT, f.hitFlag}
+	}
+	return []whatif.Flag{whatif.RankMixtureTTFT}
 }
 
 // TTFTPoint is TTFTAt with the planner's notes.
@@ -328,7 +380,7 @@ func (f *mixtureFleet) TTFTPoint(rate float64) (whatif.Result, []string) {
 		return r, notes
 	}
 	if v, ok := f.price(rate); ok {
-		return whatif.TTFT{Seconds: v, Independent: v, Pooled: v, Floor: f.floor, Flags: []whatif.Flag{whatif.RankMixtureTTFT}}, notes
+		return whatif.TTFT{Seconds: v, Independent: v, Pooled: v, Floor: f.floor, Flags: f.flags()}, notes
 	}
 	return r, notes
 }
@@ -340,6 +392,9 @@ func (f *mixtureFleet) Assumed() []string {
 	if f.scale != 1 {
 		out = append(out, fmt.Sprintf("experimental TTFT model at %d prefill replicas, %d recorded: each replica's ranks take the recorded "+
 			"share profile, at the rate per replica", int(math.Round(float64(f.mm.prefill)/f.scale)), f.mm.prefill))
+	}
+	if f.hitNote != "" {
+		out = append(out, f.hitNote)
 	}
 	return out
 }
@@ -414,6 +469,11 @@ func (mm *mainMixture) applyToReport(out *ReportResponse, q ReportQuery) {
 		return
 	}
 	scale := float64(mm.prefill) / float64(out.Fleet.Prefill)
+	computed, hitFlag, hitNote := mm.computedAt(out.Fleet.Prefill)
+	flags := []string{string(whatif.RankMixtureTTFT)}
+	if hitFlag != "" {
+		flags = append(flags, string(hitFlag))
+	}
 	for i := range out.Shapes {
 		sh := &out.Shapes[i]
 		if sh.Label != "measured" {
@@ -443,11 +503,11 @@ func (mm *mainMixture) applyToReport(out *ReportResponse, q ReportQuery) {
 				if err != nil {
 					continue
 				}
-				v, _, u := mm.rq.m.Price(row.Rate*scale, mm.pooled.Computed, mm.pooled.Prompt, p)
+				v, _, u := mm.rq.m.Price(row.Rate*scale, computed, mm.pooled.Prompt, p)
 				if u != nil || !whatif.Finite(v) {
 					continue
 				}
-				st.Figure = Figure{Value: ptr(v), Unit: unitSeconds, Flags: []string{string(whatif.RankMixtureTTFT)},
+				st.Figure = Figure{Value: ptr(v), Unit: unitSeconds, Flags: slices.Clone(flags),
 					Extrapolated: mm.top > 0 && row.Rate*scale > mm.top*(1+1e-9)}
 				moved = true
 			}
@@ -461,6 +521,9 @@ func (mm *mainMixture) applyToReport(out *ReportResponse, q ReportQuery) {
 				line += " (" + mm.info.Evidence + ")"
 			}
 			sh.Assumed = append(sh.Assumed, line+"; the verdict and the summary cells are the planner's own")
+			if hitNote != "" {
+				sh.Assumed = append(sh.Assumed, hitNote)
+			}
 		}
 	}
 }

@@ -331,6 +331,12 @@ type BacktestRequest struct {
 	// (whatif.RankMixtureOptions CleanFitSteps, SharesAtLoad). Off by
 	// default; read only with TTFTModel rank-mixture.
 	RankMixtureFitSteps bool `json:"rankMixtureFitSteps,omitempty"`
+	// RankMixtureStratified prices the rank mixture with stratified service
+	// moments (whatif.RankMixtureOptions.StratifiedMoments): each rank's
+	// mean service and cs^2 integrated over the computed-token law, not
+	// from its own draws. Off by default; read only with TTFTModel
+	// rank-mixture.
+	RankMixtureStratified bool `json:"rankMixtureStratified,omitempty"`
 	// PrefillSlots is the prefill engine's max-num-seqs, read by
 	// TTFTModel's limited-PS check; 0 not known.
 	PrefillSlots int `json:"prefillSlots,omitempty"`
@@ -869,7 +875,8 @@ func splitOf(e *inputsEntry, split, fitUntil string) (int, time.Time, string, er
 // cycle's time.
 func refitRequest(e *inputsEntry, cycle int, cutoff time.Time) (InputsRequest, error) {
 	d := e.doc
-	in := InputsRequest{Model: d.Model, DecodeVariant: d.Fleet.Decode.Variant, PrefillVPPlateau: d.PrefillVPPlateau, ExperimentalTTFT: d.ExperimentalTTFT}
+	in := InputsRequest{Model: d.Model, DecodeVariant: d.Fleet.Decode.Variant, PrefillVPPlateau: d.PrefillVPPlateau, PrefillHitAtCount: d.PrefillHitAtCount,
+		ExperimentalTTFT: d.ExperimentalTTFT}
 	if d.Fleet.Prefill != nil {
 		in.PrefillVariant = d.Fleet.Prefill.Variant
 	}
@@ -1079,7 +1086,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		case len(test.mixture) != len(test.series):
 			q.mixture = abstainedMixture("the test source did not give the per-rank series")
 		default:
-			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots, req.RankMixtureFitSteps)
+			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots, rankMixtureSwitchesOf(req))
 			if ferr != nil {
 				q.mixture = abstainedMixture(ferr.Error())
 			} else {

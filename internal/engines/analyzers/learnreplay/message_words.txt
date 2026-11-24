@@ -397,6 +397,8 @@ Pods
 Poisson
 Pre-populated
 Preemptions
+PrefixHitAtCount
+PrefixHitHeld
 Preserving
 PriorityClass
 Processing
@@ -2499,6 +2501,7 @@ prefill-capacity-observed
 prefill-catchup
 prefill-demand-held
 prefill-f-busy-minutes
+prefill-hit-at-count
 prefill-knee
 prefill-latency
 prefill-queue-by-capacity
