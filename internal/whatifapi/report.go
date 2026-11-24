@@ -122,8 +122,8 @@ type ReportShapeAsk struct {
 // on its own).
 type ReportLoadAsk struct {
 	Rate, Share, Concurrency float64
-	Seen        bool
-	X           float64
+	Seen                     bool
+	X                        float64
 	// Label is the load as asked ("5r/s", "80%", "64c", "seen", "seen x1.5").
 	Label string
 }

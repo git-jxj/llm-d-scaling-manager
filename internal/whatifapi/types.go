@@ -517,12 +517,12 @@ type Scenario struct {
 	// (limits.chosen.fromConcurrency).
 	Concurrency *float64           `json:"concurrency,omitempty"`
 	Mix         Mix                `json:"mix"`
-	ArrivalCV2 *float64           `json:"arrivalCV2,omitempty"`
-	TTFT       ResolvedObjective  `json:"ttft"`
-	TPOT       *ResolvedObjective `json:"tpot,omitempty"`
-	Headroom   float64            `json:"headroom"`
-	Assume     Assume             `json:"assume"`
-	Views      ViewRequest        `json:"views"`
+	ArrivalCV2  *float64           `json:"arrivalCV2,omitempty"`
+	TTFT        ResolvedObjective  `json:"ttft"`
+	TPOT        *ResolvedObjective `json:"tpot,omitempty"`
+	Headroom    float64            `json:"headroom"`
+	Assume      Assume             `json:"assume"`
+	Views       ViewRequest        `json:"views"`
 	// BucketEdges are the request's edges; absent with the default ones,
 	// asked or not, so that they hash to the same scenarioId.
 	BucketEdges []int `json:"bucketEdges,omitempty"`

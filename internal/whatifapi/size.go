@@ -148,7 +148,7 @@ func (s *Server) size(ctx context.Context, req SizeRequest) ([]byte, error) {
 		return nil, err
 	}
 	if sc.Concurrency != nil {
-		return nil, InputErrorf("traffic.classes.critical.concurrency: a size needs a rate; a concurrency is a rate only on a given fleet, "+
+		return nil, InputErrorf("traffic.classes.critical.concurrency: a size needs a rate; a concurrency is a rate only on a given fleet, " +
 			"so translate it with POST /v1/plan on a fleet and size for that rate")
 	}
 	if sc.Rate == nil {
