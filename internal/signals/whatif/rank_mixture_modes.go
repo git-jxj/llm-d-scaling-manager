@@ -24,7 +24,10 @@ import (
 // A figure priced past the fitted range is still flagged
 // KVDeferralOutside. The hold is at a quantile of the ranks' utilizations,
 // not at the top of the fitted range (KVDeferral.RhoHi, a mean over the
-// ranks): held there alone, it added a mean under-read on that recording.
+// ranks), which holds lower still. Held alone, the hold lowers every busier
+// step's mean a little: on that recording it took one outlier step's mean,
+// already just over 0.8, under it; with the remainder spread on as well, it
+// took none.
 //
 // Remainder spread (RemainderSpread). The router's remainder (its TTFT less
 // both engines') is drawn as its line, a constant at each prompt. The router

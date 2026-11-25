@@ -351,10 +351,22 @@ neither changes whether the variant abstains.
 
 On the public recordings neither mode moves a figure: the variant abstains
 there, and none holds the router's request-processing series. On a
-production P/D recording the hold alone took the load split's p90 and p95
-figures under 1.25 of measured, with one more mean read under 0.8. The
-remainder spread has not yet been checked on a recording that holds its
-series.
+production P/D recording, re-captured with the series (development window
+only):
+
+- The hold alone took the load split's p90 and p95 figures under 1.25 of
+  measured, and read one more mean under 0.8. That mean is one test step,
+  the split's lowest, which already read just over 0.8 with the mode off; the
+  hold lowers it a little, as it lowers every busier step. The offline
+  reference lowers the same step by the same amount, and keeps it just over
+  0.8 only because it reads the step a little higher with the mode off. It is
+  how the hold acts on one outlier step, not a difference in the hold.
+- The remainder spread alone brought the time split's p90 and p95 toward
+  measured, and most of its figures under 0.8 back within, but it raised
+  the load split's figures over 1.25 several times over.
+- Both together kept the time split's gain, left fewer figures over 1.25
+  on the load split than with both off, and read no figure under 0.8 that
+  read within with both off. Use the two together.
 
 ## Experimental: the per-request TPOT distribution
 
