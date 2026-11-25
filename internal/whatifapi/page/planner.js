@@ -259,10 +259,20 @@ async function api(method, path, body, signal) {
     }
     const resp = await fetch(path, opt);
     let doc = null;
-    try { doc = await resp.json(); } catch (e) { doc = null; }
+    // A body not JSON reads as none; one cut off by the signal is the abort.
+    try { doc = await resp.json(); } catch (e) {
+      if (e.name === "AbortError") throw e;
+      doc = null;
+    }
     const wait = retryDelay(resp.status, resp.headers.get("Retry-After"), attempt);
     if (wait >= 0) {
-      await new Promise(r => setTimeout(r, wait));
+      // The wait before a retry ends at the abort, not after it.
+      await new Promise((resolve, reject) => {
+        const aborted = () => { clearTimeout(t); reject(new DOMException("aborted", "AbortError")); };
+        const t = setTimeout(resolve, wait);
+        if (signal && signal.aborted) aborted();
+        else if (signal) signal.addEventListener("abort", aborted, {once: true});
+      });
       continue;
     }
     if (!resp.ok) {
@@ -557,7 +567,7 @@ function setInputs(inputs) {
   el("exec").hidden = true;
   el("trustchip").hidden = true;
   // A day plan of the inputs before is dropped, a run of them cancelled.
-  dayCancel();
+  dayCancel(true);
   state.day = null;
   state.dayAsked = state.dayReq = state.dayCancelled = null;
   state.reportUsed = null;
@@ -566,8 +576,8 @@ function setInputs(inputs) {
   el("dayout").hidden = true;
   el("dayrun").disabled = !inputs.fleet.prefill;
   // The bucket starts where the window cuts into no more than
-  // DAY_BUCKETS_AIMED of them.
-  el("daystep").value = dayStepFor();
+  // DAY_BUCKETS_AIMED of them, unless one was picked that still fits.
+  el("daystep").value = dayStepFor(state.dayStepPicked);
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
   state.bt = null;
   el("btout").hidden = true;
@@ -2467,7 +2477,8 @@ function wire() {
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
   el("daycancel").onclick = dayCancel;
-  el("daystep").onchange = el("daysize").onchange = dayStale;
+  el("daystep").onchange = () => { state.dayStepPicked = el("daystep").value; dayStale(); };
+  el("daysize").onchange = dayStale;
   el("btrun").onclick = runBacktest;
   el("btstart").onclick = checkAccuracy;
   el("bprun").onclick = runPredict;
@@ -3107,6 +3118,8 @@ async function runDay() {
   const stop = dayProgress(req, t0);
   try {
     const out = await api("POST", "v1/dayplan", req, abort.signal);
+    // An answer that lands after Cancel, or after a new load, is not drawn.
+    if (abort.signal.aborted) throw new DOMException("cancelled", "AbortError");
     if (!state.inputs || inputsId !== state.inputs.inputsId) return;
     state.day = out;
     state.dayAsked = JSON.stringify(req);
@@ -3119,8 +3132,9 @@ async function runDay() {
   } catch (e) {
     if (e.name === "AbortError") {
       // Cancelled: not asked again by itself until a knob changes. A run a
-      // new load cancelled says nothing: the load speaks.
-      if (state.inputs && inputsId === state.inputs.inputsId) {
+      // new load cancelled says nothing, even a load of the same inputs:
+      // the load speaks, and its day plan is asked as any other.
+      if (!abort.byLoad && state.inputs && inputsId === state.inputs.inputsId) {
         setStatus("Day plan cancelled.");
         state.dayCancelled = JSON.stringify(req);
       }
@@ -3131,21 +3145,28 @@ async function runDay() {
       if (state.dayAsked !== JSON.stringify(req)) state.dayFailed = JSON.stringify(req);
     }
   } finally {
+    // Cancel goes with the progress: a keyboard on it moves to Plan the day.
+    const onCancel = document.activeElement === el("daycancel");
     stop();
     state.dayAbort = null;
     state.dayBusy = false;
     el("dayrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
+    if (onCancel) el(el("dayrun").disabled ? "tab-day" : "dayrun").focus();
     // A knob changed while it ran: the view on screen plans again.
     if (dayStale()) dayAgain();
   }
 }
 
-// dayBuckets is about how many buckets a day plan of step cuts the source's
-// window into, or null where the window is not known.
+// dayBuckets is how many buckets a day plan of step cuts the source's
+// window into, or null where the window is not known. The server aligns
+// buckets to the step in UTC (bucketize), from the first cycle's bucket to
+// the last's, and so does this.
 function dayBuckets(step) {
-  const s = state.inputs && state.inputs.source, d = dayStepSeconds(step);
+  const s = state.inputs && state.inputs.source, d = dayStepSeconds(step) * 1000;
   if (!s || !s.firstAt || !s.lastAt || !d) return null;
-  return Math.floor((new Date(s.lastAt) - new Date(s.firstAt)) / 1000 / d) + 1;
+  const a = Date.parse(s.firstAt), b = Date.parse(s.lastAt);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null;
+  return Math.floor(b / d) - Math.floor(a / d) + 1;
 }
 
 // dayStepSeconds is a bucket's length ("5m", "1h") in seconds, or 0.
@@ -3161,10 +3182,20 @@ function dayStepSeconds(step) {
 // server sizes up to maxDayPlanBuckets (3000) on any step asked.
 const DAY_STEPS = ["5m", "15m", "1h"];
 const DAY_BUCKETS_AIMED = 300;
+// DAY_BUCKETS_MAX is the server's maxDayPlanBuckets: a step picked that
+// cuts the window into more is refused (the server counts one bucket over,
+// so the page keeps under it).
+const DAY_BUCKETS_MAX = 3000;
 
 // dayStepFor is the step a day plan starts at on the loaded window: the
-// finest of DAY_STEPS that cuts it into DAY_BUCKETS_AIMED buckets or fewer.
-function dayStepFor() {
+// step picked, where there is one and the server sizes its buckets, or else
+// the finest of DAY_STEPS that cuts the window into DAY_BUCKETS_AIMED
+// buckets or fewer.
+function dayStepFor(picked) {
+  if (picked) {
+    const n = dayBuckets(picked);
+    if (n == null || n < DAY_BUCKETS_MAX) return picked;
+  }
   for (const s of DAY_STEPS) {
     const n = dayBuckets(s);
     if (n == null || n <= DAY_BUCKETS_AIMED) return s;
@@ -3179,22 +3210,28 @@ function dayStepFor() {
 function dayProgress(req, t0) {
   const n = dayBuckets(req.step);
   const started = new Date().toISOString().slice(11, 19);
+  // Shown first, then written: a live region hidden when its text changes
+  // is not announced.
+  el("dayprogress").hidden = false;
   el("dayprogtext").textContent = `Planning the day: ${n != null ? n + " buckets of " + req.step + ", " : ""}each sized on its own, ` +
     `started ${started} UTC.`;
   const tick = () => { el("dayprogtime").textContent = `${Math.round((performance.now() - t0) / 1000)} s so far; a day of 5-minute buckets takes minutes.`; };
   tick();
-  el("dayprogress").hidden = false;
   const timer = setInterval(tick, 1000);
   return () => {
     clearInterval(timer);
     el("dayprogress").hidden = true;
+    el("dayprogtext").textContent = "";
   };
 }
 
 // dayCancel stops the day plan running: its request is aborted, and the
-// button is free again.
-function dayCancel() {
-  if (state.dayAbort) state.dayAbort.abort();
+// button is free again. byLoad is a new load cancelling it, which the run
+// does not remember as a plan cancelled.
+function dayCancel(byLoad) {
+  if (!state.dayAbort) return;
+  state.dayAbort.byLoad = byLoad === true;
+  state.dayAbort.abort();
 }
 
 // dayAgain plans a stale day plan again, after a pause for the knob still

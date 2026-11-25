@@ -947,10 +947,12 @@ it started and the seconds since, with **Cancel**, which stops the request
 and frees **Plan the day**. The server reports no share done, so the time is
 all it shows. One plan runs at a time: opening the tab again shows the one
 running, and a plan you cancelled is not asked again until a knob changes.
+Loading new inputs cancels a plan still running.
 The **Bucket** starts at 5 minutes, the server's default, or at 15 minutes or
 an hour where the window would otherwise cut into more than 300 buckets; pick
-another to plan finer. The server itself sizes up to 3000 buckets on any
-step you ask.
+another to plan finer. A bucket you pick stays when you load again, unless
+the new window would cut it into more than the 3000 buckets the server
+sizes.
 
 From the command line, on the sample recording (about an hour, so two hours
 in the table):

@@ -37,7 +37,7 @@ function fakeElement(tag) {
     querySelectorAll() { return []; },
     addEventListener() {},
     setAttribute() {},
-    focus() {},
+    focus() { document.activeElement = this; },
   };
 }
 const byId = new Map();
@@ -52,9 +52,16 @@ const document = {
 // The fake server answers a day plan after server.delay ms, or stops when
 // its request is aborted.
 const calls = [];
-const server = {delay: 300};
-function respond(status, doc) {
-  return {ok: status < 300, status, statusText: "x", headers: {get: () => null}, json: async () => doc};
+const server = {delay: 300, bodyDelay: 0, busy: 0};
+// respond is a response whose body reads after server.bodyDelay ms, or
+// fails when the request is aborted first.
+function respond(status, doc, signal, retryAfter) {
+  return {ok: status < 300, status, statusText: "x", headers: {get: h => h === "Retry-After" ? retryAfter || null : null},
+    json: () => new Promise((resolve, reject) => {
+      if (!server.bodyDelay) return resolve(doc);
+      const t = setTimeout(() => resolve(doc), server.bodyDelay);
+      if (signal) signal.addEventListener("abort", () => { clearTimeout(t); reject(new DOMException("aborted", "AbortError")); });
+    })};
 }
 async function fakeFetch(path, opt) {
   const call = {path, body: JSON.parse(opt.body || "null"), aborted: false, done: false};
@@ -71,18 +78,21 @@ async function fakeFetch(path, opt) {
   });
   call.done = true;
   if (path !== "v1/dayplan") return respond(404, {error: "no " + path});
+  if (server.busy) return respond(503, {error: "busy"}, opt.signal, "30");
   const d = JSON.parse(JSON.stringify(golden));
   d.ttft = Object.assign({}, d.ttft, {statistic: call.body.slo.ttft.statistic, target: call.body.slo.ttft.target});
-  return respond(200, d);
+  return respond(200, d, opt.signal);
 }
 
-const ctx = vm.createContext({document, location: {hash: ""}, history: {replaceState() {}}, fetch: fakeFetch, AbortController, DOMException,
+const Option = function (text, value) { return Object.assign(fakeElement("option"), {textContent: text, value}); };
+const ctx = vm.createContext({document, Option, location: {hash: ""}, history: {replaceState() {}}, fetch: fakeFetch, AbortController, DOMException,
   setTimeout, clearTimeout, setInterval, clearInterval, URLSearchParams, performance, console});
 for (const f of files) vm.runInContext(fs.readFileSync(f, "utf8"), ctx, {filename: f});
 const run = src => vm.runInContext(src, ctx);
 run("plan = async () => {};");
 const state = run("state");
 const el = id => document.getElementById(id);
+const setStatus = text => run("setStatus")(text);
 
 let passed = 0;
 const failures = [];
@@ -165,6 +175,67 @@ try {
   run("showView(\"answer\"); showView(\"day\")");
   check("a changed knob asks again", await until(() => dayCalls().length === before + 1 && !state.dayBusy), dayCalls().length - before);
   run("showView(\"answer\")");
+
+  // An answer whose body lands after Cancel is not drawn, nor an error.
+  server.delay = 0;
+  server.bodyDelay = 5000;
+  state.k.ttftTarget = 5;
+  state.day = null;
+  setStatus("");
+  const third = run("runDay()");
+  await until(() => calls[calls.length - 1].done);
+  run("dayCancel()");
+  await third;
+  server.bodyDelay = 0;
+  check("a body cut off by Cancel is not drawn", state.day === null, JSON.stringify(state.day && state.day.buckets && state.day.buckets.length));
+  check("and reads as cancelled, not an error", /cancelled/.test(el("status").textContent) && !el("status").classList.contains("error"), el("status").textContent);
+
+  // The wait before retrying a busy server ends at Cancel.
+  server.busy = 1;
+  state.k.ttftTarget = 6;
+  const t0 = Date.now();
+  const fourth = run("runDay()");
+  await until(() => calls[calls.length - 1].done);
+  await sleep(50);
+  run("dayCancel()");
+  await Promise.race([fourth, sleep(2000)]);
+  check("Cancel ends the wait before a retry", Date.now() - t0 < 2000 && !state.dayBusy, Date.now() - t0);
+  server.busy = 0;
+
+  // Cancel from the keyboard: the button goes, the focus moves to Plan the day.
+  server.delay = 5000;
+  state.k.ttftTarget = 7;
+  const fifth = run("runDay()");
+  await sleep(20);
+  el("daycancel").focus();
+  run("dayCancel()");
+  await fifth;
+  check("Cancel hands the focus to Plan the day", document.activeElement === el("dayrun"));
+
+  // A new load cancels a run without a word, even a load of the same inputs,
+  // and its plan is asked as any other.
+  const sixth = run("runDay()");
+  await sleep(20);
+  setStatus("loaded");
+  run("setInputs")(inputs);
+  await sixth;
+  const cut = dayCalls()[dayCalls().length - 1];
+  check("a new load cancels the run", cut.aborted === true && !state.dayBusy);
+  check("without a word", el("status").textContent === "loaded", el("status").textContent);
+  check("and not as a plan cancelled", state.dayCancelled === null, state.dayCancelled);
+
+  // A bucket picked stays across loads while the server sizes it, and the
+  // count is of buckets aligned to the step, as the server cuts them.
+  el("daystep").value = "1h";
+  el("daystep").onchange();
+  run("setInputs")(inputs);
+  check("a picked bucket stays across a load", el("daystep").value === "1h", el("daystep").value);
+  el("daystep").value = "1m";
+  el("daystep").onchange();
+  run("setInputs")(Object.assign({}, inputs, {source: Object.assign({}, inputs.source, {lastAt: "2026-11-04T00:00:00Z"})}));
+  check("but not where the server would refuse it", el("daystep").value === "15m", el("daystep").value);
+  state.inputs = Object.assign({}, inputs, {source: Object.assign({}, inputs.source, {firstAt: "2026-11-01T00:03:00Z", lastAt: "2026-11-01T00:07:00Z"})});
+  check("buckets are counted aligned to the step", run("dayBuckets(\"5m\")") === 2, run("dayBuckets(\"5m\")"));
 } catch (e) {
   failures.push("threw: " + (e && e.stack || e));
 }
