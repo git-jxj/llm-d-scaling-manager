@@ -442,6 +442,16 @@ In a cluster, add both to the StatefulSet's `args`
   and p95 too: see [The v2 TPOT curve](#the-v2-tpot-curve). Day plans and
   predictions are the default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
+- **The v2nl-line variant.** `--experimental-ttft=v2nl-line` in place of
+  `=v2` does all of the above with the variant
+  ([how it reads](accuracy.md#the-measured-non-queue-variant---experimental-ttftv2nl-line)):
+  every check, the main view, sizes and `at-replicas` are fitted and priced
+  as `backtest --experimental-ttft=v2nl-line` fits and prices them. The
+  TTFT caption and the inputs name it "Experimental TTFT model v2nl-line"
+  (`ttftModel.model` `rank-mixture-nl-line`), and its held-out score comes
+  from folds fitted the variant's way. It abstains more often than v2,
+  wherever its fit window does not price its own mean and p90, and says
+  why, as v2 does.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
   that it abstained and why, and every figure is then the planner's own.

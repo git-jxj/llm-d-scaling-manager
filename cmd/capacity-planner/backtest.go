@@ -92,8 +92,7 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag,
-		experimentalTTFTV2Usage+"; =v2nl-line prices with its variant that measures each part of the non-queue time on its own, calibrates nothing "+
-			"to the router and abstains unless its fit window prices itself (flagged the same)")
+		experimentalTTFTV2Usage+"; "+experimentalTTFTNLLineUsage)
 	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
 }
 
@@ -262,10 +261,7 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 	if !f.rankMixtureTTFT {
 		return nil
 	}
-	req.TTFTModel, req.PrefillSlots = string(whatif.QueueRankMixture), prefillSlotsOf(fit)
-	if f.rankMixtureNLLine {
-		req.TTFTModel = string(whatif.QueueRankMixtureNLLine)
-	}
+	req.TTFTModel, req.PrefillSlots = rankMixtureModel(f.rankMixtureNLLine), prefillSlotsOf(fit)
 	req.RankMixtureFitSteps = f.rankMixtureFitSteps
 	req.RankMixtureStratified = f.rankMixtureStratified
 	if err := withRankMixture(testPath, test, nil); err != nil {

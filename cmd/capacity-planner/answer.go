@@ -144,7 +144,10 @@ type answerFlags struct {
 	// rankMixtureTTFT is --experimental-ttft=v2: at-replicas prices its
 	// tables' TTFT with the experimental rank-mixture model, fitted on the
 	// recording (experimental_ttft_v2.go); refused elsewhere.
-	rankMixtureTTFT bool
+	// rankMixtureNLLine is its =v2nl-line: the variant
+	// (whatif.QueueRankMixtureNLLine) in place of v2, rankMixtureTTFT set
+	// too.
+	rankMixtureTTFT, rankMixtureNLLine bool
 	// rankMixtureStratified is --rank-mixture-stratified, read with
 	// rankMixtureTTFT (whatifapi.ApplyTTFTModel): nil is the default
 	// (whatif.DefaultRankMixtureStratified).
@@ -216,8 +219,9 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.loadAwareRouter, "load-aware-router", whatif.DefaultPlannerLoadAwareRouter, "state that the router scores each pod's queue (llm-d's EPP queue scorer): f is held to the load it was learned at, then falls to 1 at full load, so the prefill knee is the pooled one less the margin and f prices only the latency below it; off by default, because no recording says what the router scores")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
-	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
-		". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on the --recording")
+	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag,
+		experimentalTTFTUsage+". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on "+
+			"the --recording, and "+experimentalTTFTNLLineUsage)
 	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "at-replicas only: =v2 prices the measured shape's (--shape measured) TPOT p90 and p95 with an "+
 		"experimental per-request TPOT distribution fitted on the --recording, around the planner's own mean; every percentile it prices "+
@@ -251,9 +255,9 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 	case f.tpotDistribution && f.recording == "":
 		return usagef("--%s=%s fits the model on a --recording", experimentalTPOTFlag, experimentalTPOTV2)
 	case f.rankMixtureTTFT && f.question != reportQuestion:
-		return usagef("--%s=%s is backtest's, predict's, serve's and at-replicas'", experimentalTTFTFlag, experimentalTTFTV2)
+		return usagef("--%s=%s is backtest's, serve's and at-replicas'", experimentalTTFTFlag, f.rankMixtureValue())
 	case f.rankMixtureTTFT && f.recording == "":
-		return usagef("--%s=%s fits the model on a --recording", experimentalTTFTFlag, experimentalTTFTV2)
+		return usagef("--%s=%s fits the model on a --recording", experimentalTTFTFlag, f.rankMixtureValue())
 	case f.output != outputText && f.output != outputJSON:
 		return usagef("-o %q, want text or json", f.output)
 	case f.decode < 0:

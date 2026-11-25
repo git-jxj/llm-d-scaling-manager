@@ -238,6 +238,15 @@ func (sw rankMixtureSwitches) model() whatif.QueueModel {
 	return whatif.QueueRankMixture
 }
 
+// options is the fit's options sw turns on, with slots the prefill
+// engine's max-num-seqs: the backtest's fit and the main view's
+// (fitMainMixture) read the same.
+func (sw rankMixtureSwitches) options(slots int) whatif.RankMixtureOptions {
+	return whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
+		SpreadFloor: whatif.MinSpread, CleanFitSteps: sw.fitSteps, SharesAtLoad: sw.fitSteps,
+		StratifiedMoments: sw.stratified}
+}
+
 // stratifiedOf is a request's rankMixtureStratified: the value where it
 // names one, def where it is absent.
 func stratifiedOf(asked *bool, def bool) bool {
@@ -302,9 +311,7 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 			"ranks' own rates on stationary steps: of the fit window's %d steps, %d read no router TTFT, %d no prefill rank's rate "+
 			"and %d were not stationary", sw.model(), len(order), noRouter, noRanks, backlog)
 	}
-	o := whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
-		SpreadFloor: whatif.MinSpread, CleanFitSteps: sw.fitSteps, SharesAtLoad: sw.fitSteps,
-		StratifiedMoments: sw.stratified}
+	o := sw.options(slots)
 	fitter := whatif.FitRankMixture
 	if sw.nlLine {
 		fitter = whatif.FitRankMixtureNL

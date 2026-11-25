@@ -359,7 +359,8 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 			Content   any
 			TTFTModel string
 		}{res.Content, model})
-		mm = fitMainMixture(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, stratified)
+		mm = fitMainMixture(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine},
+			TTFTModelOptions{Model: model, Stratified: stratified}.switches())
 		info := mm.info
 		doc.TTFTModel = &info
 	}

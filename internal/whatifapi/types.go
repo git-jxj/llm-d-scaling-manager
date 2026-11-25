@@ -45,10 +45,11 @@ type InputsRequest struct {
 	// ExperimentalTTFT.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
 	// TTFTModel prices the main view's TTFT with an experimental model:
-	// "" is the server's default (serve --experimental-ttft=v2), and
-	// whatif.QueueRankMixture the only other. The model is fitted on the
-	// source's window and abstains where it is not identified; the
-	// planner's TTFT then stands.
+	// "" is the server's default (serve --experimental-ttft=v2 or
+	// =v2nl-line), whatif.QueueRankMixture or its variant
+	// whatif.QueueRankMixtureNLLine. The model is fitted on the source's
+	// window as a backtest fits it, and abstains where it is not
+	// identified; the planner's TTFT then stands.
 	TTFTModel string `json:"ttftModel,omitempty"`
 	// RankMixtureStratified is BacktestRequest.RankMixtureStratified for
 	// the main view's model: absent, the server's default (on, unless the

@@ -327,6 +327,10 @@ abstains where:
 
 On the public recordings it abstains, mostly on the fit window's length.
 
+`serve` and `at-replicas` take `--experimental-ttft=v2nl-line` too, and fit
+and price the variant exactly as `backtest` does, abstentions included
+([serve with the experimental models](page-and-commands.md#serve-with-the-experimental-v2-models)).
+
 ## Experimental: the per-request TPOT distribution
 
 `capacity-planner backtest --experimental-tpot=v2` prices the TPOT percentiles
