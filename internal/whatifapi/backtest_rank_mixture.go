@@ -122,6 +122,10 @@ type rankMixtureSwitches struct {
 	// nlLine fits the variant whatif.QueueRankMixtureNLLine in place of v2
 	// (BacktestRequest.TTFTModel); it fits with both switches above on.
 	nlLine bool
+	// kvHold and remainderSpread are the variant's modes
+	// (whatif.RankMixtureOptions KVHold and RemainderSpread):
+	// BacktestRequest RankMixtureKVHold and RankMixtureRemainderSpread.
+	kvHold, remainderSpread bool
 }
 
 // rankMixtureSwitchesOf is the switches req turns on. The server has set
@@ -129,8 +133,10 @@ type rankMixtureSwitches struct {
 // always sets it.
 func rankMixtureSwitchesOf(req BacktestRequest) rankMixtureSwitches {
 	return rankMixtureSwitches{fitSteps: req.RankMixtureFitSteps,
-		stratified: stratifiedOf(req.RankMixtureStratified, whatif.DefaultRankMixtureStratified),
-		nlLine:     req.TTFTModel == string(whatif.QueueRankMixtureNLLine)}
+		stratified:      stratifiedOf(req.RankMixtureStratified, whatif.DefaultRankMixtureStratified),
+		nlLine:          req.TTFTModel == string(whatif.QueueRankMixtureNLLine),
+		kvHold:          req.RankMixtureKVHold,
+		remainderSpread: req.RankMixtureRemainderSpread}
 }
 
 // model is the model sw fits.
@@ -158,7 +164,8 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 			sw.model())
 	}
 	f, steps, err := whatif.FitRankMixtureCycles(fitCycles(fit, fitIdx), step, slots,
-		whatif.RankMixtureSwitches{FitSteps: sw.fitSteps, Stratified: sw.stratified, NLLine: sw.nlLine})
+		whatif.RankMixtureSwitches{FitSteps: sw.fitSteps, Stratified: sw.stratified, NLLine: sw.nlLine,
+			KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread})
 	if err != nil {
 		return nil, nil, InputError{Err: err}
 	}

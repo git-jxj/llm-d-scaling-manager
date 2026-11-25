@@ -25,7 +25,9 @@ import (
 // engines each recorded their own rate (domain.EngineReading.RequestRateKnown)
 // gives one rank per engine; any other row gives its ranks
 // (domain.ReplicaMetrics.Ranks), the row's rate split evenly between them
-// and each with the row's means, counted in EvenWithinRows.
+// and each with the row's means, counted in EvenWithinRows. The router's
+// request-processing histogram and mean are the cycle's router latency's,
+// where recorded.
 func MixtureCycleOf(in domain.AnalyzerInput, at time.Time, prefillVariant, decodeVariant string) MixtureCycle {
 	c := MixtureCycle{At: at, Computed: map[float64]float64{}, Prompt: map[float64]float64{}, Queue: map[float64]float64{}}
 	roles := rolesOf(in)
@@ -96,6 +98,12 @@ func MixtureCycleOf(in domain.AnalyzerInput, at time.Time, prefillVariant, decod
 	}
 	if dw > 0 {
 		c.DecodeTTFT = dt / dw
+	}
+	if rl := in.RouterLatency; rl != nil {
+		c.RouterProcessingHist = addBuckets(nil, rl.ProcessingBuckets)
+		if rl.ProcessingCountRate > 0 && Finite(rl.ProcessingSumRate) && Finite(rl.ProcessingCountRate) {
+			c.RouterProcessingMean = rl.ProcessingSumRate / rl.ProcessingCountRate
+		}
 	}
 	return c
 }

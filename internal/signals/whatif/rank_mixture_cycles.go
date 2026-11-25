@@ -108,6 +108,20 @@ type RankMixtureZParts struct {
 	// (ZPart.Sigma); 0 is none.
 	OverheadSigma float64 `json:"overheadSigma"`
 	DecodeSigma   float64 `json:"decodeSigma"`
+	// RemainderShapeMean is the router's measured request-processing mean
+	// the remainder is drawn from, seconds, and RemainderShapeP95 that
+	// law's 95th percentile over its mean (RankMixtureSwitches
+	// RemainderSpread); both absent where the remainder is its line.
+	RemainderShapeMean float64 `json:"remainderShapeMean,omitempty"`
+	RemainderShapeP95  float64 `json:"remainderShapeP95,omitempty"`
+}
+
+// remainderShape sets the remainder's measured law, where it has one.
+func (z *RankMixtureZParts) remainderShape(r ZPart) {
+	if r.Shape == nil {
+		return
+	}
+	z.RemainderShapeMean, z.RemainderShapeP95 = r.ShapeMean, r.ShapeQuantile(0.95)
 }
 
 // RankMixtureKV is the fitted KV-deferral wait.
@@ -118,6 +132,9 @@ type RankMixtureKV struct {
 	M1    float64 `json:"m1"`
 	RhoLo float64 `json:"rhoLo"`
 	RhoHi float64 `json:"rhoHi"`
+	// RhoHold is the utilization the lines are held at past it
+	// (RankMixtureSwitches.KVHold); absent, not held.
+	RhoHold float64 `json:"rhoHold,omitempty"`
 }
 
 // RankMixtureSwitches are the rank mixture's fit switches, each independent
@@ -133,6 +150,10 @@ type RankMixtureSwitches struct {
 	// NLLine fits the variant QueueRankMixtureNLLine (FitRankMixtureNL) in
 	// place of v2; it fits with both switches above on.
 	NLLine bool
+	// KVHold and RemainderSpread are the variant's modes
+	// (RankMixtureOptions KVHold and RemainderSpread); the planner's
+	// BacktestRequest RankMixtureKVHold and RankMixtureRemainderSpread.
+	KVHold, RemainderSpread bool
 }
 
 // Model is the model sw fits.
@@ -201,7 +222,7 @@ func FitRankMixtureCycles(cycles []FitCycle, step time.Duration, slots int, sw R
 	}
 	m, diag, err := fitter(steps, RankMixtureOptions{Slots: slots, MinSpreadSpan: MinSpreadFitWindow,
 		SpreadFloor: MinSpread, CleanFitSteps: sw.FitSteps, SharesAtLoad: sw.FitSteps,
-		StratifiedMoments: sw.Stratified})
+		StratifiedMoments: sw.Stratified, KVHold: sw.KVHold, RemainderSpread: sw.RemainderSpread})
 	if err != nil {
 		return nil, nil, fmt.Errorf("the experimental TTFT model %s did not fit: %w", sw.Model(), err)
 	}
@@ -218,12 +239,14 @@ func FitRankMixtureCycles(cycles []FitCycle, step time.Duration, slots int, sw R
 		r.FoldSpread = []float64{}
 	}
 	if m.KV.Known {
-		r.KV = &RankMixtureKV{P0: m.KV.P0, P1: m.KV.P1, M0: m.KV.M0, M1: m.KV.M1, RhoLo: m.KV.RhoLo, RhoHi: m.KV.RhoHi}
+		r.KV = &RankMixtureKV{P0: m.KV.P0, P1: m.KV.P1, M0: m.KV.M0, M1: m.KV.M1, RhoLo: m.KV.RhoLo, RhoHi: m.KV.RhoHi,
+			RhoHold: m.KV.RhoHold}
 	}
 	if p := m.Parts; p != nil {
 		r.FitMean = diag.FitMean
 		r.ZParts = &RankMixtureZParts{OverheadA: p.Overhead.A, OverheadB: p.Overhead.B, DecodeA: p.Decode.A, DecodeB: p.Decode.B,
 			RemainderA: p.Remainder.A, RemainderB: p.Remainder.B, OverheadSigma: p.Overhead.Sigma, DecodeSigma: p.Decode.Sigma}
+		r.ZParts.remainderShape(p.Remainder)
 	}
 	return &RankMixtureFitted{M: m, Report: r}, steps, nil
 }
