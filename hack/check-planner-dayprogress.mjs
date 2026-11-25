@@ -169,6 +169,8 @@ try {
   run("showView(\"answer\"); showView(\"day\")");
   await sleep(600);
   check("a cancelled plan is not asked again by itself", dayCalls().length === before, dayCalls().length - before);
+  check("and the stale note does not say it will be", /you cancelled the plan for them: press Plan the day/.test(el("daystale").textContent) &&
+    !/plans the day again when it is shown/.test(el("daystale").textContent), el("daystale").textContent);
   // A knob changed asks it again.
   state.k.ttftTarget = 4;
   server.delay = 20;

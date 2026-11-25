@@ -3253,11 +3253,14 @@ function dayAgain() {
 // stated lengths, bucket or rate statistic changed. It says what the plan
 // used and asks for a re-run; it is true when stale.
 function dayStale() {
-  const stale = !!(state.day && state.inputs && state.k && JSON.stringify(dayRequest()) !== state.dayAsked);
+  const asked = state.inputs && state.k ? JSON.stringify(dayRequest()) : null;
+  const stale = !!(state.day && asked && asked !== state.dayAsked);
   el("dayout").classList.toggle("stale", stale || !!state.dayBusy);
   el("daystale").hidden = !stale;
-  el("daystale").textContent = stale ? `The knobs changed since this plan, which used ${dayUsedText(state.dayReq)}: ` +
-    "this view plans the day again when it is shown, or press Plan the day." : "";
+  // A plan cancelled is not asked again by itself: the note does not say it is.
+  const again = state.dayCancelled === asked ? "you cancelled the plan for them: press Plan the day to plan it." :
+    "this view plans the day again when it is shown, or press Plan the day.";
+  el("daystale").textContent = stale ? `The knobs changed since this plan, which used ${dayUsedText(state.dayReq)}: ${again}` : "";
   return stale;
 }
 
