@@ -598,4 +598,18 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 	require.Empty(t, out.TPOTModel.Abstained)
 	assert.Contains(t, text, fmt.Sprintf("priced 0 of the %d sized buckets", out.Summary.Counts.Sized), "a mean TPOT is the planner's")
 	assert.Contains(t, text, fmt.Sprintf("the model prices p90 and p95, not mean (%d)", out.Summary.Counts.Sized))
+	// A model that prices no target the plan asks buys nothing at the
+	// window's shape: each bucket keeps its own.
+	require.True(t, slices.ContainsFunc(e.series, func(x SeriesSample) bool { return x.HasShape }), "the cycles read their lengths")
+	assert.NotContains(t, text, windowNote)
+	for _, b := range out.Buckets {
+		if b.Status != BucketNoData {
+			assert.Equal(t, "bucket", b.Shape.Source, "bucket %s", b.Start)
+			assert.NotContains(t, b.Flags, FlagWindowShape, "bucket %s", b.Start)
+		}
+	}
+	// At a p90 TPOT target it prices, and the buckets are at the window's.
+	_, text = dayPlan(s, e, DayPlanRequest{ExperimentalModels: true,
+		SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}, TPOT: &Objective{Statistic: "p90", Target: f64(tpotTarget)}}})
+	assert.Contains(t, text, windowNote)
 }

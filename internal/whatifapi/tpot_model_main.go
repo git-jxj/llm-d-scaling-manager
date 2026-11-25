@@ -370,10 +370,16 @@ func (e *inputsEntry) models() *experimentalModels {
 	return &experimentalModels{ttft: e.ttftModel, tpot: e.tpotModel}
 }
 
-// pricesAny says at least one of the models prices (was fitted and did not
-// abstain); false where m is nil.
-func (m *experimentalModels) pricesAny() bool {
-	return m != nil && (m.ttft.priced() || m.tpot.priced())
+// pricesAt says at least one of the models prices a fleet at k, one
+// replica a role, for a target the plan asks: the TTFT model where ttft,
+// the TPOT model where tpot (a TPOT model at a mean target prices
+// nothing). False where m is nil.
+func (m *experimentalModels) pricesAt(k Knobs, ttft, tpot bool) bool {
+	if m == nil {
+		return false
+	}
+	k.Prefill, k.Decode = 1, 1
+	return (ttft && m.ttft != nil && m.ttft.notPricedAt(k) == "") || (tpot && m.tpot != nil && m.tpot.notPricedAt(k) == "")
 }
 
 // fleet is fl with the models: the TPOT model's ratio first, since it

@@ -1180,7 +1180,8 @@ but at the window's shape, so a model can price it; each such bucket is
 flagged `WindowShape` (the flag a bucket whose cycles read no lengths
 already carries: priced at the inputs' shape), its `shape.source` is
 `window`, and a note says that per-bucket shape changes are not modelled.
-This holds only where a model prices (one that abstained leaves the plan
+This holds only where a model prices a target the plan asks (one that
+abstained, or the TPOT model alone at a mean TPOT target, leaves the plan
 at each bucket's own shape, as unasked), and a stated shape keeps its
 rule: every bucket at the stated shape, the planner's own. The error is a
 bucket whose requests are longer or shorter than the day's: it is sized as

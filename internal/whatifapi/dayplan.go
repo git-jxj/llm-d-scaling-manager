@@ -1532,8 +1532,9 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	stated := !q.sc.Mix.Observed
 	// atWindow prices each bucket at the window's shape, the one the
 	// experimental models were fitted at, so a model can price it; a
-	// bucket's own shape is then not modelled.
-	atWindow := !stated && q.models.pricesAny()
+	// bucket's own shape is then not modelled. Only where a model prices
+	// a target the plan asks: else the window's shape buys nothing.
+	atWindow := !stated && q.models.pricesAt(q.k, !q.noTTFT, q.sc.TPOT != nil)
 	if atWindow {
 		out.Notes = append(out.Notes, "With the experimental models, each bucket is priced at its own rate but at the window's request shape "+
 			"(WindowShape), the shape the models were fitted at; per-bucket shape changes are not modelled.")

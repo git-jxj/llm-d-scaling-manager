@@ -954,8 +954,8 @@ prefill that never queued), prefill is sized on it. A bucket a model sized
 carries its flag (`RankMixtureTTFT`, `TPOTDistribution`) on its limit, its
 needed replicas are marked † on the page and in the command's hours table,
 and the plan names each model, with how many buckets it priced. The models
-are fitted at the window's request shape, so with them each bucket is priced
-at its own rate but at the window's shape, flagged `WindowShape`, and a note
+are fitted at the window's request shape, so where one prices a target the
+plan asks, each bucket is priced at its own rate but at the window's shape, flagged `WindowShape`, and a note
 says that per-bucket shape changes are not modelled: a bucket of longer or
 shorter requests than the day's is sized as if they were the day's. A stated
 shape or term stays the planner's own. The TPOT model prices a p90 or p95
@@ -1039,7 +1039,7 @@ alone. A higher `--ttft` sizes them.
   held ahead, and a note says so.
 - **Shape.** Each bucket is priced at its own observed prompt and output
   length. A bucket whose cycles read none is priced at the source's shape and
-  flagged `WindowShape`, as is every bucket with the experimental models. `--assume-input-tokens` and `--assume-output-tokens`
+  flagged `WindowShape`, as is every bucket where an experimental model prices a target the plan asks. `--assume-input-tokens` and `--assume-output-tokens`
   price every bucket at one stated length, flagged `EXTRAPOLATED` when it lies
   outside what the buckets observed.
 - **No TTFT target.** With no `--ttft` and none in the policy, prefill is
