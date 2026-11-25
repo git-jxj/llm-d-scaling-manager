@@ -387,7 +387,9 @@ type pricedFleet struct {
 	// servedComputed is, by pod count, the computed-token work the prefill
 	// pods sustained (learnreplay.PrefillState.ServedComputed), kept only
 	// where the prompt priced is the one those pods computed, read off the
-	// same counter: the floor under a lower-bound knee (servedKneeFloor).
+	// same counter (the measured prompt, or the load's netted by their
+	// computed-token hit): the floor under a lower-bound knee
+	// (servedKneeFloor).
 	servedComputed map[int]float64
 	// cachedTokenCost is slo.SwitchTTFTCachedTokenCost, as the replay read
 	// it (PrefillState.CachedTokenCost): priceCachedLoad.
@@ -907,6 +909,12 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 		pf.assume("prompt %s tokens "+assumeInputTokensWords, num(round(p.PromptTokens)))
 		if hit, replaced, ok := pf.netByComputedHit(); ok {
 			pf.assume("prompt netted by the prefill pods' computed-token hit %.3f, not the prefix-cache hit %.3f", hit, replaced)
+			if pf.loadShapeRead() {
+				// The load's prompt is then in the tokens the prefill pods
+				// computed, read off the counter their served work is, so
+				// the knee keeps its floor at that work, as measured.
+				pf.servedComputed = ps.ServedComputed
+			}
 		}
 	case ps.PromptTokens > 0:
 		p.PromptTokens, pf.in.PromptSource = ps.PromptTokens, shapeMeasured
@@ -1022,8 +1030,9 @@ func (pf *pricedFleet) transferPerToken(read, base float64) float64 {
 // was read (prefillHit): the prefill pods compute the prompt less their own
 // hits, not decode's; else the decode variant's, as off.
 //
-// With slo.SwitchTTFTComputedHit on, where netByComputedHit holds, it is il
-// less the prefill pods' computed-token hit instead, which counts the hits
+// With slo.SwitchTTFTComputedHit on, or for the load's shape, where
+// netByComputedHit holds, it is il less the prefill pods' computed-token
+// hit instead, which counts the hits
 // of every tier; the hit rate beside it stays a prefix-cache one, the
 // prefill variant's where read, so it compares with V_P's (prefixMoved).
 func (pf *pricedFleet) effectivePrompt(il float64) (float64, float64) {
@@ -1046,8 +1055,13 @@ func (pf *pricedFleet) effectivePrompt(il float64) (float64, float64) {
 // moves. A hit the question states (--prefix-hit, an IL/OL/hit shape)
 // governs; one the load's cycles filled in (--shape load) is read, not
 // stated, and does not.
+//
+// The load's shape nets by it with the switch off too (loadShapeRead): its
+// hit is the decode variant's, which on a P/D fleet is not a hit of the
+// prefill pods at all, and netting by it priced the whole prompt as computed
+// where the measured shape prices what the prefill pods computed.
 func (pf *pricedFleet) netByComputedHit() (computed, replaced float64, ok bool) {
-	if !pf.computedHit {
+	if !pf.computedHit && !pf.loadShapeRead() {
 		return 0, 0, false
 	}
 	if pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead {
@@ -1062,6 +1076,12 @@ func (pf *pricedFleet) netByComputedHit() (computed, replaced float64, ok bool) 
 		return 0, 0, false
 	}
 	return computed, replaced, true
+}
+
+// loadShapeRead says the prompt priced is the load's cycles' (--shape load,
+// the report's default shape), its hit read from the source, not stated.
+func (pf *pricedFleet) loadShapeRead() bool {
+	return pf.pv != nil && pf.pv.assumedHit && pf.pv.hitRead
 }
 
 // prefixCachePrompt is effectivePrompt netted by a prefix-cache hit rate, as
@@ -1456,7 +1476,7 @@ func (pf *pricedFleet) atServedWork(fl whatif.TTFTFleet) whatif.TTFTFleet {
 	if !ok {
 		return fl
 	}
-	fl.Prefill.VP *= ratio
+	fl.Prefill = fl.Prefill.WithVP(fl.Prefill.VP * ratio)
 	return fl
 }
 
