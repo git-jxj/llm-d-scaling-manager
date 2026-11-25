@@ -2139,10 +2139,16 @@ func jointTPOT(l LatencySample, windowSeconds, q float64, meas *float64, bucket 
 	if !ok || math.IsInf(b.Hi, 1) || !whatif.Finite(b.Point) {
 		return meas, bucket
 	}
-	if b.Lo > 0 && b.Hi <= (1+MeasuredBucketWidth)*b.Lo*(1+bucketEps) {
-		return ptr(b.Point), nil
+	p := ptr(b.Point)
+	if meas != nil && math.Abs(b.Point-*meas) <= 1e-9*math.Abs(*meas) {
+		// The router's own linear reading, recomputed from shares in place
+		// of rates: keep the router's figure, not its rounding.
+		p = meas
 	}
-	return ptr(b.Point), &Band{Lo: b.Lo, Hi: b.Hi}
+	if b.Lo > 0 && b.Hi <= (1+MeasuredBucketWidth)*b.Lo*(1+bucketEps) {
+		return p, nil
+	}
+	return p, &Band{Lo: b.Lo, Hi: b.Hi}
 }
 
 // latencyHist is a cumulative latency histogram, repaired to be monotone,

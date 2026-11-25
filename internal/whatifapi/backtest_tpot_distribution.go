@@ -353,7 +353,8 @@ func (q *backtestQuestion) priceTPOTDist(pred *prediction, out *BacktestStep, st
 		return
 	}
 	at := q.test.series[st.anchor].At
-	inv, g2, ok := whatif.DecodeWindow(decodeWindow(q.test, st.window, st.windowStart, at))
+	window := decodeWindow(q.test, st.window, st.windowStart, at)
+	inv, g2, ok := whatif.DecodeWindow(window)
 	mean := pred.tpot[0].Value
 	switch {
 	case !ok:
@@ -367,7 +368,7 @@ func (q *backtestQuestion) priceTPOTDist(pred *prediction, out *BacktestStep, st
 	}
 	var law []whatif.LengthGroup
 	if q.tpotDist.perLength {
-		law, _ = whatif.DecodeWindowLaw(decodeWindow(q.test, st.window, st.windowStart, at))
+		law, _ = whatif.DecodeWindowLaw(window)
 	}
 	d := q.tpotDist.distAt(g2, q.tpotDist.c, law)
 	out.TPOTDist = &TPOTDistCheck{Sigma2: d.Sigma2(inv), Inv: inv, law: law}

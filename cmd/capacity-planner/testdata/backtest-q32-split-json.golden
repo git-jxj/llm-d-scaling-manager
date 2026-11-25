@@ -279,7 +279,7 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019000000000000003,
+          "measured": 0.019,
           "inRegion": false,
           "measuredBucket": {
             "lo": 0.01,
@@ -555,7 +555,7 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019000000000000003,
+          "measured": 0.019,
           "inRegion": false,
           "measuredBucket": {
             "lo": 0.01,
@@ -582,7 +582,7 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.0195,
+          "measured": 0.019499999999999997,
           "inRegion": false,
           "measuredBucket": {
             "lo": 0.01,
@@ -1089,7 +1089,7 @@
               "outside": "TPOT percentiles: never scored against a client"
             }
           },
-          "measured": 0.019000000000000003,
+          "measured": 0.019,
           "inRegion": false,
           "measuredBucket": {
             "lo": 0.01,

@@ -105,3 +105,28 @@ func TestTPOTDistScorer_CountsAgainstTheJointBracket(t *testing.T) {
 	assert.Equal(t, 1, *got.DefaultP90Inside, "22 ms is in [20, 25]")
 	assert.Equal(t, 0, *got.DefaultP95Inside, "50 ms is over [25, 40]")
 }
+
+// Where the joint bracket reads the router's own bucket linearly (the
+// router alone, the bucket closing at every request), the measured figure is
+// the router's reading itself, not the same figure recomputed from shares
+// and rounded differently.
+func TestMeasuredOf_TheRoutersOwnReadingIsKeptExactly(t *testing.T) {
+	const window = 300.0
+	i90 := slices.Index(backtestStats, 0.9)
+	for _, n := range []float64{300, 1000, 1234, 4567, 20000} {
+		for _, f := range []float64{0.10, 0.25, 0.30, 0.45, 0.60} {
+			edges := []float64{0.005, 0.01, 0.02, 0.04, 0.06, 0.08, math.Inf(1)}
+			shares := []float64{0, f, 1, 1, 1, 1, 1}
+			bs := make([]domain.LatencyBucket, len(edges))
+			for i, e := range edges {
+				bs[i] = domain.LatencyBucket{UpperBound: e, Rate: shares[i] * n / window}
+			}
+			l := LatencySample{Router: &domain.RouterLatency{TPOTBuckets: bs, TPOTSumRate: 0.015 * n / window, TPOTCountRate: n / window}}
+			h, ok := histOf(bs)
+			require.True(t, ok)
+			m := measuredOf(l, MeasuredRouter, window, false)
+			require.NotNil(t, m.tpot[i90])
+			assert.Equal(t, h.quantile(0.9), *m.tpot[i90], "n %g, F(10 ms) %g", n, f)
+		}
+	}
+}

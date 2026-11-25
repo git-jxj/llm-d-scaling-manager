@@ -406,6 +406,11 @@ below), or under it or over it. `shapeKs` is the same gap with the distribution
 placed at the measured mean, so it shows the shape's miss without the mean's. A
 note under the answer gives these figures beside the planner's own ratio.
 
+The model abstains on the whole backtest where `--max-num-seqs` is not read,
+where a slot queue would form, where under two hours of fit steps read the
+router's TPOT histogram and the output lengths, or where `C` ends at its bound.
+Every percentile is then the planner's own, flagged `TPOTDistributionAbstained`.
+
 ### Where a measured TPOT p90 or p95 lies: the joint bracket
 
 A step carries two histograms of each request's TPOT: the router's (edges 5,
@@ -445,8 +450,26 @@ router's own.
 
 What it removes: the linear reading inside a wide router bucket read the
 measured p90 and p95 high, which made the planner's and the model's figures
-look low. Against the joint bracket, today's model is almost never under the
+look low. Against the joint bracket, the `=v2` model is almost never under the
 bracket, and is slightly over it at p95.
+
+**This changes the accuracy figures a backtest reports for TPOT p90 and p95,
+with no change to the planner.** The measured figure, and with it the ratio,
+`within`, `low`, the certain misses and the `unresolvable` count, now come
+from the bracket. Backtests from before this change are not comparable on
+those two rows. The change does not lean one way:
+
+- Where an engine edge falls inside the router's bucket, the bracket is
+  narrower, so a prediction that was `unresolvable` can now be a certain miss.
+- Where a step is thin, or its share sits near an edge, the noise widens the
+  bracket past the router's bucket. A prediction that was a certain miss can
+  then be `unresolvable`: the histograms cannot say it missed. It is not
+  counted within.
+- The figure inside a wide bucket is now read lower (the log-linear reading
+  above), so a planner that reads TPOT slow scores worse, and one that reads
+  it fast scores better.
+
+The mean and the p50 rows do not change.
 
 ### Experimental: the per-length mixture (`--experimental-tpot=v2-mix`)
 
@@ -480,11 +503,6 @@ p95s over it, against 18 and 40 for the mixture. The q32j runs barely tell the
 two apart: nearly every step is already inside. On Qwen3-0.6B most requests'
 TPOT is under 10 ms, where neither histogram has an edge; only finer vLLM
 buckets (`--custom-histogram-buckets`) would place those percentiles better.
-
-The model abstains on the whole backtest where `--max-num-seqs` is not read,
-where a slot queue would form, where under two hours of fit steps read the
-router's TPOT histogram and the output lengths, or where `C` ends at its bound.
-Every percentile is then the planner's own, flagged `TPOTDistributionAbstained`.
 
 ## Adding a run
 
