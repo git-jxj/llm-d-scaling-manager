@@ -4,7 +4,7 @@ tools:
   setup:
     note: Once per machine. The release's tools image, by the digest the release prints.
     run: |
-      TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:v0.13.0
+      TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:308cd7c10752ee2bc50daac5f96602da5c9a259e1dce635ffa3505736c7d1200
       mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
       smt() { docker run --rm --user "$(id -u):$(id -g)" \
         -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
@@ -18,7 +18,7 @@ prerequisites:
   download:
     note: The release files. Pick the release you install.
     run: |
-      V=<release, for example v0.12.4>
+      V=<release, for example v0.13.0>
       URL=https://github.com/llm-d-incubation/llm-d-scaling-manager/releases/download/$V
       for f in cluster settings preflight-cluster scaler-tls model-namespace keda-auth; do
         curl -fsSLO $URL/scaling-manager-$f.yaml
