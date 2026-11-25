@@ -103,8 +103,9 @@ type BelowBand struct {
 	// never above LeastITL, and flagged ExtrapolatedBelowFloor (issue
 	// llm-d-incubation/llm-d-scaling-manager#286). LeastSequences 0 is
 	// unknown, and LeastITL then stands for every count; a ByCount that is
-	// not a valid line (itl.ValidModel) or reads no positive floor leaves
-	// LeastITL, the lowest-count floor, flagged all the same.
+	// not a valid line (itl.ValidModel) leaves LeastITL, the lowest-count
+	// floor, flagged all the same. The flag is set only where the floor
+	// holds the figure up: a TPOT the line reads above it is the line's.
 	LeastSequences float64
 	ByCount        itl.Model
 }
@@ -209,10 +210,16 @@ func MeasuredIntercept(tier string, line itl.Model) bool {
 // the fill came within -5% to +1% of the mean TPOT the clients saw; read at
 // the band's bottom, 0.15, it was 29% to 46% high.
 func LowestFill(band FillBand, tier string, line itl.Model, leastITL float64) float64 {
-	if !MeasuredIntercept(tier, line) || !(line.A > 0) || !(leastITL > 0) || !Finite(leastITL) {
+	if !readsFloor(tier, line, leastITL) {
 		return band.Lo
 	}
 	return min(max((leastITL-line.B)/line.A, 0), band.Lo)
+}
+
+// readsFloor reports whether LowestFill reads line down to the floor
+// leastITL, rather than stopping at the band's bottom.
+func readsFloor(tier string, line itl.Model, leastITL float64) bool {
+	return MeasuredIntercept(tier, line) && line.A > 0 && leastITL > 0 && Finite(leastITL)
 }
 
 // lowestFill is the lowest fill d reads its line at: LowestFill when the
@@ -227,12 +234,15 @@ func (d Decode) lowestFill() float64 {
 // lowestFillAt is the lowest fill d reads its line at for a TPOT at fill k:
 // lowestFill where k holds at least the sequences the floor was read at
 // (BelowBand.LeastSequences); under them, LowestFill at the floor kept by
-// count (BelowBand.ByCount) at k's own sequences, never above LeastITL.
+// count (BelowBand.ByCount) at k's own sequences, never above LeastITL; a
+// floor by count that reads no positive ITL there holds nothing up, and the
+// line is read from its intercept, fill 0, as it is under any floor below B.
 // extrapolated reports the second: the floor is read below every count it
-// saw.
+// saw. A line whose intercept is a guess is never read below the band's
+// bottom (LowestFill), so it is never extrapolated either.
 func (d Decode) lowestFillAt(k float64) (fill float64, extrapolated bool) {
 	least := d.BelowBand.LeastSequences
-	if !d.BelowBand.Read || !(least > 0) || !Finite(least) {
+	if !d.BelowBand.Read || !(least > 0) || !Finite(least) || !readsFloor(d.Tier, d.Line, d.BelowBand.LeastITL) {
 		return d.lowestFill(), false
 	}
 	n := CappedSequences(k, d.CapacityTokens, d.KVPerRequest, float64(d.ReplicaCap))
@@ -241,9 +251,11 @@ func (d Decode) lowestFillAt(k float64) (fill float64, extrapolated bool) {
 	}
 	floor := d.BelowBand.LeastITL
 	if m := d.BelowBand.ByCount; itl.ValidModel(m.A, m.B) {
-		if f := m.A*n + m.B; f > 0 && f < floor {
-			floor = f
+		f := m.A*n + m.B
+		if !(f > 0) {
+			return 0, true
 		}
+		floor = min(floor, f)
 	}
 	return LowestFill(d.Band, d.Tier, d.Line, floor), true
 }
@@ -794,11 +806,13 @@ func SLOAtReplicas(d Decode, q ReplicasQuery) DecodeSLO {
 // replica's time-average k, and Basis.Floor the line's floor at the lowest
 // fill, not the higher floor a burst puts under every request. A TPOT at
 // fewer sequences than the floor was read at is held to the floor at its own
-// count (lowestFillAt), and says so.
+// count (lowestFillAt), and says so where the floor read at those counts
+// would have held it up; one the line reads above that floor is the line's,
+// as before.
 func (d Decode) tpotAt(k, knee float64, r TPOTRatio, flags []Flag) Answer {
 	seen := d.seenFill(k)
 	lowest, extrapolated := d.lowestFillAt(seen)
-	if extrapolated {
+	if extrapolated && d.lowestFill() > seen {
 		flags = append(flags, ExtrapolatedBelowFloor)
 	}
 	floor, _ := d.tpotAtFill(lowest, r)

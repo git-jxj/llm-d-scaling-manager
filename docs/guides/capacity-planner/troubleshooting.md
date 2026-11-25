@@ -110,9 +110,9 @@ bottom by both. A figure read below the band carries `BelowFittedBand`.
 
 The planner never reads the line under the lowest ITL its replicas showed below
 the band, the floor. That floor stands for the number of requests a replica ran
-when it was read, and for more. A figure at fewer requests a replica than any
-of those readings is held to the floor extended down to its own count, and
-carries `ExtrapolatedBelowFloor`.
+when it was read, and for more. A figure the floor would hold up, at fewer
+requests a replica than any of those readings, is held instead to the floor
+extended down to its own count, and carries `ExtrapolatedBelowFloor`.
 
 ## API errors
 

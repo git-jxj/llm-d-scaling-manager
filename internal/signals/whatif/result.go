@@ -184,7 +184,9 @@ const (
 	// than any reading of the floor below the band ran
 	// (BelowBand.LeastSequences): it is held to the floor kept by count
 	// (BelowBand.ByCount) read at its own count, below every count the floor
-	// saw, or to the lowest-count floor where that line was not read.
+	// saw, or to the lowest-count floor where that line was not read. Set
+	// only where that floor, read at its own counts, would have held the
+	// TPOT up: a TPOT the ITL line reads above it is not flagged.
 	ExtrapolatedBelowFloor Flag = "ExtrapolatedBelowFloor"
 	// AssumedShape is an answer priced at a prompt or output length the
 	// caller assumed rather than the one the fleet measured.

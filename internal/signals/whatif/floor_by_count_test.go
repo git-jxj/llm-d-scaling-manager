@@ -129,6 +129,49 @@ func TestMeanTPOTBelowTheFloorsCounts_ReadsTheFloorAtItsCount(t *testing.T) {
 	// A line whose intercept is a guess is read at the band's bottom, as before.
 	guess := d
 	guess.Tier, guess.Line.B = TierPinnedB, itl.DefaultBaselineSec
-	fill, _ = guess.lowestFillAt(at2)
+	fill, extrapolated = guess.lowestFillAt(at2)
 	near(t, "a guessed intercept", fill, guess.Band.Lo, 0)
+	if extrapolated {
+		t.Errorf("a guessed intercept, never read down to the floor, flagged")
+	}
+
+	// A valid line by count can read under zero at a count under one, where
+	// the replicas of #286 ran: it holds nothing up, and the line is read
+	// from its intercept, as under any floor below B. It does not fall back
+	// to LeastITL, which would put a lighter load over a heavier one.
+	neg := d
+	neg.BelowBand.ByCount = itl.Model{A: 1e-3, B: -2e-4}
+	if !itl.ValidModel(neg.BelowBand.ByCount.A, neg.BelowBand.ByCount.B) {
+		t.Fatalf("premise: %+v is not a valid line", neg.BelowBand.ByCount)
+	}
+	atTenth := 0.1 * d.KVPerRequest / d.CapacityTokens
+	fill, extrapolated = neg.lowestFillAt(atTenth)
+	near(t, "a floor by count under zero", fill, 0, 0)
+	if !extrapolated {
+		t.Errorf("a floor by count under zero, under the floor's counts, not flagged")
+	}
+	fill, _ = neg.lowestFillAt(at2)
+	near(t, "the same line at 2 sequences", neg.Line.ITLAt(fill), neg.BelowBand.ByCount.ITLAt(2), 1e-12)
+}
+
+// ExtrapolatedBelowFloor is set only where the floor read at its own counts
+// would have held the TPOT up. A TPOT under the floor's counts that the line
+// reads above that floor is the line's, unchanged, and not flagged; under the
+// floor it is flagged.
+func TestMeanTPOTBelowTheFloorsCounts_FlagsOnlyWhereTheFloorHolds(t *testing.T) {
+	d := zeroSixBFold1(1500, 500)
+	d.BelowBand.LeastSequences = 1000 // every fill below the band is under it
+	above := 2 * d.lowestFill()
+	if !(above < d.Band.Lo) {
+		t.Fatalf("premise: fill %g is not below the band's bottom %g", above, d.Band.Lo)
+	}
+	a := d.tpotAt(above, 0, one(), nil)
+	near(t, "the line above the floor", a.Value, d.Line.ITLAt(above), 1e-12)
+	if a.HasFlag(ExtrapolatedBelowFloor) {
+		t.Errorf("a TPOT the line reads above the floor flagged: %v", a.Flags)
+	}
+	under := d.lowestFill() / 2
+	if b := d.tpotAt(under, 0, one(), nil); !b.HasFlag(ExtrapolatedBelowFloor) {
+		t.Errorf("a TPOT the floor held up not flagged: %v", b.Flags)
+	}
 }
