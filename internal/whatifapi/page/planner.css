@@ -124,7 +124,8 @@ input.learned { color: var(--muted); font-style: italic; }
 .tag:empty { display: none; }
 .tag.assumed { color: var(--text-primary); font-weight: 600; }
 .tag.lowerBound { color: var(--text-warning); }
-.reset { font-size: 11px; padding: 1px 6px; }
+/* 24 px high: a target a thumb can hit (WCAG 2.2 target size). */
+.reset { font-size: 11px; padding: 1px 6px; min-height: 24px; }
 
 .tabs { display: flex; gap: 4px; }
 .tab { font-size: 14px; padding: 7px 16px; border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0;

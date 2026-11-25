@@ -665,7 +665,7 @@ function showLearned(inputs) {
   if (vpLowerBound(inputs)) {
     const vp = inputs.terms.find(x => x.name === "vp");
     el("l-vp").textContent = `learned ${fmtNum(vp.value)}, only a lower bound: the prefill pods never queued, so the real speed is likely higher ` +
-      "and prefill's limit is unknown. Type a V_P to size prefill.";
+      "and prefill's limit is unknown. The box shows it but sends nothing: type a V_P to size prefill.";
     refused = true;
   }
   el("a-lar").checked = false;
@@ -695,21 +695,18 @@ function markBox(id, how) {
 
 // refreshBoxes puts in each box whose value the source learned either the
 // value typed (an assumption, sent) or the learned one (not sent), and says
-// which. A box being edited is left alone.
+// which. A box being edited keeps what is in it, but its tag says whose value
+// is used now (a spinner or Enter commits with the box still focused); it is
+// refilled when it loses focus.
 function refreshBoxes() {
   const k = state.k, inputs = state.inputs;
   if (!k || !inputs) return;
   const active = document.activeElement;
   const put = (id, typed) => {
     const box = el(id), learned = box.dataset.learned;
-    if (box === active) return;
-    if (typed != null) {
-      box.value = String(typed);
-      markBox(id, "assumed");
-    } else {
-      box.value = learned || "";
-      markBox(id, !learned ? "" : id === "a-vp" && vpLowerBound(inputs) ? "lowerBound" : "learned");
-    }
+    const how = typed != null ? "assumed" : !learned ? "" : id === "a-vp" && vpLowerBound(inputs) ? "lowerBound" : "learned";
+    if (box !== active) box.value = typed != null ? String(typed) : learned || "";
+    markBox(id, how);
   };
   for (const a of ASSUMABLE) put("a-" + a.box, k.assume[a.key] != null ? Number((k.assume[a.key] * a.scale).toPrecision(6)) : null);
   const observed = val(inputs.observed.outputTokens);
@@ -720,9 +717,15 @@ function refreshBoxes() {
 
 // typedOrLearned reads a box a source learned a value for: null where it
 // is empty or holds the learned value (the source's stands), else the
-// number typed. An emptied box shows the learned value again.
+// number typed. An emptied box shows the learned value again. Two learned
+// values are not the source's when typed: a V_P that is only a lower bound
+// (typed, it is your statement, and prices prefill), and an R_q learned at
+// another percentile than the one asked now.
 function typedOrLearned(id) {
-  const box = el(id), raw = box.value, learned = box.dataset.learned;
+  const box = el(id), raw = box.value;
+  let learned = box.dataset.learned;
+  if (id === "a-vp" && vpLowerBound(state.inputs)) learned = "";
+  if (id === "ratio" && box.dataset.learnedAt !== state.k.tpotStat) learned = "";
   if (raw === "" || (learned && +raw === +learned)) return null;
   return +raw;
 }
@@ -1525,7 +1528,12 @@ function renderAtTarget() {
   el("rationote").textContent = note;
   // The R_q the plan priced, where it is the source's and not typed, is
   // the ratio box's learned value.
-  if (state.k.ratio == null) el("ratio").dataset.learned = val(ratio) != null ? String(Number(val(ratio).toPrecision(3))) : "";
+  // It is remembered with its percentile: a ratio typed later at another
+  // percentile is not that one's learned value.
+  if (state.k.ratio == null) {
+    el("ratio").dataset.learned = val(ratio) != null ? String(Number(val(ratio).toPrecision(3))) : "";
+    el("ratio").dataset.learnedAt = state.k.tpotStat;
+  }
   refreshBoxes();
 }
 
@@ -2516,6 +2524,9 @@ function wire() {
     schedule(0);
     el("ratio").focus();
   };
+  // A box committed while focused (Enter, the spinner) is refilled once it
+  // loses focus: emptied, it shows the learned value again.
+  for (const id of [...ASSUMABLE.map(a => "a-" + a.box), "outtok", "ratio"]) el(id).onblur = () => setTimeout(refreshBoxes, 0);
   // The router's balancing is stated, not typed: assume.loadAwareRouter,
   // sent only when ticked, so the server's default (off) stands otherwise.
   el("a-lar").onchange = () => {
@@ -2868,6 +2879,8 @@ function useVP(given) {
   if (!state.k || !(vp > 0)) return;
   state.k.assume.vp = vp;
   el("a-vp").value = String(Math.round(vp));
+  // Its box is tagged assumed, no longer the lower bound it showed.
+  refreshBoxes();
   showTyped();
   schedule(0);
 }

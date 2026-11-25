@@ -144,6 +144,32 @@ try {
   check("an edited R_q is sent", asked().assume && asked().assume.tpotRatio === 1.5 && tag("ratio") === "assumed", JSON.stringify(asked().assume));
   el("r-ratio").onclick();
   check("Use learned stops sending R_q", !(asked().assume && asked().assume.tpotRatio) && el("ratio").value === "1.31", el("ratio").value);
+  // The p90 R_q typed at p99 is an assumption: it is not p99's learned value.
+  el("ratio").value = "1.5";
+  el("ratio").onchange();
+  state.k.tpotStat = "p99";
+  el("ratio").value = "1.31";
+  el("ratio").onchange();
+  check("another percentile's learned R_q typed is sent", asked().assume && asked().assume.tpotRatio === 1.31 && tag("ratio") === "assumed",
+    `${JSON.stringify(asked().assume)} ${tag("ratio")}`);
+  el("r-ratio").onclick();
+  state.k.tpotStat = "p90";
+
+  // A box committed while focused (Enter, the spinner) is tagged by the
+  // value used now, keeps what is in it, and is refilled when it loses focus.
+  document.activeElement = el("a-hop");
+  el("a-hop").value = "5";
+  el("a-hop").onchange();
+  check("a box committed while focused is tagged assumed", tag("a-hop") === "assumed" && !el("a-hop").classList.contains("learned") && el("r-a-hop").hidden === false,
+    tag("a-hop"));
+  el("a-hop").value = "";
+  el("a-hop").onchange();
+  check("emptied while focused, it is tagged learned and left empty", tag("a-hop") === "learned" && el("a-hop").value === "" && asked().assume === undefined,
+    `${tag("a-hop")} ${el("a-hop").value}`);
+  document.activeElement = null;
+  check("it is refilled when it loses focus", typeof el("a-hop").onblur === "function");
+  run("refreshBoxes()");
+  check("with the learned value", el("a-hop").value === "2", el("a-hop").value);
 
   // A V_P from the served peak is a lower bound: shown, tagged, explained.
   load(Object.assign({}, inputs, {terms: [{name: "vp", source: "learned served-peak", value: 29632.58, unit: "tokens/s"}]}));
@@ -151,6 +177,19 @@ try {
   check("tagged lower bound", tag("a-vp") === "lower bound", tag("a-vp"));
   check("the real speed is likely higher", /real speed is likely higher/.test(el("l-vp").textContent), el("l-vp").textContent);
   check("and not sent", asked().assume === undefined, JSON.stringify(asked().assume));
+  check("the note says the box sends nothing", /sends nothing: type a V_P to size prefill/.test(el("l-vp").textContent), el("l-vp").textContent);
+  // Typed, the lower bound is a statement: sent, so prefill is priced.
+  el("a-vp").value = "40000";
+  el("a-vp").onchange();
+  el("a-vp").value = "29633";
+  el("a-vp").onchange();
+  check("the lower bound typed is sent", asked().assume && asked().assume.vp === 29633 && tag("a-vp") === "assumed", `${JSON.stringify(asked().assume)} ${tag("a-vp")}`);
+  el("r-a-vp").onclick();
+  check("Use learned puts the lower bound back, not sent", asked().assume === undefined && tag("a-vp") === "lower bound", tag("a-vp"));
+  // The answer's "use this V_P" types it: the box says so.
+  run("useVP(31000)");
+  check("a V_P used from the answer is tagged assumed", asked().assume && asked().assume.vp === 31000 && tag("a-vp") === "assumed" && el("r-a-vp").hidden === false,
+    `${JSON.stringify(asked().assume)} ${tag("a-vp")}`);
 
   // An old link's typed value stays an assumption.
   load(inputs);

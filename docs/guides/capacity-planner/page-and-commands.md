@@ -263,7 +263,8 @@ is flagged for it. Edit the box and the value is yours: tagged **assumed**,
 sent, and flagged, as before; **Use learned** beside it puts the learned value
 back. Emptying the box, or typing the learned value, does the same. A V_P
 learned from the served peak is tagged **lower bound**: the note says the real
-speed is likely higher. A link or a saved scenario that carries a value keeps
+speed is likely higher, and prefill is not sized until you type a V_P (that
+value too, typed, is yours). A link or a saved scenario that carries a value keeps
 it as an assumption.
 
 The box opens by itself when a term is refused, and when V_P is only a lower
