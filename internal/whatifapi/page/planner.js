@@ -665,10 +665,12 @@ function fillStats(id, stats, current) {
 // from a twentieth of the lower to four times the higher, so every position
 // past the floor is one the slider reaches. The number box takes any value.
 // max is set before value: a value set first is clamped to the old range.
+// min is a whole number of steps: a range snaps its value to min plus whole
+// steps, so an unaligned min would turn a typed 150 into 149.865.
 function slider(id, v, step, floor) {
   const r = el(id), lo = floor > 0 ? Math.min(v, floor) : v, hi = floor > 0 ? Math.max(v, floor) : v;
   r.step = step;
-  r.min = Math.max(step, lo / 20);
+  r.min = Number(Math.max(step, Math.floor(lo / 20 / step) * step).toFixed(step < 1 ? 1 : 0));
   r.max = Math.ceil(hi * 4);
   r.value = v;
   el(id + "box").value = Number(v.toFixed(step < 1 ? 1 : 0));
