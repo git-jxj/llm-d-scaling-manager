@@ -24,20 +24,18 @@ production on it.
 Pin a release tag or a digest, and deploy with the manifests from the **same**
 release. An image older than the manifests crash-loops on flags it does not
 know. Releases are listed on the
-[Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases);
-the current one is `v0.13.0`.
-A checked-out release deploys its own tag, so `IMG_TAG` below only makes that
-explicit. Each release's notes list its image digest; a digest names one build,
-and a tag could in principle be re-pushed.
+[Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases).
+Each release's notes list its image digest. A digest names one build, and a
+tag could in principle be re-pushed.
 
 ```bash
-git checkout v0.13.0
-make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.13.0
-# or by digest (v0.13.0's, from its release notes)
-make deploy-scaling-manager NAMESPACE=<namespace> \
-  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:d08f6a159fc8052442f6ce5af562e67ea7902b86ff1af0f77a8a3a6f56b3f8cd
+CONTROLLER_VERSION=v0.13.0
+CONTROLLER_IMAGE=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:d08f6a159fc8052442f6ce5af562e67ea7902b86ff1af0f77a8a3a6f56b3f8cd
+git checkout "$CONTROLLER_VERSION"
+make deploy-scaling-manager NAMESPACE=<namespace> IMG="$CONTROLLER_IMAGE"
 # out-of-reach shape (the cluster admin runs it): the controller runs in llmsm-<namespace>
-NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.13.0
+NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> \
+  LLMSM_WATCH_NS=<namespace> IMG="$CONTROLLER_IMAGE"
 ```
 
 `IMG_TAG` sets the tag of the default `IMG`; `IMG` replaces the whole reference.

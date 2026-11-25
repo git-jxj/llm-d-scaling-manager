@@ -299,10 +299,10 @@ is in its notes on the
 [Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases):
 
 ```bash
-git checkout v0.13.0
-export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.13.0
-# or the exact build
-export IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:d08f6a159fc8052442f6ce5af562e67ea7902b86ff1af0f77a8a3a6f56b3f8cd
+CONTROLLER_VERSION=v0.13.0
+CONTROLLER_IMAGE=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:d08f6a159fc8052442f6ce5af562e67ea7902b86ff1af0f77a8a3a6f56b3f8cd
+git checkout "$CONTROLLER_VERSION"
+export IMG="$CONTROLLER_IMAGE"
 ```
 
 `:main` is rebuilt on every push to `main`, so two runs against it a day apart
