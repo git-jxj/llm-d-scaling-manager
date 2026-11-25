@@ -611,6 +611,7 @@ inputs.policy.ttft.seconds number
 inputs.policy.ttft.statistic string
 inputs.prefillHitAtCount boolean
 inputs.prefillVPPlateau boolean
+inputs.prefillVPServiceLine boolean
 inputs.schemaVersion number
 inputs.selfCheck object
 inputs.selfCheck.checks array
@@ -835,6 +836,7 @@ inputsRequest.experimentalTTFT boolean
 inputsRequest.model string
 inputsRequest.prefillHitAtCount boolean
 inputsRequest.prefillVPPlateau boolean
+inputsRequest.prefillVPServiceLine boolean
 inputsRequest.prefillVariant string
 inputsRequest.rankMixtureKVHold boolean
 inputsRequest.rankMixtureMinFitWindow string

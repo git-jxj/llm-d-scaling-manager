@@ -55,6 +55,9 @@ type backtestFlags struct {
 	// hitAtCount is --prefill-hit-at-count, as answerFlags'
 	// (hit_at_count.go): both sides are read with the switch on.
 	hitAtCount bool
+	// vpServiceLine is --prefill-vp-service-line, as answerFlags'
+	// (vp_service_line.go): both sides are read with the switch on.
+	vpServiceLine bool
 	// experimentalTTFT is --experimental-ttft, as answerFlags'
 	// (experimental_ttft.go): both sides are read with its switches on.
 	// rankMixtureTTFT is --experimental-ttft=v2 (experimental_ttft_v2.go),
@@ -100,6 +103,7 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 		"balances prefill by load (llm-d's EPP queue scorer), so f is held to the load it was learned at, then falls to 1 at the pooled prefill knee; off by default")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
+	fs.BoolVar(&f.vpServiceLine, vpServiceLineFlag, false, vpServiceLineUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag,
 		experimentalTTFTV2Usage+"; "+experimentalTTFTNLLineUsage)
 	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
@@ -400,7 +404,7 @@ var resolveBacktest = func(ctx context.Context, f *backtestFlags, path string, c
 func resolveCycles(ctx context.Context, f *backtestFlags, path string, cycle int, cycles *whatifapi.CycleSet, warn io.Writer) (*whatifapi.Resolved, error) {
 	src := &servedSources{warn: warn, recordings: filepath.Dir(path)}
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant,
-		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, ExperimentalTTFT: f.experimentalTTFT,
+		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, ExperimentalTTFT: f.experimentalTTFT,
 		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(path), Cycle: cycle, Cycles: cycles}}
 	res, err := src.Resolve(ctx, in)
 	if err != nil && whatifapi.IsInputError(err) {

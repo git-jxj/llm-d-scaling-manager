@@ -370,6 +370,15 @@ it, and `POST /v1/inputs` takes `prefillHitAtCount` ([API](api.md)). For
 example, from a recording on 2 prefill pods:
 `capacity-planner slo-to-rate --recording run.jsonl.gz --ttft 2s@p90 --prefill 1 --prefill-hit-at-count`.
 
+**V_P from the prefill service line (`--prefill-vp-service-line`, not
+validated).** Where the prefill pods never queued, the planner has only a
+lower bound on their speed. This flag reads it from each pod's prefill time
+against the tokens it computed a request instead: a fixed time a request
+plus a time a token. It is off by default because on the public recordings
+it read some TTFT figures under what was measured. Set, every figure reads
+OUTSIDE VALIDATED REGION. The same commands take it, and `POST /v1/inputs`
+takes `prefillVPServiceLine` ([API](api.md)).
+
 **An experimental TTFT model (`--experimental-ttft`, for demonstration).**
 The TTFT model has seven switches that are off by default, because none of
 them has passed the release's validation. `--experimental-ttft` turns all
