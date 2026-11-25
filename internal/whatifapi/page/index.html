@@ -316,9 +316,11 @@
             <option value="mean">mean rate</option><option value="p95">p95 rate</option><option value="p95-modulation">p95 rate less counting noise</option><option value="max">highest rate</option></select></div>
         <button type="button" id="dayrun" disabled>Plan the day</button>
       </div>
+      <p class="notice" id="daystale" role="note" aria-live="polite" hidden></p>
       <div id="dayout" hidden>
         <ul class="dayrefused" id="dayrefused" hidden></ul>
         <p class="dayhead" id="dayhead"></p>
+        <p class="hint" id="dayused"></p>
         <div class="legend" id="daylegend"></div>
         <svg id="daychart" viewBox="0 0 960 500" role="img" aria-labelledby="daytitle daydesc"></svg>
         <p class="sr" id="daydesc"></p>

@@ -75,6 +75,9 @@ planner's own terms:
   source saw, and the policy's SLO and headroom. The source carries no request
   rate, so the rate starts at the operating point, headroom times the lower
   knee (or the one knee that priced: see "One knee refused" below). Move the rate slider, step the replicas, pick a statistic, set a target.
+  A target box takes milliseconds and any value: typed outside the slider's
+  range, the slider moves to take it in. The slider runs past the floor the
+  plan priced, so every target it reaches above the floor is one a fleet can meet.
   The request rate is the total rate: traffic classes are not priced apart
   yet.
 - **Concurrency.** Under the rate, the page says how many requests are in
@@ -906,6 +909,9 @@ bucket the fleet had fewer replicas than it needed is washed red; a bucket no
 fleet within the bound serves is hatched, in the panel of the role short.
 Hover a bucket for every value at that time; the table views list every hour
 and every bucket, with why a bucket was not sized.
+The plan says the SLO and headroom it was sized for. Change a target, the
+headroom or an assumed term afterwards and the plan dims with a note naming the
+targets it used; opening the Day plan tab again plans it at the new ones.
 
 From the command line, on the sample recording (about an hour, so two hours
 in the table):

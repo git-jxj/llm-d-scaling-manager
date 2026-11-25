@@ -557,6 +557,8 @@ function setInputs(inputs) {
   el("exec").hidden = true;
   el("trustchip").hidden = true;
   state.day = null;
+  state.dayAsked = state.dayReq = null;
+  el("daystale").hidden = true;
   el("dayout").hidden = true;
   el("dayrun").disabled = !inputs.fleet.prefill;
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
@@ -659,15 +661,36 @@ function fillStats(id, stats, current) {
   el(id).innerHTML = all.map(s => `<option${s === current ? " selected" : ""}>${esc(s)}</option>`).join("");
 }
 
-// slider sets a target's slider around v (ms): from a twentieth of it to four
-// times it; the number box takes any value.
-function slider(id, v, step) {
-  const r = el(id);
-  r.min = Math.max(step, v / 20);
-  r.max = v * 4;
+// slider sets a target's slider around v (ms) and the floor (ms, or null):
+// from a twentieth of the lower to four times the higher, so every position
+// past the floor is one the slider reaches. The number box takes any value.
+// max is set before value: a value set first is clamped to the old range.
+function slider(id, v, step, floor) {
+  const r = el(id), lo = floor > 0 ? Math.min(v, floor) : v, hi = floor > 0 ? Math.max(v, floor) : v;
   r.step = step;
+  r.min = Math.max(step, lo / 20);
+  r.max = Math.ceil(hi * 4);
   r.value = v;
   el(id + "box").value = Number(v.toFixed(step < 1 ? 1 : 0));
+}
+
+// fitSlider re-derives a target's slider when the target or the floor (ms)
+// lies outside its range: a value the browser would clamp to the range's end
+// is a target the next touch of the slider would replace.
+function fitSlider(id, v, step, floor) {
+  const r = el(id), min = +r.min, max = +r.max;
+  const outside = x => x > 0 && (!(min > 0) || !(max > 0) || x < min || x > max);
+  if (outside(v) || outside(floor)) slider(id, v, step, floor);
+  else r.value = v;
+}
+
+// targetFloor is the plan's floor for a target's slider ("ttft" or "tpot"),
+// in ms: the least latency any load gives at the statistic priced; null
+// with no plan or no floor.
+function targetFloor(id) {
+  const p = state.plan;
+  const f = !p ? null : id === "ttft" ? val(p.ttft && p.ttft.line && p.ttft.line.floor) : val(p.tpot && p.tpot.floor);
+  return f != null ? f * 1000 : null;
 }
 
 function showSource(inputs) {
@@ -952,6 +975,7 @@ function enterPlan() {
 let planTimer = null;
 function schedule(ms) {
   reportStale();
+  dayStale();
   clearTimeout(planTimer);
   planTimer = setTimeout(plan, ms);
 }
@@ -1145,6 +1169,9 @@ function fitRateSlider(knee) {
 function render() {
   const p = state.plan;
   syncControls();
+  // The targets' sliders reach the floor this plan priced, and the targets.
+  fitSlider("ttft", state.k.ttftTarget * 1000, 1, targetFloor("ttft"));
+  fitSlider("tpot", state.k.tpotTarget * 1000, 0.1, targetFloor("tpot"));
   el("banner").textContent = p.banner;
   el("bannerbox").hidden = !p.banner;
   renderNotice(p.flags, p.banner);
@@ -2209,12 +2236,19 @@ function wire() {
   // A target prices on release: it reprices the limits, which takes up to
   // seconds on a TTFT fleet.
   // A target or statistic you set is yours, no longer the page's default.
+  // The box is authoritative: a value typed outside the slider's range
+  // re-derives the range around it (fitSlider), never clamps it.
   const target = (id, scale) => {
     el(id).oninput = () => { el(id + "box").value = Number((+el(id).value).toFixed(scale < 1 ? 1 : 0)); };
     el(id).onchange = () => { if (ready()) { k()[id + "Target"] = +el(id).value / 1000; k()[id + "Default"] = false; schedule(0); } };
     el(id + "box").onchange = () => {
       const v = +el(id + "box").value;
-      if (ready() && v > 0) { k()[id + "Target"] = v / 1000; k()[id + "Default"] = false; el(id).value = v; schedule(0); }
+      if (ready() && v > 0) {
+        k()[id + "Target"] = v / 1000;
+        k()[id + "Default"] = false;
+        fitSlider(id, v, scale, targetFloor(id));
+        schedule(0);
+      }
     };
   };
   target("ttft", 1);
@@ -2298,6 +2332,7 @@ function wire() {
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
+  el("daystep").onchange = el("daysize").onchange = dayStale;
   el("btrun").onclick = runBacktest;
   el("btstart").onclick = checkAccuracy;
   el("bprun").onclick = runPredict;
@@ -2569,6 +2604,8 @@ function showView(name, focus) {
     el("tab-" + v).tabIndex = on ? 0 : -1;
   }
   if (focus) el("tab-" + name).focus();
+  // A day plan for knobs since changed is planned again when its view opens.
+  if (name === "day" && !state.dayBusy && !el("dayrun").disabled && dayStale()) runDay();
 }
 
 // wireTabs makes the tab list work by click and by arrow keys, Home and End.
@@ -2916,25 +2953,51 @@ function dayRequest() {
   return req;
 }
 
-// runDay asks the day plan and draws it.
+// runDay asks the day plan and draws it. The request it answers is kept
+// (state.dayAsked), so a knob changed since marks it stale (dayStale).
 async function runDay() {
   if (!state.inputs || !state.k) return;
   const inputsId = state.inputs.inputsId, t0 = performance.now();
+  const req = dayRequest();
   el("dayrun").disabled = true;
+  state.dayBusy = true;
   el("dayout").classList.add("stale");
   setStatus("Planning the day: each bucket sized on its own (seconds)...");
   try {
-    const out = await api("POST", "v1/dayplan", dayRequest());
+    const out = await api("POST", "v1/dayplan", req);
     if (!state.inputs || inputsId !== state.inputs.inputsId) return;
     state.day = out;
+    state.dayAsked = JSON.stringify(req);
+    state.dayReq = req;
     renderDay();
     setStatus(`Planned ${out.buckets.length} buckets in ${((performance.now() - t0) / 1000).toFixed(1)} s; ${out.searched} fleets priced.`);
   } catch (e) {
     setStatus("Could not plan the day: " + e.message, true);
   } finally {
+    state.dayBusy = false;
     el("dayrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
-    el("dayout").classList.remove("stale");
+    dayStale();
   }
+}
+
+// dayStale marks the day plan on screen stale when the request the knobs ask
+// now is not the one it answers: the targets, headroom, assumed terms,
+// stated lengths, bucket or rate statistic changed. It says what the plan
+// used and asks for a re-run; it is true when stale.
+function dayStale() {
+  const stale = !!(state.day && state.inputs && state.k && JSON.stringify(dayRequest()) !== state.dayAsked);
+  el("dayout").classList.toggle("stale", stale || !!state.dayBusy);
+  el("daystale").hidden = !stale;
+  el("daystale").textContent = stale ? `The knobs changed since this plan, which used ${dayUsedText(state.dayReq)}: ` +
+    "opening this view plans the day again, or press Plan the day." : "";
+  return stale;
+}
+
+// dayUsedText is the SLO and headroom a day plan request asks for.
+function dayUsedText(req) {
+  if (!req) return "";
+  return `TTFT ${sloText(req.slo.ttft.statistic, req.slo.ttft.target)}, TPOT ${sloText(req.slo.tpot.statistic, req.slo.tpot.target)}, ` +
+    `safety margin ${req.headroom}`;
 }
 
 // renderDay draws the day plan: the summary, the three charts on one time
@@ -2954,6 +3017,7 @@ function renderDay() {
   el("daybuckets").innerHTML = dayBucketsTable(d);
   el("daynotes").innerHTML = d.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(d.banner)}</li>`;
   el("dayhead").textContent = dayHeadline(d);
+  el("dayused").textContent = state.dayReq ? `Sized for ${dayUsedText(state.dayReq)}.` : "";
   exportsRow(el("dayexports"), "dayplan", [["CSV", "text/csv", () => dayHoursCSV(d)], ["JSON", "application/json", () => JSON.stringify(d, null, 2) + "\n"]]);
   dayHover(svg, g);
 }
