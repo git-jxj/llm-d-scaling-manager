@@ -833,6 +833,7 @@ cache
 cacheKey.name
 cacheKey.namespace
 cached
+calibrated
 called
 callers
 calm
@@ -2253,6 +2254,7 @@ nodes
 nominal
 nominal-lent-out
 non-nil
+non-queue
 none
 noneArrivedSince
 none|
@@ -2641,6 +2643,7 @@ ran
 range
 rank
 rank-mixture
+rank-mixture-nl-line
 ranks
 rate
 rate-at-tpot
@@ -3042,6 +3045,7 @@ side
 sidecar
 sight
 sightings
+sigma
 sigmaOK
 signal
 silent
@@ -3101,6 +3105,7 @@ slo-ttft-processor-sharing
 slo-ttft-prompt-support
 slo-ttft-ps-by-engine
 slo-ttft-ps-onsets
+slo-ttft-pull-work
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
 slo-ttft-sizes-prefill

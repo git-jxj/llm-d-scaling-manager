@@ -352,6 +352,21 @@ type shapeSample struct {
 //     with MTP on every decode pod, the held figure, fitted on the first half,
 //     read the decode engine's measured TTFT of the second within 20% on
 //     most five-minute steps, where the old sum read a few percent of it.
+//   - saturation.SwitchBacktestStepOutputDispersion: a backtest step priced
+//     at its own output spread, not the fit's (issue
+//     llm-d-incubation/llm-d-scaling-manager#274). Only a backtest states
+//     one (whatifapi.Knobs.OutputDispersion), so no other answer moves. On
+//     the 0.6B staircase's 1000/1000 A phases, fitted on warm-ups that end
+//     on short outputs (D 1.26), the predicted decode fill falls from 1.87
+//     to 1.59 times what the pods held, and the Qwen3-32B A-off phase's
+//     from 1.19 to 1.05. On
+//     the 8000/200 B and C phases, where the prompt holds most of the KV,
+//     the first B-off phase's rises from 1.24 to 1.37, as two steps it
+//     refused are now priced. No backtest figure newly reads more than 20%
+//     under what was measured, in TTFT or TPOT. With the hold and the lift
+//     (both off, below) it deepens two Qwen3-32B A-off TTFT steps already
+//     under (mean 0.69 to 0.46 of measured): look at those again before
+//     the hold and the lift go on.
 //
 // slo.SwitchTTFTHopWindowMeans, planner-only, reads the router hop on its
 // windows' means: the median of at least prefill.MinHopMeanWindows windows,
@@ -392,23 +407,6 @@ type shapeSample struct {
 // bursty phases' mean TPOT back to what was measured, but it is off: with
 // it, the hold, the lift and the residence all on, other figures still read
 // under what was measured.
-//
-// saturation.SwitchBacktestStepOutputDispersion, planner-only, prices a
-// backtest step at its own output spread, not the fit's (issue
-// llm-d-incubation/llm-d-scaling-manager#274). Only a backtest states one
-// (whatifapi.Knobs.OutputDispersion), so no other answer moves. On the 0.6B
-// staircase's 1000/1000 A phases, fitted on warm-ups that end on short
-// outputs (D 1.26), the predicted decode fill falls from 1.87 to 1.59 times
-// what the pods held (1.57 to 1.26 with the hold and the lift), and the
-// Qwen3-32B A-off phase's from 1.19 to 1.05. On the 8000/200 B and C
-// phases, where the prompt holds most of the KV, no median moves by more
-// than 0.01 with the hold and the lift; alone, the first B-off phase's
-// rises from 1.24 to 1.37, as two steps it refused are now priced. No
-// backtest figure newly reads under what was measured with it alone. With
-// the hold and the lift it deepens two Qwen3-32B A-off TTFT steps already
-// under (mean 0.69 to 0.46 of measured). It is not
-// listed yet: listing it moves the backtest figures of every recording
-// whose decode pods publish an output-length histogram.
 //
 // saturation.SwitchPlannerCapAtStepBudget is planner-only and not listed
 // either: no recording holds an engine whose step budget runs fewer
@@ -482,6 +480,24 @@ type shapeSample struct {
 // that lower bound, and the TTFT read many times what was measured. It is
 // on only with --experimental-ttft.
 //
+// slo.SwitchTTFTTierLoad and slo.SwitchTTFTTierKVWait are planner-only and
+// not listed (issue llm-d-incubation/llm-d-scaling-manager#386). Their
+// first real test is a private production P/D recording whose prefill pods
+// serve a material share of the prompt from a host tier and a little from a
+// peer tier, both priced from the recorded offload load with no flag. Its
+// default TTFT is refused (no V_P learned), so it was scored with
+// --experimental-ttft, the two switches alone changed. No figure newly reads
+// under 0.8 of measured with either, on a time split, a load split or the
+// busiest hour of the test, and with the KV wait the median mean TTFT of
+// the 75% time split comes closer to measured. But at the 50%
+// split, whose figures rest on a lower-bound V_P and read high, both raise
+// the median error of the mean and p90 TTFT and take figures from within
+// 20% of measured to more than 20% over, which the issue's rule forbids;
+// the load split's mean does the same. The engine's KV wait is several times
+// the transfer's own seconds there, so the tier load alone moves little.
+// They go on once a recording with a tier and a V_P learned under a queue
+// passes that rule.
+//
 // saturation.SwitchMoEBusiestRank is not listed either: it reads a
 // data-parallel MoE engine's line at its busiest rank (issue
 // llm-d-incubation/llm-d-scaling-manager#312), and its only evidence is
@@ -524,18 +540,19 @@ type shapeSample struct {
 //     was measured.
 func PlannerSwitches() map[string]map[string]bool {
 	return map[string]map[string]bool{PackageSaturation: {
-		saturation.SwitchPrefillALowLoadPerRank:  true,
-		saturation.SwitchPrefillAEngineTiming:    true,
-		saturation.SwitchPrefillQueueByCapacity:  true,
-		saturation.SwitchPrefillFBusyMinutes:     true,
-		saturation.SwitchPrefillALowLoadByRate:   true,
-		saturation.SwitchPrefillAMedianOverhead:  true,
-		saturation.SwitchITLAdaptiveBandFloor:    true,
-		saturation.SwitchPrefillVPFloorServed:    true,
-		saturation.SwitchPrefillVPServedUnqueued: true,
-		saturation.SwitchPlannerCapAtStepBudget:  true,
-		saturation.SwitchITLBaselineFromFloor:    false,
-		saturation.SwitchITLFloorBaselineHeld:    false,
+		saturation.SwitchPrefillALowLoadPerRank:       true,
+		saturation.SwitchPrefillAEngineTiming:         true,
+		saturation.SwitchPrefillQueueByCapacity:       true,
+		saturation.SwitchPrefillFBusyMinutes:          true,
+		saturation.SwitchPrefillALowLoadByRate:        true,
+		saturation.SwitchPrefillAMedianOverhead:       true,
+		saturation.SwitchITLAdaptiveBandFloor:         true,
+		saturation.SwitchPrefillVPFloorServed:         true,
+		saturation.SwitchPrefillVPServedUnqueued:      true,
+		saturation.SwitchPlannerCapAtStepBudget:       true,
+		saturation.SwitchBacktestStepOutputDispersion: true,
+		saturation.SwitchITLBaselineFromFloor:         false,
+		saturation.SwitchITLFloorBaselineHeld:         false,
 	}, PackageSLO: {
 		slo.SwitchTTFTHopUnqueued:           true,
 		slo.SwitchTTFTDecodeSpeculatingHeld: true,
@@ -657,6 +674,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 	ttft.tierLoad = opts.Switches[PackageSLO][slo.SwitchTTFTTierLoad]
 	ttft.tierKVWait = opts.Switches[PackageSLO][slo.SwitchTTFTTierKVWait]
 	ttft.psByEngine = opts.Switches[PackageSLO][slo.SwitchTTFTPSByEngine]
+	ttft.pullWork = opts.Switches[PackageSLO][slo.SwitchTTFTPullWork]
 	ttft.servedOn = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPServedUnqueued]
 	ttft.vpAtServed = opts.Switches[PackageSaturation][saturation.SwitchPrefillVPAtServedWork]
 	ttft.hitAtCount = opts.Switches[PackageSaturation][saturation.SwitchPrefillHitAtCount]

@@ -162,8 +162,9 @@ func ttftModelOf(req, server string) (string, error) {
 
 // fitMainMixture fits the model on e's cycles up to the cycle answered, cut
 // into DefaultBacktestStep steps, with the prefill engine's max-num-seqs
-// read from the source.
-func fitMainMixture(e *inputsEntry) *mainMixture {
+// read from the source; stratified prices it with the stratified service
+// moments (whatif.RankMixtureOptions.StratifiedMoments).
+func fitMainMixture(e *inputsEntry, stratified bool) *mainMixture {
 	mm := &mainMixture{info: TTFTModelInfo{Model: string(whatif.QueueRankMixture), Experimental: true, Label: TTFTModelLabel}}
 	if p := e.doc.Fleet.Prefill; p != nil {
 		mm.prefill = p.Replicas
@@ -190,7 +191,7 @@ func fitMainMixture(e *inputsEntry) *mainMixture {
 			idx = append(idx, i)
 		}
 	}
-	rq, steps, err := fitRankMixtureSteps(e, idx, DefaultBacktestStep, e.engine.PrefillSlots)
+	rq, steps, err := fitRankMixtureSteps(e, idx, DefaultBacktestStep, e.engine.PrefillSlots, rankMixtureSwitches{stratified: stratified})
 	if err != nil {
 		return abstain(err.Error())
 	}
@@ -209,7 +210,8 @@ func fitMainMixture(e *inputsEntry) *mainMixture {
 	}
 	first := e.series[idx[0]].At
 	mm.pooled = whatif.MixtureStepOf(mixtureWindow(e, idx, first.Add(-time.Nanosecond), answered), answered)
-	o := whatif.RankMixtureOptions{Slots: rq.m.Slots, MinSpreadSpan: whatif.MinSpreadFitWindow, SpreadFloor: whatif.MinSpread}
+	o := whatif.RankMixtureOptions{Slots: rq.m.Slots, MinSpreadSpan: whatif.MinSpreadFitWindow, SpreadFloor: whatif.MinSpread,
+		StratifiedMoments: stratified}
 	if h := whatif.RankMixtureHeldOut(steps, o, rq.m.Spread, BacktestTolerance); h.Steps > 0 {
 		mm.info.HeldOut = &HeldOutScore{Statistic: statisticMean, Within: h.Within, Low: h.Low, Steps: h.Steps, MedianRatio: h.MedianRatio,
 			RateFrom: h.RateLo, RateTo: h.RateHi, Prefill: mm.prefill, Decode: e.doc.Fleet.Decode.Replicas}
@@ -530,10 +532,11 @@ func (mm *mainMixture) applyToReport(out *ReportResponse, q ReportQuery) {
 
 // ApplyTTFTModel fits the experimental TTFT model on res, a source resolved
 // with InputsRequest.TTFTModel, and prices out's TTFT tables with it as
-// POST /v1/report does: at-replicas --experimental-ttft=v2. It returns the
-// model as fitted, abstained or not.
-func ApplyTTFTModel(res *Resolved, out *ReportResponse, q ReportQuery) *TTFTModelInfo {
-	mm := fitMainMixture(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine})
+// POST /v1/report does: at-replicas --experimental-ttft=v2, stratified its
+// --rank-mixture-stratified (InputsRequest.RankMixtureStratified). It
+// returns the model as fitted, abstained or not.
+func ApplyTTFTModel(res *Resolved, out *ReportResponse, q ReportQuery, stratified bool) *TTFTModelInfo {
+	mm := fitMainMixture(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, stratified)
 	mm.applyToReport(out, q)
 	info := mm.info
 	return &info

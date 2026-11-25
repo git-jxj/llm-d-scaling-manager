@@ -322,9 +322,10 @@ type BacktestRequest struct {
 	// every figure it moves is flagged, and the answer lists it.
 	Assume *Assume `json:"assume,omitempty"`
 	// TTFTModel prices TTFT with an experimental model in place of the
-	// planner's: "" is the planner's, and whatif.QueueRankMixture the only
-	// other (backtest_rank_mixture.go). Every TTFT it prices reads OUTSIDE
-	// VALIDATED REGION.
+	// planner's: "" is the planner's, whatif.QueueRankMixture
+	// (backtest_rank_mixture.go) and its variant
+	// whatif.QueueRankMixtureNLLine (backtest_rank_mixture_nl.go) the
+	// others. Every TTFT it prices reads OUTSIDE VALIDATED REGION.
 	TTFTModel string `json:"ttftModel,omitempty"`
 	// RankMixtureFitSteps turns on the rank mixture's fit-step fixes: its
 	// KV-deferral lines and prompt slopes fitted on the steps under rho 0.9
@@ -335,9 +336,11 @@ type BacktestRequest struct {
 	// RankMixtureStratified prices the rank mixture with stratified service
 	// moments (whatif.RankMixtureOptions.StratifiedMoments): each rank's
 	// mean service and cs^2 integrated over the computed-token law, not
-	// from its own draws. Off by default; read only with TTFTModel
+	// from its own draws. Absent, the server's default (on, unless the
+	// server was started with --rank-mixture-stratified=false); false
+	// reads them from each rank's own draws. Read only with TTFTModel
 	// rank-mixture.
-	RankMixtureStratified bool `json:"rankMixtureStratified,omitempty"`
+	RankMixtureStratified *bool `json:"rankMixtureStratified,omitempty"`
 	// PrefillSlots is the prefill engine's max-num-seqs, read by
 	// TTFTModel's limited-PS check; 0 not known.
 	PrefillSlots int `json:"prefillSlots,omitempty"`
@@ -683,6 +686,10 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 	}
 	if req.TPOTModel == "" {
 		req.TPOTModel = s.tpotModel
+	}
+	if req.RankMixtureStratified == nil {
+		on := s.stratified()
+		req.RankMixtureStratified = &on
 	}
 	test, ok := s.inputs.get(req.InputsID)
 	if !ok {
@@ -1086,23 +1093,25 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		if req.RankMixtureFitSteps {
 			return nil, InputErrorf("rankMixtureFitSteps changes the fit of ttftModel %q: give it with that model", whatif.QueueRankMixture)
 		}
-	case string(whatif.QueueRankMixture):
+	case string(whatif.QueueRankMixture), string(whatif.QueueRankMixtureNLLine):
 		// The model prices only where its identifiability checks pass;
 		// otherwise it abstains, and every TTFT is the planner's own.
+		sw := rankMixtureSwitchesOf(req)
 		switch {
 		case len(test.mixture) != len(test.series):
 			q.mixture = abstainedMixture("the test source did not give the per-rank series")
 		default:
-			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots, rankMixtureSwitchesOf(req))
+			fitted, ferr := fitRankMixture(fit, fitIdx, q.step, req.PrefillSlots, sw)
 			if ferr != nil {
 				q.mixture = abstainedMixture(ferr.Error())
 			} else {
 				q.mixture = fitted.identified()
 			}
 		}
+		q.mixture.report.Model = string(sw.model())
 		q.assumed = append(q.assumed, q.mixture.assumedLines()...)
 	default:
-		return nil, InputErrorf("ttftModel %q, want %q or none", req.TTFTModel, whatif.QueueRankMixture)
+		return nil, InputErrorf("ttftModel %q, want %q, %q or none", req.TTFTModel, whatif.QueueRankMixture, whatif.QueueRankMixtureNLLine)
 	}
 	switch req.TPOTModel {
 	case "":
@@ -1412,8 +1421,10 @@ func (q *backtestQuestion) finish(out *BacktestResponse) {
 		Allowed      bool
 	}{q.fitID(), q.test.id, q.cutoff, q.step, q.settle, q.source, q.target, q.cv2, q.assume, q.config.Allowed})
 	if q.mixture != nil {
-		out.BacktestID = contentID("backtest", struct{ ID, Model, Assumed, Abstained string }{out.BacktestID, q.mixture.report.Model,
-			q.mixture.report.Assumed, q.mixture.report.Abstained})
+		out.BacktestID = contentID("backtest", struct {
+			ID, Model, Assumed, Abstained string
+			Stratified                    bool
+		}{out.BacktestID, q.mixture.report.Model, q.mixture.report.Assumed, q.mixture.report.Abstained, q.mixture.report.Stratified})
 	}
 	if q.tpotDist != nil {
 		out.BacktestID = contentID("backtest", struct{ ID, TPOTModel, Assumed, Abstained string }{out.BacktestID, q.tpotDist.report.Model,

@@ -82,10 +82,21 @@ it. On:
 - V_P's rescale along the curve reads `I_eff + 2h`, `h` the cached tokens,
   not `I_eff` (`Prefill.shapedVP`, `attentionSpan`). Each computed token
   attends over the cached ones too: at 32k with a 75% hit a pod computes the
-  8k a fresh 8k prompt does, but V_P reads about 1.7x high without it. `h`
-  is `I_eff·hit/(1 − hit)`, from each side's measured hit rate, not the
-  whole prompt less `I_eff` (the two are read over different windows). It
-  needs both whole prompts known and a hit rate above
+  8k a fresh 8k prompt does, but V_P reads about 1.7x high without it.
+  Where the prefill rows read the computed prompt and the whole one, `h` is
+  each side's cached context, every tier's hits counted
+  (`pricedFleet.cachedContext`, `Prefill.CachedContextRead`, issue #383):
+  the question's from the computed-token hit of the same rows and minutes,
+  V_P's from `VPWholePromptTokens − VPPromptTokens`. A token served from a
+  host, disk or peer tier is a miss to the prefix-cache hit rate, yet the
+  prompt attends over it. A prompt netted from a whole one
+  (`--assume-input-tokens`, a backtest's step) reads `h` as the whole less
+  the netted one, so no token is both computed and cached, and only where
+  `slo-ttft-computed-hit` netted it by every tier's hit: netted by the
+  prefix-cache hit rate, a tier's tokens are priced as computed. Only where
+  they are not read is `h`
+  `I_eff·hit/(1 − hit)`, from each side's prefix-cache hit rate. It needs
+  both whole prompts known and a cached share above
   `MaterialPrefixHitMove` on either side; otherwise the rescale is as
   before.
 - The planner nets an assumed prompt by a stated hit rate (`--prefix-hit`),
@@ -99,8 +110,11 @@ the hit rate V_P was read at (`VPWholePromptTokens`, `VPPromptHitRate`), and
 `VPShapeMoved` is raised where the hits moved (`Prefill.prefixMoved`): the
 hit rate by more than `MaterialPrefixHitMove` (0.1, stated, not measured),
 or the whole prompt by more than `MaxVPShapeRatio` with a hit rate above 0.1
-on either side. A state that recorded no whole prompt raises nothing new. No
-committed recording has a prefix hit, so no golden moves.
+on either side. With the switch on and the cached context read, the hit on
+each side is its cached share of the whole prompt, as the rescale prices it,
+not the prefix-cache hit rate: like with like (issue #383). A state that
+recorded no whole prompt raises nothing new. No committed recording has a
+prefix hit, so no golden moves.
 
 `ComputedHit` (`slo-ttft-computed-hit`, planner-only, off from the
 constructor) nets a whole prompt the planner prices for the prefill pods
@@ -172,14 +186,19 @@ price took that load as free.
   flagged `TierLoadUnmeasured`. A recording with no split by tier, where the
   computed-token hit is above `MaterialPrefixHitMove`, is flagged
   `TierSplitUnread`.
-- **The attention span (issue #311).** With `slo-ttft-prefix-attention` on
-  too, the span's cached context is the whole prompt less the computed one,
-  every tier's hits counted (`whatif.Prefill.CachedContextRead`): the
-  question's from the computed-token hit of the same rows and minutes, V_P's
-  from `VPWholePromptTokens − VPPromptTokens`. The prefix-cache hit rate sees
-  the GPU's hits alone.
+- **The attention span** is `slo-ttft-prefix-attention`'s, whether this
+  switch is on or not: its cached context counts every tier's hits (issue
+  #383).
 - No committed recording reads the cached tokens by tier, so the switch moves
   no golden.
+- **Not on by default (issue #386).** On a private production P/D recording
+  with a host and a peer tier, neither this switch nor `slo-ttft-tier-kv-wait`
+  reads a figure newly under 0.8 of measured, and the KV wait brings the 75%
+  time split's median mean TTFT closer to measured. At the 50%
+  split, whose figures rest on a lower-bound V_P and read high, both raise
+  the median error and take figures from within 20% to more than 20% over,
+  which the issue's rule forbids. `learnreplay.PlannerSwitches` says when they
+  go on.
 
 `CachedTokenCost` (`slo-ttft-cached-token-cost`, planner-only, off from the
 constructor) prices the load of a cached prompt token. A token served from a

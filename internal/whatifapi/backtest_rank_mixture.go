@@ -89,6 +89,16 @@ type RankMixtureReport struct {
 	// engine's max-num-seqs (1 without chunked prefill), 0 not known.
 	Queue string `json:"queue"`
 	Slots int    `json:"slots"`
+	// ZParts is Z measured part by part and FitMean the fit window's
+	// median ratio of priced to measured mean: the variant's
+	// (whatif.QueueRankMixtureNLLine) only, which calibrates nothing to the
+	// router (backtest_rank_mixture_nl.go).
+	ZParts  *RankMixtureZParts `json:"zParts,omitempty"`
+	FitMean float64            `json:"fitMean,omitempty"`
+	// Stratified says each rank's mean service and cs^2 were read from the
+	// computed-token histogram itself, not from the rank's own draws
+	// (BacktestRequest.RankMixtureStratified, on by default).
+	Stratified bool `json:"stratified,omitempty"`
 }
 
 // RankMixtureKV is the fitted KV-deferral wait.
@@ -191,39 +201,58 @@ func backlogged(e *inputsEntry, idx []int, from, to time.Time) string {
 // stationary (backlogged) is left out: no queue model's steady state is what
 // it measured, and its TTFT would pass into the fit as cost.
 func fitRankMixture(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, sw rankMixtureSwitches) (*rankMixtureQ, error) {
-	rq, _, err := fitRankMixtureStepsWith(fit, fitIdx, step, slots, sw)
+	rq, _, err := fitRankMixtureSteps(fit, fitIdx, step, slots, sw)
 	return rq, err
 }
 
-// fitRankMixtureSteps is fitRankMixture, and the steps it fitted on.
-func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slots int) (*rankMixtureQ, []whatif.MixtureStep, error) {
-	return fitRankMixtureStepsWith(fit, fitIdx, step, slots, rankMixtureSwitches{})
-}
-
-// rankMixtureSwitches are the rank mixture's off-by-default switches, each
-// independent of the other.
+// rankMixtureSwitches are the rank mixture's switches, each independent of
+// the other.
 type rankMixtureSwitches struct {
 	// fitSteps turns on the fit-step fixes (whatif.RankMixtureOptions
-	// CleanFitSteps and SharesAtLoad): BacktestRequest.RankMixtureFitSteps.
+	// CleanFitSteps and SharesAtLoad): BacktestRequest.RankMixtureFitSteps,
+	// off by default.
 	fitSteps bool
-	// stratified turns on the stratified service moments
+	// stratified prices with the stratified service moments
 	// (whatif.RankMixtureOptions.StratifiedMoments):
-	// BacktestRequest.RankMixtureStratified.
+	// BacktestRequest.RankMixtureStratified, on by default.
 	stratified bool
+	// nlLine fits the variant whatif.QueueRankMixtureNLLine in place of v2
+	// (BacktestRequest.TTFTModel); it fits with both switches above on.
+	nlLine bool
 }
 
-// rankMixtureSwitchesOf is the switches req turns on.
+// rankMixtureSwitchesOf is the switches req turns on. The server has set
+// an absent rankMixtureStratified to its own default; the CLI's backtest
+// always sets it.
 func rankMixtureSwitchesOf(req BacktestRequest) rankMixtureSwitches {
-	return rankMixtureSwitches{fitSteps: req.RankMixtureFitSteps, stratified: req.RankMixtureStratified}
+	return rankMixtureSwitches{fitSteps: req.RankMixtureFitSteps,
+		stratified: stratifiedOf(req.RankMixtureStratified, whatif.DefaultRankMixtureStratified),
+		nlLine:     req.TTFTModel == string(whatif.QueueRankMixtureNLLine)}
 }
 
-// fitRankMixtureStepsWith is fitRankMixtureSteps, with the switches sw turns
-// on.
-func fitRankMixtureStepsWith(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, sw rankMixtureSwitches) (
+// model is the model sw fits.
+func (sw rankMixtureSwitches) model() whatif.QueueModel {
+	if sw.nlLine {
+		return whatif.QueueRankMixtureNLLine
+	}
+	return whatif.QueueRankMixture
+}
+
+// stratifiedOf is a request's rankMixtureStratified: the value where it
+// names one, def where it is absent.
+func stratifiedOf(asked *bool, def bool) bool {
+	if asked == nil {
+		return def
+	}
+	return *asked
+}
+
+// fitRankMixtureSteps is fitRankMixture, and the steps it fitted on.
+func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, sw rankMixtureSwitches) (
 	*rankMixtureQ, []whatif.MixtureStep, error) {
 	if len(fit.mixture) != len(fit.series) {
 		return nil, nil, InputErrorf("the experimental TTFT model %s needs the recording's per-rank series, which this source did not give",
-			whatif.QueueRankMixture)
+			sw.model())
 	}
 	idx := slices.Clone(fitIdx)
 	slices.SortStableFunc(idx, func(a, b int) int { return fit.series[a].At.Compare(fit.series[b].At) })
@@ -271,19 +300,24 @@ func fitRankMixtureStepsWith(fit *inputsEntry, fitIdx []int, step time.Duration,
 	if len(steps) == 0 {
 		return nil, nil, InputErrorf("the experimental TTFT model %s fits against the router's measured TTFT mean and p90 and the prefill "+
 			"ranks' own rates on stationary steps: of the fit window's %d steps, %d read no router TTFT, %d no prefill rank's rate "+
-			"and %d were not stationary", whatif.QueueRankMixture, len(order), noRouter, noRanks, backlog)
+			"and %d were not stationary", sw.model(), len(order), noRouter, noRanks, backlog)
 	}
-	m, diag, err := whatif.FitRankMixture(steps, whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
+	o := whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
 		SpreadFloor: whatif.MinSpread, CleanFitSteps: sw.fitSteps, SharesAtLoad: sw.fitSteps,
-		StratifiedMoments: sw.stratified})
-	if err != nil {
-		return nil, nil, InputErrorf("the experimental TTFT model %s did not fit: %v", whatif.QueueRankMixture, err)
+		StratifiedMoments: sw.stratified}
+	fitter := whatif.FitRankMixture
+	if sw.nlLine {
+		fitter = whatif.FitRankMixtureNL
 	}
-	r := RankMixtureReport{Model: string(whatif.QueueRankMixture), Experimental: true, Assumed: m.Assumed(), S0: m.S0, V: m.V, ServiceProportional: m.ServiceProportional,
+	m, diag, err := fitter(steps, o)
+	if err != nil {
+		return nil, nil, InputErrorf("the experimental TTFT model %s did not fit: %v", sw.model(), err)
+	}
+	r := RankMixtureReport{Model: string(sw.model()), Experimental: true, Assumed: m.Assumed(), S0: m.S0, V: m.V, ServiceProportional: m.ServiceProportional,
 		Shares: m.Shares, ShareCV: diag.ShareCV, EvenWithinRows: even, A0: m.A0, Beta: m.Beta, BetaOverhead: m.BetaOverhead,
 		BetaDecode: m.BetaDecode, BetaRemainder: m.BetaRemainder, BetaUnidentified: m.BetaUnidentified, Spread: m.Spread, FoldSpread: diag.FoldSpread,
 		SpreadAtBound: diag.SpreadAtBound, SpreadDefaulted: diag.SpreadDefaulted, SpreadFloored: diag.SpreadFloored, FitP90: diag.FitP90, FitSteps: diag.Steps, Slots: slots,
-		FitStepsBacklogged: backlog, Queue: string(whatif.QueueLimitedProcessorSharing)}
+		FitStepsBacklogged: backlog, Queue: string(whatif.QueueLimitedProcessorSharing), Stratified: sw.stratified}
 	if slots <= 0 {
 		r.Queue = string(whatif.QueueProcessorSharing)
 	}
@@ -292,6 +326,11 @@ func fitRankMixtureStepsWith(fit *inputsEntry, fitIdx []int, step time.Duration,
 	}
 	if m.KV.Known {
 		r.KV = &RankMixtureKV{P0: m.KV.P0, P1: m.KV.P1, M0: m.KV.M0, M1: m.KV.M1, RhoLo: m.KV.RhoLo, RhoHi: m.KV.RhoHi}
+	}
+	if p := m.Parts; p != nil {
+		r.FitMean = diag.FitMean
+		r.ZParts = &RankMixtureZParts{OverheadA: p.Overhead.A, OverheadB: p.Overhead.B, DecodeA: p.Decode.A, DecodeB: p.Decode.B,
+			RemainderA: p.Remainder.A, RemainderB: p.Remainder.B, OverheadSigma: p.Overhead.Sigma, DecodeSigma: p.Decode.Sigma}
 	}
 	return &rankMixtureQ{m: m, report: r}, steps, nil
 }
@@ -313,6 +352,9 @@ func abstainedMixture(why string) *rankMixtureQ {
 // down by as much as it moves the mean of Z up. A0 is Z at a prompt of no
 // tokens, a time: a negative A0 is that counterweight, not a location.
 func (rq *rankMixtureQ) identified() *rankMixtureQ {
+	if rq.report.Model == string(whatif.QueueRankMixtureNLLine) {
+		return rq.identifiedNL()
+	}
 	r := rq.report
 	var why []string
 	if len(r.BetaUnidentified) > 0 {
@@ -353,10 +395,14 @@ func (q *backtestQuestion) mixturePriced(out BacktestStep) bool {
 func (rq *rankMixtureQ) assumedLines() []string {
 	if rq.report.Abstained != "" {
 		return []string{fmt.Sprintf("experimental TTFT model %s abstained (%s): every TTFT is the planner's own, flagged %s",
-			whatif.QueueRankMixture, rq.report.Abstained, whatif.RankMixtureAbstained)}
+			rq.report.Model, rq.report.Abstained, whatif.RankMixtureAbstained)}
 	}
 	out := []string{rq.report.Assumed + "; spread fitted on the fit window's self-check folds so that their median p90 ratio is 1 " +
 		"(p95 is not fitted); every TTFT is flagged " + string(whatif.RankMixtureTTFT) + " and is OUTSIDE VALIDATED REGION"}
+	if rq.report.ZParts != nil {
+		out[0] = rq.report.Assumed + fmt.Sprintf("; nothing calibrated to the router (the fit window prices its own mean at %.3g of "+
+			"measured); every TTFT is flagged %s and is OUTSIDE VALIDATED REGION", rq.report.FitMean, whatif.RankMixtureTTFT)
+	}
 	if len(rq.report.BetaUnidentified) > 0 {
 		out = append(out, fmt.Sprintf("the fit window's prompts did not spread: the prompt term's %s slope is 0, its cost held in a0 at the "+
 			"prompts read", strings.Join(rq.report.BetaUnidentified, ", ")))
