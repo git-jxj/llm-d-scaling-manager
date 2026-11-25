@@ -22,7 +22,7 @@ capacity            req/s     out tok/s   in system   bound by
   prefill knee      >=40.19   8037        not known   prefill compute: N_p 2 x V_P x (1 - 0.05 margin) / (f 1.000 x 8001 tokens); at least: V_P is a lower bound
                     OUTSIDE VALIDATED REGION (prefill speed from the occupancy plateau, experimental and never validated)
   decode knee       36.99     7397        unbounded   decode band top at fill 0.798
-                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+                    OUTSIDE VALIDATED REGION (--assume-a stated, which the run did not price)
   fleet knee        36.99     7397        unbounded   decode
   operating (0.85)  31.44     6287        <=98        0.85 x fleet knee (scaleUpThreshold)
   max at SLO        >=29.03   5805        <=58        TTFT p90, end to end; at least: V_P is a lower bound

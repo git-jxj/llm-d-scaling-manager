@@ -20,7 +20,7 @@ utilization at the load judged
 capacity            req/s     out tok/s   in system   bound by
   prefill knee      49.97     9993        unbounded   prefill compute: N_p 2 x V_P / (f 1.000 x 8001 tokens)
   decode knee       55.48     11094       unbounded   decode band top at fill 0.798
-                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+                    OUTSIDE VALIDATED REGION (--assume-vp stated, which the run did not price)
   fleet knee        49.97     9993        unbounded   prefill
   operating (0.85)  42.48     8494        82          0.85 x fleet knee (scaleUpThreshold)
   max at SLO        36.60     7319        48          TTFT p90, end to end
