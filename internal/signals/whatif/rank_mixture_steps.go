@@ -24,6 +24,13 @@ type MixtureCycle struct {
 	// histogram, summed over its pods (upper bound to rate); nil with none
 	// read. Only the non-linear variant reads them (FitRankMixtureNL).
 	PrefillTTFTHist, DecodeTTFTHist map[float64]float64
+	// RouterProcessingHist is the router's request-processing histogram
+	// over its rate window (upper bound to rate), and RouterProcessingMean
+	// its mean, seconds; nil and 0 with none recorded. Only the
+	// non-linear variant's remainder spread reads them
+	// (RankMixtureOptions.RemainderSpread).
+	RouterProcessingHist map[float64]float64
+	RouterProcessingMean float64
 	// EvenWithinRows counts the ranks whose own rate was not recorded: a
 	// row of several ranks split evenly between them (its share profile is
 	// flatter than the fleet's).
@@ -41,8 +48,10 @@ type MixtureRankReading struct {
 // over the cycles (absent counts as no request), its means weighted by its
 // rate; each histogram the mean of the cycles'; each role's TTFT the mean of
 // the cycles that read one. Rate is the ranks' rates summed and PromptMean
-// their whole prompt weighted by rate. The router's figures are not read
-// here: the caller sets them from its measurement.
+// their whole prompt weighted by rate. The router's TTFT is not read here:
+// the caller sets it from its measurement. The router's request-processing
+// histogram is pooled as the engines' are, and its mean is the mean of the
+// cycles that read one.
 func MixtureStepOf(cycles []MixtureCycle, at time.Time) MixtureStep {
 	out := MixtureStep{At: at}
 	n := float64(len(cycles))
@@ -56,7 +65,7 @@ func MixtureStepOf(cycles []MixtureCycle, at time.Time) MixtureStep {
 	byKey := map[string]*acc{}
 	var keys []string
 	out.Computed, out.Prompt, out.Queue = map[float64]float64{}, map[float64]float64{}, map[float64]float64{}
-	var pTTFT, dTTFT, np, nd float64
+	var pTTFT, dTTFT, np, nd, rProc, nr float64
 	for _, c := range cycles {
 		for _, r := range c.Ranks {
 			a, ok := byKey[r.Key]
@@ -102,6 +111,11 @@ func MixtureStepOf(cycles []MixtureCycle, at time.Time) MixtureStep {
 		}
 		out.PrefillTTFTHist = poolHist(out.PrefillTTFTHist, c.PrefillTTFTHist, n)
 		out.DecodeTTFTHist = poolHist(out.DecodeTTFTHist, c.DecodeTTFTHist, n)
+		out.RouterProcessingHist = poolHist(out.RouterProcessingHist, c.RouterProcessingHist, n)
+		if c.RouterProcessingMean > 0 {
+			rProc += c.RouterProcessingMean
+			nr++
+		}
 		if c.PrefillTTFT > 0 {
 			pTTFT += c.PrefillTTFT
 			np++
@@ -136,5 +150,6 @@ func MixtureStepOf(cycles []MixtureCycle, at time.Time) MixtureStep {
 	}
 	out.PromptMean = div(out.PromptMean, lw)
 	out.PrefillTTFT, out.DecodeTTFT = div(pTTFT, np), div(dTTFT, nd)
+	out.RouterProcessingMean = div(rProc, nr)
 	return out
 }

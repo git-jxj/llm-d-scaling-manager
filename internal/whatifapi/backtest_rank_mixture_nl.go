@@ -27,6 +27,21 @@ type RankMixtureZParts struct {
 	// (whatif.ZPart.Sigma); 0 is none.
 	OverheadSigma float64 `json:"overheadSigma"`
 	DecodeSigma   float64 `json:"decodeSigma"`
+	// RemainderShapeMean is the router's measured request-processing mean
+	// the remainder is drawn from, seconds, and RemainderShapeP95 that
+	// law's 95th percentile over its mean
+	// (BacktestRequest.RankMixtureRemainderSpread); both absent where the
+	// remainder is its line.
+	RemainderShapeMean float64 `json:"remainderShapeMean,omitempty"`
+	RemainderShapeP95  float64 `json:"remainderShapeP95,omitempty"`
+}
+
+// remainderShape sets the remainder's measured law, where it has one.
+func (z *RankMixtureZParts) remainderShape(r whatif.ZPart) {
+	if r.Shape == nil {
+		return
+	}
+	z.RemainderShapeMean, z.RemainderShapeP95 = r.ShapeMean, r.ShapeQuantile(0.95)
 }
 
 // identifiedNL is identified for the variant. Its Z is measured, not

@@ -3,6 +3,7 @@ package whatifapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -418,7 +419,7 @@ func TestMainView_ExperimentalModelMarksEveryExtrapolatedLimit(t *testing.T) {
 	assert.Less(t, extrapolated, checked, "and some is not")
 }
 
-// A day plan is the default TTFT model's, also on inputs resolved with the
+// Unasked (no ExperimentalModels), a day plan is the default TTFT model's, also on inputs resolved with the
 // experimental one: its buckets, whose cycles read no lengths, sit at the
 // window's own shape, where the model prices, yet every figure, refusal and
 // count is the default's, so that no plan mixes a model-priced prefill with
@@ -451,4 +452,75 @@ func TestDayPlan_ExperimentalModelLeavesTheDayPlanToTheDefault(t *testing.T) {
 	assert.Equal(t, base.Refused, v2.Refused)
 	assert.Equal(t, base.Summary, v2.Summary)
 	assert.Equal(t, base.Buckets, v2.Buckets)
+}
+
+// Asked for (ExperimentalModels), a day plan on inputs resolved with the
+// experimental TTFT model is priced with it, as a size on those inputs is:
+// where the planner refuses prefill, the model sizes it, each such bucket's
+// limit flagged RankMixtureTTFT, and the plan names the model it used. It is
+// a plan of its own, under its own id. Asked on inputs resolved with no
+// model, it is refused rather than answered as the planner's own.
+func TestDayPlan_ExperimentalModelsSizePrefillWhereThePlannerRefuses(t *testing.T) {
+	plan := func(model, asked bool) (DayPlanResponse, error) {
+		t.Helper()
+		s, e := mainEntry(t, model)
+		for i := range e.series {
+			e.series[i].HasShape = false
+		}
+		body, err := s.dayPlan(context.Background(), DayPlanRequest{InputsID: e.id, ExperimentalModels: asked,
+			SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}}})
+		var out DayPlanResponse
+		if err == nil {
+			require.NoError(t, json.Unmarshal(body, &out))
+		}
+		return out, err
+	}
+	base, err := plan(true, false)
+	require.NoError(t, err)
+	v2, err := plan(true, true)
+	require.NoError(t, err)
+	require.Positive(t, base.Summary.Counts.Sized)
+	assert.Equal(t, base.Summary.Counts.Sized, base.Summary.Counts.PrefillNotPriced, "unasked, the planner's own prices no prefill")
+	assert.Nil(t, base.TTFTModel, "unasked, no model is named")
+
+	require.NotNil(t, v2.TTFTModel, "the plan names the model it was asked to price with")
+	assert.Empty(t, v2.TTFTModel.Abstained)
+	assert.Nil(t, v2.TPOTModel, "the inputs carry no TPOT model")
+	assert.NotEqual(t, base.DayPlanID, v2.DayPlanID, "a plan priced with the model is another plan")
+	assert.Less(t, v2.Summary.Counts.PrefillNotPriced, v2.Summary.Counts.Sized, "the model prices prefill the planner refuses")
+	priced := 0
+	for _, b := range v2.Buckets {
+		if b.Needed == nil || b.Needed.Prefill == nil {
+			continue
+		}
+		priced++
+		require.NotNil(t, b.Limit)
+		assert.Contains(t, b.Limit.Flags, string(whatif.RankMixtureTTFT), "the bucket at %s says the model sized it", b.Start)
+		assert.NotContains(t, b.Flags, FlagPrefillNotPriced)
+	}
+	require.Positive(t, priced, "some bucket's prefill is sized")
+	t.Logf("sized %d buckets: prefill sized in %d with the model, %d without", v2.Summary.Counts.Sized, priced,
+		base.Summary.Counts.Sized-base.Summary.Counts.PrefillNotPriced)
+	for i, b := range v2.Buckets[:min(5, len(v2.Buckets))] {
+		if b.Needed != nil && b.Needed.Prefill != nil && i < len(base.Buckets) && base.Buckets[i].Needed != nil {
+			t.Logf("%s at %.2f r/s: %s -> %d prefill + %d decode, had %v", b.Start.Format("15:04"), *b.SizedRate,
+				neededWords(base.Buckets[i].Needed), *b.Needed.Prefill, b.Needed.Decode, b.Actual)
+		}
+	}
+	assert.True(t, slices.ContainsFunc(v2.Notes, func(n string) bool {
+		return strings.Contains(n, fmt.Sprintf("priced %d of the %d sized buckets", priced, v2.Summary.Counts.Sized))
+	}), "the notes count the buckets it priced: %q", v2.Notes)
+
+	_, err = plan(false, true)
+	require.Error(t, err)
+	assert.True(t, IsInputError(err))
+	assert.Contains(t, err.Error(), "experimentalModels")
+}
+
+// neededWords is a bucket's need as the log line says it.
+func neededWords(n *DayNeeded) string {
+	if n.Prefill == nil {
+		return fmt.Sprintf("at least %d decode (prefill not sized)", n.Decode)
+	}
+	return fmt.Sprintf("%d prefill + %d decode", *n.Prefill, n.Decode)
 }

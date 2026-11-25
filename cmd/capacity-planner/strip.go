@@ -25,10 +25,12 @@ import (
 // latencyKeys are the keys a cycle's input carries a measured latency
 // under, at any depth: each engine row's TTFT, inter-token, service, queue,
 // prefill and KV-transfer times, means and histograms, with their presence
-// bits, and the router's histograms and flow-control wait.
+// bits, and the router's histograms, its request processing and
+// flow-control wait.
 var latencyKeys = map[string]bool{
 	"TTFTBuckets": true, "TPOTBuckets": true, "QueueTimeBuckets": true, "FlowControlWaitBuckets": true,
 	"TTFTSumRate": true, "TTFTCountRate": true, "TPOTSumRate": true, "TPOTCountRate": true,
+	"ProcessingBuckets": true, "ProcessingSumRate": true, "ProcessingCountRate": true,
 	"AvgTTFT": true, "AvgTTFTKnown": true,
 	"AvgITL": true, "AvgITLKnown": true, "AvgITLEmpty": true,
 	"AvgServiceTime": true, "AvgServiceTimeKnown": true,
