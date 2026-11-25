@@ -92,6 +92,13 @@ type Config struct {
 	// --experimental-ttft=v2 and --experimental-tpot=v2; its Resolver then
 	// gives the cycles they read (Resolved.Mixture, Decode).
 	TTFTModel, TPOTModel string
+	// NoRankMixtureStratified prices the rank mixture with each rank's
+	// service moments read from its own draws where a request does not say
+	// (BacktestRequest.RankMixtureStratified,
+	// InputsRequest.RankMixtureStratified); false, the default, reads them
+	// from the computed-token histogram (whatif.DefaultRankMixtureStratified).
+	// The CLI's serve sets it with --rank-mixture-stratified=false.
+	NoRankMixtureStratified bool
 }
 
 // DefaultPlanBudget is the plan budget a server has when its Config names
@@ -168,6 +175,8 @@ type Server struct {
 	uploadDeadline time.Duration
 	// ttftModel and tpotModel are Config's.
 	ttftModel, tpotModel string
+	// noStratified is Config.NoRankMixtureStratified.
+	noStratified bool
 }
 
 // inputsEntry is a source resolved: its id, the inputs a plan reads its
@@ -230,7 +239,13 @@ func New(c Config) *Server {
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget,
 		uploader: c.Uploader, uploadMax: uploadMax, uploadSlots: make(chan struct{}, 1), uploadIdle: uploadIdle, uploadDeadline: uploadDeadline,
-		ttftModel: c.TTFTModel, tpotModel: c.TPOTModel}
+		ttftModel: c.TTFTModel, tpotModel: c.TPOTModel, noStratified: c.NoRankMixtureStratified}
+}
+
+// stratified is whether the rank mixture is priced with stratified service
+// moments where a request does not say.
+func (s *Server) stratified() bool {
+	return whatif.DefaultRankMixtureStratified && !s.noStratified
 }
 
 // errBusy is a request past the server's bound on work in flight.
@@ -336,6 +351,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	doc.InputsID = contentID("inputs", res.Content)
 	doc.Measured = BusiestHourMeasured(res.Series, res.Latency)
 	var mm *mainMixture
+	stratified := stratifiedOf(req.RankMixtureStratified, s.stratified())
 	if model != "" {
 		// The same source priced with the model is another entry: its id
 		// names the model.
@@ -343,7 +359,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 			Content   any
 			TTFTModel string
 		}{res.Content, model})
-		mm = fitMainMixture(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine})
+		mm = fitMainMixture(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, stratified)
 		info := mm.info
 		doc.TTFTModel = &info
 	}
@@ -357,6 +373,13 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 		mt = fitMainTPOT(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
 		info := mt.info
 		doc.TPOTModel = &info
+	}
+	if model != "" && !stratified {
+		// And so is the model read from each rank's own draws.
+		doc.InputsID = contentID("inputs", struct {
+			ID           string
+			Unstratified bool
+		}{doc.InputsID, true})
 	}
 	if check && (doc.Source.Kind == SourceRecording || doc.Source.Kind == SourcePrometheus) {
 		// The self-check is bounded as a plan is; out of time it is not run,
