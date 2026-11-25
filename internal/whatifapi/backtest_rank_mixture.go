@@ -109,6 +109,9 @@ type RankMixtureKV struct {
 	M1    float64 `json:"m1"`
 	RhoLo float64 `json:"rhoLo"`
 	RhoHi float64 `json:"rhoHi"`
+	// RhoHold is the utilization the lines are held at past it
+	// (BacktestRequest.RankMixtureKVHold); absent, not held.
+	RhoHold float64 `json:"rhoHold,omitempty"`
 }
 
 // RankMixtureCheck is what one step's data says of the model's assumptions
@@ -235,6 +238,10 @@ type rankMixtureSwitches struct {
 	// nlLine fits the variant whatif.QueueRankMixtureNLLine in place of v2
 	// (BacktestRequest.TTFTModel); it fits with both switches above on.
 	nlLine bool
+	// kvHold and remainderSpread are the variant's modes
+	// (whatif.RankMixtureOptions KVHold and RemainderSpread):
+	// BacktestRequest RankMixtureKVHold and RankMixtureRemainderSpread.
+	kvHold, remainderSpread bool
 }
 
 // rankMixtureSwitchesOf is the switches req turns on. The server has set
@@ -242,8 +249,10 @@ type rankMixtureSwitches struct {
 // always sets it.
 func rankMixtureSwitchesOf(req BacktestRequest) rankMixtureSwitches {
 	return rankMixtureSwitches{fitSteps: req.RankMixtureFitSteps,
-		stratified: stratifiedOf(req.RankMixtureStratified, whatif.DefaultRankMixtureStratified),
-		nlLine:     req.TTFTModel == string(whatif.QueueRankMixtureNLLine)}
+		stratified:      stratifiedOf(req.RankMixtureStratified, whatif.DefaultRankMixtureStratified),
+		nlLine:          req.TTFTModel == string(whatif.QueueRankMixtureNLLine),
+		kvHold:          req.RankMixtureKVHold,
+		remainderSpread: req.RankMixtureRemainderSpread}
 }
 
 // model is the model sw fits.
@@ -320,7 +329,7 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 	}
 	o := whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
 		SpreadFloor: whatif.MinSpread, CleanFitSteps: sw.fitSteps, SharesAtLoad: sw.fitSteps,
-		StratifiedMoments: sw.stratified}
+		StratifiedMoments: sw.stratified, KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread}
 	fitter := whatif.FitRankMixture
 	if sw.nlLine {
 		fitter = whatif.FitRankMixtureNL
@@ -341,12 +350,14 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 		r.FoldSpread = []float64{}
 	}
 	if m.KV.Known {
-		r.KV = &RankMixtureKV{P0: m.KV.P0, P1: m.KV.P1, M0: m.KV.M0, M1: m.KV.M1, RhoLo: m.KV.RhoLo, RhoHi: m.KV.RhoHi}
+		r.KV = &RankMixtureKV{P0: m.KV.P0, P1: m.KV.P1, M0: m.KV.M0, M1: m.KV.M1, RhoLo: m.KV.RhoLo, RhoHi: m.KV.RhoHi,
+			RhoHold: m.KV.RhoHold}
 	}
 	if p := m.Parts; p != nil {
 		r.FitMean = diag.FitMean
 		r.ZParts = &RankMixtureZParts{OverheadA: p.Overhead.A, OverheadB: p.Overhead.B, DecodeA: p.Decode.A, DecodeB: p.Decode.B,
 			RemainderA: p.Remainder.A, RemainderB: p.Remainder.B, OverheadSigma: p.Overhead.Sigma, DecodeSigma: p.Decode.Sigma}
+		r.ZParts.remainderShape(p.Remainder)
 	}
 	return &rankMixtureQ{m: m, report: r, fitPrefill: actualOf(seriesAt(fit.series, idx)).Prefill}, steps, nil
 }
