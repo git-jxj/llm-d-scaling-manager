@@ -370,6 +370,15 @@ it, and `POST /v1/inputs` takes `prefillHitAtCount` ([API](api.md)). For
 example, from a recording on 2 prefill pods:
 `capacity-planner slo-to-rate --recording run.jsonl.gz --ttft 2s@p90 --prefill 1 --prefill-hit-at-count`.
 
+**V_P from the prefill service line (`--prefill-vp-service-line`, not
+validated).** Where the prefill pods never queued, the planner has only a
+lower bound on their speed. This flag reads it from each pod's prefill time
+against the tokens it computed a request instead: a fixed time a request
+plus a time a token. It is off by default because on the public recordings
+it read some TTFT figures under what was measured. Set, every figure reads
+OUTSIDE VALIDATED REGION. The same commands take it, and `POST /v1/inputs`
+takes `prefillVPServiceLine` ([API](api.md)).
+
 **An experimental TTFT model (`--experimental-ttft`, for demonstration).**
 The TTFT model has seven switches that are off by default, because none of
 them has passed the release's validation. `--experimental-ttft` turns all
@@ -380,7 +389,8 @@ seven on for the one command you pass it to:
 - `prefill-vp-at-served-work`: V_P raised to the work the prefill Pods
   served, where the prefill knee was raised to it;
 - `slo-ttft-computed-hit`: a stated prompt netted by the computed-token hit
-  (the load's shape is netted by it with the switch off too);
+  (the load's shape, a day plan's bucket and a backtest's step are netted by
+  it with the switch off too);
 - `slo-ttft-tier-load` and `slo-ttft-tier-kv-wait`: the load of a cached
   token from a host, disk or peer tier, at the engine's measured wait for it;
 - `slo-ttft-ps-by-engine`: the prefill queue priced as processor sharing
@@ -679,7 +689,8 @@ It replays the recording once and answers, for each shape and load:
   prices the load's prompt less the share the prefill pods did not compute
   (cache hits on every tier: GPU, host memory, peer), the same work the
   measured shape prices. The answer says so: `prompt netted by the prefill
-  pods' computed-token hit`.
+  pods' computed-token hit`. A day plan's buckets and a backtest's steps
+  read their prompt the same way, so their prefill is priced the same way.
 - **The load's shape as the default.** A model change becomes the default
   only where it moves no figure on the public recordings to under 0.8 of what
   was measured. On the decode-only sample (`throughput-sweep`) the load's

@@ -55,7 +55,7 @@ func (f *answerFlags) foldFits(decodeVariant, prefillVariant string) []whatifapi
 	for c, st := range f.folds {
 		out = append(out, whatifapi.FoldFit{Cycle: c, At: st.At, Pricer: &servedState{st: st, decodeVariant: decodeVariant,
 			prefillVariant: prefillVariant, hint: f.hintSource(), imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter,
-			experimentalTTFT: f.experimentalTTFT}})
+			experimentalTTFT: f.experimentalTTFT, vpServiceLine: f.vpServiceLine}})
 	}
 	return out
 }
@@ -160,6 +160,9 @@ func (f *answerFlags) stated() (*whatifapi.Stated, error) {
 	}
 	if f.hitAtCount {
 		st.Replayed = append(st.Replayed, "--"+hitAtCountFlag)
+	}
+	if f.vpServiceLine {
+		st.Replayed, st.Outside = append(st.Replayed, "--"+vpServiceLineFlag), true
 	}
 	if f.experimentalTTFT {
 		st.Replayed, st.Outside = append(st.Replayed, "--"+experimentalTTFTFlag), true

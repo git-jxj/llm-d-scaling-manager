@@ -71,6 +71,12 @@ hit x N'/N and each request computes more prompt tokens, flagged
 `PrefixHitAtCount`; at more it is kept, flagged `PrefixHitHeld`. The answer
 carries `prefillHitAtCount: true` and its own `inputsId`.
 
+`prefillVPServiceLine: true` reads V_P from the prefill service line
+where the prefill pods never queued, or V_P is only a lower bound under the
+line (the CLI's `--prefill-vp-service-line`). It is off by default and not
+validated: every figure's `validation` reads OUTSIDE VALIDATED REGION, and
+the answer carries `prefillVPServiceLine: true` and its own `inputsId`.
+
 `experimentalTTFT: true` prices TTFT with the experimental TTFT model (the
 CLI's `--experimental-ttft`): the seven TTFT switches that are off by
 default, on for this source. It is for demonstration and not validated:

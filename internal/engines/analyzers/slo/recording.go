@@ -108,7 +108,7 @@ func (a *Analyzer) SlopeHoldFor() time.Duration { return a.slopeHoldFor }
 // SwitchTTFTDecodeGateCharge, SwitchTTFTImbalanceAcrossCounts,
 // SwitchTTFTLowLoadDecodeTTFT, SwitchTTFTHopUnqueued, SwitchTTFTHopWindowMeans,
 // SwitchTTFTDecodeSpeculatingHeld, SwitchTTFTJointInputs,
-// SwitchTTFTPromptSupport and SwitchKVPerRequestOutputDispersion; a name it
+// SwitchTTFTPromptSupport, SwitchKVPerRequestOutputDispersion and SwitchV2Inputs; a name it
 // does not know is an error, and sets nothing. Never called on a production
 // path; a test holds that.
 func (a *Analyzer) SetSwitchesForReplay(switches map[string]bool) error {
@@ -230,6 +230,10 @@ func (a *Analyzer) switchFields() map[string]*bool {
 		// J1: the joint prefill and decode model's inputs, in shadow
 		// (ttft_joint.go).
 		SwitchTTFTJointInputs: &a.ttftJointInputs,
+		// Issue llm-d-incubation/llm-d-scaling-manager#440: the v2 latency
+		// models' inputs and coverage (model_inputs.go). Off from the
+		// constructor.
+		SwitchV2Inputs: &a.v2Inputs,
 
 		// Issue ev-shindin/llm-scaling-manager#276: the spread of output lengths in the KV per request
 		// (output_dispersion.go).

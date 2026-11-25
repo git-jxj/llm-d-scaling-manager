@@ -98,6 +98,14 @@ type Knobs struct {
 	// of the observed ones (the CLI's --assume-input-tokens and
 	// --assume-output-tokens, flagged AssumedShape); 0 is the observed one.
 	PromptTokens, OutputTokens float64
+	// PromptTokensRead says PromptTokens is a whole prompt read from the
+	// source's own cycles (a day plan's bucket, a backtest's step), not
+	// stated: its hit is then the source's too, and on a P/D fleet the
+	// prefill pods' computed-token hit nets it, as it nets a PrefixHit read
+	// from the load's cycles (PrefixHitRead). The decode rows' prefix-cache
+	// hit is not a hit of the prefill pods: netted by it, the prompt their
+	// caches served was priced as computed.
+	PromptTokensRead bool
 	// PrefixHit is a stated prefix-cache hit rate in [0, 1), nil the
 	// observed one (flagged AssumedShape).
 	PrefixHit *float64

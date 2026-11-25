@@ -79,6 +79,7 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	f := answerFlags{question: "serve", cycle: "last", model: req.Model, variant: req.DecodeVariant, prefillVariant: req.PrefillVariant,
 		serveSelfCheck: req.SelfCheck != nil && *req.SelfCheck,
 		seed:           whatif.DefaultResampling().Seed, vpPlateau: req.PrefillVPPlateau, hitAtCount: req.PrefillHitAtCount,
+		vpServiceLine:    req.PrefillVPServiceLine,
 		experimentalTTFT: req.ExperimentalTTFT || s.experimentalTTFT, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
 		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
@@ -402,7 +403,7 @@ func (s *servedSources) resolved(ctx context.Context, f *answerFlags, st *learnr
 	}
 	pricer := &servedState{st: st, decodeVariant: f.variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
 		imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter,
-		experimentalTTFT: f.experimentalTTFT}
+		experimentalTTFT: f.experimentalTTFT, vpServiceLine: f.vpServiceLine}
 	res := &whatifapi.Resolved{
 		Inputs:  inputsDoc(f, st, &variants[0], ps, fleets[0], info),
 		Content: content,
@@ -424,6 +425,11 @@ func (s *servedSources) resolved(ctx context.Context, f *answerFlags, st *learnr
 		// Another replay, so other inputs: never the id of the default's.
 		res.Inputs.PrefillHitAtCount = true
 		res.Content += "\x00" + hitAtCountFlag
+	}
+	if f.vpServiceLine {
+		// Another replay, so other inputs: never the id of the default's.
+		res.Inputs.PrefillVPServiceLine = true
+		res.Content += "\x00" + vpServiceLineFlag
 	}
 	if f.experimentalTTFT {
 		// Another replay, so other inputs: never the id of the default's.
@@ -455,6 +461,10 @@ type servedState struct {
 	// experimentalTTFT): every fleet read is priced and flagged as the
 	// experimental TTFT model's.
 	experimentalTTFT bool
+	// vpServiceLine is --prefill-vp-service-line (the request's
+	// prefillVPServiceLine): the state was replayed with it, and every
+	// fleet read states it (statedOutside).
+	vpServiceLine bool
 }
 
 // seconds is x seconds as a duration, to the nanosecond.
@@ -483,10 +493,10 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 		seed: whatif.DefaultResampling().Seed, set: map[string]bool{"ttft": true, "headroom": true}, warn: io.Discard,
 		decode: k.Decode, prefill: k.Prefill, headroom: k.Headroom, priceRouterWait: whatif.DefaultPriceRouterWait,
 		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: s.imbalanceAcrossCounts, loadAwareRouter: s.loadAwareRouter,
-		experimentalTTFT: s.experimentalTTFT}
+		experimentalTTFT: s.experimentalTTFT, vpServiceLine: s.vpServiceLine}
 	set := func(name string) { f.set[name] = true }
 	if k.PromptTokens > 0 {
-		f.inputTokens = k.PromptTokens
+		f.inputTokens, f.inputTokensRead = k.PromptTokens, k.PromptTokensRead
 		set("assume-input-tokens")
 	}
 	f.prefixHit, f.prefixHitRead = k.PrefixHit, k.PrefixHitRead

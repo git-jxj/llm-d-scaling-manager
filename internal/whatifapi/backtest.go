@@ -904,7 +904,7 @@ func splitOf(e *inputsEntry, split, fitUntil string) (int, time.Time, string, er
 func refitRequest(e *inputsEntry, cycle int, cutoff time.Time) (InputsRequest, error) {
 	d := e.doc
 	in := InputsRequest{Model: d.Model, DecodeVariant: d.Fleet.Decode.Variant, PrefillVPPlateau: d.PrefillVPPlateau, PrefillHitAtCount: d.PrefillHitAtCount,
-		ExperimentalTTFT: d.ExperimentalTTFT}
+		PrefillVPServiceLine: d.PrefillVPServiceLine, ExperimentalTTFT: d.ExperimentalTTFT}
 	if d.Fleet.Prefill != nil {
 		in.PrefillVariant = d.Fleet.Prefill.Variant
 	}
@@ -1714,11 +1714,14 @@ func scoreStep(out *BacktestStep, m measured, target *ReportTarget) {
 	}
 	for i := range out.TTFT {
 		why := m.ttftWhy[i]
-		if why == "" && out.Unsettled {
+		// A refused figure counts by its refusal, not twice: a step
+		// that does not settle or is a burst unscores only a figure
+		// priced.
+		priced := out.TTFT[i].Predicted.Value != nil
+		if why == "" && out.Unsettled && priced {
 			why = UnscoredUnsettled
 		}
-		if why == "" && out.TTFTBurst && out.TTFT[i].Predicted.Value != nil {
-			// A refused figure counts by its refusal, not twice.
+		if why == "" && out.TTFTBurst && priced {
 			why = UnscoredBurst
 		}
 		out.TTFT[i] = scoredPoint(out.TTFT[i], m.ttft[i], m.requests, m.ttftTop, why, m.ttftBucket[i])
@@ -1907,7 +1910,9 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		}
 		fl, ok := p.fleets[k]
 		if !ok {
-			kn := Knobs{Prefill: k.np, Decode: k.nd, PromptTokens: k.prompt, OutputTokens: k.output, TTFTPercentile: q, TPOTPercentile: q,
+			// The step's prompt is read from its cycles, not stated
+			// (Knobs.PromptTokensRead).
+			kn := Knobs{Prefill: k.np, Decode: k.nd, PromptTokens: k.prompt, PromptTokensRead: k.prompt > 0, OutputTokens: k.output, TTFTPercentile: q, TPOTPercentile: q,
 				ArrivalCV2: p.cv2, Headroom: p.headroom}
 			kn.Assume = p.assume
 			kn.Assume.PromptCV = cv

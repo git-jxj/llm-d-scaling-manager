@@ -243,6 +243,13 @@ type Cycle struct {
 	// where V_P is refused for want of a queue or is a lower bound
 	// (lonerate.go; saturation.SwitchPrefillVPLoneRate).
 	VPLoneRate bool
+	// VPServiceLine reads V_P from the prefill service line: the engine's
+	// prefill time, inverted for processor sharing, against its computed
+	// tokens a request, S(x) = s0 + x/V, priced with s0 in the capacity at
+	// the minutes' mean computed prompt, where V_P is refused for want of a
+	// queue or is a lower bound under it (serviceline.go;
+	// saturation.SwitchPrefillVPServiceLine).
+	VPServiceLine bool
 	// ALowLoadByRate reads a minute as low load, for the fit of a, by its
 	// request rate against its prompt cluster's service time
 	// (lowLoadByRate), not against its own: a minute whose prefill ran slow
@@ -314,6 +321,16 @@ type Estimate struct {
 	VPLone        float64
 	VPLoneMinutes int
 	VPLoneIsVP    bool
+	// VPLine is V_P from the service line (serviceline.go), read with
+	// Cycle.VPServiceLine, whether or not V_P is taken from it; zero where
+	// the line is refused (VPLineRefused). VPLineS0 and VPLineSlope are its
+	// intercept, seconds, and slope, seconds a computed token on one engine,
+	// and VPLineMinutes how many timed minutes it read.
+	VPLine        float64
+	VPLineS0      float64
+	VPLineSlope   float64
+	VPLineMinutes int
+	VPLineRefused Refusal
 	// VPQueuedMinutes, VPLongestQueuedRun and VPBusyMinutes say why V_P was
 	// refused or where it stands: the samples kept that held a queue on
 	// some sample, the longest run of them (a peak needs PeakRun), and the
@@ -362,7 +379,8 @@ type Estimate struct {
 	// request's work is VPPromptTokens/VP, and VPRequestSeconds of it is
 	// paid whatever the prompt. Zero is not measured, and V_P is then priced
 	// as one token rate at every prompt, as before
-	// (whatif.Prefill.VPRequestSeconds).
+	// (whatif.Prefill.VPRequestSeconds). The service line sets it
+	// (serviceline.go).
 	VPRequestSeconds float64
 
 	// A is the fixed latency in seconds: the low-load fit's intercept plus
@@ -660,7 +678,7 @@ func (o *Observer) Observe(c Cycle) Estimate {
 				s.overhead, s.overheadOK = rm.AvgTTFT-svc, true
 			}
 		}
-		if c.AFromTiming && c.Disaggregated && ieffOK && rrOK {
+		if (c.AFromTiming || c.VPServiceLine) && c.Disaggregated && ieffOK && rrOK {
 			s.timed, s.timedOK = timed(rowTiming{prefill: rm.AvgPrefillTime, prefillKnown: rm.AvgPrefillTimeKnown,
 				ttft: rm.AvgTTFT, ttftKnown: rm.AvgTTFTKnown, queue: rm.AvgQueueTime, queueKnown: rm.AvgQueueTimeKnown,
 				ranks: rm.Ranks()}, ieff, rr)
@@ -682,6 +700,9 @@ func (o *Observer) Observe(c Cycle) Estimate {
 	if c.VPLoneRate {
 		ref, _ := MeanEffectivePrompt(c.Rows, sglang)
 		est.loneFill(ks, c, ref)
+	}
+	if c.VPServiceLine {
+		est.lineFill(ks)
 	}
 	est.fixed(ks, c)
 	if c.AFromTiming {

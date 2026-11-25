@@ -108,7 +108,12 @@ var reviewed = map[reflect.Type]buckets{
 		// (2.5), which only a replay reads and nothing restores.
 		// TakeLearnerReports hands the line's reports to the engine's metrics
 		// and keeps none, as the saturation analyzer's does.
-		readers: []string{"Name", "StateTimeout", "SlopeHoldFor", "Judging", "PathCounts", "TakeLearnerReports"},
+		// ReadsModelInputs reads the v2 inputs switch. ObserveModelInputs
+		// (issue #440) keeps no state: it publishes which v2 model inputs a
+		// cycle read, and nothing a replay restores or a decision reads; the
+		// v2 learners are recorded once they learn.
+		readers: []string{"Name", "StateTimeout", "SlopeHoldFor", "Judging", "PathCounts", "TakeLearnerReports",
+			"ReadsModelInputs", "ObserveModelInputs"},
 		// WithSettleView hands the slo line the engine's settle tracker; the
 		// replay hands it its own, as it does k2's (settle.go).
 		// WithPrefillEstimates hands it the saturation analyzer's prefill

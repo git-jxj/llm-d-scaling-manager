@@ -453,6 +453,19 @@ type shapeSample struct {
 // measured, no worse self-check, and the prefill knee within 15% of the
 // measured one on the staircases whose knee was measured.
 //
+// saturation.SwitchPrefillVPServiceLine is planner-only and not listed
+// (issues llm-d-incubation/llm-d-scaling-manager#368, #416): it reads V_P
+// from the prefill service line, the engines' prefill time against their
+// computed tokens a request, s0 kept in the capacity, where no queue gives
+// one. On the public recordings whose line is read beside a V_P from a
+// queue it reads 0.85 to 1.05 of it (0.6B and Qwen3-32B warm-ups), but on
+// the 0.6B warm-up's 50% split, fitted on the light half, it reads under
+// the busy V_P, three TTFT figures it newly prices read 0.67 to 0.79 of
+// what was measured, and at-replicas' self-check falls from not run to
+// inconsistent on two warm-ups (the fleet called overloaded where it
+// served). It goes on once the public cross-validation shows no figure
+// newly under what was measured and no worse self-check.
+//
 // saturation.SwitchPrefillHitAtCount is planner-only and not listed (issue
 // llm-d-incubation/llm-d-scaling-manager#384): it prices the prefix hit at a
 // prefill count other than the fit's, the floor hit x N'/N at fewer pods and

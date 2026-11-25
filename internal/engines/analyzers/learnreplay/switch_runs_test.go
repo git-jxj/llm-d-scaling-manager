@@ -190,6 +190,10 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// no ask, no composite. Its unit tests and the model row hold it
 	// (heldBy).
 	slo.SwitchTTFTJointInputs: nil,
+	// Issue llm-d-incubation/llm-d-scaling-manager#440: the v2 latency
+	// models' inputs. Analyze never reads them: the engine hands them to
+	// ObserveModelInputs, which publishes coverage only. No golden moves.
+	slo.SwitchV2Inputs: nil,
 	// ev-shindin/llm-scaling-manager#495's one slow pod (mu_slow_pod.go), four switches, measured each
 	// alone against all off:
 	//
@@ -1331,6 +1335,11 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// it off and off alone from all on moves nothing. Its unit tests hold
 	// it (heldBy).
 	saturation.SwitchPrefillVPLoneRate: nil,
+	// llm-d-incubation/llm-d-scaling-manager#368, #416: V_P from the
+	// prefill service line. Planner-only, off from the constructor, so every
+	// golden replay runs it off and off alone from all on moves nothing. Its
+	// unit tests hold it (heldBy).
+	saturation.SwitchPrefillVPServiceLine: nil,
 	// llm-d-incubation/llm-d-scaling-manager#384: the prefix hit at another
 	// prefill count. Planner-only, off from the constructor, so every golden
 	// replay runs it off and off alone from all on moves nothing. Its unit
@@ -1827,6 +1836,18 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestPromptNotCovered_InsideTheRangeIsPriced"},
 		{"../saturation", "TestPrefillVPPromptCoverage_ThroughAnalyze"},
 	},
+	saturation.SwitchPrefillVPServiceLine: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestServiceLine_FillsAFleetThatNeverQueued"},
+		{"../../../signals/prefill", "TestServiceLine_TheSharingIsTakenOut"},
+		{"../../../signals/prefill", "TestServiceLine_AbstainsWithTooFewMinutes"},
+		{"../../../signals/prefill", "TestServiceLine_RefusesPromptsThatDoNotSpread"},
+		{"../../../signals/prefill", "TestServiceLine_RefusesANegativeInterceptOrSlope"},
+		{"../../../signals/prefill", "TestServiceLine_RefusesAnUncertainSlope"},
+		{"../../../signals/prefill", "TestServiceLine_BusyMinutesWin"},
+		{"../../../signals/prefill", "TestServiceLine_ALowerBoundStandsOnlyAboveTheLine"},
+		{"../saturation", "TestPrefillVPServiceLine_ThroughAnalyze"},
+	},
 	saturation.SwitchPrefillVPLoneRate: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestLoneRate_IsVPWhereTheServedPeakAgrees"},
@@ -2131,6 +2152,12 @@ var heldBy = map[string][]heldTest{
 		{"../slo", "TestTTFTJoint_TheInvertedVPStandsWhereP1Refused"},
 		{"../slo", "TestTTFTJoint_PublishedBesideP1"},
 		{".", "TestGoldens_TTFTJointModelRow"},
+	},
+	// The first runs the switch off from the constructor and on, and asserts
+	// both; the second holds the engine to asking the collector only when on.
+	slo.SwitchV2Inputs: {
+		{"../slo", "TestObserveModelInputs_ReportsWhereEachModelStands"},
+		{"../../steadystate", "TestSLOV2Inputs_NamesEveryNamespaceWhenOn"},
 	},
 	// It runs the switch on and off through Analyze and asserts both.
 	saturation.SwitchITLClearsOnNewRevision: {
