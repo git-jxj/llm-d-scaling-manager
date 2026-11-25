@@ -1822,6 +1822,7 @@ larger
 last
 lastAccelerator
 lastKnown
+latency
 later
 latest
 launcher
@@ -2313,6 +2314,7 @@ observe
 observed
 observed/historical/derived
 observedGPS
+observing
 occupancy
 occupancy-plateau
 occupancy-unknown
@@ -2734,6 +2736,7 @@ redirected
 redistribution
 reduce
 refilled
+refit
 refitted
 refresh
 refreshInterval
