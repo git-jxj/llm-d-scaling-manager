@@ -77,18 +77,22 @@ var (
 	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait",
 		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "prefill-engine-args", "gpus-per-replica",
 		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts", "assume-transfer-base",
-		"load-aware-router"}
+		"load-aware-router",
+		// V_P from the prefill service line failed the public cross-validation
+		// (vp_service_line.go), and its figures carry no flag of their own.
+		vpServiceLineFlag}
 )
 
 // statedOutside is the flags in flagsOutside that were set, as --name;
 // --imbalance-across-counts and --load-aware-router only away from the
-// planner's defaults. With --prometheus, capture's flags state nothing: the
-// window's flags (windowFlags) and --batch-cap, the engine's cap the window
-// is captured with (pricedBatchCap), say how the window is captured, as
-// capture's own do for a recording, and the answer from that recording
-// states none of them. Stating them here put the --prometheus answer's
-// figures outside by "--batch-cap stated" where the recorded answer's
-// read a flag (issue #359).
+// planner's defaults, and --prefill-vp-service-line by its field, whether
+// the flag or the server's request set it. With --prometheus, capture's
+// flags state nothing: the window's flags (windowFlags) and --batch-cap, the
+// engine's cap the window is captured with (pricedBatchCap), say how the
+// window is captured, as capture's own do for a recording, and the answer
+// from that recording states none of them. Stating them here put the
+// --prometheus answer's figures outside by "--batch-cap stated" where the
+// recorded answer's read a flag (issue #359).
 func (f *answerFlags) statedOutside() []string {
 	var out []string
 	var capture []string
@@ -104,6 +108,13 @@ func (f *answerFlags) statedOutside() []string {
 			continue
 		}
 		if name == "load-aware-router" && f.loadAwareRouter == whatif.DefaultPlannerLoadAwareRouter {
+			continue
+		}
+		// Read from the field, which the server sets from its request too.
+		if name == vpServiceLineFlag {
+			if f.vpServiceLine {
+				out = append(out, "--"+name)
+			}
 			continue
 		}
 		if f.set[name] {

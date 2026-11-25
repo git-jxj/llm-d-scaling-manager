@@ -313,7 +313,7 @@ func TestServeParityCoversEveryJSONGolden(t *testing.T) {
 	}
 	dayCovered := slices.Collect(maps.Keys(dayPlanParity()))
 	slices.Sort(dayCovered)
-	require.Len(t, days, 2, "the day plan's JSON goldens")
+	require.Len(t, days, 3, "the day plan's JSON goldens")
 	assert.Equal(t, days, dayCovered)
 	assert.Equal(t, backtestParity, backtests, "the backtest's JSON goldens")
 	cases := parityCases()

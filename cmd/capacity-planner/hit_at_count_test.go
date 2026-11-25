@@ -133,7 +133,12 @@ func TestTTFT_HitAtCountLeavesAStatedHit(t *testing.T) {
 	pf = hitFleetOf(t, labState(true), read, answerFlags{prefill: 1, inputTokens: 8000}, "prefill", "assume-input-tokens")
 	require.Nil(t, pf.refused)
 	require.NotNil(t, pf.in.HitAtCount, "a hit read from the load is moved")
-	assert.InDelta(t, 8000*(1-0.25), pf.fleet.Prefill.PromptTokens, 1e-9, "8000 tokens at half the 0.5 hit read")
+	// The load's whole prompt is netted by the prefill pods' computed-token
+	// hit, not the decode variant's 0.5 (netByComputedHit), and that hit is
+	// the one moved.
+	h, ok := labState(true).Prefill[0].PromptWindow.ComputedHit()
+	require.True(t, ok)
+	assert.InDelta(t, 8000*(1-h/2), pf.fleet.Prefill.PromptTokens, 1e-9, "8000 tokens at half the prefill pods' hit read")
 
 	none := labState(true)
 	none.Prefill[0].PromptWindow = nil

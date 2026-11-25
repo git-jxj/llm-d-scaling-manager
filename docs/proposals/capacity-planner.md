@@ -1139,6 +1139,57 @@ pages; any other client that reaches the port can name `localhost`. So the
 opt-in is refused in a Kubernetes Pod, and the guide runs the image with
 `--user` (recordings are written `0600`) on `127.0.0.1` only.
 
+## As built: the day plan with the experimental models
+
+**Decision.** A day plan prices with the experimental TTFT and TPOT models
+only when asked (`DayPlanRequest.experimentalModels`), and only on inputs
+resolved with them: it then hands the inputs' models (`inputsEntry.models()`)
+to the sizer every bucket is sized with, and wraps decode's own limit with
+them, as a size on the same inputs does. Nothing new is fitted or learned:
+the models are the ones the inputs carry, and the flags the ones their
+figures already carry (`RankMixtureTTFT`, `TPOTDistribution`).
+
+**Why opt-in, not on whenever the server serves v2.** A day plan is a
+sizing recommendation, read in GPU-hours, and the models are not validated:
+the caller says it wants them, and a request means one thing whatever server
+answers it. The default day plan's JSON and goldens stay as they were. The
+page asks whenever the loaded inputs carry a model, so its day plan matches
+its Answer view; the CLI asks with the same flags at-replicas takes
+(`--experimental-ttft=v2`, `--experimental-tpot=v2`), fitting them on the
+`--recording`. Asked on inputs with no model, the plan is refused rather
+than silently answered as the planner's own.
+
+**What a bucket shows.** Where the TTFT model prices a TTFT the planner
+refuses (a prefill that never queued), prefill is sized on it: the bucket
+has `needed.prefill`, no `PrefillNotPriced`, and its `limit` carries
+`RankMixtureTTFT` (and `extrapolated` past the load served, as a size's
+step). The page and the command mark its need with †. The plan names each
+model (`ttftModel`, `tpotModel`, as the inputs fitted them) and counts in a
+note the buckets it priced. A model prices the source's own traffic, so a
+bucket at a stated shape or term stays the planner's; a model that
+abstained (under 12 hours of window) leaves every bucket the planner's.
+The note gives, per model, why each sized bucket it did not price is the
+planner's, as the model's own `notPricedAt` reads the bucket's knobs.
+
+**Decision: the window's shape, each bucket at its own rate.** The models
+are fitted at the window's pooled request shape and price no other. A
+recording's cycles read their lengths, so a plan that sized each bucket at
+its own observed shape left every bucket of a real recording to the
+planner. Asked for the models, the plan prices each bucket at its own rate
+but at the window's shape, so a model can price it; each such bucket is
+flagged `WindowShape` (the flag a bucket whose cycles read no lengths
+already carries: priced at the inputs' shape), its `shape.source` is
+`window`, and a note says that per-bucket shape changes are not modelled.
+This holds only where a model prices a target the plan asks (one that
+abstained, or the TPOT model alone at a mean TPOT target, leaves the plan
+at each bucket's own shape, as unasked), and a stated shape keeps its
+rule: every bucket at the stated shape, the planner's own. The error is a
+bucket whose requests are longer or shorter than the day's: it is sized as
+if they were the day's. Feeding each bucket its own histograms, within the
+shapes the fit saw, is the follow-up; it needs the backtest's validation
+before a day plan takes it. The TPOT model still prices a p90 or p95 TPOT
+target, not the mean.
+
 ## Decisions
 
 Decided 2026-11-09, on the questions the first draft left open.

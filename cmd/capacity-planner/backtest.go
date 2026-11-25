@@ -55,6 +55,9 @@ type backtestFlags struct {
 	// hitAtCount is --prefill-hit-at-count, as answerFlags'
 	// (hit_at_count.go): both sides are read with the switch on.
 	hitAtCount bool
+	// vpServiceLine is --prefill-vp-service-line, as answerFlags'
+	// (vp_service_line.go): both sides are read with the switch on.
+	vpServiceLine bool
 	// experimentalTTFT is --experimental-ttft, as answerFlags'
 	// (experimental_ttft.go): both sides are read with its switches on.
 	// rankMixtureTTFT is --experimental-ttft=v2 (experimental_ttft_v2.go),
@@ -71,6 +74,11 @@ type backtestFlags struct {
 	// mixture's variant with Z measured part by part
 	// (whatif.QueueRankMixtureNLLine).
 	rankMixtureNLLine bool
+	// rankMixtureKVHold and rankMixtureRemainderSpread are
+	// --rank-mixture-kv-hold and --rank-mixture-remainder-spread, the
+	// variant's modes (whatifapi.BacktestRequest RankMixtureKVHold and
+	// RankMixtureRemainderSpread).
+	rankMixtureKVHold, rankMixtureRemainderSpread bool
 	// experimentalTPOT is --experimental-tpot (experimental_tpot.go),
 	// backtest's only.
 	experimentalTPOT string
@@ -91,6 +99,7 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 		"balances prefill by load (llm-d's EPP queue scorer), so f is held to the load it was learned at, then falls to 1 at the pooled prefill knee; off by default")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
+	fs.BoolVar(&f.vpServiceLine, vpServiceLineFlag, false, vpServiceLineUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag,
 		experimentalTTFTV2Usage+"; =v2nl-line prices with its variant that measures each part of the non-queue time on its own, calibrates nothing "+
 			"to the router and abstains unless its fit window prices itself (flagged the same)")
@@ -133,6 +142,12 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.BoolVar(&f.rankMixtureFitSteps, "rank-mixture-fit-steps", false, "with --experimental-ttft=v2, fit the KV-deferral lines and "+
 		"the prompt slopes only on steps whose busiest prefill rank is under utilization 0.9, and read the ranks' shares at the "+
 		"priced load (the fit steps of nearest rate) instead of the fit window's mean; off by default")
+	fs.BoolVar(&f.rankMixtureKVHold, "rank-mixture-kv-hold", false, "with --experimental-ttft=v2nl-line, read the fitted "+
+		"KV-deferral wait no further than the fit window's 95th percentile rank utilization: held past it, not extrapolated; "+
+		"off by default")
+	fs.BoolVar(&f.rankMixtureRemainderSpread, "rank-mixture-remainder-spread", false, "with --experimental-ttft=v2nl-line, draw "+
+		"the router's remainder from the router's measured request-processing time where the fit window recorded it "+
+		"(its line where not, as off); off by default")
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage)
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
@@ -145,6 +160,15 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	}
 	if f.rankMixtureFitSteps && !f.rankMixtureTTFT {
 		return usagef("--rank-mixture-fit-steps changes the fit of the rank mixture: give it with --experimental-ttft=v2")
+	}
+	if (f.rankMixtureKVHold || f.rankMixtureRemainderSpread) && !f.rankMixtureNLLine {
+		return usagef("--rank-mixture-kv-hold and --rank-mixture-remainder-spread are modes of the rank mixture's variant: " +
+			"give them with --experimental-ttft=v2nl-line")
+	}
+	if f.rankMixtureKVHold && !f.rankMixtureRemainderSpread {
+		fmt.Fprintln(warn, "capacity-planner: warning: --rank-mixture-kv-hold without --rank-mixture-remainder-spread: "+
+			"held alone it lowers every step priced past the hold, and on a production recording it read one more mean "+
+			"under measured; the two together did not, so give both")
 	}
 	ctrllog.SetLogger(logr.Discard())
 	req, err := f.request()
@@ -268,6 +292,7 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 	}
 	req.RankMixtureFitSteps = f.rankMixtureFitSteps
 	req.RankMixtureStratified = f.rankMixtureStratified
+	req.RankMixtureKVHold, req.RankMixtureRemainderSpread = f.rankMixtureKVHold, f.rankMixtureRemainderSpread
 	if err := withRankMixture(testPath, test, nil); err != nil {
 		return err
 	}
@@ -366,7 +391,7 @@ var resolveBacktest = func(ctx context.Context, f *backtestFlags, path string, c
 func resolveCycles(ctx context.Context, f *backtestFlags, path string, cycle int, cycles *whatifapi.CycleSet, warn io.Writer) (*whatifapi.Resolved, error) {
 	src := &servedSources{warn: warn, recordings: filepath.Dir(path)}
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant,
-		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, ExperimentalTTFT: f.experimentalTTFT,
+		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, ExperimentalTTFT: f.experimentalTTFT,
 		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(path), Cycle: cycle, Cycles: cycles}}
 	res, err := src.Resolve(ctx, in)
 	if err != nil && whatifapi.IsInputError(err) {

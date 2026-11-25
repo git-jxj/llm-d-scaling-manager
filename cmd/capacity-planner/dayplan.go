@@ -16,6 +16,7 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
 
@@ -45,9 +46,19 @@ type dayPlanFlags struct {
 	// hitAtCount is --prefill-hit-at-count, as answerFlags'
 	// (hit_at_count.go).
 	hitAtCount bool
+	// vpServiceLine is --prefill-vp-service-line, as answerFlags'
+	// (vp_service_line.go).
+	vpServiceLine bool
 	// experimentalTTFT is --experimental-ttft, as answerFlags'
 	// (experimental_ttft.go).
 	experimentalTTFT bool
+	// rankMixtureTTFT is --experimental-ttft=v2 and experimentalTPOT
+	// --experimental-tpot=v2: the plan is priced with those experimental
+	// models, fitted on the source (whatifapi.DayPlanRequest.ExperimentalModels),
+	// as at-replicas and a served plan price with them.
+	rankMixtureTTFT  bool
+	experimentalTPOT string
+	tpotDistribution bool
 }
 
 // runDayPlan is `capacity-planner day-plan`: the prefill and decode replicas
@@ -89,10 +100,22 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.Float64Var(&f.outputTokens, "assume-output-tokens", 0, "price every bucket at this mean output, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
-	fs.BoolVar(&f.experimentalTTFT, experimentalTTFTFlag, false, experimentalTTFTUsage)
+	fs.BoolVar(&f.vpServiceLine, vpServiceLineFlag, false, vpServiceLineUsage)
+	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
+		". =v2 instead sizes with the experimental rank-mixture TTFT model fitted on the recording, as at-replicas and serve price with it, "+
+		"each bucket at its own rate but at the window's request shape the model is fitted at (WindowShape): where it prices TTFT the planner refuses, prefill is sized on it; every figure it sets is flagged RankMixtureTTFT and reads OUTSIDE VALIDATED REGION")
+	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage+"; on day-plan it sizes decode with it at a p90 or p95 TPOT target, each bucket at the window's request shape")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
 		return err
+	}
+	on, err := experimentalTPOTOf(f.experimentalTPOT)
+	if err != nil {
+		return err
+	}
+	f.tpotDistribution = on
+	if (f.rankMixtureTTFT || f.tpotDistribution) && f.recording == "" {
+		return usagef("--%s=v2 and --%s=v2 fit their model on a --recording", experimentalTTFTFlag, experimentalTPOTFlag)
 	}
 	if f.output != outputText && f.output != outputJSON {
 		return usagef("-o %q, want text or json", f.output)
@@ -137,6 +160,53 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	return dayPlanExit(plan)
 }
 
+// dagger marks a figure an experimental model set, as the page's does.
+const dagger = "\u2020"
+
+// dayModelsText is the experimental models a plan was asked to price
+// with, a line each, "" with none: abstained, or how many sized buckets
+// each priced, marked with the dagger; the notes say why the rest are the
+// planner's own.
+func dayModelsText(p *whatifapi.DayPlanResponse) string {
+	var b strings.Builder
+	line := func(label, abstained string, flag whatif.Flag) {
+		if abstained != "" {
+			fmt.Fprintf(&b, "%s: abstained (%s); the planner's own prices every bucket\n", label, abstained)
+			return
+		}
+		n := 0
+		for _, bk := range p.Buckets {
+			if bk.Limit != nil && slices.Contains(bk.Limit.Flags, string(flag)) {
+				n++
+			}
+		}
+		fmt.Fprintf(&b, "%s: priced %d of the %d sized buckets, each marked %s (not validated: OUTSIDE VALIDATED REGION); the notes say why the rest are the planner's own\n",
+			label, n, p.Summary.Counts.Sized, dagger)
+	}
+	if m := p.TTFTModel; m != nil {
+		line(m.Label, m.Abstained, whatif.RankMixtureTTFT)
+	}
+	if m := p.TPOTModel; m != nil {
+		line(m.Label, m.Abstained, whatif.TPOTDistribution)
+	}
+	return b.String()
+}
+
+// experimentalHours is the hours, by their Unix second, holding a sized bucket whose limit an
+// experimental model set (whatif.RankMixtureTTFT, TPOTDistribution).
+func experimentalHours(p *whatifapi.DayPlanResponse) map[int64]bool {
+	out := map[int64]bool{}
+	for _, bk := range p.Buckets {
+		if bk.Limit == nil {
+			continue
+		}
+		if slices.Contains(bk.Limit.Flags, string(whatif.RankMixtureTTFT)) || slices.Contains(bk.Limit.Flags, string(whatif.TPOTDistribution)) {
+			out[bk.Start.Truncate(time.Hour).Unix()] = true
+		}
+	}
+	return out
+}
+
 // dayPlanExit is the day plan's exit: 3 when the source refused a term, a
 // bucket's rate is beyond the bound, or no bucket was sized at all, as a
 // refused role exits elsewhere; else whatifapi.ExitUntrusted when a
@@ -167,7 +237,13 @@ var resolveDay = func(ctx context.Context, f *dayPlanFlags, warn io.Writer) (*wh
 func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.Resolved, error) {
 	check := defaultSelfCheck && !f.noSelfCheck
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant, SelfCheck: &check,
-		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, ExperimentalTTFT: f.experimentalTTFT}
+		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, ExperimentalTTFT: f.experimentalTTFT}
+	if f.rankMixtureTTFT {
+		in.TTFTModel = string(whatif.QueueRankMixture)
+	}
+	if f.tpotDistribution {
+		in.TPOTModel = whatif.TPOTRenewalLognormal
+	}
 	src := &servedSources{warn: warn}
 	switch {
 	case f.recording != "" && f.window.prometheus != "":
@@ -201,7 +277,8 @@ func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.
 
 // request is the day plan the flags ask.
 func (f *dayPlanFlags) request() (whatifapi.DayPlanRequest, error) {
-	req := whatifapi.DayPlanRequest{Step: f.bucket, SizeFor: f.sizeFor, MinRequests: &f.minRequests}
+	req := whatifapi.DayPlanRequest{Step: f.bucket, SizeFor: f.sizeFor, MinRequests: &f.minRequests,
+		ExperimentalModels: f.rankMixtureTTFT || f.tpotDistribution}
 	slo := &whatifapi.SLORequest{}
 	var err error
 	if req.Lead, err = leadOf(f.lead); err != nil {
@@ -363,6 +440,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		fmt.Fprintf(&b, ", TPOT %s %s", p.TPOT.Statistic, fmtSeconds(p.TPOT.Target))
 	}
 	fmt.Fprintf(&b, "; headroom %.2f. %s\n", p.Headroom, p.Banner)
+	b.WriteString(dayModelsText(p))
 	for _, r := range p.Refused {
 		what := map[string]string{"ttft": "prefill's TTFT", "tpot": "decode's TPOT", "decodeKnee": "decode's knee", "window": "the busiest bucket"}[r.Term]
 		fmt.Fprintf(&b, "\nREFUSED %s (%s), in %d buckets: %s\n  what to do: %s\n  what the plan did: %s\n",
@@ -380,6 +458,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		}
 	}
 	row("hour (UTC)", "rate mean", "rate p95", "need P", "need D", "busiest", "had P", "had D", "", "held")
+	modelHours := experimentalHours(p)
 	notServing := false
 	for _, h := range p.Hours {
 		mean, p95 := "-", "-"
@@ -389,6 +468,9 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		np, nd, ap, ad := "-", "-", "-", "-"
 		if h.Needed != nil {
 			np, nd = neededCells(h.Needed)
+			if modelHours[h.Start.Unix()] {
+				np, nd = np+dagger, nd+dagger
+			}
 		}
 		busiest := "-"
 		if n := h.Busiest; n != nil {
