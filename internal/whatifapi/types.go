@@ -39,6 +39,11 @@ type InputsRequest struct {
 	// fewer pods the hit is the floor hit x N'/N, flagged PrefixHitAtCount;
 	// at more it is held, flagged PrefixHitHeld.
 	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
+	// PrefillVPServiceLine reads V_P from the prefill service line where no
+	// prefill pod queued, or V_P is a lower bound under the line (the CLI's
+	// --prefill-vp-service-line): opt-in, off by default, and not validated,
+	// so every figure reads outside the validated region.
+	PrefillVPServiceLine bool `json:"prefillVPServiceLine,omitempty"`
 	// ExperimentalTTFT prices TTFT with the TTFT model's switches that are
 	// off by default (the CLI's --experimental-ttft): for demonstration,
 	// not validated. Every prefill and TTFT figure is flagged
@@ -117,6 +122,10 @@ type InputsResponse struct {
 	// at each prefill count (InputsRequest.PrefillHitAtCount); absent
 	// otherwise.
 	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
+	// PrefillVPServiceLine says the source was read with V_P from the
+	// prefill service line (InputsRequest.PrefillVPServiceLine); absent
+	// otherwise.
+	PrefillVPServiceLine bool `json:"prefillVPServiceLine,omitempty"`
 	// ExperimentalTTFT says the source was read with the experimental TTFT
 	// model (InputsRequest.ExperimentalTTFT); absent otherwise.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
