@@ -148,7 +148,10 @@ const (
 	OutputSpreadUnread Flag = "OutputSpreadUnread"
 	// VPScaledToPrompt is a V_P read at one mean prompt and rescaled along
 	// P1's curve to a longer one (Prefill.shapedVP): V_P * s(I_vp)/s(I),
-	// s(I) = b + c*I.
+	// s(I) = b + c*I. It is raised too where V_P is priced at a prompt more
+	// than MaxVPShapeRatio from I_vp along its source's split of a request's
+	// work (Prefill.VPRequestSeconds), in place of VPShapeMoved: the
+	// per-request part held, the rest per token.
 	VPScaledToPrompt Flag = "VPScaledToPrompt"
 	// PrefixHitAtCount is a prefill figure priced at fewer prefill pods than
 	// the prefix hit was read on, whose priced hit moved from the read one
@@ -166,7 +169,8 @@ const (
 	PrefixHitHeld Flag = "PrefixHitHeld"
 	// VPShapeMoved is a V_P read at a mean prompt more than MaxVPShapeRatio
 	// from the one asked, either way, or at one not known, with no curve to
-	// rescale it by: the V_P is held, and on a longer prompt it reads high
+	// rescale it by and no split of a request's work to price it along
+	// (Prefill.VPRequestSeconds): the V_P is held, and on a longer prompt it reads high
 	// and over-promises. It is raised too, curve or not, where the prefix
 	// hits moved from those V_P was read at (Prefill.prefixMoved): the
 	// cached tokens' attention is not in E[I_eff]. No caller acts on it.

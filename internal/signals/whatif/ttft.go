@@ -128,6 +128,15 @@ type Prefill struct {
 	// VPPromptNotCovered and no TTFT is priced. An assumed V_P is never
 	// checked against them.
 	VPPromptLow, VPPromptHigh float64
+	// VPRequestSeconds is r, the part of a request's work on a pod that does
+	// not grow with its prompt, in pod-seconds, where V_P's source measured
+	// it (prefill.Estimate.VPRequestSeconds): at I_vp (VPPromptTokens) a
+	// request's work is I_vp/V_P, r of it paid per request. Set with I_vp
+	// known and r under I_vp/V_P, V_P is priced at the question's prompt
+	// along that split (shapedVP), r held and the rest per token; 0 is not
+	// measured, and V_P is one token rate at every prompt, as before. An
+	// assumed V_P never reads it.
+	VPRequestSeconds float64
 	// PrefixAttention prices the attention over a prefix hit's cached
 	// tokens in the curve's rescale (shapedVP): off, I_eff stands for the
 	// context, as if no token were cached. The replay switch
@@ -663,7 +672,87 @@ func (pl prefillPlan) atRate(rate float64) prefillPlan {
 // hit from a host, disk or peer tier as a miss though the prompt attends
 // over it. Otherwise I_eff stands for it, as if nothing were cached, and reads V_P
 // high at a hit (issue llm-d-incubation/llm-d-scaling-manager#311).
+//
+// With VPRequestSeconds r measured (requestSplit), V_P is not one token
+// rate. A request's work at I_vp is I_vp/V_P, of which r is paid per request
+// and the rest, k = (I_vp/V_P - r)/I_vp a token, per token, so at E[I] it is
+// r + E[I]*k*g: the mean work of the prompt mix, since the work is linear in
+// the prompt at a given cost a token. g is how far the cost a token grows
+// from I_vp to E[I]: with the curve, as the token rate is rescaled above;
+// with none, 1 at or below I_vp, and above it the growth of the attention
+// span, I_eff + 2h with h the cached context (spanGrowth), as if every
+// per-token cost were attention, which is the most it can grow. Above I_vp
+// the work is never priced above the one-rate figure, E[I]/V_P with V_P
+// held, the price before the split: there V_P is held and flagged as
+// before. Otherwise V_P at E[I] is E[I] over that work, flagged
+// VPScaledToPrompt where it would have been flagged VPShapeMoved: it is
+// priced at the prompt, not held.
+//
+// Held as one token rate, a prompt longer than I_vp paid r once per I_vp
+// tokens, and one shorter paid it less than once a request. Where r is two
+// thirds of the work at I_vp and the context is mostly cached (g near 1),
+// the one-rate knee at twice I_vp is two thirds of the split's, and at half
+// I_vp it is 5/3 of it, over-promising. On fresh prompts the span doubles
+// with the prompt, the bound reaches the one-rate figure, and the knee holds
+// where it was: a line through the prompts of a warm-up read the per-token
+// cost of its longest prompts low, and the split alone priced a knee above
+// the rate the pods saturated at (issue
+// llm-d-incubation/llm-d-scaling-manager#368).
 func (p Prefill) shapedVP() (float64, Flag) {
+	vp, flag := p.tokenRateVP()
+	r, ok := p.requestSplit()
+	if !ok {
+		return vp, flag
+	}
+	i, ivp := p.PromptTokens, p.VPPromptTokens
+	g := p.VP / vp
+	if !(p.CurveSlope > 0 && p.CurveCurvature > 0) && i > ivp {
+		g = p.spanGrowth()
+	}
+	work := r + i*(ivp/p.VP-r)/ivp*g
+	if i > ivp && !(work < i/vp) {
+		return vp, flag
+	}
+	if flag == VPShapeMoved {
+		flag = VPScaledToPrompt
+	}
+	return i / work, flag
+}
+
+// spanGrowth is the attention span at the question's prompt over the one at
+// I_vp, I_eff + 2h each, at least 1 (shapedVP). h is the cached context, the
+// whole prompt less the computed one, every tier's hits counted: as read
+// (CachedContextRead), else from the whole prompts where both are known,
+// else none on either side. Not the prefix-cache hit rates, which count the
+// GPU's hits alone and read a hit from another tier as computed: the span
+// they give is short, and its growth read high, on one side and not the
+// other (issue llm-d-incubation/llm-d-scaling-manager#383).
+func (p Prefill) spanGrowth() float64 {
+	i, ivp := p.PromptTokens, p.VPPromptTokens
+	switch {
+	case p.CachedContextRead:
+		i, ivp = i+2*p.CachedContextTokens, ivp+2*p.VPCachedContextTokens
+	case p.WholePromptTokens > 0 && p.VPWholePromptTokens > 0:
+		i, ivp = i+2*max(p.WholePromptTokens-i, 0), ivp+2*max(p.VPWholePromptTokens-ivp, 0)
+	}
+	return max(1, i/ivp)
+}
+
+// requestSplit is VPRequestSeconds where shapedVP prices V_P along it: a
+// learned V_P read at a known I_vp, and r above 0 and under I_vp/V_P, the
+// whole of a request's work there. Otherwise false, and V_P is one token
+// rate.
+func (p Prefill) requestSplit() (float64, bool) {
+	r := p.VPRequestSeconds
+	if p.VPAssumed || !(r > 0) || !(p.VPPromptTokens > 0) || !(r < p.VPPromptTokens/p.VP) {
+		return 0, false
+	}
+	return r, true
+}
+
+// tokenRateVP is V_P at the question's mean prompt as one token rate, and
+// the flag it raises (shapedVP).
+func (p Prefill) tokenRateVP() (float64, Flag) {
 	if p.VPAssumed {
 		return p.VP, ""
 	}
@@ -795,6 +884,8 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 		u = refuse(InvalidInput, fmt.Sprintf("transfer %g s per token", p.TransferSecondsPerToken))
 	case !Finite(p.VPPromptTokens) || p.VPPromptTokens < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("V_P read at %g prompt tokens", p.VPPromptTokens))
+	case !Finite(p.VPRequestSeconds) || p.VPRequestSeconds < 0:
+		u = refuse(InvalidInput, fmt.Sprintf("V_P's per-request work %g s, want a finite value of at least 0 (0 is not measured)", p.VPRequestSeconds))
 	case !Finite(p.VPWholePromptTokens) || p.VPWholePromptTokens < 0 || !Finite(p.WholePromptTokens) || p.WholePromptTokens < 0:
 		u = refuse(InvalidInput, fmt.Sprintf("whole prompt %g, V_P's %g, want finite values of at least 0 (0 is unknown)",
 			p.WholePromptTokens, p.VPWholePromptTokens))
