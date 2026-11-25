@@ -728,8 +728,9 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
 			// A typed B is a guess: the line is not read below the band from
 			// it. A B from the floor puts the line through the floor itself.
-			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL},
-			AssumedB:  pv.itlB.Applied,
+			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL,
+				LeastSequences: vs.BelowBandLeastSequences, ByCount: vs.BelowBandByCount},
+			AssumedB: pv.itlB.Applied,
 		}
 		if st.DecodeResidencePull && domain.CanonicalRole(vs.Role) == domain.RoleDecode && slices.ContainsFunc(st.Variants, func(v learnreplay.VariantState) bool {
 			return domain.CanonicalRole(v.Role) == domain.RolePrefill
