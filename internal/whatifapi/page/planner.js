@@ -613,6 +613,8 @@ function setInputs(inputs) {
   el("pnow").textContent = inputs.fleet.prefill ? "now " + inputs.fleet.prefill.replicas : "no prefill variant";
   el("dnow").textContent = "now " + inputs.fleet.decode.replicas;
   el("ratio").value = "";
+  el("ratio").dataset.learned = "";
+  refreshBoxes();
   showSource(inputs);
   showInputs(inputs);
   syncControls();
@@ -638,6 +640,7 @@ function showLearned(inputs) {
   let refused = false;
   for (const a of ASSUMABLE) {
     el("a-" + a.box).value = "";
+    el("a-" + a.box).dataset.learned = "";
     // A line refused for any other reason (NoLine) has no B to state.
     const t = inputs.terms.find(x => x.name === a.term) ||
       (a.refusedAs && inputs.terms.find(x => x.name === a.refusedAs && x.refused && x.refused.reason === "PinnedDefaultB"));
@@ -649,6 +652,9 @@ function showLearned(inputs) {
       refused = true;
     } else if (t) {
       text = "learned " + fmtNum(t.value * a.scale);
+      // The box shows the learned value, muted: it is the source's, not
+      // an assumption, and is not sent (refreshBoxes).
+      el("a-" + a.box).dataset.learned = String(learnedShown(t.value * a.scale));
     }
     el("l-" + a.box).textContent = text;
   }
@@ -658,13 +664,67 @@ function showLearned(inputs) {
   // The box opens and says so: a stated V_P is what prices prefill.
   if (vpLowerBound(inputs)) {
     const vp = inputs.terms.find(x => x.name === "vp");
-    el("l-vp").textContent = `learned ${fmtNum(vp.value)}, only a lower bound: the prefill pods never queued, so prefill's limit is unknown. ` +
-      "Type a V_P to size prefill.";
+    el("l-vp").textContent = `learned ${fmtNum(vp.value)}, only a lower bound: the prefill pods never queued, so the real speed is likely higher ` +
+      "and prefill's limit is unknown. Type a V_P to size prefill.";
     refused = true;
   }
   el("a-lar").checked = false;
   el("assumebox").open = refused;
   el("assumecount").textContent = "none typed";
+}
+
+// learnedShown is a learned value as its box shows it: whole above 100, else
+// four significant digits. The box sends nothing while it holds it, so the
+// server prices the exact value.
+function learnedShown(x) {
+  return Math.abs(x) >= 100 ? Math.round(x) : Number(x.toPrecision(4));
+}
+
+// markBox shows whose value a box holds: "learned" or "lowerBound" (the
+// source's, muted, not sent), "assumed" (typed, flagged and sent), or ""
+// (empty, or nothing learned). Where a learned value exists and the box
+// holds another, "Use learned" puts it back.
+function markBox(id, how) {
+  const box = el(id), learned = box.dataset.learned;
+  box.classList.toggle("learned", how === "learned" || how === "lowerBound");
+  const tag = el("t-" + id);
+  tag.textContent = {learned: "learned", lowerBound: "lower bound", assumed: "assumed"}[how] || "";
+  tag.className = "tag" + (how ? " " + how : "");
+  el("r-" + id).hidden = !(how === "assumed" && learned !== undefined && learned !== "");
+}
+
+// refreshBoxes puts in each box whose value the source learned either the
+// value typed (an assumption, sent) or the learned one (not sent), and says
+// which. A box being edited is left alone.
+function refreshBoxes() {
+  const k = state.k, inputs = state.inputs;
+  if (!k || !inputs) return;
+  const active = document.activeElement;
+  const put = (id, typed) => {
+    const box = el(id), learned = box.dataset.learned;
+    if (box === active) return;
+    if (typed != null) {
+      box.value = String(typed);
+      markBox(id, "assumed");
+    } else {
+      box.value = learned || "";
+      markBox(id, !learned ? "" : id === "a-vp" && vpLowerBound(inputs) ? "lowerBound" : "learned");
+    }
+  };
+  for (const a of ASSUMABLE) put("a-" + a.box, k.assume[a.key] != null ? Number((k.assume[a.key] * a.scale).toPrecision(6)) : null);
+  const observed = val(inputs.observed.outputTokens);
+  el("outtok").dataset.learned = observed != null ? String(Math.round(observed)) : "";
+  put("outtok", k.outputTokens != null && (observed == null || Math.abs(k.outputTokens - observed) >= 0.5) ? Math.round(k.outputTokens) : null);
+  put("ratio", k.ratio != null ? k.ratio : null);
+}
+
+// typedOrLearned reads a box a source learned a value for: null where it
+// is empty or holds the learned value (the source's stands), else the
+// number typed. An emptied box shows the learned value again.
+function typedOrLearned(id) {
+  const box = el(id), raw = box.value, learned = box.dataset.learned;
+  if (raw === "" || (learned && +raw === +learned)) return null;
+  return +raw;
 }
 
 // vpLowerBound says the inputs' V_P is a lower bound alone: learned from the
@@ -912,6 +972,8 @@ function applyLink() {
   el("ratio").value = k.ratio != null ? k.ratio : "";
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) el("a-" + a.box).value = Number((k.assume[a.key] * a.scale).toPrecision(6));
   el("a-lar").checked = !!k.assume.loadAwareRouter;
+  // A value the link carries is typed: an assumption, as before.
+  refreshBoxes();
   showTyped();
   syncControls();
 }
@@ -1461,6 +1523,10 @@ function renderAtTarget() {
   if (ratio && ratio.refused) note = "R_q is not learned (" + ratio.refused.reason + "): type a ratio, or pick the mean.";
   else if (ratio && ratio.value != null) note = `R_q ${fmtNum(ratio.value)} (${ratio.source || "?"})`;
   el("rationote").textContent = note;
+  // The R_q the plan priced, where it is the source's and not typed, is
+  // the ratio box's learned value.
+  if (state.k.ratio == null) el("ratio").dataset.learned = val(ratio) != null ? String(Number(val(ratio).toPrecision(3))) : "";
+  refreshBoxes();
 }
 
 // targetNote is what the page says under a target: whose it is, why a page
@@ -2393,8 +2459,9 @@ function wire() {
   };
   el("ratio").onchange = () => {
     if (!ready()) return;
-    const v = +el("ratio").value;
-    k().ratio = el("ratio").value === "" || !(v > 0) ? null : v;
+    const v = typedOrLearned("ratio");
+    k().ratio = v == null || !(v > 0) ? null : v;
+    refreshBoxes();
     showTyped();
     schedule(0);
   };
@@ -2404,19 +2471,51 @@ function wire() {
   };
   el("priceas").onchange = () => { if (ready()) { k().priceAs = el("priceas").value; schedule(0); } };
   el("outtok").onchange = () => {
-    const v = +el("outtok").value;
-    if (ready() && v > 0) { k().outputTokens = v; schedule(0); }
+    if (!ready()) return;
+    const v = typedOrLearned("outtok");
+    if (v == null) k().outputTokens = val(state.inputs.observed.outputTokens);
+    else if (v > 0) k().outputTokens = v;
+    refreshBoxes();
+    schedule(0);
   };
+  // A box that shows a learned value sends nothing until it is edited: then
+  // the value typed is an assumption, flagged and sent. Emptied, or set back
+  // to the learned value (Use learned), the source's stands again.
   for (const a of ASSUMABLE) {
-    el("a-" + a.box).onchange = () => {
+    const id = "a-" + a.box;
+    el(id).onchange = () => {
       if (!ready()) return;
-      const raw = el("a-" + a.box).value, v = +raw;
-      if (raw === "" || !(v >= 0)) delete k().assume[a.key];
+      const v = typedOrLearned(id);
+      if (v == null || !(v >= 0)) delete k().assume[a.key];
       else k().assume[a.key] = v / a.scale;
+      refreshBoxes();
       showTyped();
       schedule(0);
     };
+    el("r-" + id).onclick = () => {
+      if (!ready()) return;
+      delete k().assume[a.key];
+      refreshBoxes();
+      showTyped();
+      schedule(0);
+      el(id).focus();
+    };
   }
+  el("r-outtok").onclick = () => {
+    if (!ready()) return;
+    k().outputTokens = val(state.inputs.observed.outputTokens);
+    refreshBoxes();
+    schedule(0);
+    el("outtok").focus();
+  };
+  el("r-ratio").onclick = () => {
+    if (!ready()) return;
+    k().ratio = null;
+    refreshBoxes();
+    showTyped();
+    schedule(0);
+    el("ratio").focus();
+  };
   // The router's balancing is stated, not typed: assume.loadAwareRouter,
   // sent only when ticked, so the server's default (off) stands otherwise.
   el("a-lar").onchange = () => {
