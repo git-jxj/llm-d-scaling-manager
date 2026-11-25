@@ -150,7 +150,7 @@ func decodeWindow(e *inputsEntry, idx []int, from, to time.Time) []whatif.Decode
 // routerTPOTStep is the step anchored at the cycle a of e: its router TPOT
 // histogram and mean over the router's window, the decode cycles of that
 // window, and the decode engines' TPOT histogram the cycle read (its [1m]
-// rates counted over the router's window), which the step's joint bracket
+// rates counted over that minute, withEngineTPOT), which the step's joint bracket
 // reads (whatif.JointBracket). ok is false where the router's TPOT or the
 // output lengths are not read.
 func routerTPOTStep(e *inputsEntry, idx []int, a int) (whatif.TPOTDistStep, bool) {
@@ -172,12 +172,14 @@ func routerTPOTStep(e *inputsEntry, idx []int, a int) (whatif.TPOTDistStep, bool
 	if !ok {
 		return st, false
 	}
-	return withEngineTPOT(st, e.latency[a].EngineTPOT, w), true
+	return withEngineTPOT(st, e.latency[a].EngineTPOT), true
 }
 
 // withEngineTPOT is st with the engines' TPOT histogram bs, its rates
-// counted over windowSeconds.
-func withEngineTPOT(st whatif.TPOTDistStep, bs []domain.LatencyBucket, windowSeconds float64) whatif.TPOTDistStep {
+// counted over the minute they were read over (defaultMeasureWindow), not
+// the router's longer window: the requests the engines' shares rest on,
+// which set their sampling noise and MinEngineAboveFirstEdge.
+func withEngineTPOT(st whatif.TPOTDistStep, bs []domain.LatencyBucket) whatif.TPOTDistStep {
 	if len(bs) == 0 {
 		return st
 	}
@@ -185,7 +187,7 @@ func withEngineTPOT(st whatif.TPOTDistStep, bs []domain.LatencyBucket, windowSec
 	for i, b := range bs {
 		edges[i], cum[i] = b.UpperBound, b.Rate
 	}
-	return st.WithEngine(edges, cum, windowSeconds)
+	return st.WithEngine(edges, cum, defaultMeasureWindow)
 }
 
 // fitTPOTDist fits the distribution on the fit entry's cycles at fitIdx, cut

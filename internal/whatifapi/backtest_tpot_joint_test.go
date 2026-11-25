@@ -85,7 +85,7 @@ func TestTPOTDistScorer_CountsAgainstTheJointBracket(t *testing.T) {
 	}
 	st, ok := whatif.TPOTDistStepOf(edges, cum, 300, 0.014, []whatif.DecodeCycle{{Output: map[float64]float64{2: 0, 100: 1}}})
 	require.True(t, ok)
-	st = withEngineTPOT(st, l.EngineTPOT, 300)
+	st = withEngineTPOT(st, l.EngineTPOT)
 
 	var sc tpotDistScorer
 	// No spread: every percentile is the mean, 30 ms, above the p90's
@@ -127,6 +127,38 @@ func TestMeasuredOf_TheRoutersOwnReadingIsKeptExactly(t *testing.T) {
 			m := measuredOf(l, MeasuredRouter, window, false)
 			require.NotNil(t, m.tpot[i90])
 			assert.Equal(t, h.quantile(0.9), *m.tpot[i90], "n %g, F(10 ms) %g", n, f)
+		}
+	}
+}
+
+// The engines' TPOT rates are over one minute, so their requests are the
+// rates times 60 s, not times the router's 300 s window: an engine histogram
+// of 100 requests a second puts 3000 above its first edge in its minute,
+// joins and narrows the p90 to [20 ms, 25 ms]; at 1 a second it puts 30
+// there, under MinEngineAboveFirstEdge, and the bracket is the router's
+// alone, though counted over 300 s it would have held 150 and joined.
+func TestJointTPOT_TheEnginesCountOverTheirOwnMinute(t *testing.T) {
+	i90 := slices.Index(backtestStats, 0.9)
+	for _, c := range []struct {
+		rate   float64
+		joined bool
+	}{{100, true}, {1, false}} {
+		l := jointSample(true)
+		f := []float64{0.5, 0.5 + 0.5*(0.92-0.3)/0.7, 0.5 + 0.5*(0.98-0.3)/0.7, 0.5 + 0.5*(0.993-0.3)/0.7, 0.5 + 0.5*(0.998-0.3)/0.7, 1}
+		for i := range l.EngineTPOT {
+			l.EngineTPOT[i].Rate = f[i] * c.rate
+		}
+		st := withEngineTPOT(whatif.TPOTDistStep{Edges: []float64{0.005, 0.01, 0.02, 0.04, 0.06, 0.08, math.Inf(1)},
+			Counts: []float64{400, 5600, 11000, 2400, 400, 100, 100}}, l.EngineTPOT)
+		b, ok := whatif.JointBracket(st, 0.9)
+		require.True(t, ok)
+		assert.Equal(t, c.joined, b.Engine, "%g engine requests a second", c.rate)
+		m := measuredOf(l, MeasuredRouter, 300, false)
+		require.NotNil(t, m.tpotBucket[i90])
+		if c.joined {
+			assert.InDelta(t, 0.025, m.tpotBucket[i90].Hi, 1e-12)
+		} else {
+			assert.InDelta(t, 0.040, m.tpotBucket[i90].Hi, 1e-12, "the router's own bucket")
 		}
 	}
 }

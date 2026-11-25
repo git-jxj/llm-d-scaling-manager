@@ -430,6 +430,9 @@ backtest reads the measured p90 and p95 from both at once:
   router and the engines disagree at their shared 10 ms edge on most steps.
   So above 10 ms the engines' histogram gives the shape, anchored at the
   router's share at 10 ms, and only where at least 50 requests lie above it.
+  The engines' histogram is a one-minute rate, so its requests, and with them
+  its noise and those 50, are counted over that minute, not over the
+  router's five.
 - **The figure inside.** The measured figure is read inside the merged
   sub-bucket with the log of the share above it linear in the log of the
   TPOT. Held out at the engines' 25 ms edge, predicted from the router alone,
@@ -496,7 +499,15 @@ one's bracket:
 |---|---|---|---|---|---|
 | Qwen3-32B staircase, 6 runs (q32j) | 136 | 135 | 133 | 135 | 133 |
 | Qwen3-32B warm-up (cpval-s2) | 29 | 24 | 21 | 27 | 25 |
+| Qwen3-32B warm-ups (q32h, q32f, repo-q32) | 71 | 53 | 38 | 65 | 60 |
 | Qwen3-0.6B staircases and warm-ups (4 runs) | 82 | 40 | 37 | 63 | 41 |
+
+An earlier count of this table read the engines' one-minute rates as if they
+held over the router's five minutes, which took five times their requests and
+too little noise. Counted over the minute, the engines join on fewer steps
+(cpval-s2 19 of 29 where it was 29, q32j 132 of 136 where it was 133), and
+none of the counts that table held moved. The q32h, q32f and repo-q32 row is
+new.
 
 Where `=v2` misses, it reads over the bracket: on Qwen3-0.6B, 41 p90s and 45
 p95s over it, against 18 and 40 for the mixture. The q32j runs barely tell the

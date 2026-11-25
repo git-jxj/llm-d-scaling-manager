@@ -2139,7 +2139,7 @@ func jointTPOT(l LatencySample, windowSeconds, q float64, meas *float64, bucket 
 		counts[i] = (c - prev) * windowSeconds
 		prev = c
 	}
-	st := withEngineTPOT(whatif.TPOTDistStep{Edges: edges, Counts: counts}, l.EngineTPOT, windowSeconds)
+	st := withEngineTPOT(whatif.TPOTDistStep{Edges: edges, Counts: counts}, l.EngineTPOT)
 	b, ok := whatif.JointBracket(st, q)
 	if !ok || math.IsInf(b.Hi, 1) || !whatif.Finite(b.Point) {
 		return meas, bucket
