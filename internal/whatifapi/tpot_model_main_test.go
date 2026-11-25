@@ -510,14 +510,14 @@ func TestDayPlan_ExperimentalTPOTModelLeavesTheDayPlanToTheDefault(t *testing.T)
 }
 
 // A day plan asked for the experimental models prices each bucket at its
-// own rate but at the window's request shape, the one the models were
-// fitted at, even where its cycles read lengths of their own (as a
-// recording's do): every bucket with data is flagged WindowShape, the
-// model prices the buckets it would on a window that read no lengths, need
-// for need, and a note says the per-bucket shape is not modelled. Unasked,
-// each bucket keeps its own shape. A stated shape stays the planner's own,
-// and so does a TPOT target at the mean, which the TPOT model does not
-// price; the note says why for each.
+// own rate and, where its cycles read lengths of their own (as a
+// recording's do) inside what the model's fit served, at its own shape:
+// the model draws from the bucket's own histograms, here the window's
+// shape throughout, so it prices the buckets it would on a window that
+// read no lengths, need for need, and a note says how. Unasked, each
+// bucket keeps its own shape, the planner's own. A stated shape stays the
+// planner's own, and so does a TPOT target at the mean, which the TPOT
+// model does not price; the note says why for each.
 func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 	dayPlan := func(s *Server, e *inputsEntry, req DayPlanRequest) (DayPlanResponse, string) {
 		t.Helper()
@@ -529,7 +529,7 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 		return out, strings.Join(out.Notes, "\n")
 	}
 	ttft := &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}}
-	const windowNote = "each bucket is priced at its own rate but at the window's request shape"
+	const modelNote = "a bucket is priced at its own rate and its own request shape"
 
 	s, e := mainEntry(t, true)
 	require.True(t, slices.ContainsFunc(e.series, func(x SeriesSample) bool { return x.HasShape }), "the cycles read their lengths")
@@ -537,20 +537,22 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 	require.Positive(t, out.Summary.Counts.Sized)
 	require.NotNil(t, out.TTFTModel)
 	require.Empty(t, out.TTFTModel.Abstained)
-	assert.Contains(t, text, windowNote)
+	assert.Contains(t, text, modelNote)
 	priced := 0
 	for _, b := range out.Buckets {
 		if b.Status == BucketNoData {
 			continue
 		}
-		assert.Contains(t, b.Flags, FlagWindowShape, "the bucket at %s is priced at the window's shape", b.Start)
-		assert.Equal(t, "window", b.Shape.Source)
-		assert.Nil(t, b.Shape.PromptTokens)
+		if b.Needed != nil {
+			assert.NotContains(t, b.Flags, FlagWindowShape, "the bucket at %s is priced at its own shape", b.Start)
+			assert.Equal(t, "bucket", b.Shape.Source)
+			assert.NotNil(t, b.Shape.Model)
+		}
 		if b.Limit != nil && slices.Contains(b.Limit.Flags, string(whatif.RankMixtureTTFT)) {
 			priced++
 		}
 	}
-	require.Positive(t, priced, "at the window's shape, the model prices buckets whose cycles read their own")
+	require.Positive(t, priced, "the model prices buckets whose cycles read their own shape")
 	t.Logf("shapes kept: the TTFT model priced %d of the %d sized buckets", priced, out.Summary.Counts.Sized)
 	assert.Contains(t, text, fmt.Sprintf("priced %d of the %d sized buckets", priced, out.Summary.Counts.Sized))
 
@@ -569,7 +571,7 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 
 	// Unasked, each bucket is priced at its own shape, as before.
 	plain, plainText := dayPlan(s, e, DayPlanRequest{SLO: ttft})
-	assert.NotContains(t, plainText, windowNote)
+	assert.NotContains(t, plainText, modelNote)
 	for _, b := range plain.Buckets {
 		if b.Status != BucketNoData {
 			assert.NotContains(t, b.Flags, FlagWindowShape)
@@ -580,7 +582,7 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 	// A stated shape keeps today's rule: every bucket at it, the planner's own.
 	stated, text := dayPlan(s, e, DayPlanRequest{ExperimentalModels: true, SLO: ttft, Traffic: &Traffic{Mix: &Mix{PromptTokens: 4000}}})
 	require.Positive(t, stated.Summary.Counts.Sized)
-	assert.NotContains(t, text, windowNote)
+	assert.NotContains(t, text, modelNote)
 	for _, b := range stated.Buckets {
 		if b.Status != BucketNoData {
 			assert.Equal(t, dayShapeStated, b.Shape.Source)
@@ -598,18 +600,30 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 	require.Empty(t, out.TPOTModel.Abstained)
 	assert.Contains(t, text, fmt.Sprintf("priced 0 of the %d sized buckets", out.Summary.Counts.Sized), "a mean TPOT is the planner's")
 	assert.Contains(t, text, fmt.Sprintf("the model prices p90 and p95, not mean (%d)", out.Summary.Counts.Sized))
-	// A model that prices no target the plan asks buys nothing at the
-	// window's shape: each bucket keeps its own.
+	// A model that prices no target the plan asks reads no bucket's shape:
+	// each bucket keeps its own, the planner's.
 	require.True(t, slices.ContainsFunc(e.series, func(x SeriesSample) bool { return x.HasShape }), "the cycles read their lengths")
-	assert.NotContains(t, text, windowNote)
+	assert.NotContains(t, text, modelNote)
 	for _, b := range out.Buckets {
 		if b.Status != BucketNoData {
 			assert.Equal(t, "bucket", b.Shape.Source, "bucket %s", b.Start)
 			assert.NotContains(t, b.Flags, FlagWindowShape, "bucket %s", b.Start)
 		}
 	}
-	// At a p90 TPOT target it prices, and the buckets are at the window's.
-	_, text = dayPlan(s, e, DayPlanRequest{ExperimentalModels: true,
+	// At a p90 TPOT target it prices each bucket at its own shape, its ratio
+	// the window's.
+	out, text = dayPlan(s, e, DayPlanRequest{ExperimentalModels: true,
 		SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}, TPOT: &Objective{Statistic: "p90", Target: f64(tpotTarget)}}})
-	assert.Contains(t, text, windowNote)
+	assert.Contains(t, text, "With the experimental TPOT model, a bucket is priced at its own rate and its own request shape")
+	priced = 0
+	for _, b := range out.Buckets {
+		if b.Needed != nil {
+			assert.Equal(t, "bucket", b.Shape.Source, "bucket %s", b.Start)
+			assert.NotContains(t, b.Flags, FlagWindowShape, "bucket %s", b.Start)
+			if slices.Contains(b.Limit.Flags, string(whatif.TPOTDistribution)) {
+				priced++
+			}
+		}
+	}
+	assert.Positive(t, priced, "the TPOT model prices buckets at their own shape")
 }

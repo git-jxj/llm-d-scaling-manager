@@ -115,6 +115,13 @@ type mainMixture struct {
 	// read: the computed-token histogram is priced at each prefill count's
 	// prefix hit (computedAt).
 	hitAtCount bool
+	// fit is the shape the fit steps served: what a day-plan bucket's own
+	// shape is checked against before the model prices it (outsideFit).
+	fit mixtureRange
+	// bucket says pooled is a day-plan bucket's own histograms
+	// (experimentalModels.atBucket), not the window's: the bucket's lengths
+	// on the fleet's knobs are then its own, not stated ones.
+	bucket bool
 }
 
 // computedAt is the computed-token histogram the model draws from at n
@@ -205,6 +212,7 @@ func fitMainMixture(e *inputsEntry, stratified bool) *mainMixture {
 	for _, st := range steps {
 		mm.top = max(mm.top, st.Rate)
 	}
+	mm.fit = mixtureRangeOf(steps)
 	if mm.top > 0 {
 		mm.info.MeasuredUpTo = ptr(mm.top)
 	}
@@ -240,7 +248,7 @@ func (mm *mainMixture) notPricedAt(k Knobs) string {
 		return "the model abstained: " + mm.info.Abstained
 	case mm.prefill <= 0 || k.Prefill <= 0:
 		return "the fleet has no prefill replica"
-	case k.PromptTokens != 0 || k.OutputTokens != 0 || (k.PrefixHit != nil && !k.PrefixHitRead) || k.CachedTokenCost != nil:
+	case (!mm.bucket && (k.PromptTokens != 0 || k.OutputTokens != 0)) || (k.PrefixHit != nil && !k.PrefixHitRead) || k.CachedTokenCost != nil:
 		return "the model prices the source's own request shape, not a stated one"
 	case statesTTFTTerm(k.Assume) || k.ArrivalCV2 != nil:
 		return "the model prices the source's own terms and random arrivals, not stated ones"
@@ -390,7 +398,11 @@ func (f *mixtureFleet) TTFTPoint(rate float64) (whatif.Result, []string) {
 // Assumed is the planner's assumed inputs and the model's.
 func (f *mixtureFleet) Assumed() []string {
 	out := slices.Clone(f.Fleet.Assumed())
-	out = append(out, f.mm.rq.report.Assumed+"; TTFT priced at the source window's pooled prompt mix, up to the planner's own lower knee")
+	mix := "the source window's pooled prompt mix"
+	if f.mm.bucket {
+		mix = "the bucket's own prompt and computed-token histograms"
+	}
+	out = append(out, f.mm.rq.report.Assumed+"; TTFT priced at "+mix+", up to the planner's own lower knee")
 	if f.scale != 1 {
 		out = append(out, fmt.Sprintf("experimental TTFT model at %d prefill replicas, %d recorded: each replica's ranks take the recorded "+
 			"share profile, at the rate per replica", int(math.Round(float64(f.mm.prefill)/f.scale)), f.mm.prefill))

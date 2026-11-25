@@ -1185,10 +1185,52 @@ abstained, or the TPOT model alone at a mean TPOT target, leaves the plan
 at each bucket's own shape, as unasked), and a stated shape keeps its
 rule: every bucket at the stated shape, the planner's own. The error is a
 bucket whose requests are longer or shorter than the day's: it is sized as
-if they were the day's. Feeding each bucket its own histograms, within the
-shapes the fit saw, is the follow-up; it needs the backtest's validation
-before a day plan takes it. The TPOT model still prices a p90 or p95 TPOT
+if they were the day's. The TPOT model still prices a p90 or p95 TPOT
 target, not the mean.
+
+**Decision: each bucket at its own histograms, within the fit's range.**
+The window's shape misses where it matters most: a busy hour whose prefix
+hit is lower than the day's computes more tokens a request at the same
+prompt length, and the window's shape under-prices its prefill. So the
+plan prices each bucket as a backtest prices a test step, from its own
+measured histograms: the TTFT model draws from the bucket's prompt and
+computed-token histograms (its own prefix hit; with `PrefillHitAtCount`,
+that hit moved to each count). The planner's own terms keep the bucket's
+observed shape on the 5% grid, as a plan without the models. The TPOT
+model keeps its ratio at the window's output lengths and decode spread,
+around the planner's mean TPOT at the bucket's own output length: on the
+held-out steps of a time-split backtest, its ratio at each step's own
+output lengths put the measured p95 in its histogram bucket less often
+than at the window's, so it gains nothing from the bucket's own.
+
+One five-minute bucket's computed-token tail is too noisy to price on, so
+the histograms are read over a window centred on the bucket, grown a
+bucket each side at a time until it holds 8000 requests and spans 30
+minutes, and no further than 2 hours (`ShapeFewRequests` past it). The
+thresholds come from the noise of the bucket's prefill price: the gap
+between the prices of the window's two interleaved halves (alternate
+2-minute blocks) against the hour-to-hour change of the price, picked where
+the change clearly exceeds the noise.
+
+A bucket is priced at its own shape only inside what the fit served: its
+mean prompt and computed tokens within the TTFT model's fit steps'
+rate-weighted 5th to 95th percentiles (percentiles, so one odd step does
+not widen the range), widened by a quarter each way, and its
+computed-token p90 at most the largest step's (a tail the fit never served
+is outside even at an in-range mean); with fewer than 20 fit steps there
+is no range. The quarter is what the backtest's held-out steps support: at
+the percentiles alone, the steps outside still priced closer from their
+own histograms than from the fit window's pooled ones, out to a quarter
+past them. Outside, the bucket is priced at the window's shape, flagged
+`WindowShape` and `ShapeOutsideFit`, and `shape.model.outsideFit` names
+what lies outside and the range. The fallback is a pricing choice, not a
+refusal: the models' `notPricedAt` gains no reason.
+
+A bucket priced at its own histograms needs its own sizer, since its
+neighbour's histograms differ even at the same mean. To bound the
+searches, buckets whose shape so read (mean prompt and computed tokens,
+computed-token p90) agrees on the 5% grid share the first one's sizer, as
+buckets of nearly one observed shape share the planner's.
 
 ## Decisions
 
