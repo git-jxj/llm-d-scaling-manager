@@ -1,22 +1,25 @@
 /* The capacity planner's page. Colours follow the proposal's mock
    (docs/proposals/capacity-planner/example.html); dark mode follows the
-   system's prefers-color-scheme. */
+   system's prefers-color-scheme. Every token meets WCAG 2.1 AA on --page
+   and --surface-1: 4.5:1 for the text tokens (text-*, muted, good,
+   critical), 3:1 for graphics and control borders
+   (hack/check-planner-contrast.mjs). */
 :root {
   color-scheme: light;
   --page: #f9f9f7; --surface-1: #fcfcfb; --text-primary: #0b0b0b; --text-secondary: #52514e;
-  --muted: #6f6e69; --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11, 11, 11, 0.12);
-  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100; --series-5: #e87ba4;
+  --muted: #6f6e69; --grid: #e1e0d9; --axis: #8a897f; --border: rgba(11, 11, 11, 0.12); --control-border: #8a897f;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #13996a; --series-4: #b07800; --series-5: #d4558a;
   --sat: rgba(208, 59, 59, 0.08); --onset: rgba(237, 161, 0, 0.10); --band: rgba(11, 11, 11, 0.10);
-  --good: #0ca30c; --warning: #b57900; --critical: #d03b3b; --accent: #2a78d6;
+  --good: #087f08; --warning: #b57900; --critical: #d03b3b; --accent: #2a78d6; --text-warning: #8a5c00;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
     --page: #0d0d0d; --surface-1: #1a1a19; --text-primary: #f0efec; --text-secondary: #c3c2b7;
-    --muted: #9a9890; --grid: #2c2c2a; --axis: #4a4a46; --border: rgba(255, 255, 255, 0.12);
+    --muted: #9a9890; --grid: #2c2c2a; --axis: #6f6e69; --border: rgba(255, 255, 255, 0.12); --control-border: #6f6e69;
     --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-5: #d55181;
     --sat: rgba(208, 59, 59, 0.14); --onset: rgba(201, 133, 0, 0.14); --band: rgba(255, 255, 255, 0.12);
-    --good: #3fbf3f; --warning: #e0a400; --critical: #ef6a6a; --accent: #3987e5;
+    --good: #3fbf3f; --warning: #e0a400; --critical: #ef6a6a; --accent: #3987e5; --text-warning: #e0a400;
   }
 }
 * { box-sizing: border-box; }
@@ -32,7 +35,7 @@ h3 { margin: 0 0 2px; font-size: 15px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
 input, select, button { font: inherit; font-size: 13px; color: var(--text-primary); background: var(--page);
-  border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
+  border: 1px solid var(--control-border); border-radius: 6px; padding: 3px 6px; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: 0.5; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -66,14 +69,14 @@ input[type=number] { width: 80px; font-variant-numeric: tabular-nums; }
 .status.error { color: var(--critical); }
 
 .modes { border: none; margin: 0 0 10px; padding: 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 13px; }
-.modes label { border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; background: var(--surface-1); cursor: pointer; }
+.modes label { border: 1px solid var(--control-border); border-radius: 8px; padding: 6px 12px; background: var(--surface-1); cursor: pointer; }
 .modes label:has(input:checked) { border-color: var(--accent); font-weight: 600; }
 .modes input { margin: 0 6px 0 0; accent-color: var(--accent); }
 .scenarios { margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
 .scenrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; color: var(--text-secondary); }
 .scenrow input[type=text] { width: 260px; }
 .scenrow select { max-width: 320px; }
-.scenrow .file { border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; background: var(--page); color: var(--text-primary); cursor: pointer; }
+.scenrow .file { border: 1px solid var(--control-border); border-radius: 6px; padding: 3px 6px; background: var(--page); color: var(--text-primary); cursor: pointer; }
 .scenrow .file:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .comparebox { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--grid); }
 #comparetable { overflow-x: auto; }
@@ -91,7 +94,9 @@ input[type=number] { width: 80px; font-variant-numeric: tabular-nums; }
 .fewer { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; color: var(--text-secondary); }
 .fewer li { margin: 3px 0; }
 .fewer b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
-.controls { display: grid; grid-template-columns: 1fr 1.3fr 1.3fr; gap: 22px; margin-bottom: 14px; }
+.controls { display: grid; grid-template-columns: 1fr 1.3fr; gap: 22px; margin-bottom: 14px; }
+/* The common controls sit above the tabs: every view reads them. */
+.controls.common { grid-template-columns: 1.3fr 1fr; margin: 0 0 4px; }
 .group { display: flex; flex-direction: column; gap: 10px; }
 .stepper { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .stepper .name { width: 120px; color: var(--text-secondary); }
@@ -270,8 +275,7 @@ svg .line.c-had { stroke-width: 1.5; }
 .rmark.missed, td.missed { background: color-mix(in srgb, var(--critical) 22%, transparent); }
 .rmark.saturated, td.saturated { background: color-mix(in srgb, var(--warning) 25%, transparent); }
 .rmark.unknown, td.unknown { background: color-mix(in srgb, var(--muted) 18%, transparent); }
-.rextra { color: #8a5c00; font-weight: 600; }
-@media (prefers-color-scheme: dark) { .rextra { color: var(--warning); } }
+.rextra { color: var(--text-warning); font-weight: 600; }
 .rpart { white-space: nowrap; }
 
 .rmark.notarget, td.notarget { background: color-mix(in srgb, var(--muted) 10%, transparent); }
