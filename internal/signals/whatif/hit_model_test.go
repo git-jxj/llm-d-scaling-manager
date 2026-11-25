@@ -128,6 +128,60 @@ func TestPromptWindow_HitModel(t *testing.T) {
 	assert.Equal(t, 0.7, mt.HInf)
 }
 
+// The duplication K is read from the affinity the router gave up over the
+// window's cycles: the lab's 2-pod fit gave up 6.65% of the cached tokens
+// it could have hit, which reads K 1.142, and the law then prices more hits
+// at one pod than with no duplication. A pair that is not one reading, a
+// cycle the window did not keep and no router figures leave K at 1.
+func TestPromptWindow_HitModelReadsTheDuplication(t *testing.T) {
+	window := func(rl func(i int) *domain.RouterLatency) *PromptWindow {
+		w := &PromptWindow{}
+		for i := range 3 {
+			w.Note([]domain.ReplicaMetrics{residencyRow(), residencyRow()}, i, time.Unix(int64(15*i), 0))
+			w.NoteRouterPrefix(i, rl(i))
+		}
+		return w
+	}
+	lab := window(func(int) *domain.RouterLatency {
+		return &domain.RouterLatency{PrefixPredictedTokenRate: 9335, PrefixBestAvailableTokenRate: 10000}
+	})
+	loss, ok := lab.AffinityLoss()
+	require.True(t, ok)
+	assert.InDelta(t, 0.0665, loss, 1e-9)
+	m := lab.HitModel(2)
+	require.NotNil(t, m)
+	assert.InDelta(t, 1.1418, m.K, 1e-4)
+
+	none := window(func(int) *domain.RouterLatency { return nil })
+	_, ok = none.AffinityLoss()
+	assert.False(t, ok)
+	m1 := none.HitModel(2)
+	require.NotNil(t, m1)
+	assert.Equal(t, 1.0, m1.K)
+	g, _, ok := m.HitAt(1, 1)
+	require.True(t, ok)
+	g1, _, ok := m1.HitAt(1, 1)
+	require.True(t, ok)
+	assert.Greater(t, g, g1, "a duplicated prefix is read on fewer pods' caches: one pod keeps more of it")
+
+	bad := window(func(i int) *domain.RouterLatency {
+		switch i {
+		case 0:
+			return &domain.RouterLatency{PrefixPredictedTokenRate: 10, PrefixBestAvailableTokenRate: 5}
+		case 1:
+			return &domain.RouterLatency{PrefixPredictedTokenRate: math.NaN(), PrefixBestAvailableTokenRate: 5}
+		}
+		return &domain.RouterLatency{PrefixBestAvailableTokenRate: 5}
+	})
+	_, ok = bad.AffinityLoss()
+	assert.False(t, ok, "best under predicted, NaN, none predicted")
+	stale := window(func(int) *domain.RouterLatency { return nil })
+	stale.NoteRouterPrefix(7, &domain.RouterLatency{PrefixPredictedTokenRate: 1, PrefixBestAvailableTokenRate: 2})
+	_, ok = stale.AffinityLoss()
+	assert.False(t, ok, "a cycle the window did not keep")
+	(*PromptWindow)(nil).NoteRouterPrefix(0, &domain.RouterLatency{})
+}
+
 // A bound at or under 0, a NaN rate or an empty histogram is not read.
 func TestReuseHistogramsOf(t *testing.T) {
 	r := ReuseHistogramsOf(map[float64]float64{0: 1, 10: 5, math.Inf(1): 5, 20: math.NaN()}, map[float64]float64{50: 3})

@@ -43,7 +43,8 @@ func (c *ReplicaMetricsCollector) CollectRouterLatency(
 	if c.RecordsTTFTInputs() {
 		queries = append(queries, registration.QuerySLORouterTPOTBuckets, registration.QueryFlowControlWaitBuckets,
 			registration.QuerySLORouterProcessingBuckets, registration.QuerySLORouterProcessingSum,
-			registration.QuerySLORouterProcessingCount)
+			registration.QuerySLORouterProcessingCount, registration.QuerySLORouterPrefixPredicted,
+			registration.QuerySLORouterPrefixBestAvailable)
 	}
 	results, issued, err := c.refreshSharedIssued(ctx, queries, map[string]string{source.ParamNamespace: namespace})
 	if err != nil {
@@ -89,8 +90,9 @@ func (c *ReplicaMetricsCollector) CollectRouterLatency(
 	out.TPOTBuckets = routerBuckets(results[registration.QuerySLORouterTPOTBuckets], modelID)
 	out.FlowControlWaitBuckets = routerBuckets(results[registration.QueryFlowControlWaitBuckets], modelID)
 	out.ProcessingBuckets, out.ProcessingSumRate, out.ProcessingCountRate = routerProcessing(results, modelID)
+	out.PrefixPredictedTokenRate, out.PrefixBestAvailableTokenRate = routerPrefixAffinity(results, modelID)
 	if !out.Judgeable() && out.TPOTBuckets == nil && out.FlowControlWaitBuckets == nil && out.ProcessingBuckets == nil &&
-		out.ProcessingCountRate == 0 {
+		out.ProcessingCountRate == 0 && out.PrefixBestAvailableTokenRate == 0 {
 		return nil
 	}
 	return out
@@ -130,6 +132,44 @@ func routerProcessing(results map[string]*source.MetricResult, modelID string) (
 	return b, sumRate, countRate
 }
 
+// routerPrefixAffinity is the router prefix producer's predicted and
+// best-available cached token rates, for modelID, joined as
+// routerProcessing joins its series. A P/D router runs one producer per
+// profile and each counts every prompt, so the producers are not summed:
+// the pair is the producer (plugin_name, endpoint_role) that predicted the
+// most, the one routing pods whose caches hit. Zeros with either query
+// failed, no producer that predicted any, or a best-available rate under the
+// predicted one (the two would not be one reading).
+func routerPrefixAffinity(results map[string]*source.MetricResult, modelID string) (predicted, best float64) {
+	if !onlyModel(results[registration.QuerySLORouterTTFTBuckets], modelID) {
+		return 0, 0
+	}
+	pr, ba := results[registration.QuerySLORouterPrefixPredicted], results[registration.QuerySLORouterPrefixBestAvailable]
+	if pr == nil || pr.HasError() || ba == nil || ba.HasError() {
+		return 0, 0
+	}
+	producer := func(l map[string]string) string { return l["plugin_name"] + "/" + l["endpoint_role"] }
+	bestBy := map[string]float64{}
+	for _, v := range readableValues(ba) {
+		bestBy[producer(v.Labels)] += v.Value
+	}
+	predBy := map[string]float64{}
+	for _, v := range readableValues(pr) {
+		predBy[producer(v.Labels)] += v.Value
+	}
+	var pick string
+	for p, r := range predBy {
+		if r > predicted || (r == predicted && r > 0 && p < pick) {
+			pick, predicted = p, r
+		}
+	}
+	best = bestBy[pick]
+	if !(predicted > 0) || !(best >= predicted) {
+		return 0, 0
+	}
+	return predicted, best
+}
+
 // onlyModel says result, a router series grouped by model, names modelID
 // and no other model.
 func onlyModel(result *source.MetricResult, modelID string) bool {
@@ -154,7 +194,8 @@ func routerQueryType(query string) string {
 	switch query {
 	case registration.QuerySLORouterTPOTBuckets, registration.QueryFlowControlWaitBuckets,
 		registration.QuerySLORouterProcessingBuckets, registration.QuerySLORouterProcessingSum,
-		registration.QuerySLORouterProcessingCount:
+		registration.QuerySLORouterProcessingCount, registration.QuerySLORouterPrefixPredicted,
+		registration.QuerySLORouterPrefixBestAvailable:
 		return constants.QueryTypeLearnerRecording
 	case registration.QuerySLORouterTTFTSum, registration.QuerySLORouterTTFTCount:
 		return constants.QueryTypeTTFTInputs
