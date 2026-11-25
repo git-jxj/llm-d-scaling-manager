@@ -192,6 +192,16 @@ capacity-planner replicas-to-slo --recording run.jsonl.gz --prefill 2 --decode 2
   --assume-prompt-cv 0.0577 --arrival-cv2 1 --flow-control off
 ```
 
+**A backtest prices each step at its own output spread.** The spread of
+output lengths sets the KV a running request holds. By default a backtest
+step is priced at the spread its own decode pods' output-length histograms
+read, as it already is at its own lengths; a step that read none keeps the
+fit's. Before, every step took the spread the fit read in its last minutes.
+On the 0.6B staircase, whose warm-ups end on a few minutes of short outputs,
+the predicted decode KV fill on the 1000/1000 phases fell from 1.87 to 1.59
+times what the pods held, and on the Qwen3-32B A-off phase from 1.19 to
+1.05. No backtest figure newly read more than 20% under what was measured.
+
 ## Never validated
 
 These always read `OUTSIDE VALIDATED REGION`:
@@ -244,15 +254,22 @@ With fewer than four steps under 0.9, the two fits read every step; with
 fewer than five steps whose ranks carried a request a second, the shares are
 the fit window's mean. The model's `assumed` line says which it priced.
 
-`--rank-mixture-stratified` (`rankMixtureStratified`, off by default) fixes
-how the draws read each rank's service. Without it, each rank's mean service
-and its spread come from that rank's own few hundred random draws. On a
+**Each rank's service is read from the histogram, by default.** The mean
+service and its spread are read once from the computed-token histogram
+itself, and each rank draws one request per equal slice of it. The older
+way read them from each rank's own few hundred random draws. On a
 computed-token histogram with a long tail (a few requests compute a whole
 uncached prompt), whether those draws catch the tail is chance, and a figure
-moves by several percent with the seed. With the switch, the mean and the
-spread are read once from the histogram itself, and each rank draws one
-request per equal slice of it, so a figure moves far less with the seed. The two switches are
-independent: either, both or neither can be on.
+moved by several percent with the seed. On a production P/D recording,
+priced with three seeds, a step's figure moved by a median 2.4 to 2.9 % and
+at most 12 to 17 % the older way, and by 0.5 to 1.0 % and at most 1.2 to
+2.6 % this way. The median ratios to measured did not move.
+
+To price the older way, set `--rank-mixture-stratified=false` on
+`backtest`, `at-replicas` or `serve`, or send `rankMixtureStratified` false
+in the request. The backtest's `rankMixture.stratified` says which way it
+priced. The two switches are independent: `--rank-mixture-fit-steps` can
+be on or off either way.
 
 The model prices only what its inputs identify. It abstains on the whole backtest where:
 - a prompt slope is not identified;

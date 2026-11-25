@@ -336,9 +336,11 @@ type BacktestRequest struct {
 	// RankMixtureStratified prices the rank mixture with stratified service
 	// moments (whatif.RankMixtureOptions.StratifiedMoments): each rank's
 	// mean service and cs^2 integrated over the computed-token law, not
-	// from its own draws. Off by default; read only with TTFTModel
+	// from its own draws. Absent, the server's default (on, unless the
+	// server was started with --rank-mixture-stratified=false); false
+	// reads them from each rank's own draws. Read only with TTFTModel
 	// rank-mixture.
-	RankMixtureStratified bool `json:"rankMixtureStratified,omitempty"`
+	RankMixtureStratified *bool `json:"rankMixtureStratified,omitempty"`
 	// RankMixtureKVHold reads the KV-deferral lines no further than the
 	// fit window's 95th percentile rank utilization, held past it, not
 	// extrapolated (whatif.RankMixtureOptions.KVHold). Off by default;
@@ -497,6 +499,12 @@ type BacktestStep struct {
 	// Target is the TTFT target judged, predicted and measured: met,
 	// missed or unknown.
 	Target *BacktestJudged `json:"target,omitempty"`
+	// BatchBeyondFit is the batch the step's decode runs past the most the
+	// fit's ITL line rows held (flag BatchBeyondFit): its mean TPOT's, or,
+	// on a step past the decode knee, the knee's, where the TPOT is refused.
+	// Its TPOT may read low and the decode knee high. Absent where the batch
+	// is inside the fit's.
+	BatchBeyondFit *BatchBeyondFit `json:"batchBeyondFit,omitempty"`
 }
 
 // BacktestPoint is one statistic of a step: the prediction (with the
@@ -689,6 +697,10 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 	}
 	if req.TPOTModel == "" {
 		req.TPOTModel = s.tpotModel
+	}
+	if req.RankMixtureStratified == nil {
+		on := s.stratified()
+		req.RankMixtureStratified = &on
 	}
 	test, ok := s.inputs.get(req.InputsID)
 	if !ok {
@@ -1401,6 +1413,9 @@ func (q *backtestQuestion) finish(out *BacktestResponse) {
 	out.VerdictLines, out.Excluded = verdictOf(out, q.step)
 	out.Verdict = strings.Join(out.VerdictLines, " ")
 	out.Notes = append(out.Notes, backtestNotes(q)...)
+	if n := batchBeyondFitNote(out.Steps); n != "" {
+		out.Notes = append(out.Notes, n)
+	}
 	if q.mixture != nil {
 		r := q.mixture.report
 		out.RankMixture = &r
@@ -1421,8 +1436,10 @@ func (q *backtestQuestion) finish(out *BacktestResponse) {
 		Allowed      bool
 	}{q.fitID(), q.test.id, q.cutoff, q.step, q.settle, q.source, q.target, q.cv2, q.assume, q.config.Allowed})
 	if q.mixture != nil {
-		out.BacktestID = contentID("backtest", struct{ ID, Model, Assumed, Abstained string }{out.BacktestID, q.mixture.report.Model,
-			q.mixture.report.Assumed, q.mixture.report.Abstained})
+		out.BacktestID = contentID("backtest", struct {
+			ID, Model, Assumed, Abstained string
+			Stratified                    bool
+		}{out.BacktestID, q.mixture.report.Model, q.mixture.report.Assumed, q.mixture.report.Abstained, q.mixture.report.Stratified})
 	}
 	if q.tpotDist != nil {
 		out.BacktestID = contentID("backtest", struct{ ID, TPOTModel, Assumed, Abstained string }{out.BacktestID, q.tpotDist.report.Model,
@@ -1637,6 +1654,7 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		out.TTFT = append(out.TTFT, predictedPoint(q, pred.ttft[i], pred.ttftBound[i]))
 		out.TPOT = append(out.TPOT, predictedPoint(q, pred.tpot[i], pred.tpotBound[i]))
 	}
+	out.BatchBeyondFit = pred.beyondFit
 	return out
 }
 
@@ -1851,6 +1869,9 @@ type prediction struct {
 	// promptCV is the prompt spread priced, and ca2 the arrivals' (1 for
 	// random arrivals).
 	promptCV, ca2 float64
+	// beyondFit is the batch the step's decode runs past its line's fit
+	// (BacktestStep.BatchBeyondFit), nil inside it.
+	beyondFit *BatchBeyondFit
 }
 
 // predict prices one step at each statistic: the TTFT as a report's table
@@ -1925,6 +1946,9 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 			kneeShare = shareOf(in.rate, v)
 		}
 		pf = validate(pf, kind, q, class, kneeShare)
+		if q == 0 {
+			out.beyondFit = stepBeyondFit(pf, fl.DecodeKnee(), in.rate)
+		}
 		var pb *float64
 		if pf.Value != nil && pf.Band != nil {
 			pb = ptr(max(*pf.Value, pf.Band.Hi))
@@ -1960,6 +1984,54 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		out.tpot, out.tpotBound = append(out.tpot, pf), append(out.tpotBound, pb)
 	}
 	return out, nil
+}
+
+// stepBeyondFit is a step's batch past its decode line's fit: the mean TPOT's
+// (mean), or, where the step's rate is at or past the decode knee and the
+// TPOT is refused, the knee's, priced at the batch the knee runs. Nil inside
+// the fit's batch.
+func stepBeyondFit(mean Figure, knee whatif.Result, rate float64) *BatchBeyondFit {
+	if b := mean.BatchBeyondFit; b != nil {
+		c := *b
+		return &c
+	}
+	k, ok := knee.(whatif.Answer)
+	if !ok || mean.Refused == nil || k.Basis.Batch == nil || rate < k.Value {
+		return nil
+	}
+	b := k.Basis.Batch
+	return &BatchBeyondFit{Priced: b.Priced, Fitted: b.Fitted, Ranks: b.Ranks}
+}
+
+// batchBeyondFitNote is the note a backtest adds where steps ran past the
+// batch the fit's decode line was fitted on (BacktestStep.BatchBeyondFit):
+// which, and the batches; "" with none.
+func batchBeyondFitNote(steps []BacktestStep) string {
+	var at []string
+	var fitted, lo, hi int64
+	ranks := 0
+	for _, s := range steps {
+		b := s.BatchBeyondFit
+		if b == nil || s.Excluded != "" {
+			continue
+		}
+		at = append(at, s.Start.UTC().Format("15:04"))
+		fitted, ranks = b.Fitted, b.Ranks
+		if lo == 0 || b.Priced < lo {
+			lo = b.Priced
+		}
+		hi = max(hi, b.Priced)
+	}
+	if len(at) == 0 {
+		return ""
+	}
+	runs := fmt.Sprintf("about %d", lo)
+	if hi != lo {
+		runs = fmt.Sprintf("about %d to %d", lo, hi)
+	}
+	return fmt.Sprintf("BatchBeyondFit on %d judged steps (%s): the decode line was fitted on up to %d sequences %s; these steps run %s, "+
+		"so TPOT may read low and the decode knee high. The figures are priced all the same.", len(at), strings.Join(at, ", "), fitted,
+		whatif.BatchUnit(ranks), runs)
 }
 
 // measured is one step's measured figures at each statistic of

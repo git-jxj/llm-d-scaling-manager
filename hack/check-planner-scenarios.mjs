@@ -46,7 +46,7 @@ check("esc of a number", esc(5) === "5");
 
 // linkProblem: every link linkParams writes is admitted ...
 const good = "recording=run.jsonl.gz&cycle=3&model=m&prefillVariant=p&decodeVariant=d&prefill=2&decode=1&rate=6.5&ttftStat=p90&ttft=0.8" +
-  "&tpotStat=mean&tpot=0.05&ratio=1.3&headroom=0.85&priceAs=1k&out=1000&vp=30000&a=0.02&promptCV=1.2&routerHop=0.003&perBucket=1";
+  "&tpotStat=mean&tpot=0.05&ratio=1.3&headroom=0.85&priceAs=1k&out=1000&vp=30000&a=0.02&promptCV=1.2&routerHop=0.003&loadAwareRouter=1&perBucket=1";
 for (const link of [good, "namespace=llm&headroom=0.85", "namespace=llm&mode=size&max=40&low=1&rate=2&headroom=0.85",
   "recording=r.jsonl.gz&ttftStat=p99.9&ttft=1"]) {
   check(`admits ${link.slice(0, 50)}`, linkProblem(link) === "", linkProblem(link));
@@ -66,6 +66,8 @@ for (const [link, want] of [
   ["recording=r&ttftStat=max", "ttftStat cannot be"],
   ["recording=r&mode=plan", "mode cannot be"],
   ["recording=r&low=true", "low cannot be"],
+  ["recording=r&loadAwareRouter=true", "loadAwareRouter cannot be"],
+  ["recording=r&loadAwareRouter=0", "loadAwareRouter cannot be"],
   ["recording=r&model=", "model is not a name"],
   ["recording=r&model=a%0Db", "model is not a name"],
   ["recording=r&model=" + "m".repeat(254), "model is not a name"],
@@ -816,7 +818,7 @@ if (failures.length) {
 }
 // EXPECTED_CASES is how many cases this file runs: a case that silently
 // stops running (an early return, a renamed function) fails the check.
-const EXPECTED_CASES = 382;
+const EXPECTED_CASES = 384;
 if (passed !== EXPECTED_CASES) {
   console.error(`check-planner-scenarios: ${passed} cases ran; expected ${EXPECTED_CASES}`);
   process.exit(1);

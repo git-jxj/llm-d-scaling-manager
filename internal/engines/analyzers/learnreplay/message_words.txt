@@ -49,6 +49,7 @@
 /bin/bash
 /bin/sh
 /bridge
+/etc/scaling-manager-prometheus-ca/ca.crt
 /mu
 /tmp
 /tmp/
@@ -258,6 +259,7 @@ LEARNED_STATE_BUCKET_RETENTION
 LEARNED_STATE_EPISODE_GAP
 LEARNED_STATE_SNAPSHOT
 LEARNED_STATE_VARIANT_TIMEOUT
+LLMSM_KEDA_NAMESPACE
 LLMSM_LIMITED_MODE
 LLMSM_LIMITER
 LLMSM_PASSIVE
@@ -455,6 +457,7 @@ ScaledObject
 Scaling
 ScalingPolicy
 Seconds
+Secret
 Selected
 Seq
 Set
@@ -532,6 +535,7 @@ Variant
 Variants
 WARNING
 WATCH_NAMESPACE
+WATCH_NAMESPACES_LIVE
 WEBHOOK_CERT_KEY
 WEBHOOK_CERT_NAME
 WEBHOOK_CERT_PATH
@@ -823,6 +827,7 @@ by
 byRole
 bytes
 c
+caFromSecret
 cache
 cacheKey.name
 cacheKey.namespace
@@ -1148,6 +1153,7 @@ dropped
 droppedRoles
 droppedTokens
 dropping
+dsetRoleWriter
 dtype
 duplicate
 duration
@@ -1704,6 +1710,8 @@ kPrice
 kSpread
 kSpreadOverThreshold
 kSpreadThreshold
+keda-namespace
+kedaNamespace
 keep
 keeping
 keeps
@@ -2097,6 +2105,7 @@ mori
 most
 mostly
 mount
+mounted
 move
 moved
 moves
@@ -2165,6 +2174,7 @@ namespaceDefault
 namespacePools
 namespaceQuotas
 namespaceScoped
+namespaceSelector
 namespaces
 nan
 narrow
@@ -2926,6 +2936,7 @@ scaling-manager-learned-state
 scaling-manager-managed
 scaling-manager-manager-config
 scaling-manager-policy
+scaling-manager-prometheus-ca
 scaling-manager-scaling-policy-config
 scaling-manager-settings
 scaling-manager-system
@@ -2947,6 +2958,7 @@ scrape
 scrapeError
 scraped
 second
+seconds
 see
 seed
 seeds
@@ -3093,6 +3105,7 @@ slo-ttft-processor-sharing
 slo-ttft-prompt-support
 slo-ttft-ps-by-engine
 slo-ttft-ps-onsets
+slo-ttft-pull-work
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
 slo-ttft-sizes-prefill
@@ -3629,6 +3642,7 @@ was
 wasLifted
 watch
 watch-namespace
+watch-namespaces-live
 watchNamespace
 watchNamespaces
 way

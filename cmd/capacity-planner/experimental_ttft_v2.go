@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -32,6 +33,53 @@ const experimentalTTFTV2NLLine = "v2nl-line"
 const experimentalTTFTV2Usage = experimentalTTFTUsage + ". On backtest, =v2 instead prices TTFT with an experimental model: limited " +
 	"processor sharing per prefill rank, mixed over the ranks' measured traffic shares, with a fitted KV-deferral wait and a cost per " +
 	"prompt token, fitted on the fit window; every TTFT it prices is flagged RankMixtureTTFT and reads OUTSIDE VALIDATED REGION"
+
+// rankMixtureStratifiedFlag is the switch that prices the rank mixture with
+// stratified service moments (whatif.DefaultRankMixtureStratified), on by
+// default wherever =v2 prices.
+const rankMixtureStratifiedFlag = "rank-mixture-stratified"
+
+// rankMixtureStratifiedUsage is its help, the same on every command.
+const rankMixtureStratifiedUsage = "with --experimental-ttft=v2, read each prefill rank's mean service and its spread from the " +
+	"computed-token histogram itself, not from the rank's own random draws, so a figure moves far less with the draws; " +
+	"on by default, =false reads them from the draws"
+
+// optionalBool is a boolean flag that is nil until it is given, so that a
+// flags struct's zero value is the default (def), whatever it is: the
+// caller reads nil as def.
+type optionalBool struct {
+	p   **bool
+	def bool
+}
+
+// String is the value, def where none was given.
+func (v optionalBool) String() string {
+	if v.p == nil || *v.p == nil {
+		return strconv.FormatBool(v.def)
+	}
+	return strconv.FormatBool(**v.p)
+}
+
+// Set reads one value.
+func (v optionalBool) Set(s string) error {
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return err
+	}
+	*v.p = &b
+	return nil
+}
+
+// IsBoolFlag lets the flag stand without a value: alone it is true.
+func (v optionalBool) IsBoolFlag() bool { return true }
+
+// stratifiedOr is a --rank-mixture-stratified given, or the default.
+func stratifiedOr(given *bool) bool {
+	if given == nil {
+		return whatif.DefaultRankMixtureStratified
+	}
+	return *given
+}
 
 // experimentalTTFTValue is --experimental-ttft where it also takes =v2: alone,
 // true or v1 it sets *switches (the TTFT model's switches), v2 sets *v2,
@@ -159,7 +207,7 @@ func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.Rep
 		return err
 	}
 	if f.rankMixtureTTFT {
-		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q)
+		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q, stratifiedOr(f.rankMixtureStratified))
 	}
 	if f.tpotDistribution {
 		rep.TPOTModel = whatifapi.ApplyTPOTModel(res, rep, q)

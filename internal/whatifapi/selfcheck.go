@@ -210,7 +210,8 @@ func (st *Stated) outside() bool {
 		return false
 	}
 	a := st.Assume
-	return st.Outside || a.VP != nil || a.A != nil || a.RouterHop != nil || a.ITLB != nil || a.ITLBFromFloor || routerWaitOutside(a.RouterWait)
+	return st.Outside || a.VP != nil || a.A != nil || a.RouterHop != nil || a.ITLB != nil || a.ITLBFromFloor || routerWaitOutside(a.RouterWait) ||
+		a.LoadAwareRouter
 }
 
 // routerWaitOutside says an Assume.RouterWait puts a figure outside, as the
@@ -298,6 +299,13 @@ func (st *Stated) words(a Assume, cv2 *float64, prompt, output float64) []string
 		out = append(out, "--price-router-wait")
 	default:
 		out = append(out, "--router-wait-in-prefill=false --price-router-wait=false")
+	}
+	switch {
+	case !a.LoadAwareRouter:
+	case st.CLI:
+		out = append(out, "--load-aware-router")
+	default:
+		out = append(out, "assume.loadAwareRouter")
 	}
 	arrivalKey := st.arrivalKey
 	if arrivalKey == "" {
