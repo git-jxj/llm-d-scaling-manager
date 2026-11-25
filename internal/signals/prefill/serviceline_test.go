@@ -185,3 +185,22 @@ func TestServiceLine_ALowerBoundStandsOnlyAboveTheLine(t *testing.T) {
 	assert.InDelta(t, line*2, above.VP, 1e-6)
 	assert.InDelta(t, line, above.VPLine, 1e-6)
 }
+
+// A lower bound the window kept from a peak Retention aged out carries the
+// minute it was read (VPLearnedAt); the line that replaces it is read now,
+// and carries none.
+func TestServiceLine_ReplacesAWindowPeakWithItsAge(t *testing.T) {
+	line := 2500 / (0.25 + 2500.0/20000)
+	var cycles []Cycle
+	for i := range PeakRun {
+		cycles = append(cycles, cycle(t0.Add(minute*time.Duration(i)), queued("p-0", line/2, 2)))
+	}
+	cycles = append(cycles, lineCycles(true, spread(int(Retention/minute)+40, 0.25, 20000, 1)...)...)
+	for i := range cycles {
+		cycles[i].Now = t0.Add(minute * time.Duration(i))
+		cycles[i].VPWindowBest, cycles[i].VPServiceLine = true, true
+	}
+	est := run(NewObserver(), cycles...)
+	require.Equal(t, SourceServiceLine, est.VPSource, "%+v", est)
+	assert.True(t, est.VPLearnedAt.IsZero(), "the line is read now: %v", est.VPLearnedAt)
+}

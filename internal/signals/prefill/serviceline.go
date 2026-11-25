@@ -3,6 +3,7 @@ package prefill
 import (
 	"math"
 	"slices"
+	"time"
 )
 
 // V_P from the prefill service line (Cycle.VPServiceLine; issues
@@ -149,6 +150,8 @@ func (est *Estimate) lineFill(ks *keyState) {
 	}
 	est.VP, est.VPSource, est.VPRefused, est.VPSamples = ln.vp, SourceServiceLine, "", ln.minutes
 	est.VPLowerBound, est.VPLowerBoundReason, est.VPFlooredAtServed = false, "", false
+	// Read now, not from an earlier peak in the window (capacity.go).
+	est.VPLearnedAt = time.Time{}
 	est.VPPromptTokens, est.VPWholePromptTokens, est.VPPromptHitRate = ln.prompt, ln.whole, ln.hit
 	est.VPPromptLow, est.VPPromptHigh = ln.lo, ln.hi
 }
