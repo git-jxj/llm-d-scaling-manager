@@ -1270,6 +1270,7 @@ external
 externalClusterQuotas
 externalNamespaceQuotas
 external_unspecified
+extrapolated
 f
 fAtPods
 fPods
@@ -1979,6 +1980,7 @@ lowerBound
 lowerBounds
 lowered
 lowering
+lowers
 m
 m-prefill
 m_d
@@ -2385,6 +2387,7 @@ p1
 p10-p90
 p2p
 p90
+p95
 p_d
 packing
 page_size
@@ -2760,6 +2763,7 @@ reports
 republishing
 request
 request-arrival
+request-processing
 requestCount
 requestRate
 requestedBucketRetention

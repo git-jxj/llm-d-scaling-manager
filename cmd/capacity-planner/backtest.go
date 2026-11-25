@@ -74,6 +74,11 @@ type backtestFlags struct {
 	// mixture's variant with Z measured part by part
 	// (whatif.QueueRankMixtureNLLine).
 	rankMixtureNLLine bool
+	// rankMixtureKVHold and rankMixtureRemainderSpread are
+	// --rank-mixture-kv-hold and --rank-mixture-remainder-spread, the
+	// variant's modes (whatifapi.BacktestRequest RankMixtureKVHold and
+	// RankMixtureRemainderSpread).
+	rankMixtureKVHold, rankMixtureRemainderSpread bool
 	// experimentalTPOT is --experimental-tpot (experimental_tpot.go),
 	// backtest's only.
 	experimentalTPOT string
@@ -137,6 +142,12 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.BoolVar(&f.rankMixtureFitSteps, "rank-mixture-fit-steps", false, "with --experimental-ttft=v2, fit the KV-deferral lines and "+
 		"the prompt slopes only on steps whose busiest prefill rank is under utilization 0.9, and read the ranks' shares at the "+
 		"priced load (the fit steps of nearest rate) instead of the fit window's mean; off by default")
+	fs.BoolVar(&f.rankMixtureKVHold, "rank-mixture-kv-hold", false, "with --experimental-ttft=v2nl-line, read the fitted "+
+		"KV-deferral wait no further than the fit window's 95th percentile rank utilization: held past it, not extrapolated; "+
+		"off by default")
+	fs.BoolVar(&f.rankMixtureRemainderSpread, "rank-mixture-remainder-spread", false, "with --experimental-ttft=v2nl-line, draw "+
+		"the router's remainder from the router's measured request-processing time where the fit window recorded it "+
+		"(its line where not, as off); off by default")
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage)
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
@@ -149,6 +160,15 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	}
 	if f.rankMixtureFitSteps && !f.rankMixtureTTFT {
 		return usagef("--rank-mixture-fit-steps changes the fit of the rank mixture: give it with --experimental-ttft=v2")
+	}
+	if (f.rankMixtureKVHold || f.rankMixtureRemainderSpread) && !f.rankMixtureNLLine {
+		return usagef("--rank-mixture-kv-hold and --rank-mixture-remainder-spread are modes of the rank mixture's variant: " +
+			"give them with --experimental-ttft=v2nl-line")
+	}
+	if f.rankMixtureKVHold && !f.rankMixtureRemainderSpread {
+		fmt.Fprintln(warn, "capacity-planner: warning: --rank-mixture-kv-hold without --rank-mixture-remainder-spread: "+
+			"held alone it lowers every step priced past the hold, and on a production recording it read one more mean "+
+			"under measured; the two together did not, so give both")
 	}
 	ctrllog.SetLogger(logr.Discard())
 	req, err := f.request()
@@ -272,6 +292,7 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 	}
 	req.RankMixtureFitSteps = f.rankMixtureFitSteps
 	req.RankMixtureStratified = f.rankMixtureStratified
+	req.RankMixtureKVHold, req.RankMixtureRemainderSpread = f.rankMixtureKVHold, f.rankMixtureRemainderSpread
 	if err := withRankMixture(testPath, test, nil); err != nil {
 		return err
 	}

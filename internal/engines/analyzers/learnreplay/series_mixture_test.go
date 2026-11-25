@@ -1,6 +1,7 @@
 package learnreplay
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -55,10 +56,36 @@ func TestMixtureCycleOf_RanksFromEnginesOrSplitEvenly(t *testing.T) {
 	assert.Equal(t, map[float64]float64{0.3: 2.5, 1: 3}, c.Queue)
 	assert.InDelta(t, (3*1.5+4*1.0)/7, c.PrefillTTFT, 1e-12)
 	assert.Equal(t, 0.4, c.DecodeTTFT, "d1 only")
+	assert.Nil(t, c.RouterProcessingHist, "no router latency recorded")
+	assert.Zero(t, c.RouterProcessingMean)
 	// A group with an engine whose rate was not recorded is split evenly.
 	group.GroupEngines[1].RequestRateKnown = false
 	c = mixtureCycleOf(seriesInput(7, group), at, SeriesVariants{})
 	require.Len(t, c.Ranks, 2)
 	assert.Equal(t, 1.5, c.Ranks[0].Rate)
 	assert.Equal(t, 2, c.EvenWithinRows)
+}
+
+// The router's request-processing histogram and mean are the cycle's
+// router latency's: the histogram bound to rate, the mean its _sum over its
+// _count. A cycle with none, or with no count, reads none.
+func TestMixtureCycleOf_RouterProcessing(t *testing.T) {
+	at := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	in := seriesInput(7)
+	in.RouterLatency = &domain.RouterLatency{WindowSeconds: 300,
+		ProcessingBuckets: []domain.LatencyBucket{{UpperBound: 0.05, Rate: 1.5}, {UpperBound: math.Inf(1), Rate: 2.5}},
+		ProcessingSumRate: 0.25, ProcessingCountRate: 2.5}
+	c := mixtureCycleOf(in, at, SeriesVariants{})
+	assert.Equal(t, map[float64]float64{0.05: 1.5, math.Inf(1): 2.5}, c.RouterProcessingHist)
+	assert.InDelta(t, 0.1, c.RouterProcessingMean, 1e-12)
+
+	in.RouterLatency.ProcessingSumRate, in.RouterLatency.ProcessingCountRate = 0, 0
+	c = mixtureCycleOf(in, at, SeriesVariants{})
+	assert.NotNil(t, c.RouterProcessingHist, "the histogram stands without its mean")
+	assert.Zero(t, c.RouterProcessingMean)
+
+	in.RouterLatency = &domain.RouterLatency{WindowSeconds: 300, TPOTSumRate: 1, TPOTCountRate: 2}
+	c = mixtureCycleOf(in, at, SeriesVariants{})
+	assert.Nil(t, c.RouterProcessingHist, "a recording made before the series was recorded")
+	assert.Zero(t, c.RouterProcessingMean)
 }

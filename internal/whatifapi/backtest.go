@@ -341,6 +341,17 @@ type BacktestRequest struct {
 	// reads them from each rank's own draws. Read only with TTFTModel
 	// rank-mixture.
 	RankMixtureStratified *bool `json:"rankMixtureStratified,omitempty"`
+	// RankMixtureKVHold reads the KV-deferral lines no further than the
+	// fit window's 95th percentile rank utilization, held past it, not
+	// extrapolated (whatif.RankMixtureOptions.KVHold). Off by default;
+	// only with TTFTModel rank-mixture-nl-line.
+	RankMixtureKVHold bool `json:"rankMixtureKVHold,omitempty"`
+	// RankMixtureRemainderSpread draws the router's remainder from the
+	// router's measured request-processing time, where the fit window
+	// recorded it (whatif.RankMixtureOptions.RemainderSpread); without it
+	// the remainder is its line, as off, and the assumed line says so. Off
+	// by default; only with TTFTModel rank-mixture-nl-line.
+	RankMixtureRemainderSpread bool `json:"rankMixtureRemainderSpread,omitempty"`
 	// PrefillSlots is the prefill engine's max-num-seqs, read by
 	// TTFTModel's limited-PS check; 0 not known.
 	PrefillSlots int `json:"prefillSlots,omitempty"`
@@ -1087,6 +1098,10 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	if q.cv2 == nil {
 		q.assumed = append(q.assumed, "random (Poisson) arrivals: the recording does not measure how bursty arrivals are; "+
 			"state it with --arrival-cv2 (arrivalCV2) when known")
+	}
+	if (req.RankMixtureKVHold || req.RankMixtureRemainderSpread) && req.TTFTModel != string(whatif.QueueRankMixtureNLLine) {
+		return nil, InputErrorf("rankMixtureKVHold and rankMixtureRemainderSpread are modes of ttftModel %q: give them with that model",
+			whatif.QueueRankMixtureNLLine)
 	}
 	switch req.TTFTModel {
 	case "":

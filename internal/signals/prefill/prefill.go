@@ -372,6 +372,15 @@ type Estimate struct {
 	// outside them it is not the capacity there, in either direction (issue
 	// llm-d-incubation/llm-d-scaling-manager#405).
 	VPPromptLow, VPPromptHigh float64
+	// VPRequestSeconds is the part of a request's work on one pod that does
+	// not grow with its prompt, in pod-seconds (an engine rank's
+	// per-request occupancy over the pod's ranks), where the source V_P came
+	// from measured it beside the per-token part: at VPPromptTokens the
+	// request's work is VPPromptTokens/VP, and VPRequestSeconds of it is
+	// paid whatever the prompt. Zero is not measured, and V_P is then priced
+	// as one token rate at every prompt, as before
+	// (whatif.Prefill.VPRequestSeconds).
+	VPRequestSeconds float64
 
 	// A is the fixed latency in seconds: the low-load fit's intercept plus
 	// the least overhead (AvgTTFT - AvgServiceTime) seen at low load, the

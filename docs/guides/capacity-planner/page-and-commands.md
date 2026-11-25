@@ -251,9 +251,21 @@ The `kvPerRequest` term says where its figure came from:
 A source that did not see enough load cannot learn every term, and the page
 then shows refusals instead of numbers. Open **Assume a term the source did
 not learn**, above the tabs, and type a value: the prefill rate V_P, the fixed latency a, the
-prompt cv, the router hop, or decode's ITL B. The learned value, or the reason
-it is missing, is shown under each box. A typed value flags every figure that
-rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
+prompt cv, the router hop, or decode's ITL B. A refused term's box is empty,
+with the reason under it. A typed value flags every figure that rests on it.
+[Each reason and its fix](troubleshooting.md#refused-figures).
+
+A box whose value the source learned shows that value, muted and tagged
+**learned**: the boxes above, the output length (the observed one) and R_q
+(the one the plan priced, at a percentile TPOT). A learned value is not an
+assumption: the page does not send it, the server uses its own, and no figure
+is flagged for it. Edit the box and the value is yours: tagged **assumed**,
+sent, and flagged, as before; **Use learned** beside it puts the learned value
+back. Emptying the box, or typing the learned value, does the same. A V_P
+learned from the served peak is tagged **lower bound**: the note says the real
+speed is likely higher, and prefill is not sized until you type a V_P (that
+value too, typed, is yours). A link or a saved scenario that carries a value keeps
+it as an assumption.
 
 The box opens by itself when a term is refused, and when V_P is only a lower
 bound: the prefill pods never queued, so the source saw their load, not their
@@ -448,8 +460,11 @@ In a cluster, add both to the StatefulSet's `args`
   them (a prefill that never queued). See
   [The v2 TTFT curve](#the-v2-ttft-curve). Sizes follow, from the model's
   prefill limit. With `--experimental-tpot=v2` the main view's TPOT p90
-  and p95 too: see [The v2 TPOT curve](#the-v2-tpot-curve). Day plans and
-  predictions are the default's. `=v2` does not turn
+  and p95 too: see [The v2 TPOT curve](#the-v2-tpot-curve). A day plan
+  prices with them too when asked: the page asks whenever the loaded inputs
+  carry a model, so the day plan matches the Answer view (see
+  [Plan replicas over a day](#plan-replicas-over-a-day)). Predictions are
+  the default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
@@ -515,8 +530,8 @@ In a cluster, add both to the StatefulSet's `args`
   or p95 target: the rate whose mean meets the target over that ratio. A
   size at such a target sizes decode on it. The report's measured-shape
   table prices its TPOT percentile the same way. The report's verdict,
-  capacity and summary cells stay the planner's own. Day plans do not use
-  it.
+  capacity and summary cells stay the planner's own. A day plan asked for
+  the experimental models sizes decode on it.
 - **Solid, then dashed.** As the TTFT curve: solid up to the highest load
   the source served, per decode replica, and dashed beyond it. Each figure
   past that load carries `extrapolated` true, a size's steps among them.
@@ -950,6 +965,40 @@ headroom, a length or an assumed term above the tabs and a plan on screen
 plans again; on another tab it dims, with a note naming the targets it used,
 and plans again when you open it.
 
+**With the experimental models.** On inputs loaded with the experimental
+TTFT or TPOT model (a server started with `--experimental-ttft=v2` or
+`--experimental-tpot=v2`), the page plans the day with them, as the Answer
+view prices with them; from the command line, `day-plan
+--experimental-ttft=v2 --experimental-tpot=v2` fits them on the
+`--recording`. Where the TTFT model prices a TTFT the planner refuses (a
+prefill that never queued), prefill is sized on it. A bucket a model sized
+carries its flag (`RankMixtureTTFT`, `TPOTDistribution`) on its limit, its
+needed replicas are marked † on the page and in the command's hours table,
+and the plan names each model, with how many buckets it priced. The models
+are fitted at the window's request shape, so where one prices a target the
+plan asks, each bucket is priced at its own rate but at the window's shape, flagged `WindowShape`, and a note
+says that per-bucket shape changes are not modelled: a bucket of longer or
+shorter requests than the day's is sized as if they were the day's. A stated
+shape or term stays the planner's own. The TPOT model prices a p90 or p95
+TPOT target, not the mean. The plan's notes
+say, for each model, why each bucket it did not price is the planner's. On
+a window under 12 hours a model abstains, the plan says so, and every figure
+is the planner's own. Not validated: every figure a model sets reads
+OUTSIDE VALIDATED REGION.
+
+Each bucket is sized on its own, so a day of 5-minute buckets (289) takes
+minutes. While a plan runs, the Day plan tab says so: how many buckets, when
+it started and the seconds since, with **Cancel**, which stops the request
+and frees **Plan the day**. The server reports no share done, so the time is
+all it shows. One plan runs at a time: opening the tab again shows the one
+running, and a plan you cancelled is not asked again until a knob changes.
+Loading new inputs cancels a plan still running.
+The **Bucket** starts at 5 minutes, the server's default, or at 15 minutes or
+an hour where the window would otherwise cut into more than 300 buckets; pick
+another to plan finer. A bucket you pick stays when you load again, unless
+the new window would cut it into more than the 3000 buckets the server
+sizes.
+
 From the command line, on the sample recording (about an hour, so two hours
 in the table):
 
@@ -1024,7 +1073,7 @@ alone. A higher `--ttft` sizes them.
   held ahead, and a note says so.
 - **Shape.** Each bucket is priced at its own observed prompt and output
   length. A bucket whose cycles read none is priced at the source's shape and
-  flagged `WindowShape`. `--assume-input-tokens` and `--assume-output-tokens`
+  flagged `WindowShape`, as is every bucket where an experimental model prices a target the plan asks. `--assume-input-tokens` and `--assume-output-tokens`
   price every bucket at one stated length, flagged `EXTRAPOLATED` when it lies
   outside what the buckets observed.
 - **No TTFT target.** With no `--ttft` and none in the policy, prefill is
