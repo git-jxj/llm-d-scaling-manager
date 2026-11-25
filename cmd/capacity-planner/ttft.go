@@ -1456,7 +1456,7 @@ func (pf *pricedFleet) atServedWork(fl whatif.TTFTFleet) whatif.TTFTFleet {
 	if !ok {
 		return fl
 	}
-	fl.Prefill.VP *= ratio
+	fl.Prefill = fl.Prefill.WithVP(fl.Prefill.VP * ratio)
 	return fl
 }
 
