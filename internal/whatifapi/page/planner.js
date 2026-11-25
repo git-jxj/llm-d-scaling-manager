@@ -714,11 +714,14 @@ function sliderTarget(id, step) {
 // from a twentieth of the lower to ten times the higher, so every position
 // past the floor is one the slider reaches. The number box takes any value.
 // max is set before value: a value set first is clamped to the old range.
+// min is a whole number of steps, and a range snaps its value to min plus
+// whole steps, so a typed 150 stands near 150, not at it: setSlider keeps the
+// target it was put at, so touching the slider without moving it keeps 150.
 function slider(id, v, step, floor) {
   const r = el(id), lo = floor > 0 ? Math.min(v, floor) : v, hi = floor > 0 ? Math.max(v, floor) : v;
   r.step = SLIDER_STEP;
-  r.min = Math.floor(Math.log10(Math.max(step, lo / 20)) / SLIDER_STEP) * SLIDER_STEP;
-  r.max = Math.ceil(Math.log10(hi * 10) / SLIDER_STEP) * SLIDER_STEP;
+  r.min = Number((Math.floor(Math.log10(Math.max(step, lo / 20)) / SLIDER_STEP) * SLIDER_STEP).toFixed(2));
+  r.max = Number((Math.ceil(Math.log10(hi * 10) / SLIDER_STEP) * SLIDER_STEP).toFixed(2));
   setSlider(id, v);
   el(id + "box").value = Number(v.toFixed(step < 1 ? 1 : 0));
 }

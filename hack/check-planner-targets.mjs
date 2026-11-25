@@ -50,17 +50,20 @@ function fakeElement(tag) {
 }
 
 // fakeRange is an <input type="range">: its value reads clamped to min and
-// max as they stand, the browser's value sanitization, with no attribute
-// meaning 0 to 100.
+// max as they stand and snapped to min plus whole steps, the browser's value
+// sanitization, with no attribute meaning 0 to 100 in steps of 1.
 function fakeRange() {
   const e = fakeElement("input");
   let raw = "50";
   e.min = "";
   e.max = "";
+  e.step = "";
   Object.defineProperty(e, "value", {
     get() {
-      const lo = e.min === "" ? 0 : +e.min, hi = e.max === "" ? 100 : +e.max;
-      return String(Math.min(Math.max(+raw, lo), Math.max(lo, hi)));
+      const lo = e.min === "" ? 0 : +e.min, hi = Math.max(lo, e.max === "" ? 100 : +e.max), st = e.step === "" ? 1 : +e.step;
+      let v = lo + Math.round((Math.min(Math.max(+raw, lo), hi) - lo) / st) * st;
+      if (v > hi) v -= st;
+      return String(Number(v.toFixed(9)));
     },
     set(v) { raw = String(v); },
   });
@@ -179,6 +182,19 @@ try {
   // The box rounds the end up a little past it, as the browser does.
   run("fitSlider(\"ttft\", Math.ceil(Math.pow(10, +el(\"ttft\").max)), 1, targetFloor(\"ttft\"))");
   check("the end of the slider does not widen it", el("ttft").max === end, `${end} -> ${el("ttft").max}`);
+
+  // A floor that is no whole number of steps still leaves a typed whole
+  // target whole: the slider touched does not snap 150 to 149.865.
+  run("slider(\"ttft\", 200, 1, 37.3)");
+  el("ttftbox").value = "150";
+  el("ttftbox").onchange();
+  el("ttft").onchange();
+  check("an unaligned floor does not move a typed target", state.k.ttftTarget === 0.15, state.k.ttftTarget);
+  run("slider(\"tpot\", 50, 0.1, 7.3)");
+  el("tpotbox").value = "20.5";
+  el("tpotbox").onchange();
+  el("tpot").onchange();
+  check("an unaligned TPOT floor does not move a typed target", Math.abs(state.k.tpotTarget - 0.0205) < 1e-12, state.k.tpotTarget);
 
   // The day plan: it says the targets it used.
   state.k.ttftTarget = 5;
