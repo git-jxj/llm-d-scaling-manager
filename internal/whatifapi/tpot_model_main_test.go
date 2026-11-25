@@ -3,6 +3,7 @@ package whatifapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"slices"
@@ -433,7 +434,7 @@ func TestMainViewTPOT_SelfCheckPricesWithTheModel(t *testing.T) {
 	assert.Positive(t, on.TPOT.p90Steps, "with it the p90 is the model's, scored")
 }
 
-// A day plan is the default's also on inputs resolved with the
+// Unasked (no ExperimentalModels), a day plan is the default's also on inputs resolved with the
 // experimental TPOT model, alone or beside the TTFT model: its buckets,
 // whose cycles read no lengths, sit at the window's own shape, where the
 // models price, yet every figure, refusal and count is the default's, so
@@ -506,4 +507,109 @@ func TestDayPlan_ExperimentalTPOTModelLeavesTheDayPlanToTheDefault(t *testing.T)
 	sb, eb := both(true)
 	require.NotEqual(t, sized(size(sb0, eb0.id)), sized(size(sb, eb.id)), "the models size the same inputs otherwise")
 	same("ttft+tpot", plan(sb0, eb0), plan(sb, eb))
+}
+
+// A day plan asked for the experimental models prices each bucket at its
+// own rate but at the window's request shape, the one the models were
+// fitted at, even where its cycles read lengths of their own (as a
+// recording's do): every bucket with data is flagged WindowShape, the
+// model prices the buckets it would on a window that read no lengths, need
+// for need, and a note says the per-bucket shape is not modelled. Unasked,
+// each bucket keeps its own shape. A stated shape stays the planner's own,
+// and so does a TPOT target at the mean, which the TPOT model does not
+// price; the note says why for each.
+func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
+	dayPlan := func(s *Server, e *inputsEntry, req DayPlanRequest) (DayPlanResponse, string) {
+		t.Helper()
+		req.InputsID = e.id
+		body, err := s.dayPlan(context.Background(), req)
+		require.NoError(t, err)
+		var out DayPlanResponse
+		require.NoError(t, json.Unmarshal(body, &out))
+		return out, strings.Join(out.Notes, "\n")
+	}
+	ttft := &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}}
+	const windowNote = "each bucket is priced at its own rate but at the window's request shape"
+
+	s, e := mainEntry(t, true)
+	require.True(t, slices.ContainsFunc(e.series, func(x SeriesSample) bool { return x.HasShape }), "the cycles read their lengths")
+	out, text := dayPlan(s, e, DayPlanRequest{ExperimentalModels: true, SLO: ttft})
+	require.Positive(t, out.Summary.Counts.Sized)
+	require.NotNil(t, out.TTFTModel)
+	require.Empty(t, out.TTFTModel.Abstained)
+	assert.Contains(t, text, windowNote)
+	priced := 0
+	for _, b := range out.Buckets {
+		if b.Status == BucketNoData {
+			continue
+		}
+		assert.Contains(t, b.Flags, FlagWindowShape, "the bucket at %s is priced at the window's shape", b.Start)
+		assert.Equal(t, "window", b.Shape.Source)
+		assert.Nil(t, b.Shape.PromptTokens)
+		if b.Limit != nil && slices.Contains(b.Limit.Flags, string(whatif.RankMixtureTTFT)) {
+			priced++
+		}
+	}
+	require.Positive(t, priced, "at the window's shape, the model prices buckets whose cycles read their own")
+	t.Logf("shapes kept: the TTFT model priced %d of the %d sized buckets", priced, out.Summary.Counts.Sized)
+	assert.Contains(t, text, fmt.Sprintf("priced %d of the %d sized buckets", priced, out.Summary.Counts.Sized))
+
+	// Need for need, the plan a window that read no lengths gets.
+	s1, e1 := mainEntry(t, true)
+	for i := range e1.series {
+		e1.series[i].HasShape = false
+	}
+	noShape, _ := dayPlan(s1, e1, DayPlanRequest{ExperimentalModels: true, SLO: ttft})
+	require.Len(t, noShape.Buckets, len(out.Buckets))
+	for i, b := range out.Buckets {
+		assert.Equal(t, noShape.Buckets[i].Needed, b.Needed, "bucket %s", b.Start)
+		assert.Equal(t, noShape.Buckets[i].Limit, b.Limit, "bucket %s", b.Start)
+	}
+	assert.Equal(t, noShape.Summary, out.Summary)
+
+	// Unasked, each bucket is priced at its own shape, as before.
+	plain, plainText := dayPlan(s, e, DayPlanRequest{SLO: ttft})
+	assert.NotContains(t, plainText, windowNote)
+	for _, b := range plain.Buckets {
+		if b.Status != BucketNoData {
+			assert.NotContains(t, b.Flags, FlagWindowShape)
+			assert.Equal(t, "bucket", b.Shape.Source)
+		}
+	}
+
+	// A stated shape keeps today's rule: every bucket at it, the planner's own.
+	stated, text := dayPlan(s, e, DayPlanRequest{ExperimentalModels: true, SLO: ttft, Traffic: &Traffic{Mix: &Mix{PromptTokens: 4000}}})
+	require.Positive(t, stated.Summary.Counts.Sized)
+	assert.NotContains(t, text, windowNote)
+	for _, b := range stated.Buckets {
+		if b.Status != BucketNoData {
+			assert.Equal(t, dayShapeStated, b.Shape.Source)
+			assert.NotContains(t, b.Flags, FlagWindowShape)
+		}
+	}
+	assert.Contains(t, text, fmt.Sprintf("priced 0 of the %d sized buckets", stated.Summary.Counts.Sized))
+	assert.Contains(t, text, fmt.Sprintf("the model prices the source's own request shape, not a stated one (%d)", stated.Summary.Counts.Sized))
+
+	s, e = tpotEntry(t, true, 64)
+	out, text = dayPlan(s, e, DayPlanRequest{ExperimentalModels: true,
+		SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}, TPOT: &Objective{Statistic: "mean", Target: f64(tpotTarget)}}})
+	require.Positive(t, out.Summary.Counts.Sized)
+	require.NotNil(t, out.TPOTModel)
+	require.Empty(t, out.TPOTModel.Abstained)
+	assert.Contains(t, text, fmt.Sprintf("priced 0 of the %d sized buckets", out.Summary.Counts.Sized), "a mean TPOT is the planner's")
+	assert.Contains(t, text, fmt.Sprintf("the model prices p90 and p95, not mean (%d)", out.Summary.Counts.Sized))
+	// A model that prices no target the plan asks buys nothing at the
+	// window's shape: each bucket keeps its own.
+	require.True(t, slices.ContainsFunc(e.series, func(x SeriesSample) bool { return x.HasShape }), "the cycles read their lengths")
+	assert.NotContains(t, text, windowNote)
+	for _, b := range out.Buckets {
+		if b.Status != BucketNoData {
+			assert.Equal(t, "bucket", b.Shape.Source, "bucket %s", b.Start)
+			assert.NotContains(t, b.Flags, FlagWindowShape, "bucket %s", b.Start)
+		}
+	}
+	// At a p90 TPOT target it prices, and the buckets are at the window's.
+	_, text = dayPlan(s, e, DayPlanRequest{ExperimentalModels: true,
+		SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}, TPOT: &Objective{Statistic: "p90", Target: f64(tpotTarget)}}})
+	assert.Contains(t, text, windowNote)
 }

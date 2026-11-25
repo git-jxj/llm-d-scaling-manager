@@ -355,8 +355,8 @@ func ApplyTPOTModel(res *Resolved, out *ReportResponse, q ReportQuery) *TPOTMode
 }
 
 // experimentalModels is the experimental models a source was resolved
-// with, either nil: what a plan and a size price with, and a day plan,
-// which is the default's, does not (sizer.models).
+// with, either nil: what a plan and a size price with, and a day plan
+// asked for them (DayPlanRequest.ExperimentalModels; sizer.models).
 type experimentalModels struct {
 	ttft *mainMixture
 	tpot *mainTPOT
@@ -368,6 +368,18 @@ func (e *inputsEntry) models() *experimentalModels {
 		return nil
 	}
 	return &experimentalModels{ttft: e.ttftModel, tpot: e.tpotModel}
+}
+
+// pricesAt says at least one of the models prices a fleet at k, one
+// replica a role, for a target the plan asks: the TTFT model where ttft,
+// the TPOT model where tpot (a TPOT model at a mean target prices
+// nothing). False where m is nil.
+func (m *experimentalModels) pricesAt(k Knobs, ttft, tpot bool) bool {
+	if m == nil {
+		return false
+	}
+	k.Prefill, k.Decode = 1, 1
+	return (ttft && m.ttft != nil && m.ttft.notPricedAt(k) == "") || (tpot && m.tpot != nil && m.tpot.notPricedAt(k) == "")
 }
 
 // fleet is fl with the models: the TPOT model's ratio first, since it
