@@ -67,6 +67,10 @@ type backtestFlags struct {
 	// (whatifapi.BacktestRequest.RankMixtureStratified): nil is the
 	// default (whatif.DefaultRankMixtureStratified).
 	rankMixtureStratified *bool
+	// rankMixtureNLLine is --experimental-ttft=v2nl-line: the rank
+	// mixture's variant with Z measured part by part
+	// (whatif.QueueRankMixtureNLLine).
+	rankMixtureNLLine bool
 	// experimentalTPOT is --experimental-tpot (experimental_tpot.go),
 	// backtest's only.
 	experimentalTPOT string
@@ -87,7 +91,9 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 		"balances prefill by load (llm-d's EPP queue scorer), so f is held to the load it was learned at, then falls to 1 at the pooled prefill knee; off by default")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
-	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTV2Usage)
+	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag,
+		experimentalTTFTV2Usage+"; =v2nl-line prices with its variant that measures each part of the non-queue time on its own, calibrates nothing "+
+			"to the router and abstains unless its fit window prices itself (flagged the same)")
 	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
 }
 
@@ -257,6 +263,9 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 		return nil
 	}
 	req.TTFTModel, req.PrefillSlots = string(whatif.QueueRankMixture), prefillSlotsOf(fit)
+	if f.rankMixtureNLLine {
+		req.TTFTModel = string(whatif.QueueRankMixtureNLLine)
+	}
 	req.RankMixtureFitSteps = f.rankMixtureFitSteps
 	req.RankMixtureStratified = f.rankMixtureStratified
 	if err := withRankMixture(testPath, test, nil); err != nil {

@@ -292,6 +292,41 @@ time, TTFT and prompt from a LeaderWorkerSet group's engines
 (`GroupEngines`). In an older recording, a row's ranks share its rate evenly,
 and the answer says so.
 
+### The measured non-queue variant (`--experimental-ttft=v2nl-line`)
+
+`backtest --experimental-ttft=v2nl-line` prices with v2's queue and service
+line, and fits them another way. It is off by default, and its figures carry
+the same flags. The answer's `rankMixture.model` reads `rank-mixture-nl-line`.
+
+- **Non-queue part.** `Z` is measured part by part, not calibrated. Each part
+  is its own line in the prompt, with an intercept and slope held at 0 or
+  above: the engine's pre-queue overhead, the decode engine's first token and
+  the router's remainder. `a0` is the sum of the intercepts, so it is never
+  negative, and `s` is 1. `rankMixture.zParts` names each part.
+- **Spreads of the parts.** Each part varies request to request. It is drawn
+  lognormal about its line, so its mean does not move. The decode part's sigma
+  comes from the decode engines' TTFT histogram. The overhead's is the one at
+  which the priced prefill-engine TTFT reads the engines' measured p90. The
+  router's remainder has no histogram of its own and stays a line.
+- **v2's switches, always on.** The variant fits as
+  `--rank-mixture-fit-steps` and `--rank-mixture-stratified` do: the
+  KV-deferral lines and the parts on the steps under utilization 0.9, the
+  shares at the priced load, and each rank's service read from the histogram.
+
+No spread or location is calibrated to the router's TTFT, so the fit window
+must price itself. This check is on the same window, and the router's
+remainder is the router's mean less both engines': a fit window priced at its
+mean mostly says the prefill engine's queue and service are. The variant
+abstains where:
+- the fit window's median ratio of priced to measured mean (`fitMean`) is
+  outside 0.8 to 1.25;
+- its median p90 ratio (`fitP90`) is outside 0.9 to 1.25;
+- the fit window is under 12 hours, too short for those checks;
+- the computed prompts do not spread (one prompt length);
+- or, as for v2, the ranks' own rates or `--max-num-seqs` are not read.
+
+On the public recordings it abstains, mostly on the fit window's length.
+
 ## Experimental: the per-request TPOT distribution
 
 `capacity-planner backtest --experimental-tpot=v2` prices the TPOT percentiles

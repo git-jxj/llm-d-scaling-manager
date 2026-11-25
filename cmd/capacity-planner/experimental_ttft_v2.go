@@ -23,6 +23,11 @@ import (
 // experimentalTTFTV2 is the flag's value that asks for the rank mixture.
 const experimentalTTFTV2 = "v2"
 
+// experimentalTTFTV2NLLine is the flag's value that asks for the rank
+// mixture's variant with Z measured part by part on v2's service line
+// (whatif.QueueRankMixtureNLLine). Backtest only.
+const experimentalTTFTV2NLLine = "v2nl-line"
+
 // experimentalTTFTV2Usage is backtest's and predict's help for the flag: the
 // switches' (experimentalTTFTUsage), and =v2.
 const experimentalTTFTV2Usage = experimentalTTFTUsage + ". On backtest, =v2 instead prices TTFT with an experimental model: limited " +
@@ -81,11 +86,15 @@ func stratifiedOr(given *bool) bool {
 // false neither.
 type experimentalTTFTValue struct {
 	switches, v2 *bool
+	// nlLine, where set, takes =v2nl-line: v2 and nlLine both true.
+	nlLine *bool
 }
 
 // String is the value.
 func (v experimentalTTFTValue) String() string {
 	switch {
+	case v.v2 != nil && *v.v2 && v.nlLine != nil && *v.nlLine:
+		return experimentalTTFTV2NLLine
 	case v.v2 != nil && *v.v2:
 		return experimentalTTFTV2
 	case v.switches != nil && *v.switches:
@@ -103,8 +112,16 @@ func (v experimentalTTFTValue) Set(s string) error {
 		*v.switches, *v.v2 = false, false
 	case experimentalTTFTV2:
 		*v.switches, *v.v2 = false, true
+	case experimentalTTFTV2NLLine:
+		if v.nlLine == nil {
+			return fmt.Errorf("--%s=%s is backtest's only", experimentalTTFTFlag, s)
+		}
+		*v.switches, *v.v2 = false, true
 	default:
 		return fmt.Errorf("want --%s, --%s=false or --%s=%s", experimentalTTFTFlag, experimentalTTFTFlag, experimentalTTFTFlag, experimentalTTFTV2)
+	}
+	if v.nlLine != nil {
+		*v.nlLine = s == experimentalTTFTV2NLLine
 	}
 	return nil
 }

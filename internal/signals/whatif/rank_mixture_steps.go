@@ -20,6 +20,10 @@ type MixtureCycle struct {
 	// PrefillTTFT and DecodeTTFT are each role's mean TTFT, weighted by its
 	// pods' request rates; 0 with none read.
 	PrefillTTFT, DecodeTTFT float64
+	// PrefillTTFTHist and DecodeTTFTHist are each role's engine TTFT
+	// histogram, summed over its pods (upper bound to rate); nil with none
+	// read. Only the non-linear variant reads them (FitRankMixtureNL).
+	PrefillTTFTHist, DecodeTTFTHist map[float64]float64
 	// EvenWithinRows counts the ranks whose own rate was not recorded: a
 	// row of several ranks split evenly between them (its share profile is
 	// flatter than the fleet's).
@@ -96,6 +100,8 @@ func MixtureStepOf(cycles []MixtureCycle, at time.Time) MixtureStep {
 		for b, v := range c.Queue {
 			out.Queue[b] += v / n
 		}
+		out.PrefillTTFTHist = poolHist(out.PrefillTTFTHist, c.PrefillTTFTHist, n)
+		out.DecodeTTFTHist = poolHist(out.DecodeTTFTHist, c.DecodeTTFTHist, n)
 		if c.PrefillTTFT > 0 {
 			pTTFT += c.PrefillTTFT
 			np++
