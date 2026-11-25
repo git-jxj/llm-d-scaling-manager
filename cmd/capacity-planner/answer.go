@@ -251,11 +251,11 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 	f.tpotDistribution = on
 	switch {
 	case f.tpotDistribution && f.question != reportQuestion:
-		return usagef("--%s=%s is backtest's, serve's and at-replicas'", experimentalTPOTFlag, experimentalTPOTV2)
+		return usagef("--%s=%s is backtest's, day-plan's, serve's and at-replicas'", experimentalTPOTFlag, experimentalTPOTV2)
 	case f.tpotDistribution && f.recording == "":
 		return usagef("--%s=%s fits the model on a --recording", experimentalTPOTFlag, experimentalTPOTV2)
 	case f.rankMixtureTTFT && f.question != reportQuestion:
-		return usagef("--%s=%s is backtest's, serve's and at-replicas'", experimentalTTFTFlag, f.rankMixtureValue())
+		return usagef("--%s=%s is backtest's, day-plan's, predict's, serve's and at-replicas'", experimentalTTFTFlag, f.rankMixtureValue())
 	case f.rankMixtureTTFT && f.recording == "":
 		return usagef("--%s=%s fits the model on a --recording", experimentalTTFTFlag, f.rankMixtureValue())
 	case f.output != outputText && f.output != outputJSON:

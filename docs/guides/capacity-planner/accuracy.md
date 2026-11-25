@@ -327,6 +327,51 @@ abstains where:
 
 On the public recordings it abstains, mostly on the fit window's length.
 
+Two modes of the variant, each off by default and refused without
+`--experimental-ttft=v2nl-line`. Neither moves `fitMean` or `fitP90`, so
+neither changes whether the variant abstains.
+
+- **KV-deferral hold** (`--rank-mixture-kv-hold`, `rankMixtureKVHold`). The
+  KV-deferral lines are fitted over the fit window's loads. Priced past them,
+  the lines are extrapolated, and on a production P/D recording that read
+  the busier half's queue well over what was measured. With the mode, the
+  lines are read no further than the 0.95 quantile of the rank utilizations
+  the fit window prices (`rankMixture.kv.rhoHold`); past it the wait is held.
+  A figure past the fitted range is still flagged `KVDeferralOutside`.
+- **Router remainder spread** (`--rank-mixture-remainder-spread`,
+  `rankMixtureRemainderSpread`). The router's remainder is drawn from the
+  router's measured request-processing time
+  (`llm_d_epp_request_processing_duration_seconds`): its line less that
+  time's mean, plus a draw of that time's measured law, so a mostly flat
+  line gets the router's own tail. `rankMixture.zParts` gives the mean and
+  the 0.95 quantile over the mean. It needs a recording that holds the
+  series, on at least 4 fit steps. Recordings made before it was recorded,
+  and every public recording here, hold none: the remainder is then its
+  line, as with the mode off, and the assumed line says so.
+
+On the public recordings neither mode moves a figure: the variant abstains
+there, and none holds the router's request-processing series. On a
+production P/D recording, re-captured with the series (development window
+only):
+
+- The hold alone took the load split's p90 and p95 figures under 1.25 of
+  measured, and read one more mean under 0.8. That mean is one test step,
+  the split's lowest, which already read just over 0.8 with the mode off; the
+  hold lowers it a little, as it lowers every busier step. The offline
+  reference lowers the same step by the same amount, and keeps it just over
+  0.8 only because it reads the step a little higher with the mode off. It is
+  how the hold acts on one outlier step, not a difference in the hold.
+- The remainder spread alone brought the time split's p90 and p95 toward
+  measured, and most of its figures under 0.8 back within, but it raised
+  the load split's figures over 1.25 several times over.
+- Both together kept the time split's gain, left fewer figures over 1.25
+  on the load split than with both off, and read no figure under 0.8 that
+  read within with both off. Use the two together.
+
+The hold given without the remainder spread is not refused, so each can
+still be compared alone, but `backtest` prints a warning and the assumed
+line says so.
+
 `serve` and `at-replicas` take `--experimental-ttft=v2nl-line` too, and fit
 and price the variant exactly as `backtest` does, abstentions included
 ([serve with the experimental models](page-and-commands.md#serve-with-the-experimental-v2-models)).

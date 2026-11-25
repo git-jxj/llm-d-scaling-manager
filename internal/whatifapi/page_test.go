@@ -395,7 +395,10 @@ func TestPagePlansADay(t *testing.T) {
 	// The request asked is the one kept: a knob changed since marks the plan
 	// stale (its cases run under node in hack/check-planner-targets.mjs).
 	assert.Contains(t, js, "const req = dayRequest();")
-	assert.Contains(t, js, `api("POST", "v1/dayplan", req)`)
+	// It can be cancelled (its running view runs under node in
+	// hack/check-planner-dayprogress.mjs).
+	assert.Contains(t, js, `api("POST", "v1/dayplan", req, abort.signal)`)
+	assert.Contains(t, html, `id="daycancel"`)
 	assert.Contains(t, js, "state.dayAsked = JSON.stringify(req);")
 	for _, want := range []string{"delete req.fleet", "delete req.traffic.classes", "dayPlanSVG(d)", "dayTipHTML(state.day, b)", "dayHoursTable(d)"} {
 		assert.Contains(t, js, want)
