@@ -46,6 +46,9 @@ type dayPlanFlags struct {
 	// hitAtCount is --prefill-hit-at-count, as answerFlags'
 	// (hit_at_count.go).
 	hitAtCount bool
+	// vpServiceLine is --prefill-vp-service-line, as answerFlags'
+	// (vp_service_line.go).
+	vpServiceLine bool
 	// experimentalTTFT is --experimental-ttft, as answerFlags'
 	// (experimental_ttft.go).
 	experimentalTTFT bool
@@ -97,6 +100,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.Float64Var(&f.outputTokens, "assume-output-tokens", 0, "price every bucket at this mean output, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
+	fs.BoolVar(&f.vpServiceLine, vpServiceLineFlag, false, vpServiceLineUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
 		". =v2 instead sizes with the experimental rank-mixture TTFT model fitted on the recording, as at-replicas and serve price with it, "+
 		"each bucket at its own rate and its own request shape read over at least 30 minutes and 8000 requests around it, or at the window's (WindowShape) where that shape is outside the model's fit (ShapeOutsideFit) or the requests too few (ShapeFewRequests): where it prices TTFT the planner refuses, prefill is sized on it; every figure it sets is flagged RankMixtureTTFT and reads OUTSIDE VALIDATED REGION")
@@ -233,7 +237,7 @@ var resolveDay = func(ctx context.Context, f *dayPlanFlags, warn io.Writer) (*wh
 func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.Resolved, error) {
 	check := defaultSelfCheck && !f.noSelfCheck
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant, SelfCheck: &check,
-		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, ExperimentalTTFT: f.experimentalTTFT}
+		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, ExperimentalTTFT: f.experimentalTTFT}
 	if f.rankMixtureTTFT {
 		in.TTFTModel = string(whatif.QueueRankMixture)
 	}
