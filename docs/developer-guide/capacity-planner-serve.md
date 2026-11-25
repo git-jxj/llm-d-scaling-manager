@@ -294,8 +294,9 @@ is that error. Nothing of a stopped plan is cached, and its slot is freed.
 The budget is checked between figures, so a plan can run past it by one
 figure. A size's search is not under the budget, only the plan it answers
 with. A request that joins a plan already in flight shares that plan's clock.
-`maxPlanBudget` in `serve.go` is 9 minutes, a minute under `writeTimeout`, so
-the refusal is written before the connection closes; `--plan-budget` 0 is
+`maxPlanBudget` in `serve.go` is 9 minutes, well under
+`whatifapi.LongRequestDeadline` (every route that plans has it), so the
+refusal is written before the connection closes; `--plan-budget` 0 is
 `DefaultPlanBudget` (5 minutes).
 
 The page retries only a 503 with `Retry-After` (`retryDelay` in

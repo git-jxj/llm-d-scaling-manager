@@ -103,8 +103,8 @@ type Config struct {
 
 // DefaultPlanBudget is the plan budget a server has when its Config names
 // none: a cold plan of the worked recording takes under 20 s, and it ends
-// well before capacity-planner serve's 10-minute write timeout (serve refuses
-// a --plan-budget past 9 minutes).
+// well before LongRequestDeadline (capacity-planner serve refuses a
+// --plan-budget past 9 minutes).
 const DefaultPlanBudget = 5 * time.Minute
 
 // LongRequestDeadline is how long a request that computes (POST /v1/inputs,

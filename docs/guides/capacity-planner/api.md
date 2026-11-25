@@ -632,9 +632,10 @@ stops at its next figure and is a 503, with no `Retry-After`:
 - A size's search is not under the budget; only the plan it answers with is.
 - A request for a plan already being priced waits for it and shares its clock,
   so it can be refused sooner than its own budget.
-- The most is 9 minutes, a minute under the 10-minute response limit, so the
-  refusal is written before the connection closes. A negative value or one
-  above 9m stops the server from starting.
+- The most is 9 minutes, well inside the 30 minutes a plan's request may run,
+  so the refusal is written before the connection closes, even for a backtest
+  that first loads a recording. A negative value or one above 9m stops the
+  server from starting.
 
 A cold plan of the worked recording takes under 20 s.
 

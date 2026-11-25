@@ -232,8 +232,8 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, usagef("--auth=%s needs --tls-cert-file and --tls-key-file: a bearer token is not sent in the clear", whatifapi.AuthKubernetes)
 	}
 	if f.planBudget < 0 || f.planBudget > maxPlanBudget {
-		return nil, usagef("--plan-budget %s: want 0 (the default, %s) up to %s: a plan stopped later is refused after the server's %s write timeout has closed the connection",
-			f.planBudget, whatifapi.DefaultPlanBudget, maxPlanBudget, writeTimeout)
+		return nil, usagef("--plan-budget %s: want 0 (the default, %s) up to %s",
+			f.planBudget, whatifapi.DefaultPlanBudget, maxPlanBudget)
 	}
 	if f.maxInputs < 0 {
 		return nil, usagef("--max-inputs %d: want 1 or more, or 0 for the default, %d", f.maxInputs, whatifapi.DefaultMaxInputs)
@@ -345,10 +345,11 @@ const (
 	idleTimeout  = 2 * time.Minute
 )
 
-// maxPlanBudget is the largest --plan-budget: a minute under writeTimeout, so
-// a plan stopped at its budget, which may run on for one figure, is refused
-// on a connection still open.
-const maxPlanBudget = writeTimeout - time.Minute
+// maxPlanBudget is the largest --plan-budget. A plan stopped at its budget,
+// which may run on for one figure, is refused on a connection still open: a
+// route that plans has whatifapi.LongRequestDeadline, 30 minutes, and a
+// backtest may first load a recording within that same time.
+const maxPlanBudget = 9 * time.Minute
 
 // namespaces is the namespaces a prometheus source may read: --allowed-namespaces,
 // else --namespace alone, each a DNS-1123 label. With --prometheus, one is
