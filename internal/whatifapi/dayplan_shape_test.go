@@ -312,3 +312,54 @@ func TestOutsideFit(t *testing.T) {
 	m.ttft.fit.prompt.steps = MinShapeFitSteps - 1
 	assert.Contains(t, m.outsideFit(in)[0], "no range")
 }
+
+// A bucket model's prefill limit, read off one search a prefill count
+// (rateAtTargetShared), is the per-fleet search's at every fleet, within
+// a thousandth; the prices it keeps are the model's.
+func TestDayPlan_SharedRateAtTargetIsThePerFleetSearch(t *testing.T) {
+	const first = 2340
+	_, e := shapeEntry(t, func(i int) bool { return i >= first }, 1.5, true)
+	mm := e.ttftModel
+	q, err := dayQuestionOf(e, DayPlanRequest{InputsID: e.id, ExperimentalModels: true,
+		SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(1)}}})
+	require.NoError(t, err)
+	buckets := bucketize(e.series, q.step)
+	cycle := sampleStep(e.series, q.step).Seconds()
+	req := make([]float64, len(buckets))
+	for i, b := range buckets {
+		if len(b.samples) > 0 {
+			req[i] = rateOf(b.samples).Mean * cycle * float64(len(b.samples))
+		}
+	}
+	hs, flag := q.modelShapeOf(buckets, req, len(buckets)-6)
+	require.Empty(t, flag)
+	shared := q.models.atBucket(hs).ttft
+	plain := *shared
+	plain.prices, plain.atTarget = nil, nil
+	floor, _, u := mm.rq.m.Price(1e-6, hs.mixture.Computed, hs.mixture.Prompt, 0.9)
+	require.Nil(t, u)
+	compared := 0
+	for _, x := range []float64{1.2, 1.5, 2, 3} {
+		for _, n := range []FleetCounts{{Prefill: 1, Decode: 1}, {Prefill: 1, Decode: 3}, {Prefill: 2, Decode: 2}, {Prefill: 3, Decode: 8}} {
+			k := q.k
+			k.Prefill, k.Decode = n.Prefill, n.Decode
+			inner, err := e.pricer.Fleet(k)
+			require.NoError(t, err)
+			a, okA := shared.fleet(inner, k).(*mixtureFleet)
+			b, okB := plain.fleet(inner, k).(*mixtureFleet)
+			require.True(t, okA && okB)
+			ra, endA, okRA := a.rateAtTarget(x * floor)
+			rb, endB, okRB := b.rateAtTarget(x * floor)
+			require.Equal(t, okRB, okRA, "x %g fleet %+v", x, n)
+			assert.Equal(t, endB, endA, "x %g fleet %+v", x, n)
+			if okRA {
+				// The drawn curve wiggles at a few parts in a hundred thousand where it
+				// is flat: two bisections over different spans land that far apart.
+				assert.InEpsilon(t, rb, ra, 1e-3, "x %g fleet %+v", x, n)
+				compared++
+			}
+		}
+	}
+	assert.Positive(t, compared)
+	assert.NotEmpty(t, shared.prices, "the bucket model kept its prices")
+}
