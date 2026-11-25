@@ -160,6 +160,14 @@ flow control and the router's own latency go unread.
 | `llm_d_epp_flow_control_request_queue_duration_seconds_bucket` | histogram buckets | `le`, `outcome="Dispatched"` | flow-control wait | optional |
 | `llm_d_epp_flow_control_pool_saturation` | gauge | `inference_pool`, `stage` (no model labels) | pool saturation | optional |
 | `llm_d_epp_flow_control_requests_total` | counter | `inference_pool`, `outcome` (no model labels) | flow-control outcomes | optional |
+| `llm_d_epp_request_processing_duration_seconds_bucket` | histogram buckets | `le` (no model labels) | the router's own time: `--rank-mixture-remainder-spread` | optional |
+| `llm_d_epp_request_processing_duration_seconds_sum` | histogram sum | (no model labels) | the router's mean own time: `--rank-mixture-remainder-spread` | optional |
+| `llm_d_epp_request_processing_duration_seconds_count` | histogram count | (no model labels) | as above | optional |
+
+The request-processing series carry no model. A recording or a capture
+gives them to a model only where the router's TTFT names that model and no
+other in the namespace; with two models behind one namespace's routers,
+neither gets them.
 
 ## kube-state-metrics
 
@@ -343,7 +351,7 @@ each one and prints whether it was present, like the series above.
 | --- | --- | --- | --- | --- |
 | `llm_d_epp_request_processing_duration_seconds_sum` | llm-d router v1.0.0; no model labels | on by default | diagnostic: TTFT outside the engines | the router's own time before it picks an endpoint unseen |
 | `llm_d_epp_request_processing_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
-| `llm_d_epp_request_processing_duration_seconds_bucket` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | no spread of the router's own time |
+| `llm_d_epp_request_processing_duration_seconds_bucket` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | no spread of the router's own time: `--rank-mixture-remainder-spread` draws the remainder as its line |
 | `llm_d_epp_token_producer_render_duration_seconds_sum` | llm-d router v1.0.0; `plugin_type`, `plugin_name`, `backend`, `result` | on by default; observed only when a token-producer plugin renders prompts | diagnostic: TTFT outside the engines | time spent rendering prompts for the prefix scorer unseen |
 | `llm_d_epp_token_producer_render_duration_seconds_count` | llm-d router v1.0.0 | as above | diagnostic: TTFT outside the engines | as above |
 | `llm_d_epp_plugin_duration_seconds_sum` | llm-d router v1.0.0; `extension_point`, `plugin_type`, `plugin_name` | on by default | diagnostic: TTFT outside the engines | no split of the router's time by plugin |
@@ -459,8 +467,8 @@ the counter files the exporter ships: add them to a custom one.
 | --- | --- | --- | --- | --- | --- |
 | vLLM | 34 | 1 | 8 | 4 | 21 |
 | SGLang | 23 | 1 | 8 | 0 | 14 |
-| Router (EPP) | 17 | 0 | 1 | 2 | 14 |
+| Router (EPP) | 20 | 0 | 1 | 2 | 17 |
 | kube-state-metrics | 15 | 0 | 0 | 0 | 15 |
-| All | 89 | 2 | 17 | 6 | 64 |
+| All | 92 | 2 | 17 | 6 | 67 |
 
 A capture reads one engine's series, vLLM's or SGLang's, never both.

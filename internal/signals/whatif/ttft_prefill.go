@@ -41,6 +41,7 @@ func PrefillFromEstimate(est prefill.Estimate) (Prefill, *Unanswerable) {
 		FixedLatency: est.A, VPPromptTokens: est.VPPromptTokens, VPMargin: DefaultVPMargin,
 		VPWholePromptTokens: est.VPWholePromptTokens, VPPromptHitRate: est.VPPromptHitRate,
 		VPPromptLow: est.VPPromptLow, VPPromptHigh: est.VPPromptHigh,
+		VPRequestSeconds: est.VPRequestSeconds,
 	}
 	if est.AModel == prefill.AModelQuadratic {
 		p.CurveSlope, p.CurveCurvature = est.ASlope, est.ACurve
