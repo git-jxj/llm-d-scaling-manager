@@ -98,9 +98,9 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
-		". =v2 instead sizes every bucket with the experimental rank-mixture TTFT model fitted on the recording, as at-replicas and serve price "+
+		". =v2 instead sizes the buckets at the window's request shape with the experimental rank-mixture TTFT model fitted on the recording, as at-replicas and serve price "+
 		"with it: where it prices TTFT the planner refuses, prefill is sized on it; every figure it sets is flagged RankMixtureTTFT and reads OUTSIDE VALIDATED REGION")
-	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage+"; on day-plan it sizes every bucket's decode with it")
+	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage+"; on day-plan it sizes decode with it at a p90 or p95 TPOT target, in the buckets at the window's request shape")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
 		return err
