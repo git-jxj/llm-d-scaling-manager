@@ -243,6 +243,10 @@ func (m RankMixture) modesAssumed() string {
 	case m.KV.RhoHold > 0:
 		parts = append(parts, fmt.Sprintf("KV-deferral lines held past rho %.3g (the %g quantile of the fit window's rank "+
 			"utilizations), not extrapolated", m.KV.RhoHold, KVHoldQuantile))
+		if !m.RemainderSpread {
+			parts = append(parts, "KV-deferral hold without the remainder spread: held alone it lowers every step "+
+				"priced past the hold, so use the two together")
+		}
 	default:
 		parts = append(parts, "KV-deferral hold not applied: no KV-deferral line fitted")
 	}

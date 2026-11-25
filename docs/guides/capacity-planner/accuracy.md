@@ -368,6 +368,10 @@ only):
   on the load split than with both off, and read no figure under 0.8 that
   read within with both off. Use the two together.
 
+The hold given without the remainder spread is not refused, so each can
+still be compared alone, but `backtest` prints a warning and the assumed
+line says so.
+
 ## Experimental: the per-request TPOT distribution
 
 `capacity-planner backtest --experimental-tpot=v2` prices the TPOT percentiles

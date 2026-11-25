@@ -109,7 +109,14 @@ func TestFitRankMixtureNL_KVHoldAtTheFitQuantile(t *testing.T) {
 	same.KV.RhoHold, same.KVHold = 0, false
 	assert.Equal(t, off, same, "the hold is the only difference")
 	assert.Contains(t, on.Assumed(), "KV-deferral lines held past rho")
+	assert.Contains(t, on.Assumed(), "KV-deferral hold without the remainder spread", "held alone, the line says so")
 	assert.NotContains(t, off.Assumed(), "held past")
+	o.RemainderSpread = true
+	both, _, err := FitRankMixtureNL(steps, o)
+	require.NoError(t, err)
+	assert.Contains(t, both.Assumed(), "KV-deferral lines held past rho")
+	assert.NotContains(t, both.Assumed(), "without the remainder spread", "with the spread asked for, no caveat")
+	o.RemainderSpread = false
 
 	o.NoKV = true
 	noKV, _, err := FitRankMixtureNL(steps, o)

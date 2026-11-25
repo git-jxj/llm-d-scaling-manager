@@ -161,6 +161,11 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 		return usagef("--rank-mixture-kv-hold and --rank-mixture-remainder-spread are modes of the rank mixture's variant: " +
 			"give them with --experimental-ttft=v2nl-line")
 	}
+	if f.rankMixtureKVHold && !f.rankMixtureRemainderSpread {
+		fmt.Fprintln(warn, "capacity-planner: warning: --rank-mixture-kv-hold without --rank-mixture-remainder-spread: "+
+			"held alone it lowers every step priced past the hold, and on a production recording it read one more mean "+
+			"under measured; the two together did not, so give both")
+	}
 	ctrllog.SetLogger(logr.Discard())
 	req, err := f.request()
 	if err != nil {
