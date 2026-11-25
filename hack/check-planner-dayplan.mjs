@@ -19,7 +19,7 @@ const [scen, day, golden, decodeOnly] = [
 ];
 const ctx = vm.createContext({URLSearchParams});
 for (const f of [scen, day]) vm.runInContext(fs.readFileSync(f, "utf8"), ctx, {filename: f});
-const {dayPlanSVG, dayBucketAt, dayTip, dayTipHTML, dayHoursTable, dayBucketsTable, dayRefusedHTML, daySummaryText, dayLegend} = ctx;
+const {dayPlanSVG, dayBucketAt, dayTip, dayTipHTML, dayHoursTable, dayBucketsTable, dayRefusedHTML, daySummaryText, dayLegend, dayModelsText} = ctx;
 const plan = JSON.parse(fs.readFileSync(golden, "utf8"));
 const half = JSON.parse(fs.readFileSync(decodeOnly, "utf8"));
 const copy = x => JSON.parse(JSON.stringify(x));
@@ -264,6 +264,29 @@ try {
   check("the hour table writes no markup of a plan", !hours.includes("<img"));
 } catch (e) {
   failures.push("threw: " + (e && e.stack || e));
+}
+
+// A plan priced with an experimental model marks each bucket whose limit
+// it set with the dagger, in the needed cells, and says so; an abstained
+// model is said, and marks nothing; a plan with none says nothing.
+{
+  const v2 = copy(plan);
+  const sized = v2.buckets.filter(b => b.needed && b.limit);
+  sized[0].limit.flags = (sized[0].limit.flags || []).concat(["RankMixtureTTFT"]);
+  v2.ttftModel = {model: "rank-mixture", label: "Experimental TTFT model"};
+  const table = dayBucketsTable(v2);
+  check("a bucket the model sized is marked", (table.match(/\u2020/g) || []).length === 2, (table.match(/\u2020/g) || []).length);
+  check("the model is said, with what it priced", typeof dayModelsText === "function" && new RegExp(`Experimental TTFT model: priced 1 of the ${v2.summary.counts.sized} sized buckets, each marked †`).test(dayModelsText(v2)),
+    typeof dayModelsText === "function" ? dayModelsText(v2) : "no dayModelsText");
+  v2.ttftModel.abstained = "spread not calibrated";
+  check("an abstained model is said", typeof dayModelsText === "function" && /abstained \(spread not calibrated\); the planner's own/.test(dayModelsText(v2)));
+  check("no model, nothing said or marked", typeof dayModelsText === "function" && dayModelsText(plan) === "" && !/\u2020/.test(dayBucketsTable(plan)));
+  // Another experimental flag (a plateau V_P) is no model the plan was
+  // asked for: named in the flags column, not marked, as the command's
+  // hours table does not mark it.
+  const vp = copy(plan);
+  vp.buckets.filter(b => b.needed && b.limit)[0].limit.flags = ["VPFromPlateau"];
+  check("a plateau V_P is not a model's mark", !/\u2020/.test(dayBucketsTable(vp)));
 }
 
 if (failures.length) {
