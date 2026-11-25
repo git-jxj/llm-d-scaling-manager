@@ -46,8 +46,11 @@ import (
 // A tier past the GPU is a second, inclusive LRU: a per-pod tier of Ratio
 // times the pod's B_eff holds the accesses under the horizon of 1 + Ratio
 // times the GPU's capacity at R'; a shared tier, of Ratio times one pod's
-// B_eff, holds them under the horizon of the fleet's accesses, N' R'. With
-// no tier size known, a tier that served hits at the fit keeps the total at
+// B_eff, holds them under the horizon of the fleet's accesses to one copy
+// of each prefix, N' R' / k(N'), which does not move with N' (a prefix's
+// accesses on k pods are one stream there, its gaps the per-pod ones over
+// k). The total is the larger of the two stacks' hits, a floor on their
+// union. With no tier size known, a tier that served hits at the fit keeps the total at
 // h_inf, and only the GPU's share of it moves.
 
 // HitTier is a cache tier past the GPU prefix cache (HitModel.Tiers): an
@@ -217,7 +220,11 @@ func (m HitModel) HitAt(count int, rateRatio float64) (gpu, total float64, ok bo
 				continue
 			}
 			if t.Shared {
-				total = max(total, m.horizonHit(base*t.Ratio/float64(count)))
+				// The fleet's accesses, one copy of a prefix: its gaps
+				// are the fit's per-pod gaps over the fit's duplication,
+				// whatever the duplication at count, so base's k(N')/k(N)
+				// is taken back out.
+				total = max(total, m.horizonHit(base*t.Ratio*m.duplication(count)/float64(count)))
 				continue
 			}
 			perPod += t.Ratio

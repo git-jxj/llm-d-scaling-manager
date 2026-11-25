@@ -128,6 +128,11 @@ func HitAtCountOf(h, computed float64, fitCount, count int, m *HitModel) (HitAtC
 			// No tier read the share ever reused, so the law's ceiling is
 			// 1 and at many more pods it prices every prompt token cached.
 			// The miss is held to fall no faster than the pods rise.
+			// Stated, not derived: the miss falls slower than that
+			// while each pod's cache holds a small part of the
+			// prefixes it serves, and the law is not trusted past it.
+			// On the lab run it priced 0.764 at 4 pods from 2 (0.792
+			// measured; the law alone 0.816).
 			out.Hi = min(out.Hi, 1-(1-h)/x)
 		}
 		out.Rule = HitReuseGap

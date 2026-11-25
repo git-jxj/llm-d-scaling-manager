@@ -84,16 +84,9 @@ func (pf *pricedFleet) priceHitAtCount(ps *learnreplay.PrefillState) {
 	if flag != "" {
 		pf.flags = append(pf.flags, flag)
 	}
+	p.PromptHitRate = gpuHitAt(p.PromptHitRate, r)
 	switch {
 	case r.Moved():
-		switch {
-		case r.Rule == prefill.HitReuseGap:
-			// The GPU prefix-cache hit moves as the law prices it; a tier
-			// past the GPU takes up the rest (tierLoad).
-			p.PromptHitRate *= r.GPUScale
-		case r.FitHit > 0:
-			p.PromptHitRate *= r.Hit / r.FitHit
-		}
 		pf.assume("prefix hit %.3f on %d prefill pods from %.3f read on %d (%s; between %.3f and %.3f): %s computed tokens a request, %s on %d (--%s)",
 			r.Hit, r.Count, r.FitHit, r.FitCount, hitRuleWords(r.Rule), r.Lo, r.Hi,
 			num(round(r.Computed)), num(round(p.PromptTokens)), r.FitCount, hitAtCountFlag)
@@ -102,7 +95,27 @@ func (pf *pricedFleet) priceHitAtCount(ps *learnreplay.PrefillState) {
 		pf.assume("prefix hit %.3f read on %d prefill pods held on %d: a cache-aware router spreads the prefixes over more caches, "+
 			"so the hit is likely higher, up to %.3f, and capacity reads low (--%s)",
 			r.FitHit, r.FitCount, r.Count, r.Hi, hitAtCountFlag)
+	case r.Rule == prefill.HitReuseGap && (r.GPUScale != 1 || r.TierScale != 1):
+		pf.assume("prefix hit %.3f read on %d prefill pods held on %d by a tier past the GPU (%s): the GPU's share of it x%.3g, "+
+			"the tier's x%.3g (--%s)", r.FitHit, r.FitCount, r.Count, hitRuleWords(r.Rule), r.GPUScale, r.TierScale, hitAtCountFlag)
 	}
+}
+
+// gpuHitAt is the GPU prefix-cache hit rate gpu, read at the fit, at the
+// count r priced. Under the reuse-gap rule it moves by the law's GPU ratio
+// whether or not the total moved (an unsized tier past the GPU holds the
+// total and takes up the GPU's loss, tierLoad), and never above the total
+// hit priced: the GPU's hits are among it, and the bracket can hold the
+// total under the law's (the ceiling assumed at more pods). Under any
+// other rule it moves by the total's own ratio.
+func gpuHitAt(gpu float64, r prefill.HitAtCount) float64 {
+	switch {
+	case r.Rule == prefill.HitReuseGap:
+		return min(gpu*r.GPUScale, r.Hit)
+	case r.Moved() && r.FitHit > 0:
+		return gpu * r.Hit / r.FitHit
+	}
+	return gpu
 }
 
 // hitFitCount is the prefill count the fit's hit was read on: the cycle's

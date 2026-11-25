@@ -64,6 +64,10 @@ func TestTTFT_HitAtCountPricesTheReuseGapLaw(t *testing.T) {
 	assert.InDelta(t, labComputedTwo/2, four.fleet.Prefill.PromptTokens, 1e-6)
 	assert.Contains(t, four.flags, whatif.PrefixHitAtCount)
 	assert.NotContains(t, four.flags, whatif.PrefixHitHeld)
+	// The law alone reads a GPU hit of 0.816 at 4 pods; the total is held
+	// under it, and the GPU's hits are among the total's.
+	assert.LessOrEqual(t, four.fleet.Prefill.PromptHitRate, four.in.HitAtCount.Hit)
+	assert.Greater(t, four.fleet.Prefill.PromptHitRate, labPrefixHitRate)
 
 	two := fleetOf(t, labResidencyState(true), answerFlags{prefill: 2}, "prefill")
 	require.Nil(t, two.refused)
@@ -75,4 +79,20 @@ func TestTTFT_HitAtCountPricesTheReuseGapLaw(t *testing.T) {
 	require.Nil(t, off.refused)
 	assert.Nil(t, off.hitModel)
 	assert.Equal(t, labComputedTwo, off.fleet.Prefill.PromptTokens)
+}
+
+// Under the reuse-gap rule the GPU hit moves by the law's GPU ratio even
+// where an unsized tier past the GPU holds the total, and never above the
+// total priced; under the floor it moves by the total's own ratio, and a
+// held hit leaves it.
+func TestGPUHitAt(t *testing.T) {
+	held := prefill.HitAtCount{Rule: prefill.HitReuseGap, FitHit: 0.8, Hit: 0.8, GPUScale: 0.6, TierScale: 1.9}
+	assert.InDelta(t, 0.3, gpuHitAt(0.5, held), 1e-12, "the tier holds the total; the GPU's share falls")
+
+	capped := prefill.HitAtCount{Rule: prefill.HitReuseGap, FitHit: 0.526, Hit: 0.764, GPUScale: 1.552, TierScale: 1}
+	assert.Equal(t, 0.764, gpuHitAt(0.526, capped))
+
+	floor := prefill.HitAtCount{Rule: prefill.HitFloor, FitHit: 0.5, Hit: 0.25, GPUScale: 1, TierScale: 1}
+	assert.InDelta(t, 0.2, gpuHitAt(0.4, floor), 1e-12)
+	assert.Equal(t, 0.4, gpuHitAt(0.4, prefill.HitAtCount{Rule: prefill.HitHeld, FitHit: 0.5, Hit: 0.5}))
 }

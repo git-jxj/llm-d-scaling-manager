@@ -113,6 +113,20 @@ func TestHitModel_Tiers(t *testing.T) {
 	shared, _ := FitHitModel(in)
 	_, s2, _ := shared.HitAt(2, 1)
 	assert.Greater(t, s2, p2, "a shared tier of the per-pod tiers' fleet size keeps more at fewer pods")
+
+	// A shared tier sees the fleet's accesses, one copy of a prefix,
+	// whatever the pods and the duplication across them: its hit does not
+	// move with the count, on one pod (no duplication) as on many.
+	in.Tiers, in.K = []HitTier{{Ratio: 10, Shared: true}}, 2
+	dup, ok := FitHitModel(in)
+	require.True(t, ok)
+	g4, s4, _ := dup.HitAt(4, 1)
+	require.Greater(t, s4, g4, "the shared tier serves past the GPU")
+	for _, n := range []int{1, 2, 8} {
+		g, s, _ := dup.HitAt(n, 1)
+		require.Greater(t, s, g, "%d pods", n)
+		assert.InDelta(t, s4, s, 1e-9, "%d pods", n)
+	}
 }
 
 // With a = 1 the gaps move with the rate and the hit does not; with a = 0
