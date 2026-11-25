@@ -239,6 +239,16 @@ try {
     ["forms stack on a phone", /@media \(max-width: 640px\)[\s\S]*\.source form, \.reportform, \.row[^{]*\{ flex-direction: column;/]]) {
     check(name, re.test(sheet));
   }
+  // Every control grid of more than one column outside a media query stacks
+  // under 1000 px: a more specific selector (.controls.common) outranks the
+  // media query's .controls and keeps its columns on a phone.
+  const bare = sheet.replace(/\/\*[\s\S]*?\*\//g, "");
+  const narrow = (/@media \(max-width: 1000px\) \{([^}]*\})/.exec(bare) || [])[1] || "";
+  const stacked = new Set(((/([^{]*)\{ grid-template-columns: 1fr; \}/.exec(narrow) || [])[1] || "").split(",").map(x => x.trim()));
+  const grids = [...bare.replace(/@media[^{]*\{([^{}]*\{[^}]*\})*[^}]*\}/g, "").matchAll(/([^{}]*\.controls[^{}]*)\{[^}]*grid-template-columns:\s*([^;]+);/g)]
+    .filter(m => m[2].trim().split(/\s+/).length > 1).map(m => m[1].trim());
+  check("the control grids read", grids.length >= 2, grids.join(" | "));
+  for (const sel of grids) check(`${sel} stacks under 1000 px`, stacked.has(sel), [...stacked].join(", "));
 } catch (e) {
   failures.push("threw: " + (e && e.stack || e));
 }

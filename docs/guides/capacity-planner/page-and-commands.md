@@ -17,6 +17,17 @@ The planner answers five questions about one model's prefill/decode fleet:
 
 ## Read the page
 
+Above the tabs, under the source, one card holds what every view reads:
+**Targets and assumptions**. It has the TTFT and TPOT statistic and target,
+the safety margin (headroom), the prompt and output length to price at, and
+**Assume a term the source did not learn**. The Answer view prices them, the
+day plan sizes each bucket under them, and the Right-size view judges the
+fleet under them. **Check the planner** reads none of them: it learns its own
+terms from the source. Change one and every view that used it says so: the
+Answer prices again, a day plan on screen plans again (another view's waits,
+dimmed, with a note naming the targets it used, and plans again when you open
+it), and a right-size answer is hidden with the targets it was judged at.
+
 The page has four tabs:
 
 - **Answer**: the answer first, then the figures behind it and the what-if
@@ -52,9 +63,10 @@ The **Answer** tab, top down:
 5. **The figures**: the limits, then TTFT and TPOT against the rate, side by
    side. **Download CSV** and **Download JSON** export the curves and the
    plan.
-6. **What if**: fleet, traffic and SLO in one row (one column on a phone).
-7. Closed below: assumed terms, saved scenarios, the flags, the inputs and a
-   glossary of the planner's symbols.
+6. **What if**: the fleet and the request rate, in one row (one column on a
+   phone). The targets are above the tabs.
+7. Closed below: saved scenarios, the flags, the inputs and a glossary of the
+   planner's symbols.
 
 The page uses plain words; the symbols stay in tooltips and the glossary:
 
@@ -72,9 +84,19 @@ The rest of this section describes the controls and figures, in the
 planner's own terms:
 
 - **Fleet, traffic, SLO.** The page starts from now: the replica counts the
-  source saw, and the policy's SLO and headroom. The source carries no request
+  source saw, and the policy's SLO and headroom. With no policy objective the
+  page sets one (TTFT p90 1 s, TPOT mean 50 ms); where that is under 1.5 times
+  the floor the first plan priced (the least latency any load gives), it
+  starts at a round value above 1.5 times the floor instead, and says so under
+  the target. A policy's target, or yours, is never moved: under the floor it
+  is marked "no load meets it". The source carries no request
   rate, so the rate starts at the operating point, headroom times the lower
   knee (or the one knee that priced: see "One knee refused" below). Move the rate slider, step the replicas, pick a statistic, set a target.
+  A target box takes milliseconds and any value: typed outside the slider's
+  range, the slider moves to take it in. The target sliders are on a log
+  scale, in steps of about 2%, from a twentieth of the target or floor to ten
+  times it, so every target above the floor is in reach; a slider let go where
+  it stands keeps the value typed.
   The request rate is the total rate: traffic classes are not priced apart
   yet.
 - **Concurrency.** Under the rate, the page says how many requests are in
@@ -193,8 +215,10 @@ planner's own terms:
     figures rest on.
   - **How accurate is this?** What no run has validated yet.
 
-  The report uses the knobs above: fleet, targets, headroom and typed terms.
-  Change a knob and the page asks you to judge again. A server from before
+  The report uses the fleet under What if and the targets, headroom and typed
+  terms above the tabs, and says the targets it was judged at. Change a knob
+  and the page hides the answer and asks you to judge again, naming the
+  targets it was judged at. A server from before
   the report says so under the button; the rest of the page works. The same
   report is `capacity-planner at-replicas` and `POST /v1/report`.
 
@@ -226,10 +250,16 @@ The `kvPerRequest` term says where its figure came from:
 
 A source that did not see enough load cannot learn every term, and the page
 then shows refusals instead of numbers. Open **Assume a term the source did
-not learn** and type a value: the prefill rate V_P, the fixed latency a, the
+not learn**, above the tabs, and type a value: the prefill rate V_P, the fixed latency a, the
 prompt cv, the router hop, or decode's ITL B. The learned value, or the reason
 it is missing, is shown under each box. A typed value flags every figure that
 rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
+
+The box opens by itself when a term is refused, and when V_P is only a lower
+bound: the prefill pods never queued, so the source saw their load, not their
+speed. Prefill's limit is then unknown, a day plan sizes decode alone, and
+the note beside **Prefill speed V_P per pod** says so. Type a V_P there to
+size prefill; the day plan's refusal points to the same box.
 
 The same box holds **My router balances prefill by load**. Tick it when the
 router scores each prefill pod's queue (llm-d's EPP queue scorer): it is the
@@ -906,6 +936,10 @@ bucket the fleet had fewer replicas than it needed is washed red; a bucket no
 fleet within the bound serves is hatched, in the panel of the role short.
 Hover a bucket for every value at that time; the table views list every hour
 and every bucket, with why a bucket was not sized.
+The plan says the SLO and headroom it was sized for. Change a target, the
+headroom, a length or an assumed term above the tabs and a plan on screen
+plans again; on another tab it dims, with a note naming the targets it used,
+and plans again when you open it.
 
 From the command line, on the sample recording (about an hour, so two hours
 in the table):
