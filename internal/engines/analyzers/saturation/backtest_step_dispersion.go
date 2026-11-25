@@ -13,6 +13,6 @@ package saturation
 // (whatifapi.Knobs.OutputDispersion), as its prompt spread already is; a
 // step that read none keeps the fit's. The analyzer accepts the switch and
 // does nothing with it: the planner reads it (learnreplay.State.StepOutputDispersion),
-// and the controller never prices from it. Planner-only and off from the
-// constructor.
+// and the controller never prices from it. Planner-only: off from the
+// constructor, on in the planner (learnreplay.PlannerSwitches).
 const SwitchBacktestStepOutputDispersion = "backtest-step-output-dispersion"

@@ -192,6 +192,16 @@ capacity-planner replicas-to-slo --recording run.jsonl.gz --prefill 2 --decode 2
   --assume-prompt-cv 0.0577 --arrival-cv2 1 --flow-control off
 ```
 
+**A backtest prices each step at its own output spread.** The spread of
+output lengths sets the KV a running request holds. By default a backtest
+step is priced at the spread its own decode pods' output-length histograms
+read, as it already is at its own lengths; a step that read none keeps the
+fit's. Before, every step took the spread the fit read in its last minutes.
+On the 0.6B staircase, whose warm-ups end on a few minutes of short outputs,
+the predicted decode KV fill on the 1000/1000 phases fell from 1.87 to 1.59
+times what the pods held, and on the Qwen3-32B A-off phase from 1.19 to
+1.05. No backtest figure newly read more than 20% under what was measured.
+
 ## Never validated
 
 These always read `OUTSIDE VALIDATED REGION`:

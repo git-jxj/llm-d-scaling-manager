@@ -166,7 +166,7 @@ bucket, steps it called overloaded marked in red at the top, and steps not
 judged in grey.
 
 The prediction uses each step's request rate, prompt and output lengths, the
-spread of prompt lengths, and the replicas each role ran. Unless you give
+spread of prompt and of output lengths, and the replicas each role ran. Unless you give
 `--arrival-cv2` (1 is random arrivals, higher is burstier), it assumes random
 arrivals. It is compared with the router's TTFT and TPOT histograms in the
 same recording, over the window its histogram covers (the router's rate
