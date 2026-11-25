@@ -123,6 +123,7 @@ var notOnTheTTFTPath = map[string]string{
 	"CoarseTPOTBucket":          "TPOT",
 	"EngineTPOTHistogram":       "TPOT",
 	"ExtrapolatedFill":          "decode line",
+	"ExtrapolatedBelowFloor":    "TPOT: the floor by running count is read only by the planner's TPOT figure",
 	"GlobalTPOTRatio":           "TPOT",
 	"MeanBoundedTPOTPercentile": "TPOT",
 	"HeldLine":                  "decode line",
