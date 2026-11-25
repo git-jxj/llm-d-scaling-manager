@@ -95,6 +95,10 @@ type RankMixtureReport struct {
 	// router (backtest_rank_mixture_nl.go).
 	ZParts  *RankMixtureZParts `json:"zParts,omitempty"`
 	FitMean float64            `json:"fitMean,omitempty"`
+	// Stratified says each rank's mean service and cs^2 were read from the
+	// computed-token histogram itself, not from the rank's own draws
+	// (BacktestRequest.RankMixtureStratified, on by default).
+	Stratified bool `json:"stratified,omitempty"`
 }
 
 // RankMixtureKV is the fitted KV-deferral wait.
@@ -197,34 +201,33 @@ func backlogged(e *inputsEntry, idx []int, from, to time.Time) string {
 // stationary (backlogged) is left out: no queue model's steady state is what
 // it measured, and its TTFT would pass into the fit as cost.
 func fitRankMixture(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, sw rankMixtureSwitches) (*rankMixtureQ, error) {
-	rq, _, err := fitRankMixtureStepsWith(fit, fitIdx, step, slots, sw)
+	rq, _, err := fitRankMixtureSteps(fit, fitIdx, step, slots, sw)
 	return rq, err
 }
 
-// fitRankMixtureSteps is fitRankMixture, and the steps it fitted on.
-func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slots int) (*rankMixtureQ, []whatif.MixtureStep, error) {
-	return fitRankMixtureStepsWith(fit, fitIdx, step, slots, rankMixtureSwitches{})
-}
-
-// rankMixtureSwitches are the rank mixture's off-by-default switches, each
-// independent of the other.
+// rankMixtureSwitches are the rank mixture's switches, each independent of
+// the other.
 type rankMixtureSwitches struct {
 	// fitSteps turns on the fit-step fixes (whatif.RankMixtureOptions
-	// CleanFitSteps and SharesAtLoad): BacktestRequest.RankMixtureFitSteps.
+	// CleanFitSteps and SharesAtLoad): BacktestRequest.RankMixtureFitSteps,
+	// off by default.
 	fitSteps bool
-	// stratified turns on the stratified service moments
+	// stratified prices with the stratified service moments
 	// (whatif.RankMixtureOptions.StratifiedMoments):
-	// BacktestRequest.RankMixtureStratified.
+	// BacktestRequest.RankMixtureStratified, on by default.
 	stratified bool
 	// nlLine fits the variant whatif.QueueRankMixtureNLLine in place of v2
 	// (BacktestRequest.TTFTModel); it fits with both switches above on.
 	nlLine bool
 }
 
-// rankMixtureSwitchesOf is the switches req turns on.
+// rankMixtureSwitchesOf is the switches req turns on. The server has set
+// an absent rankMixtureStratified to its own default; the CLI's backtest
+// always sets it.
 func rankMixtureSwitchesOf(req BacktestRequest) rankMixtureSwitches {
-	return rankMixtureSwitches{fitSteps: req.RankMixtureFitSteps, stratified: req.RankMixtureStratified,
-		nlLine: req.TTFTModel == string(whatif.QueueRankMixtureNLLine)}
+	return rankMixtureSwitches{fitSteps: req.RankMixtureFitSteps,
+		stratified: stratifiedOf(req.RankMixtureStratified, whatif.DefaultRankMixtureStratified),
+		nlLine:     req.TTFTModel == string(whatif.QueueRankMixtureNLLine)}
 }
 
 // model is the model sw fits.
@@ -235,9 +238,17 @@ func (sw rankMixtureSwitches) model() whatif.QueueModel {
 	return whatif.QueueRankMixture
 }
 
-// fitRankMixtureStepsWith is fitRankMixtureSteps, with the switches sw turns
-// on.
-func fitRankMixtureStepsWith(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, sw rankMixtureSwitches) (
+// stratifiedOf is a request's rankMixtureStratified: the value where it
+// names one, def where it is absent.
+func stratifiedOf(asked *bool, def bool) bool {
+	if asked == nil {
+		return def
+	}
+	return *asked
+}
+
+// fitRankMixtureSteps is fitRankMixture, and the steps it fitted on.
+func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slots int, sw rankMixtureSwitches) (
 	*rankMixtureQ, []whatif.MixtureStep, error) {
 	if len(fit.mixture) != len(fit.series) {
 		return nil, nil, InputErrorf("the experimental TTFT model %s needs the recording's per-rank series, which this source did not give",
@@ -306,7 +317,7 @@ func fitRankMixtureStepsWith(fit *inputsEntry, fitIdx []int, step time.Duration,
 		Shares: m.Shares, ShareCV: diag.ShareCV, EvenWithinRows: even, A0: m.A0, Beta: m.Beta, BetaOverhead: m.BetaOverhead,
 		BetaDecode: m.BetaDecode, BetaRemainder: m.BetaRemainder, BetaUnidentified: m.BetaUnidentified, Spread: m.Spread, FoldSpread: diag.FoldSpread,
 		SpreadAtBound: diag.SpreadAtBound, SpreadDefaulted: diag.SpreadDefaulted, SpreadFloored: diag.SpreadFloored, FitP90: diag.FitP90, FitSteps: diag.Steps, Slots: slots,
-		FitStepsBacklogged: backlog, Queue: string(whatif.QueueLimitedProcessorSharing)}
+		FitStepsBacklogged: backlog, Queue: string(whatif.QueueLimitedProcessorSharing), Stratified: sw.stratified}
 	if slots <= 0 {
 		r.Queue = string(whatif.QueueProcessorSharing)
 	}

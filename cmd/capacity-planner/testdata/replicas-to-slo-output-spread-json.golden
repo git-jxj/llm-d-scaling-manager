@@ -104,11 +104,15 @@
               "boundBy": [
                 "batch cap"
               ],
-              "tier": "pinned-B"
+              "tier": "pinned-B",
+              "batchBeyondFit": {
+                "priced": 64,
+                "fitted": 24
+              }
             },
             "flags": [
-              "BatchBeyondFit",
-              "ExtrapolatedFill"
+              "ExtrapolatedFill",
+              "BatchBeyondFit"
             ],
             "validation": {
               "validated": false,
@@ -133,11 +137,15 @@
               "boundBy": [
                 "operating-point cap"
               ],
-              "tier": "pinned-B"
+              "tier": "pinned-B",
+              "batchBeyondFit": {
+                "priced": 48,
+                "fitted": 24
+              }
             },
             "flags": [
-              "BatchBeyondFit",
-              "ExtrapolatedFill"
+              "ExtrapolatedFill",
+              "BatchBeyondFit"
             ]
           }
         },
@@ -155,11 +163,15 @@
               "floor": 0.002221892534461583,
               "uncapped": 0,
               "boundBy": [],
-              "tier": "pinned-B"
+              "tier": "pinned-B",
+              "batchBeyondFit": {
+                "priced": 48,
+                "fitted": 24
+              }
             },
             "flags": [
-              "BatchBeyondFit",
-              "ExtrapolatedFill"
+              "ExtrapolatedFill",
+              "BatchBeyondFit"
             ],
             "validation": {
               "validated": false,

@@ -17,6 +17,9 @@ A cluster admin applies the `part=admin` objects once
 ([step 4](#4-cluster-admin-give-keda-its-client-certificate)). The namespace
 owner does the rest, and upgrades the controller.
 
+One controller for the whole cluster instead, from v0.13.0? [Install with
+kubectl, from one manifest](../kubectl-install/).
+
 Tested: the namespaced and the cluster-wide files on Kubernetes, by hand (kind,
 `make test-e2e-release-manifests`) and with the tools image (`make
 test-e2e-tools-install`), in CI on each pull request that changes what

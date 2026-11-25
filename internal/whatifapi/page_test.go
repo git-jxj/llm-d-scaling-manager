@@ -176,6 +176,26 @@ func TestPageAsksSize(t *testing.T) {
 	}
 }
 
+// The page states a load-aware router under the assumptions: a checkbox in
+// the assume box, wired, sent as assume.loadAwareRouter only when ticked,
+// carried by the link, and cleared when new inputs load.
+// hack/check-planner-exec.mjs runs it.
+func TestPageStatesALoadAwareRouter(t *testing.T) {
+	html, js := pageText(t, "index.html"), pageText(t, "planner.js")
+	start := strings.Index(html, `id="assumebox"`)
+	require.GreaterOrEqual(t, start, 0, "no assume box")
+	end := strings.Index(html[start:], "</details>")
+	require.Positive(t, end, "the assume box does not end")
+	box := html[start : start+end]
+	assert.Contains(t, box, `<input type="checkbox" id="a-lar"> My router balances prefill by load`)
+	for _, want := range []string{`el("a-lar").onchange = () => {`, "k().assume.loadAwareRouter = true;", "delete k().assume.loadAwareRouter;",
+		`if (k.assume.loadAwareRouter) p.set("loadAwareRouter", "1");`, `if (g("loadAwareRouter") === "1") k.assume.loadAwareRouter = true;`,
+		`el("a-lar").checked = false;`, `el("a-lar").checked = !!k.assume.loadAwareRouter;`} {
+		assert.Contains(t, js, want)
+	}
+	assert.Contains(t, pageText(t, "scenario.js"), "loadAwareRouter: /^1$/")
+}
+
 // The page asks again only where retryDelay (scenario.js, checked under node
 // by hack/check-planner-scenarios.sh) says to: a busy server's 503, never a
 // plan stopped at the server's plan budget.

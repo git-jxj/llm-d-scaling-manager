@@ -75,8 +75,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 2,
@@ -94,8 +99,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -109,7 +119,8 @@
         "FewCyclesForP95",
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -147,8 +158,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 2,
@@ -166,8 +182,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -179,7 +200,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -217,8 +239,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 2,
@@ -236,8 +263,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -249,7 +281,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -287,8 +320,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 2,
@@ -306,8 +344,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -319,7 +362,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -357,8 +401,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 2,
@@ -376,8 +425,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -389,7 +443,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -427,8 +482,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 3,
@@ -446,8 +506,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -459,7 +524,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -497,8 +563,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 3,
@@ -516,8 +587,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -529,7 +605,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -567,8 +644,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 3,
@@ -586,8 +668,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -599,7 +686,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -637,8 +725,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 3,
@@ -656,8 +749,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -669,7 +767,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -707,8 +806,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 3,
@@ -726,8 +830,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -739,7 +848,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -777,8 +887,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 3,
@@ -796,8 +911,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -809,7 +929,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -847,8 +968,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 3,
@@ -866,8 +992,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -879,7 +1010,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -917,8 +1049,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 3,
@@ -936,8 +1073,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -949,7 +1091,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -987,8 +1130,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 3,
@@ -1006,8 +1154,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -1019,7 +1172,8 @@
       "flags": [
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -1056,8 +1210,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 3,
@@ -1075,8 +1234,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -1089,7 +1253,8 @@
         "FewCyclesForP95",
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     },
     {
@@ -1126,8 +1291,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "held": {
         "decode": 1,
@@ -1145,8 +1315,13 @@
         ],
         "flags": [
           "AssumedShape",
-          "ExtrapolatedFill"
-        ]
+          "ExtrapolatedFill",
+          "BatchBeyondFit"
+        ],
+        "batchBeyondFit": {
+          "priced": 111,
+          "fitted": 85
+        }
       },
       "actual": {
         "prefill": 2,
@@ -1160,7 +1335,8 @@
         "FewCyclesForP95",
         "PrefillNotPriced",
         "AssumedShape",
-        "ExtrapolatedFill"
+        "ExtrapolatedFill",
+        "BatchBeyondFit"
       ]
     }
   ],

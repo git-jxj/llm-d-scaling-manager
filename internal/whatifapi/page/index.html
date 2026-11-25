@@ -265,6 +265,8 @@
           <div class="field"><label for="a-itlb">Decode ITL B (per-token latency, cache empty), ms</label><input type="number" id="a-itlb" min="0.001" step="0.5"><span class="hint" id="l-itlb"></span></div>
         </div>
         <div class="hint">A typed value replaces the learned one and flags every figure that rests on it. Leave a box empty to use the source's. ITL B is used only where decode is refused PinnedDefaultB; the assumed list says when it was not.</div>
+        <label class="toggle" for="a-lar"><input type="checkbox" id="a-lar"> My router balances prefill by load</label>
+        <div class="hint">Tick it when the router scores each prefill pod's queue (llm-d's EPP queue scorer): the busiest pod's extra share is held up to the load it was learned at, then falls to none at the pooled prefill limit, which lifts that limit. No recording shows what the router scores, so it is your statement, and every figure reads outside the validated region with it.</div>
       </details>
     </section>
 

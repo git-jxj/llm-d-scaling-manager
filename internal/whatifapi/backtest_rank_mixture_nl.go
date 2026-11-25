@@ -11,7 +11,7 @@ import (
 // variant whatif.QueueRankMixtureNLLine (BacktestRequest.TTFTModel): Z
 // measured part by part on v2's queue and service line
 // (whatif/rank_mixture_nl.go). It is fitted on the backtest's fit window as
-// v2 is (fitRankMixtureStepsWith), prices each test step the same way, and
+// v2 is (fitRankMixtureSteps), prices each test step the same way, and
 // abstains where its own checks fail (identifiedNL).
 
 // RankMixtureZParts is Z measured part by part, seconds and seconds a

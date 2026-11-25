@@ -2,6 +2,10 @@ Figure object
 Figure.band object
 Figure.band.hi number
 Figure.band.lo number
+Figure.batchBeyondFit object
+Figure.batchBeyondFit.fitted int64
+Figure.batchBeyondFit.priced int64
+Figure.batchBeyondFit.ranks number
 Figure.boundBy array
 Figure.boundBy[] string
 Figure.extrapolated boolean
@@ -141,6 +145,7 @@ backtest.rankMixture.spread number
 backtest.rankMixture.spreadAtBound boolean
 backtest.rankMixture.spreadDefaulted boolean
 backtest.rankMixture.spreadFloored boolean
+backtest.rankMixture.stratified boolean
 backtest.rankMixture.v number
 backtest.rankMixture.zParts object
 backtest.rankMixture.zParts.decodeA number
@@ -159,6 +164,10 @@ backtest.steps array
 backtest.steps[] object
 backtest.steps[].backlog number
 backtest.steps[].backlogWait number
+backtest.steps[].batchBeyondFit object
+backtest.steps[].batchBeyondFit.fitted int64
+backtest.steps[].batchBeyondFit.priced int64
+backtest.steps[].batchBeyondFit.ranks number
 backtest.steps[].cycles number
 backtest.steps[].decode number
 backtest.steps[].decodeKneeShare number
@@ -453,6 +462,7 @@ backtestRequest.assume.a number
 backtestRequest.assume.flowControl string
 backtestRequest.assume.itlB number
 backtestRequest.assume.itlBFromFloor boolean
+backtestRequest.assume.loadAwareRouter boolean
 backtestRequest.assume.promptCV number
 backtestRequest.assume.routerHop number
 backtestRequest.assume.routerWait string
@@ -776,6 +786,7 @@ inputs.ttftModel.fit.spread number
 inputs.ttftModel.fit.spreadAtBound boolean
 inputs.ttftModel.fit.spreadDefaulted boolean
 inputs.ttftModel.fit.spreadFloored boolean
+inputs.ttftModel.fit.stratified boolean
 inputs.ttftModel.fit.v number
 inputs.ttftModel.fit.zParts object
 inputs.ttftModel.fit.zParts.decodeA number
@@ -807,6 +818,7 @@ inputsRequest.model string
 inputsRequest.prefillHitAtCount boolean
 inputsRequest.prefillVPPlateau boolean
 inputsRequest.prefillVariant string
+inputsRequest.rankMixtureStratified boolean
 inputsRequest.selfCheck boolean
 inputsRequest.source object
 inputsRequest.source.cycle number
@@ -876,6 +888,7 @@ plan.scenario.assume.a number
 plan.scenario.assume.flowControl string
 plan.scenario.assume.itlB number
 plan.scenario.assume.itlBFromFloor boolean
+plan.scenario.assume.loadAwareRouter boolean
 plan.scenario.assume.promptCV number
 plan.scenario.assume.routerHop number
 plan.scenario.assume.routerWait string
@@ -960,6 +973,7 @@ planRequest.assume.a number
 planRequest.assume.flowControl string
 planRequest.assume.itlB number
 planRequest.assume.itlBFromFloor boolean
+planRequest.assume.loadAwareRouter boolean
 planRequest.assume.promptCV number
 planRequest.assume.routerHop number
 planRequest.assume.routerWait string
@@ -1008,6 +1022,7 @@ predictRequest.assume.a number
 predictRequest.assume.flowControl string
 predictRequest.assume.itlB number
 predictRequest.assume.itlBFromFloor boolean
+predictRequest.assume.loadAwareRouter boolean
 predictRequest.assume.promptCV number
 predictRequest.assume.routerHop number
 predictRequest.assume.routerWait string
@@ -1054,6 +1069,10 @@ prediction.steps array
 prediction.steps[] object
 prediction.steps[].backlog number
 prediction.steps[].backlogWait number
+prediction.steps[].batchBeyondFit object
+prediction.steps[].batchBeyondFit.fitted int64
+prediction.steps[].batchBeyondFit.priced int64
+prediction.steps[].batchBeyondFit.ranks number
 prediction.steps[].cycles number
 prediction.steps[].decode number
 prediction.steps[].decodeKneeShare number
@@ -1628,6 +1647,7 @@ report.ttftModel.fit.spread number
 report.ttftModel.fit.spreadAtBound boolean
 report.ttftModel.fit.spreadDefaulted boolean
 report.ttftModel.fit.spreadFloored boolean
+report.ttftModel.fit.stratified boolean
 report.ttftModel.fit.v number
 report.ttftModel.fit.zParts object
 report.ttftModel.fit.zParts.decodeA number
@@ -1658,6 +1678,7 @@ reportRequest.assume.a number
 reportRequest.assume.flowControl string
 reportRequest.assume.itlB number
 reportRequest.assume.itlBFromFloor boolean
+reportRequest.assume.loadAwareRouter boolean
 reportRequest.assume.promptCV number
 reportRequest.assume.routerHop number
 reportRequest.assume.routerWait string
@@ -1756,6 +1777,7 @@ sizeRequest.assume.a number
 sizeRequest.assume.flowControl string
 sizeRequest.assume.itlB number
 sizeRequest.assume.itlBFromFloor boolean
+sizeRequest.assume.loadAwareRouter boolean
 sizeRequest.assume.promptCV number
 sizeRequest.assume.routerHop number
 sizeRequest.assume.routerWait string
