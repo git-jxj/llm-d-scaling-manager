@@ -17,6 +17,9 @@ A cluster admin applies the `part=admin` objects once
 ([step 4](#4-cluster-admin-give-keda-its-client-certificate)). The namespace
 owner does the rest, and upgrades the controller.
 
+One controller for the whole cluster instead, from v0.13.0? [Install with
+kubectl, from one manifest](../kubectl-install/).
+
 Tested: the namespaced and the cluster-wide files on Kubernetes, by hand (kind,
 `make test-e2e-release-manifests`) and with the tools image (`make
 test-e2e-tools-install`), in CI on each pull request that changes what
@@ -59,7 +62,7 @@ identity by accident.
 <!-- guide:tools.setup start -->
 ```bash
 # Once per machine. The release's tools image, by the digest the release prints. Each person uses their own kubeconfig.
-TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:0e70901bbc138cf910b7e24409a09b6b6b03138be1c9170465ea9c4e8dfc071e
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:v0.13.0
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }

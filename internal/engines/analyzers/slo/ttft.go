@@ -199,7 +199,12 @@ const SwitchTTFTPromptSupport = "slo-ttft-prompt-support"
 // tokens, I_eff + 2h, not I_eff alone (whatif.Prefill.PrefixAttention); the
 // prefill work is the prompt net of the prefill variant's hit, not the
 // decode variant's; and the KV transfer moves the prompt net of the decode
-// variant's hit. Off, as before. Planner-only: off from the constructor, and
+// variant's hit. h, the cached context, is the whole prompt less the
+// computed one where the prefill rows read both (whatif.Prefill
+// .CachedContextRead), every tier's hits counted, and the prefix-cache hit
+// rate only where they do not: that rate counts the GPU's hits alone, and a
+// token served from a host, disk or peer tier is attended over all the same
+// (issue llm-d-incubation/llm-d-scaling-manager#383). Off, as before. Planner-only: off from the constructor, and
 // not in learnreplay.PlannerSwitches, so it is off in the planner too until
 // a backtest turns it on. The analyzer itself reads no whole prompt and
 // prices nothing with it; the planner reads it through the replay
@@ -227,17 +232,14 @@ const SwitchTTFTComputedHit = "slo-ttft-computed-hit"
 // the GPU prefix cache alone; a hit from a host, disk or peer tier is loaded
 // into the GPU first, and the price took it as free. On, where the prefill
 // rows read the cached tokens by tier (domain.ReplicaMetrics
-// .CachedTokenRateBySource) and the KV transfers (KVTransferRates):
-//
-//   - a request's TTFT carries the load of its cached tokens from outside
-//     the GPU (whatif.Prefill.TierLoadSeconds): the tokens each tier served
-//     times the bytes a token moved over the bandwidth the transfer read,
-//     whatif.PromptWindow.TierLoad, with no overlap with the request's own
-//     prefill (the OffloadingConnector loads before the request is
-//     scheduled), so an upper bound where a connector overlaps it;
-//   - with SwitchTTFTPrefixAttention on, the attention span's cached
-//     context is the whole prompt less the computed one, every tier's hits
-//     counted, not the GPU's hit rate (whatif.Prefill.CachedContextRead).
+// .CachedTokenRateBySource) and the KV transfers (KVTransferRates), a
+// request's TTFT carries the load of its cached tokens from outside the GPU
+// (whatif.Prefill.TierLoadSeconds): the tokens each tier served times the
+// bytes a token moved over the bandwidth the transfer read,
+// whatif.PromptWindow.TierLoad, with no overlap with the request's own
+// prefill (the OffloadingConnector loads before the request is scheduled),
+// so an upper bound where a connector overlaps it. The attention over every
+// tier's cached context is SwitchTTFTPrefixAttention's.
 //
 // A tier serving whatif.MinTierShare of the prompt or more with no transfer
 // reading, or no split by tier where the computed-token hit is material,
@@ -310,6 +312,21 @@ const SwitchTTFTMeasuredTransfer = "slo-ttft-measured-transfer"
 // accelerator or of engine arguments sweeps the window. It moves no golden, since
 // no committed recording prices a line; its unit tests hold it.
 const SwitchTTFTQuietTransfer = "slo-ttft-quiet-transfer"
+
+// SwitchTTFTPullWork is the replay switch for what the transfer window reads of
+// each decode row (prefill.TransferWindow.PullWork): on, the KV pull's own work,
+// the row's measured NIXL transfer time with the processor-sharing stretch at the
+// row's request rate taken out, T/(1 + lambda T); off, the time as measured, as
+// before. The pull is priced as a processor-sharing stage on the decode pods, so
+// a time measured under load priced as the work stretches the pull twice: on the
+// public P/D staircase with flow control on, the window's last cycles read 60 ms
+// at 21 r/s a decode pod, the pull priced at utilization 0.93 at 30.8 r/s, and
+// 0.78 s of a mean TTFT of 1.02 s was that wait, where the router measured 0.17 s
+// and the rows' transfer read 40 ms (issue
+// llm-d-incubation/llm-d-scaling-manager#301). Read as work, the rows read
+// 25-28 ms at every load of that ladder. The analyzer reads it in the window it
+// prices from (noteTransfer); off from the constructor.
+const SwitchTTFTPullWork = "slo-ttft-pull-work"
 
 const (
 	// decodeBoundRatio is how far the prefill side's own rate must exceed

@@ -412,7 +412,7 @@ function btStepTable(bt, failingOnly) {
     `<th colspan="3" class="grp">TTFT, predicted vs measured</th><th colspan="3" class="grp">TPOT, predicted vs measured</th><th rowspan="2">judged</th></tr><tr>` +
     ["ttft", "tpot"].map(k => stats.map(st => `<th>${k.toUpperCase()} ${st}</th>`).join("")).join("") + `</tr></thead><tbody>`;
   for (const s of steps) {
-    h += `<tr><td>${esc(s.start.slice(11, 16))}</td><td>${esc(s.rate.toFixed(2))}</td><td>${s.prefill} + ${s.decode}</td>`;
+    h += `<tr><td>${esc(s.start.slice(11, 16))}${btBatchChip(s)}</td><td>${esc(s.rate.toFixed(2))}</td><td>${s.prefill} + ${s.decode}</td>`;
     for (const k of ["ttft", "tpot"]) {
       for (const st of stats) {
         const c = btCell(s, k, st);
@@ -423,6 +423,24 @@ function btStepTable(bt, failingOnly) {
   }
   if (!steps.length) h += `<tr><td colspan="10">${failingOnly ? "No judged step reads more than 20% off." : "No step."}</td></tr>`;
   return h + "</tbody></table>";
+}
+
+// batchFitWords is a BatchBeyondFit figure's two batches in words, of what
+// (this load, this step): a pod's, or an engine rank's on a pod of several
+// (batchBeyondFit.ranks).
+function batchFitWords(b, what) {
+  const unit = b.ranks > 1 ? "an engine rank" : "a pod";
+  return `The decode line was fitted on up to ${b.fitted} sequences ${unit}; ${what} runs about ${b.priced}`;
+}
+
+// btBatchChip is the warning a step whose decode runs more sequences than
+// the fit's ITL line was fitted on carries beside its time (BatchBeyondFit),
+// "" for any other.
+function btBatchChip(s) {
+  const b = s.batchBeyondFit;
+  if (!b) return "";
+  const words = batchFitWords(b, "this step") + ", so its TPOT may read low and the decode knee high.";
+  return ` <span class="chip flagged" title="${esc(words)}">BatchBeyondFit</span>`;
 }
 
 // ---- The check, read first: the verdict card, the notice, the step table ----

@@ -197,6 +197,9 @@ type Analyzer struct {
 	// ttftQuietTransfer is SwitchTTFTQuietTransfer (ttft.go): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	ttftQuietTransfer bool
+	// ttftPullWork is SwitchTTFTPullWork (ttft.go): off from the
+	// constructor.
+	ttftPullWork bool
 	// ttftDecodeTerm is SwitchTTFTDecodeTerm (ttft.go): on from the
 	// constructor; a replay turns it off (SetSwitchesForReplay).
 	ttftDecodeTerm bool

@@ -307,7 +307,8 @@ func (a *Analyzer) refitModel(namespace, modelID string, w *modelWindow, now tim
 	start := time.Now()
 	var tt whatif.MixtureWindowFit
 	if pv != "" {
-		tt = whatif.FitMixtureWindow(cycles, ModelStep, a.engineParams(namespace, modelID, pv).PrefillSlots(), modelHeldOutTolerance)
+		tt = whatif.FitMixtureWindow(cycles, ModelStep, a.engineParams(namespace, modelID, pv).PrefillSlots(), modelHeldOutTolerance,
+			whatif.DefaultRankMixtureStratified)
 	} else {
 		tt = whatif.MixtureWindowFit{Fitted: whatif.AbstainedRankMixture("the model has not one prefill variant")}
 	}

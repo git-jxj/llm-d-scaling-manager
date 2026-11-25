@@ -145,6 +145,10 @@ type answerFlags struct {
 	// tables' TTFT with the experimental rank-mixture model, fitted on the
 	// recording (experimental_ttft_v2.go); refused elsewhere.
 	rankMixtureTTFT bool
+	// rankMixtureStratified is --rank-mixture-stratified, read with
+	// rankMixtureTTFT (whatifapi.ApplyTTFTModel): nil is the default
+	// (whatif.DefaultRankMixtureStratified).
+	rankMixtureStratified *bool
 	// experimentalTPOT is --experimental-tpot (=v2): at-replicas prices its
 	// tables' TPOT p90 and p95 with the experimental per-request TPOT
 	// distribution, fitted on the recording (experimental_tpot.go); refused
@@ -214,6 +218,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
 		". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on the --recording")
+	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "at-replicas only: =v2 prices the measured shape's (--shape measured) TPOT p90 and p95 with an "+
 		"experimental per-request TPOT distribution fitted on the --recording, around the planner's own mean; every percentile it prices "+
 		"is flagged TPOTDistribution and reads OUTSIDE VALIDATED REGION")
@@ -891,8 +896,9 @@ func (pv pricedVariant) observedFillMax() (float64, bool) {
 	return hi, ok
 }
 
-// qualify adds the variant's own flags to an answer, and ExtrapolatedFill
-// when its fill lies above every reading; a NoLine refusal on a variant that
+// qualify adds the variant's own flags to an answer, ExtrapolatedFill when
+// its fill lies above every reading, and BatchBeyondFit when the batch at
+// that fill is past the most the line's fit rows held; a NoLine refusal on a variant that
 // learned no line says so by the cycle.
 func (pv pricedVariant) qualify(r whatif.Result) whatif.Result {
 	a, ok := r.(whatif.Answer)
@@ -917,6 +923,14 @@ func (pv pricedVariant) qualify(r whatif.Result) whatif.Result {
 	// arrivals cluster (decode-burst-fill), so that is the fill checked.
 	if top, ok := pv.observedFillMax(); ok && pv.decode.SeenFill(a.Basis.Fill) > top && !slices.Contains(flags, whatif.ExtrapolatedFill) {
 		flags = append(flags, whatif.ExtrapolatedFill)
+	}
+	// The batch at that fill, against the most the line's fit rows held:
+	// the figure is printed as priced, and flagged.
+	if b, ok := pv.beyondFit(pv.decode.SeenFill(a.Basis.Fill)); ok {
+		if !slices.Contains(flags, batchBeyondFit) {
+			flags = append(flags, batchBeyondFit)
+		}
+		a.Basis.Batch = &b
 	}
 	a.Flags = flags
 	return a

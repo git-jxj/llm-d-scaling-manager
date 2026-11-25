@@ -161,8 +161,9 @@ func ttftModelOf(req, server string) (string, error) {
 
 // fitMainMixture fits the model on e's cycles up to the cycle answered, cut
 // into DefaultBacktestStep steps, with the prefill engine's max-num-seqs
-// read from the source.
-func fitMainMixture(e *inputsEntry) *mainMixture {
+// read from the source; stratified prices it with the stratified service
+// moments (whatif.RankMixtureOptions.StratifiedMoments).
+func fitMainMixture(e *inputsEntry, stratified bool) *mainMixture {
 	mm := &mainMixture{info: TTFTModelInfo{Model: string(whatif.QueueRankMixture), Experimental: true, Label: TTFTModelLabel}}
 	if p := e.doc.Fleet.Prefill; p != nil {
 		mm.prefill = p.Replicas
@@ -191,7 +192,7 @@ func fitMainMixture(e *inputsEntry) *mainMixture {
 	}
 	// The slo analyzer's v2 TTFT learner fits and prices its own cycles with
 	// the same call.
-	w := whatif.FitMixtureWindow(fitCycles(e, idx), DefaultBacktestStep, e.engine.PrefillSlots, BacktestTolerance)
+	w := whatif.FitMixtureWindow(fitCycles(e, idx), DefaultBacktestStep, e.engine.PrefillSlots, BacktestTolerance, stratified)
 	if w.FitErr != nil {
 		return abstain(w.FitErr.Error())
 	}
@@ -527,10 +528,11 @@ func (mm *mainMixture) applyToReport(out *ReportResponse, q ReportQuery) {
 
 // ApplyTTFTModel fits the experimental TTFT model on res, a source resolved
 // with InputsRequest.TTFTModel, and prices out's TTFT tables with it as
-// POST /v1/report does: at-replicas --experimental-ttft=v2. It returns the
-// model as fitted, abstained or not.
-func ApplyTTFTModel(res *Resolved, out *ReportResponse, q ReportQuery) *TTFTModelInfo {
-	mm := fitMainMixture(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine})
+// POST /v1/report does: at-replicas --experimental-ttft=v2, stratified its
+// --rank-mixture-stratified (InputsRequest.RankMixtureStratified). It
+// returns the model as fitted, abstained or not.
+func ApplyTTFTModel(res *Resolved, out *ReportResponse, q ReportQuery, stratified bool) *TTFTModelInfo {
+	mm := fitMainMixture(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, stratified)
 	mm.applyToReport(out, q)
 	info := mm.info
 	return &info

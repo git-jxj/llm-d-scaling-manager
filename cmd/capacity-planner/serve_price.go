@@ -444,7 +444,8 @@ type servedState struct {
 	// imbalanceAcrossCounts is --imbalance-across-counts on at-replicas;
 	// the server prices at the planner's default.
 	imbalanceAcrossCounts bool
-	// loadAwareRouter is --load-aware-router on at-replicas.
+	// loadAwareRouter is --load-aware-router on at-replicas; a request's
+	// assume.loadAwareRouter turns it on for the fleets it reads.
 	loadAwareRouter bool
 	// cachedCost is phi as fitted on the source (fitCachedCosts), nil
 	// where none was.
@@ -535,6 +536,12 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 	}
 	if err := f.assumeFlowControl(a); err != nil {
 		return nil, apiError(err)
+	}
+	if a.LoadAwareRouter {
+		// --load-aware-router, marked set as the CLI's parse marks it, so the
+		// envelope classes it alike (statedOutside).
+		f.loadAwareRouter = true
+		set("load-aware-router")
 	}
 	if err := f.checkTTFT(); err != nil {
 		return nil, apiError(err)

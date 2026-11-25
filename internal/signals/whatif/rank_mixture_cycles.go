@@ -82,6 +82,32 @@ type RankMixtureReport struct {
 	// engine's max-num-seqs (1 without chunked prefill), 0 not known.
 	Queue string `json:"queue"`
 	Slots int    `json:"slots"`
+	// ZParts is Z measured part by part and FitMean the fit window's
+	// median ratio of priced to measured mean: the variant's
+	// (QueueRankMixtureNLLine) only, which calibrates nothing to the
+	// router (identifiedNL).
+	ZParts  *RankMixtureZParts `json:"zParts,omitempty"`
+	FitMean float64            `json:"fitMean,omitempty"`
+	// Stratified says each rank's mean service and cs^2 were read from the
+	// computed-token histogram itself, not from the rank's own draws
+	// (RankMixtureSwitches.Stratified; the planner's
+	// BacktestRequest.RankMixtureStratified, on by default).
+	Stratified bool `json:"stratified,omitempty"`
+}
+
+// RankMixtureZParts is Z measured part by part, seconds and seconds a
+// prompt token, and the parts' spreads (ZParts).
+type RankMixtureZParts struct {
+	OverheadA  float64 `json:"overheadA"`
+	OverheadB  float64 `json:"overheadB"`
+	DecodeA    float64 `json:"decodeA"`
+	DecodeB    float64 `json:"decodeB"`
+	RemainderA float64 `json:"remainderA"`
+	RemainderB float64 `json:"remainderB"`
+	// OverheadSigma and DecodeSigma are the parts' lognormal spreads
+	// (ZPart.Sigma); 0 is none.
+	OverheadSigma float64 `json:"overheadSigma"`
+	DecodeSigma   float64 `json:"decodeSigma"`
 }
 
 // RankMixtureKV is the fitted KV-deferral wait.
@@ -94,8 +120,9 @@ type RankMixtureKV struct {
 	RhoHi float64 `json:"rhoHi"`
 }
 
-// RankMixtureSwitches are the rank mixture's off-by-default fit switches,
-// each independent of the other.
+// RankMixtureSwitches are the rank mixture's fit switches, each independent
+// of the others. The zero value is every switch off; the planner turns
+// Stratified on unless asked not to (DefaultRankMixtureStratified).
 type RankMixtureSwitches struct {
 	// FitSteps turns on the fit-step fixes (RankMixtureOptions
 	// CleanFitSteps and SharesAtLoad).
@@ -103,6 +130,17 @@ type RankMixtureSwitches struct {
 	// Stratified turns on the stratified service moments
 	// (RankMixtureOptions.StratifiedMoments).
 	Stratified bool
+	// NLLine fits the variant QueueRankMixtureNLLine (FitRankMixtureNL) in
+	// place of v2; it fits with both switches above on.
+	NLLine bool
+}
+
+// Model is the model sw fits.
+func (sw RankMixtureSwitches) Model() QueueModel {
+	if sw.NLLine {
+		return QueueRankMixtureNLLine
+	}
+	return QueueRankMixture
 }
 
 // RankMixtureFitted is the model fitted on cycles, and its report.
@@ -155,20 +193,24 @@ func FitRankMixtureCycles(cycles []FitCycle, step time.Duration, slots int, sw R
 	if len(steps) == 0 {
 		return nil, nil, fmt.Errorf("the experimental TTFT model %s fits against the router's measured TTFT mean and p90 and the prefill "+
 			"ranks' own rates on stationary steps: of the fit window's %d steps, %d read no router TTFT, %d no prefill rank's rate "+
-			"and %d were not stationary", QueueRankMixture, len(order), noRouter, noRanks, backlog)
+			"and %d were not stationary", sw.Model(), len(order), noRouter, noRanks, backlog)
 	}
-	m, diag, err := FitRankMixture(steps, RankMixtureOptions{Slots: slots, MinSpreadSpan: MinSpreadFitWindow,
+	fitter := FitRankMixture
+	if sw.NLLine {
+		fitter = FitRankMixtureNL
+	}
+	m, diag, err := fitter(steps, RankMixtureOptions{Slots: slots, MinSpreadSpan: MinSpreadFitWindow,
 		SpreadFloor: MinSpread, CleanFitSteps: sw.FitSteps, SharesAtLoad: sw.FitSteps,
 		StratifiedMoments: sw.Stratified})
 	if err != nil {
-		return nil, nil, fmt.Errorf("the experimental TTFT model %s did not fit: %w", QueueRankMixture, err)
+		return nil, nil, fmt.Errorf("the experimental TTFT model %s did not fit: %w", sw.Model(), err)
 	}
-	r := RankMixtureReport{Model: string(QueueRankMixture), Experimental: true, Assumed: m.Assumed(), S0: m.S0, V: m.V,
+	r := RankMixtureReport{Model: string(sw.Model()), Experimental: true, Assumed: m.Assumed(), S0: m.S0, V: m.V,
 		ServiceProportional: m.ServiceProportional, Shares: m.Shares, ShareCV: diag.ShareCV, EvenWithinRows: even, A0: m.A0,
 		Beta: m.Beta, BetaOverhead: m.BetaOverhead, BetaDecode: m.BetaDecode, BetaRemainder: m.BetaRemainder,
 		BetaUnidentified: m.BetaUnidentified, Spread: m.Spread, FoldSpread: diag.FoldSpread, SpreadAtBound: diag.SpreadAtBound,
 		SpreadDefaulted: diag.SpreadDefaulted, SpreadFloored: diag.SpreadFloored, FitP90: diag.FitP90, FitSteps: diag.Steps,
-		Slots: slots, FitStepsBacklogged: backlog, Queue: string(QueueLimitedProcessorSharing)}
+		Slots: slots, FitStepsBacklogged: backlog, Queue: string(QueueLimitedProcessorSharing), Stratified: sw.Stratified}
 	if slots <= 0 {
 		r.Queue = string(QueueProcessorSharing)
 	}
@@ -177,6 +219,11 @@ func FitRankMixtureCycles(cycles []FitCycle, step time.Duration, slots int, sw R
 	}
 	if m.KV.Known {
 		r.KV = &RankMixtureKV{P0: m.KV.P0, P1: m.KV.P1, M0: m.KV.M0, M1: m.KV.M1, RhoLo: m.KV.RhoLo, RhoHi: m.KV.RhoHi}
+	}
+	if p := m.Parts; p != nil {
+		r.FitMean = diag.FitMean
+		r.ZParts = &RankMixtureZParts{OverheadA: p.Overhead.A, OverheadB: p.Overhead.B, DecodeA: p.Decode.A, DecodeB: p.Decode.B,
+			RemainderA: p.Remainder.A, RemainderB: p.Remainder.B, OverheadSigma: p.Overhead.Sigma, DecodeSigma: p.Decode.Sigma}
 	}
 	return &RankMixtureFitted{M: m, Report: r}, steps, nil
 }
@@ -198,6 +245,9 @@ func AbstainedRankMixture(why string) *RankMixtureFitted {
 // much as it moves the mean of Z up. A0 is Z at a prompt of no tokens, a
 // time: a negative A0 is that counterweight, not a location.
 func (rq *RankMixtureFitted) Identified() *RankMixtureFitted {
+	if rq.Report.Model == string(QueueRankMixtureNLLine) {
+		return rq.identifiedNL()
+	}
 	r := rq.Report
 	var why []string
 	if len(r.BetaUnidentified) > 0 {
@@ -221,6 +271,43 @@ func (rq *RankMixtureFitted) Identified() *RankMixtureFitted {
 	}
 	if r.Slots <= 0 {
 		why = append(why, "the prefill engine's max-num-seqs not read")
+	}
+	if len(why) == 0 {
+		return rq
+	}
+	rq.Report.Abstained = strings.Join(why, "; ")
+	return rq
+}
+
+// identifiedNL is Identified for the variant QueueRankMixtureNLLine. Its Z
+// is measured, not calibrated, so v2's checks on the spread and on A0 do not
+// apply (A0 is a sum of non-negative intercepts); in their place the fit
+// window must price its own router mean within [MinNLFitMean, MaxNLFitMean]
+// of measured and its own p90 within [MinNLFitP90, MaxNLFitMean], since
+// nothing was calibrated to either: a model that misses the window it was
+// fitted on is not extrapolated from it.
+func (rq *RankMixtureFitted) identifiedNL() *RankMixtureFitted {
+	r := rq.Report
+	var why []string
+	if r.ServiceProportional {
+		why = append(why, "prefill service not identified (one prompt length)")
+	}
+	if r.EvenWithinRows > 0 {
+		why = append(why, "the prefill ranks' own rates not recorded")
+	}
+	if r.Slots <= 0 {
+		why = append(why, "the prefill engine's max-num-seqs not read")
+	}
+	if r.SpreadDefaulted {
+		why = append(why, fmt.Sprintf("fit window under %s: too short for its own checks", MinSpreadFitWindow))
+	}
+	if !(r.FitMean >= MinNLFitMean && r.FitMean <= MaxNLFitMean) {
+		why = append(why, fmt.Sprintf("the fit window's own mean not priced (median ratio %.3g, outside %g-%g)",
+			r.FitMean, MinNLFitMean, MaxNLFitMean))
+	}
+	if !(r.FitP90 >= MinNLFitP90 && r.FitP90 <= MaxNLFitMean) {
+		why = append(why, fmt.Sprintf("the fit window's own p90 not priced (median ratio %.3g, outside %g-%g)",
+			r.FitP90, MinNLFitP90, MaxNLFitMean))
 	}
 	if len(why) == 0 {
 		return rq
@@ -260,10 +347,11 @@ func (w MixtureWindowFit) Abstained() string {
 
 // FitMixtureWindow fits the model on cycles, cut into steps of step, with
 // the prefill engine's max-num-seqs slots, and scores it on its self-check
-// folds at tolerance. A fit that fails, or fails an identifiability check,
-// abstains.
-func FitMixtureWindow(cycles []FitCycle, step time.Duration, slots int, tolerance float64) MixtureWindowFit {
-	rq, steps, err := FitRankMixtureCycles(cycles, step, slots, RankMixtureSwitches{})
+// folds at tolerance; stratified prices it with the stratified service
+// moments (RankMixtureSwitches.Stratified). A fit that fails, or fails an
+// identifiability check, abstains.
+func FitMixtureWindow(cycles []FitCycle, step time.Duration, slots int, tolerance float64, stratified bool) MixtureWindowFit {
+	rq, steps, err := FitRankMixtureCycles(cycles, step, slots, RankMixtureSwitches{Stratified: stratified})
 	if err != nil {
 		return MixtureWindowFit{Fitted: AbstainedRankMixture(err.Error()), FitErr: err}
 	}
@@ -277,7 +365,8 @@ func FitMixtureWindow(cycles []FitCycle, step time.Duration, slots int, toleranc
 	sorted := sortedByTime(cycles)
 	first, last := sorted[0].At, sorted[len(sorted)-1].At
 	w.Pooled = MixtureStepOf(MixtureCyclesIn(cycles, first.Add(-time.Nanosecond), last), last)
-	o := RankMixtureOptions{Slots: rq.M.Slots, MinSpreadSpan: MinSpreadFitWindow, SpreadFloor: MinSpread}
+	o := RankMixtureOptions{Slots: rq.M.Slots, MinSpreadSpan: MinSpreadFitWindow, SpreadFloor: MinSpread,
+		StratifiedMoments: stratified}
 	w.HeldOut = RankMixtureHeldOut(steps, o, rq.M.Spread, tolerance)
 	return w
 }

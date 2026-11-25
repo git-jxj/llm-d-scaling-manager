@@ -28,7 +28,7 @@ func plannerV2At(t *testing.T, recording string, cycle int) (*whatifapi.TTFTMode
 		Source:    &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(recording), Cycle: cycle}})
 	require.NoError(t, err)
 	var out whatifapi.ReportResponse
-	return whatifapi.ApplyTTFTModel(res, &out, whatifapi.ReportQuery{}), whatifapi.ApplyTPOTModel(res, &out, whatifapi.ReportQuery{})
+	return whatifapi.ApplyTTFTModel(res, &out, whatifapi.ReportQuery{}, whatif.DefaultRankMixtureStratified), whatifapi.ApplyTPOTModel(res, &out, whatifapi.ReportQuery{})
 }
 
 // controllerV2At is the slo analyzer's v2 learners refitted at cycle on the

@@ -197,6 +197,9 @@ type ttftSamples struct {
 	tierKVWait bool
 	// psByEngine is slo.SwitchTTFTPSByEngine (PrefillState.PSByEngine).
 	psByEngine bool
+	// pullWork is slo.SwitchTTFTPullWork, for the transfer windows
+	// (prefill.TransferWindow.PullWork).
+	pullWork bool
 	// cachedTokenCost is slo.SwitchTTFTCachedTokenCost
 	// (PrefillState.CachedTokenCost).
 	cachedTokenCost bool
@@ -491,7 +494,7 @@ func (t *ttftSamples) noteTerm(in domain.AnalyzerInput, now time.Time, args func
 		w.Under(accelerator, args(v))
 		x := t.transfers[v]
 		if x == nil {
-			x = &prefill.TransferWindow{}
+			x = &prefill.TransferWindow{PullWork: t.pullWork}
 			t.transfers[v] = x
 		}
 		x.Under(accelerator, args(v))

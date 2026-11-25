@@ -968,6 +968,7 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 	} else if f.set["assume-transfer-base"] {
 		pf.assume("--assume-transfer-base not applied: no KV transfer measured on the decode rows")
 	}
+	pf.cachedContext()
 	pf.tierLoad(ps)
 }
 
