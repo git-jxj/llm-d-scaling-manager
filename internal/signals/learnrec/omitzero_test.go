@@ -65,7 +65,7 @@ func TestCodec_R1FieldsAreLeftOutWhileZero(t *testing.T) {
 			"ExternalPrefixCacheQueryTokenRateKnown", "CachedTokenRateBySource", "KVTransferRates"},
 		reflect.TypeFor[domain.RouterLatency](): {"TTFTSumRate", "TTFTCountRate", "TPOTBuckets", "FlowControlWaitBuckets",
 			"ProcessingBuckets", "ProcessingSumRate", "ProcessingCountRate"},
-		reflect.TypeFor[Input]():                {"RouterLatency", "FlowControlPools"},
+		reflect.TypeFor[Input](): {"RouterLatency", "FlowControlPools"},
 	}
 	for typ, added := range r1 {
 		var tagged []string

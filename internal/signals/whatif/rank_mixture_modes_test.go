@@ -96,7 +96,7 @@ func TestFitRankMixtureNL_KVHoldAtTheFitQuantile(t *testing.T) {
 	o.KVHold = true
 	on, onDiag, err := FitRankMixtureNL(steps, o)
 	require.NoError(t, err)
-	var rhos []float64
+	rhos := make([]float64, 0, 4*len(steps))
 	for _, p := range drawSteps(off, steps) {
 		require.False(t, p.priceError)
 		rhos = append(rhos, p.d.Checks.Rho...)

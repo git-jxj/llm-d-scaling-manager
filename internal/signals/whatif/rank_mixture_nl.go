@@ -168,7 +168,7 @@ const zSeed = 0x5eed + 99
 // line, or drawn from its shape; nil where p is nil or no part is spread (Z
 // is then the lines' sum, priced as a0 + beta L).
 func (p *ZParts) draws(l []float64) []float64 {
-	if p == nil || !(p.Overhead.spread() || p.Decode.spread() || p.Remainder.spread()) {
+	if p == nil || (!p.Overhead.spread() && !p.Decode.spread() && !p.Remainder.spread()) {
 		return nil
 	}
 	return drawParts(l, []ZPart{p.Overhead, p.Decode, p.Remainder})
