@@ -370,6 +370,12 @@ func (e *inputsEntry) models() *experimentalModels {
 	return &experimentalModels{ttft: e.ttftModel, tpot: e.tpotModel}
 }
 
+// pricesAny says at least one of the models prices (was fitted and did not
+// abstain); false where m is nil.
+func (m *experimentalModels) pricesAny() bool {
+	return m != nil && (m.ttft.priced() || m.tpot.priced())
+}
+
 // fleet is fl with the models: the TPOT model's ratio first, since it
 // replaces the fleet the TTFT model then wraps; fl itself where m is nil.
 func (m *experimentalModels) fleet(fl Fleet, k Knobs) Fleet {

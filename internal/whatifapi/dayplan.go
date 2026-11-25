@@ -140,7 +140,8 @@ const (
 // The flags a day plan adds to a bucket, beside the planner's own.
 const (
 	// FlagWindowShape is a bucket priced at the inputs' shape: its cycles
-	// read no lengths of their own.
+	// read no lengths of their own, or the plan prices with the
+	// experimental models, which are fitted at that shape.
 	FlagWindowShape = "WindowShape"
 	// FlagExtrapolated is a bucket priced at a stated shape outside the
 	// lengths the window's buckets observed.
@@ -669,8 +670,7 @@ func (q *dayQuestion) modelNotes(out *DayPlanResponse, sized map[int]sizedBucket
 			rest = " The rest are the planner's own: " + strings.Join(why, "; ") + "."
 		}
 		return fmt.Sprintf("%s (%s) priced %d of the %d sized buckets, flagged %s: where it prices TTFT or TPOT the planner refuses, the role is "+
-			"sized on it.%s It prices the source's own traffic, so a bucket sized at a request shape of its own (each bucket whose cycles read "+
-			"their lengths) or at a stated term is the planner's own. Not validated: every figure it sets reads OUTSIDE VALIDATED REGION.",
+			"sized on it.%s It prices the source's own traffic, so a bucket sized at a stated shape or term is the planner's own. Not validated: every figure it sets reads OUTSIDE VALIDATED REGION.",
 			label, model, n, len(sized), flag, rest)
 	}
 	var notes []string
@@ -1530,6 +1530,14 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		out.TTFT = &t
 	}
 	stated := !q.sc.Mix.Observed
+	// atWindow prices each bucket at the window's shape, the one the
+	// experimental models were fitted at, so a model can price it; a
+	// bucket's own shape is then not modelled.
+	atWindow := !stated && q.models.pricesAny()
+	if atWindow {
+		out.Notes = append(out.Notes, "With the experimental models, each bucket is priced at its own rate but at the window's request shape "+
+			"(WindowShape), the shape the models were fitted at; per-bucket shape changes are not modelled.")
+	}
 	var lo, hi [2]float64
 	groups := map[[2]float64]*dayGroup{}
 	groupFor := func(k Knobs) (*dayGroup, error) {
@@ -1588,7 +1596,9 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 				hi[i] = max(hi[i], v)
 			}
 			db.Shape.PrefixHitRate = ptr(h)
-			if !stated {
+			if atWindow {
+				db.Flags = append(db.Flags, FlagWindowShape)
+			} else if !stated {
 				k.PromptTokens, k.OutputTokens = shapeKnob(p), shapeKnob(o)
 				db.Shape.Source = "bucket"
 				db.Shape.PromptTokens, db.Shape.OutputTokens = ptr(p), ptr(o)

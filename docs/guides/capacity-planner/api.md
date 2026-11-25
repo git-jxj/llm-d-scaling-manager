@@ -435,7 +435,7 @@ decode is sized alone, and the missing target adds nothing to `refused`.
 | `sizeFor` | `p95-modulation` | The rate of a bucket's cycles to size for: `mean`, `p95`, `p95-modulation` (the p95 less the counting noise of a 1-minute rate; the bucket's `rate.p95Modulation`) or `max`. A bucket of fewer than 20 cycles asked for its `p95` or `p95-modulation` is sized for its `mean` and flagged `FewCyclesForP95`; each bucket's `sizedFor` says which. |
 | `lead` | the source's | Each role's scale-up lead time, seconds: `{"prefill": 180, "decode": 90}`. A role left out takes the start time the source learned (`fleet.<role>.startSeconds` in the inputs), else 0. |
 | `minRequests` | 30 | A bucket with fewer requests is `tooLittleData`, not sized. |
-| `experimentalModels` | false | Price the plan with the experimental TTFT and TPOT models the inputs were resolved with (`ttftModel`, `tpotModel` in `POST /v1/inputs`, or a server started with `--experimental-ttft=v2` or `--experimental-tpot=v2`), as a plan and a size on those inputs are. Inputs resolved with no model are refused (400). Where the TTFT model prices a TTFT the planner refuses, prefill is sized on it, each such bucket's `limit` flagged `RankMixtureTTFT`. A model prices only buckets at the window's shape: a bucket at its own request shape (a recording whose cycles read their lengths sizes every bucket so) or at a stated term is the planner's own, and the TPOT model prices a p90 or p95 target, not the mean; a note says, per model, why each bucket it did not price is the planner's. |
+| `experimentalModels` | false | Price the plan with the experimental TTFT and TPOT models the inputs were resolved with (`ttftModel`, `tpotModel` in `POST /v1/inputs`, or a server started with `--experimental-ttft=v2` or `--experimental-tpot=v2`), as a plan and a size on those inputs are. Inputs resolved with no model are refused (400). Where the TTFT model prices a TTFT the planner refuses, prefill is sized on it, each such bucket's `limit` flagged `RankMixtureTTFT`. The models are fitted at the window's request shape, so where a model prices, each bucket is sized at its own rate but at the window's shape, flagged `WindowShape`, and a note says per-bucket shape changes are not modelled; a bucket at a stated shape or term is the planner's own, and the TPOT model prices a p90 or p95 target, not the mean; a note says, per model, why each bucket it did not price is the planner's. |
 
 A term the source cannot price at any rate is not a bucket's refusal. The plan
 probes each shape once at one replica a role: a TPOT it cannot price
@@ -457,7 +457,8 @@ bucket not covered changes no exit code. It prints the plan either way.
 
 Each bucket is priced at its own observed prompt and output length (rounded
 to a 5% grid, so buckets of nearly one shape share their priced fleets), or
-at the inputs' shape with `WindowShape` where its cycles read none, or at
+at the inputs' shape with `WindowShape` where its cycles read none or the
+plan prices with an experimental model (`experimentalModels`), or at
 `traffic.mix` where the request states it: then `Extrapolated` on every
 bucket when the stated length lies outside what the buckets observed.
 
