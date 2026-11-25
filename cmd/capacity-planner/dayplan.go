@@ -56,6 +56,8 @@ type dayPlanFlags struct {
 	rankMixtureTTFT  bool
 	experimentalTPOT string
 	tpotDistribution bool
+	// tpotModel is the distribution --experimental-tpot names.
+	tpotModel string
 }
 
 // runDayPlan is `capacity-planner day-plan`: the prefill and decode replicas
@@ -105,11 +107,11 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
-	on, err := experimentalTPOTOf(f.experimentalTPOT)
+	model, err := experimentalTPOTOf(f.experimentalTPOT)
 	if err != nil {
 		return err
 	}
-	f.tpotDistribution = on
+	f.tpotDistribution, f.tpotModel = model != "", model
 	if (f.rankMixtureTTFT || f.tpotDistribution) && f.recording == "" {
 		return usagef("--%s=v2 and --%s=v2 fit their model on a --recording", experimentalTTFTFlag, experimentalTPOTFlag)
 	}
@@ -238,7 +240,7 @@ func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.
 		in.TTFTModel = string(whatif.QueueRankMixture)
 	}
 	if f.tpotDistribution {
-		in.TPOTModel = whatif.TPOTRenewalLognormal
+		in.TPOTModel = f.tpotModel
 	}
 	src := &servedSources{warn: warn}
 	switch {

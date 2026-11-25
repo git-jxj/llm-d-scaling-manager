@@ -31,7 +31,7 @@ func tpotEntry(t *testing.T, model bool, slots int) (*Server, *inputsEntry) {
 	e.engine = EngineSlots{DecodeSlots: slots, SpecTokens: 3}
 	e.id = "sha256:main-tpot"
 	if model {
-		e.tpotModel = fitMainTPOT(e)
+		e.tpotModel = fitMainTPOT(e, "")
 		info := e.tpotModel.info
 		e.doc.TPOTModel = &info
 		e.id += "-v2"
@@ -91,7 +91,7 @@ func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
 	assert.LessOrEqual(t, h.P90Inside, h.Steps)
 	assert.LessOrEqual(t, h.P95Inside, h.Steps)
 	assert.Equal(t, 2, h.Decode)
-	assert.Regexp(t, `^held-out steps, at the measured mean: p90 in the measured bucket on \d+ of \d+, p95 on \d+$`, mt.info.Evidence)
+	assert.Regexp(t, `^held-out steps, at the measured mean: p90 in the measured p90's joint bracket on \d+ of \d+, p95 on \d+$`, mt.info.Evidence)
 	require.NotNil(t, mt.info.P95Ratio)
 	top := *mt.info.MeasuredUpTo
 	assert.InDelta(t, 13.5, top, 0.5, "the highest step rate the window served")
@@ -144,6 +144,32 @@ func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
 	assert.False(t, limit.Extrapolated, "a limit under the load served is not extrapolated")
 	assert.InEpsilon(t, target, mt.ratio(0.9)*(0.005+*limit.Value/1000), 1e-9, "the p90 at the limit is the target")
 	assert.Contains(t, strings.Join(out.Assumed, "; "), "experimental TPOT distribution")
+}
+
+// The per-length mixture (whatif.TPOTPerLengthMixture) is fitted and named as
+// the one lognormal is, and prices each rate at the source window's pooled
+// output lengths: its ratio is the mixture's quantile at a mean of one, not
+// the lognormal's at the pooled E[1/(L-1)]. An unknown model is refused.
+func TestMainViewTPOT_PerLengthMixture(t *testing.T) {
+	e, _ := tdEntries(t, 960)
+	e.doc.Fleet.Decode.Replicas = 2
+	e.engine = EngineSlots{DecodeSlots: 64, SpecTokens: 3}
+	one, mix := fitMainTPOT(e, ""), fitMainTPOT(e, whatif.TPOTPerLengthMixture)
+	require.Empty(t, one.info.Abstained)
+	require.Empty(t, mix.info.Abstained)
+	assert.Equal(t, whatif.TPOTRenewalLognormal, one.info.Model)
+	assert.Equal(t, whatif.TPOTPerLengthMixture, mix.info.Model)
+	assert.Empty(t, one.dist.PerLength)
+	require.NotEmpty(t, mix.dist.PerLength)
+	require.NotNil(t, mix.info.P90Ratio)
+	assert.InDelta(t, mix.dist.Quantile(1, 0, 0.9), *mix.info.P90Ratio, 1e-12)
+	assert.NotEqual(t, *one.info.P90Ratio, *mix.info.P90Ratio)
+	assert.Contains(t, mix.tq.report.Assumed, "one lognormal per length")
+	_, err := tpotModelOf("renewal-lognormal-mix", "")
+	require.Error(t, err)
+	m, err := tpotModelOf("", whatif.TPOTPerLengthMixture)
+	require.NoError(t, err)
+	assert.Equal(t, whatif.TPOTPerLengthMixture, m)
 }
 
 // The p90 and the p95 are priced, each at its own ratio: the curve is the
@@ -218,10 +244,10 @@ func TestMainViewTPOT_DefaultStandsWhereTheModelDoesNotPrice(t *testing.T) {
 	}
 	short, _ := tdEntries(t, 200)
 	short.engine = EngineSlots{DecodeSlots: 64, SpecTokens: 3}
-	assert.Contains(t, fitMainTPOT(short).info.Abstained, "fit steps")
+	assert.Contains(t, fitMainTPOT(short, "").info.Abstained, "fit steps")
 	nodecode, _ := tdEntries(t, 960)
 	nodecode.decode = nil
-	assert.Contains(t, fitMainTPOT(nodecode).info.Abstained, "decode series")
+	assert.Contains(t, fitMainTPOT(nodecode, "").info.Abstained, "decode series")
 }
 
 // An inputs request names the model, and gets an entry of its own; on the
@@ -497,7 +523,7 @@ func TestDayPlan_ExperimentalTPOTModelLeavesTheDayPlanToTheDefault(t *testing.T)
 		tdRouter(e.latency, e.decode, len(e.series)*3/4)
 		e.engine.DecodeSlots, e.engine.SpecTokens = 64, 3
 		if model {
-			e.tpotModel = fitMainTPOT(e)
+			e.tpotModel = fitMainTPOT(e, "")
 			require.True(t, e.tpotModel.priced(), e.tpotModel.info.Abstained)
 			require.NotNil(t, e.ttftModel)
 		}

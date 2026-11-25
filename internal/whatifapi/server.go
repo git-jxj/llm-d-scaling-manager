@@ -370,7 +370,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 			Content              any
 			TTFTModel, TPOTModel string
 		}{res.Content, model, tpotModel})
-		mt = fitMainTPOT(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
+		mt = fitMainTPOT(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine}, tpotModel)
 		info := mt.info
 		doc.TPOTModel = &info
 	}

@@ -687,7 +687,7 @@ func (q *dayQuestion) modelNotes(out *DayPlanResponse, sized map[int]sizedBucket
 	if m.tpot != nil {
 		info := m.tpot.info
 		out.TPOTModel = &info
-		notes = append(notes, note(TPOTModelLabel, whatif.TPOTRenewalLognormal, whatif.TPOTDistribution, info.Abstained, func(g *dayGroup) string {
+		notes = append(notes, note(TPOTModelLabel, info.Model, whatif.TPOTDistribution, info.Abstained, func(g *dayGroup) string {
 			if g.z.sc.TPOT == nil {
 				return "the plan prices no TPOT target"
 			}
@@ -713,7 +713,7 @@ func withModels(e *inputsEntry, res *Resolved, stratified bool) {
 		e.ttftModel = fitMainMixture(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, stratified)
 	}
 	if res.Decode != nil {
-		e.tpotModel = fitMainTPOT(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
+		e.tpotModel = fitMainTPOT(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine}, res.TPOTModel)
 	}
 }
 

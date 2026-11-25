@@ -62,8 +62,8 @@ type TPOTModelInfo struct {
 // TPOTHeldOut is the experimental TPOT model scored on the source's
 // self-check folds, each fold's C fitted on the steps before its cut alone
 // and placed at each later step's measured mean: of Steps steps, P90Inside
-// and P95Inside put the predicted p90 and p95 in the router histogram's
-// bucket the measured one fell in. No percentile is fitted, so both are
+// and P95Inside put the predicted p90 and p95 in the measured one's joint
+// bracket (TPOTDistScore). No percentile is fitted, so both are
 // held out. Decode is the recorded decode replicas.
 type TPOTHeldOut struct {
 	Steps     int `json:"steps"`
@@ -112,18 +112,25 @@ func tpotModelOf(req, server string) (string, error) {
 	if m == "" {
 		m = server
 	}
-	if m != "" && m != whatif.TPOTRenewalLognormal {
-		return "", InputErrorf("tpotModel %q, want %q or none", m, whatif.TPOTRenewalLognormal)
+	if m != "" && !whatif.IsTPOTDistModel(m) {
+		return "", InputErrorf("tpotModel %q, want %q, %q or none", m, whatif.TPOTRenewalLognormal, whatif.TPOTPerLengthMixture)
 	}
 	return m, nil
 }
 
 // fitMainTPOT fits the model on e's cycles up to the cycle answered, cut
 // into DefaultBacktestStep steps, with the decode engine's max-num-seqs and
-// num_speculative_tokens read from the source.
-func fitMainTPOT(e *inputsEntry) *mainTPOT {
+// num_speculative_tokens read from the source. model is the distribution
+// (whatif.TPOTRenewalLognormal, or whatif.TPOTPerLengthMixture; "" the
+// former). With the per-length mixture every rate is priced at the source
+// window's pooled lengths, as the one lognormal is at their pooled
+// E[1/(L-1)].
+func fitMainTPOT(e *inputsEntry, model string) *mainTPOT {
+	if model == "" {
+		model = whatif.TPOTRenewalLognormal
+	}
 	mt := &mainTPOT{decode: e.doc.Fleet.Decode.Replicas,
-		info: TPOTModelInfo{Model: whatif.TPOTRenewalLognormal, Experimental: true, Label: TPOTModelLabel}}
+		info: TPOTModelInfo{Model: model, Experimental: true, Label: TPOTModelLabel}}
 	abstain := func(why string) *mainTPOT {
 		mt.info.Abstained = why
 		return mt
@@ -144,18 +151,23 @@ func fitMainTPOT(e *inputsEntry) *mainTPOT {
 			idx = append(idx, i)
 		}
 	}
-	tq := fitTPOTDist(e, idx, DefaultBacktestStep, e.engine.DecodeSlots, e.engine.SpecTokens)
+	tq := fitTPOTDist(e, idx, DefaultBacktestStep, e.engine.DecodeSlots, e.engine.SpecTokens, model)
 	r := tq.report
 	mt.info.Fit = &r
 	if r.Abstained != "" {
 		return abstain(r.Abstained)
 	}
 	first := e.series[idx[0]].At
-	inv, g2, ok := whatif.DecodeWindow(decodeWindow(e, idx, first.Add(-time.Nanosecond), answered))
+	window := decodeWindow(e, idx, first.Add(-time.Nanosecond), answered)
+	inv, g2, ok := whatif.DecodeWindow(window)
 	if !ok {
 		return abstain("the source's decode pods read no output-length histogram")
 	}
-	mt.tq, mt.inv, mt.dist = tq, inv, whatif.TPOTDist{GroupCV2: g2, C: tq.c, Renewal: r.Renewal}
+	var law []whatif.LengthGroup
+	if tq.perLength {
+		law, _ = whatif.DecodeWindowLaw(window)
+	}
+	mt.tq, mt.inv, mt.dist = tq, inv, tq.distAt(g2, tq.c, law)
 	mt.info.P90Ratio, mt.info.P95Ratio = ptr(mt.ratio(0.9)), ptr(mt.ratio(0.95))
 	for _, rate := range tq.stepRates {
 		mt.top = max(mt.top, rate)
@@ -179,7 +191,7 @@ func fitMainTPOT(e *inputsEntry) *mainTPOT {
 
 // tpotHeldOutWords is a held-out score in the page's words.
 func tpotHeldOutWords(h TPOTHeldOut) string {
-	return fmt.Sprintf("held-out steps, at the measured mean: p90 in the measured bucket on %d of %d, p95 on %d",
+	return fmt.Sprintf("held-out steps, at the measured mean: p90 in the measured p90's joint bracket on %d of %d, p95 on %d",
 		h.P90Inside, h.Steps, h.P95Inside)
 }
 
@@ -334,7 +346,7 @@ func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
 			if !slices.Contains(sh.Flags, string(whatif.TPOTDistribution)) {
 				sh.Flags = append(sh.Flags, string(whatif.TPOTDistribution))
 			}
-			line := TPOTModelLabel + " (" + whatif.TPOTRenewalLognormal + ") prices the table's TPOT percentile around its mean"
+			line := TPOTModelLabel + " (" + mt.info.Model + ") prices the table's TPOT percentile around its mean"
 			if mt.info.Evidence != "" {
 				line += " (" + mt.info.Evidence + ")"
 			}
@@ -348,7 +360,7 @@ func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
 // POST /v1/report does: at-replicas --experimental-tpot=v2. It returns the
 // model as fitted, abstained or not.
 func ApplyTPOTModel(res *Resolved, out *ReportResponse, q ReportQuery) *TPOTModelInfo {
-	mt := fitMainTPOT(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
+	mt := fitMainTPOT(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine}, res.TPOTModel)
 	mt.applyToReport(out, q)
 	info := mt.info
 	return &info

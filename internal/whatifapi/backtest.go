@@ -526,7 +526,10 @@ type BacktestPoint struct {
 	// in, where it is too wide to place the percentile (MeasuredBucketWidth):
 	// the truth is somewhere in it. With the prediction inside it the pair
 	// is not scored (unresolvable); with the prediction outside it,
-	// OutsideBucket says which side.
+	// OutsideBucket says which side. For the router's TPOT p90 and p95 it is
+	// the joint bracket (whatif.JointBracket: the router's TPOT histogram and,
+	// above their first edge, the decode engines', at their sampling noise),
+	// and Measured its point.
 	MeasuredBucket *Band `json:"measuredBucket,omitempty"`
 	// OutsideBucket is "under" or "over" where the prediction fell so far
 	// below or above MeasuredBucket that even its nearer edge is more than
@@ -1130,18 +1133,18 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	}
 	switch req.TPOTModel {
 	case "":
-	case whatif.TPOTRenewalLognormal:
+	case whatif.TPOTRenewalLognormal, whatif.TPOTPerLengthMixture:
 		// The distribution prices only where its checks pass; otherwise it
 		// abstains, and every TPOT percentile is the planner's own.
 		if len(test.decode) != len(test.series) {
-			q.tpotDist = &tpotDistQ{report: TPOTDistReport{Model: whatif.TPOTRenewalLognormal, Experimental: true, FoldC: []float64{},
+			q.tpotDist = &tpotDistQ{report: TPOTDistReport{Model: req.TPOTModel, Experimental: true, FoldC: []float64{},
 				Fold: []TPOTDistScore{}, Abstained: "the test source did not give the decode series"}}
 		} else {
-			q.tpotDist = fitTPOTDist(fit, fitIdx, q.step, req.DecodeSlots, req.SpecTokens)
+			q.tpotDist = fitTPOTDist(fit, fitIdx, q.step, req.DecodeSlots, req.SpecTokens, req.TPOTModel)
 		}
 		q.assumed = append(q.assumed, q.tpotDist.assumedLines()...)
 	default:
-		return nil, InputErrorf("tpotModel %q, want %q or none", req.TPOTModel, whatif.TPOTRenewalLognormal)
+		return nil, InputErrorf("tpotModel %q, want %q, %q or none", req.TPOTModel, whatif.TPOTRenewalLognormal, whatif.TPOTPerLengthMixture)
 	}
 	return q, nil
 }
@@ -2098,10 +2101,48 @@ func measuredOf(l LatencySample, source string, windowSeconds float64, pd bool) 
 			}
 			if pok {
 				m.tpot[i], m.tpotBucket[i] = ptr(ph.quantile(q)), ph.coarseBucket(q)
+				if source == MeasuredRouter && (q == 0.9 || q == 0.95) {
+					m.tpot[i], m.tpotBucket[i] = jointTPOT(l, windowSeconds, q, m.tpot[i], m.tpotBucket[i])
+				}
 			}
 		}
 	}
 	return m
+}
+
+// jointTPOT is the router's measured TPOT q-quantile read from every
+// per-request TPOT histogram the cycle l holds at once (whatif.JointBracket:
+// the router's and, above their first edge, the decode engines', at their
+// sampling noise): the bracket's point, and the bracket where it is too wide
+// to place the quantile (MeasuredBucketWidth), the pair then unresolvable
+// with the prediction inside it. Where the bracket is open above (the
+// quantile within noise of the top edge) the router's own reading, meas and
+// bucket, stands.
+func jointTPOT(l LatencySample, windowSeconds, q float64, meas *float64, bucket *Band) (*float64, *Band) {
+	r := l.Router
+	if r == nil || len(r.TPOTBuckets) == 0 {
+		return meas, bucket
+	}
+	edges, cum := make([]float64, len(r.TPOTBuckets)), make([]float64, len(r.TPOTBuckets))
+	for i, b := range r.TPOTBuckets {
+		edges[i], cum[i] = b.UpperBound, b.Rate
+	}
+	counts := make([]float64, len(cum))
+	prev := 0.0
+	for i, c := range cum {
+		c = max(prev, c)
+		counts[i] = (c - prev) * windowSeconds
+		prev = c
+	}
+	st := withEngineTPOT(whatif.TPOTDistStep{Edges: edges, Counts: counts}, l.EngineTPOT, windowSeconds)
+	b, ok := whatif.JointBracket(st, q)
+	if !ok || math.IsInf(b.Hi, 1) || !whatif.Finite(b.Point) {
+		return meas, bucket
+	}
+	if b.Lo > 0 && b.Hi <= (1+MeasuredBucketWidth)*b.Lo*(1+bucketEps) {
+		return ptr(b.Point), nil
+	}
+	return ptr(b.Point), &Band{Lo: b.Lo, Hi: b.Hi}
 }
 
 // latencyHist is a cumulative latency histogram, repaired to be monotone,
@@ -2923,7 +2964,9 @@ func backtestNotes(q *backtestQuestion) []string {
 			"measured percentiles are interpolated inside the histogram's buckets, and one whose bucket is wider than %.0f%% of its lower "+
 			"edge is too wide to place: the bucket, not the traffic, would set it. A prediction more than 20%% beyond that bucket's "+
 			"nearer edge is a certain miss, scored against that edge, which understates the miss, and never within; one nearer is "+
-			"shown and not scored (unresolvable). The verdict quotes the mean, the histogram's sum over its count.", minRequestsFor(0.5), minRequestsFor(0.9), minRequestsFor(0.95), MeasuredBucketWidth*100),
+			"shown and not scored (unresolvable). The router's TPOT p90 and p95 are read from its TPOT histogram and, above their "+
+			"first edge, the decode engines' together, each at its sampling noise: the bracket both allow is the bucket, and a reading "+
+			"inside it (log survival linear in log TPOT) the measured figure. The verdict quotes the mean, the histogram's sum over its count.", minRequestsFor(0.5), minRequestsFor(0.9), minRequestsFor(0.95), MeasuredBucketWidth*100),
 		fmt.Sprintf("Median ratio is the middle step's predicted over measured; typical and worst-10%% miss the median and p90 of the factor "+
 			"between them; under the upper bound the share measured at or under the planner's own upper estimate, where it gives one; "+
 			"within, the share inside %.0f%%. A measured figure above the histogram's top bucket, or a prediction more than 20%% "+

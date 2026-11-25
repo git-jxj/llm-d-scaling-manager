@@ -140,6 +140,7 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 	var serr error
 	if err == nil {
 		serr = s.experimentalSeries(data, res, req.TTFTModel != "", req.TPOTModel != "")
+		res.TPOTModel = req.TPOTModel
 	}
 	// The series, and the experimental models' after it, are the last
 	// passes: a file changed under them is refused, and nothing is kept

@@ -267,20 +267,18 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	if err != nil {
 		return nil, err
 	}
-	tpotV2, err := experimentalTPOTOf(f.experimentalTPOT)
+	tpotModel, err := experimentalTPOTOf(f.experimentalTPOT)
 	if err != nil {
 		return nil, err
 	}
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed, experimentalTTFT: f.experimentalTTFT,
-		rankMixture: f.rankMixtureTTFT, tpotDistribution: tpotV2}
+		rankMixture: f.rankMixtureTTFT, tpotDistribution: tpotModel != ""}
 	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlannerVersion: plannerVersion(), SelfCheck: defaultSelfCheck && !f.noSelfCheck, PlanBudget: f.planBudget,
 		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes, NoRankMixtureStratified: !stratifiedOr(f.rankMixtureStratified)}
 	if f.rankMixtureTTFT {
 		cfg.TTFTModel = string(whatif.QueueRankMixture)
 	}
-	if tpotV2 {
-		cfg.TPOTModel = whatif.TPOTRenewalLognormal
-	}
+	cfg.TPOTModel = tpotModel
 	if f.allowUpload {
 		// Built last, so that no check refusing the flags leaves its
 		// directory behind; the client below is the one step after it.
