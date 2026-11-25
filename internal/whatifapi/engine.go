@@ -103,8 +103,9 @@ type Knobs struct {
 	// or off, and a stated one governs.
 	PrefixHitRead bool
 	// PrefillComputedTokens is the prompt the prefill pods computed a
-	// request, read from the same rows as PromptTokens (a backtest's step);
-	// 0 is none. It moves a figure only where the replay turned
+	// request, read over the same cycles as PromptTokens (a backtest's
+	// step), off the prefill pods' rows where PromptTokens is read off the
+	// decode rows; 0 is none. It moves a figure only where the replay turned
 	// slo.SwitchTTFTPrefixAttention on: the prefill work is then this
 	// prompt, and PromptTokens less it is the cached context its attention
 	// spans (whatif.Prefill.CachedContextRead). PrefixHit is not used for

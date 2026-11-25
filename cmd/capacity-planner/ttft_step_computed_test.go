@@ -50,3 +50,28 @@ func TestTTFT_TheStepsComputedPromptMovesNothingOffOrImmaterial(t *testing.T) {
 	assert.Equal(t, tierFleet(t, st, false, true, false, plain).pf.fleet.Prefill,
 		tierFleet(t, st, false, true, false, withStep).pf.fleet.Prefill, "on, a 0.05 hit")
 }
+
+// With saturation.SwitchPrefillHitAtCount on too, a step's computed prompt
+// stands: its prefill pods computed it at the step's own count, so the fit's
+// hit is not moved to that count over it. On the lab run fitted on 2 pods
+// and stepped on 1, the step's 10,454 computed tokens are priced as read;
+// without a computed prompt the switch moves the whole prompt as before.
+func TestTTFT_HitAtCountLeavesTheStepsComputedPrompt(t *testing.T) {
+	t.Parallel()
+	fleet := func(computed float64) *pricedFleet {
+		st := labState(true)
+		st.Prefill[0].PrefixAttention = true
+		pf := fleetOf(t, st, answerFlags{prefill: 1, inputTokens: labWholePrompt, prefillComputed: computed}, "assume-input-tokens")
+		require.Nil(t, pf.refused)
+		return pf
+	}
+	step := fleet(labComputedOne)
+	assert.True(t, step.stepComputed, "precondition: the step's computed prompt is priced")
+	assert.InDelta(t, labComputedOne, step.fleet.Prefill.PromptTokens, 1e-9, "the step's computed prompt, as measured")
+	assert.InDelta(t, 1-labComputedOne/labWholePrompt, step.fleet.Prefill.PromptHitRate, 1e-12)
+	assert.Nil(t, step.in.HitAtCount, "the hit is not moved to the step's count")
+
+	plain := fleet(0)
+	assert.False(t, plain.stepComputed)
+	assert.NotNil(t, plain.in.HitAtCount, "precondition: the switch moves a prompt with no computed one")
+}
