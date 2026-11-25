@@ -332,11 +332,12 @@ neither changes whether the variant abstains.
   and every public recording here, hold none: the remainder is then its
   line, as with the mode off, and the assumed line says so.
 
-On the public recordings the hold leaves every figure where it was: their
-test loads stay inside the fit window's. On a production P/D recording,
-the two together cut the load split's over-reads and brought the time
-split's p95 closer to measured. Alone, the hold cut the over-reads without
-a new under-read.
+On the public recordings neither mode moves a figure: the variant abstains
+there, and none holds the router's request-processing series. On a
+production P/D recording the hold alone took the load split's p90 and p95
+figures under 1.25 of measured, with one more mean read under 0.8. The
+remainder spread has not yet been checked on a recording that holds its
+series.
 
 ## Experimental: the per-request TPOT distribution
 
