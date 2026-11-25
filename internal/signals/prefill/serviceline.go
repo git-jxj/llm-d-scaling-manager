@@ -55,6 +55,10 @@ import (
 //     at most MaxVPLineSlopeRelSE of it (SlopeUncertain), and s0 at 0 or
 //     above (NonPositiveIntercept).
 //
+// Where V_P is taken from the line, its split of a request's work goes with
+// it (Estimate.VPRequestSeconds): s0 per request on an engine, so s0/ranks
+// pod-seconds on the row, and the rest, E[x]/V, per token.
+//
 // Precedence: V_P from the line fills a V_P refused for want of a queue
 // (NoPrefillCapacity), or a lower bound at or under it, and is not a bound.
 // A V_P that is not a lower bound (busy minutes of a single-rank pod, a
@@ -80,9 +84,9 @@ const SlopeUncertain Refusal = "SlopeUncertain"
 type serviceLine struct {
 	// s0 is the intercept in seconds, slope the seconds a computed token on
 	// one engine, prompt the minutes' mean computed prompt, and vp the
-	// row's capacity at it (the rule above).
+	// row's capacity at it (the rule above), over ranks engines.
 	s0, slope, prompt, vp float64
-	minutes               int
+	minutes, ranks        int
 	whole, hit            float64
 	lo, hi                float64
 }
@@ -126,8 +130,8 @@ func fitServiceLine(ks *keyState) (serviceLine, int, Refusal) {
 		return serviceLine{}, n, SlopeUncertain
 	}
 	prompt := meanPrompt(xs)
-	out := serviceLine{s0: intercept, slope: slope, prompt: prompt, minutes: n, lo: lo, hi: hi}
-	out.vp = float64(max(ranks, 1)) * prompt / (intercept + slope*prompt)
+	out := serviceLine{s0: intercept, slope: slope, prompt: prompt, minutes: n, ranks: max(ranks, 1), lo: lo, hi: hi}
+	out.vp = float64(out.ranks) * prompt / (intercept + slope*prompt)
 	out.whole, out.hit = meanWhole(minutes)
 	return out, n, ""
 }
@@ -154,6 +158,10 @@ func (est *Estimate) lineFill(ks *keyState) {
 	est.VPLearnedAt = time.Time{}
 	est.VPPromptTokens, est.VPWholePromptTokens, est.VPPromptHitRate = ln.prompt, ln.whole, ln.hit
 	est.VPPromptLow, est.VPPromptHigh = ln.lo, ln.hi
+	// The line splits a request's work: s0 of it per request on an engine,
+	// s0/ranks pod-seconds on the row, the rest per token. The knee prices
+	// V_P along it at the asked prompt (whatif.Prefill.VPRequestSeconds).
+	est.VPRequestSeconds = ln.s0 / float64(ln.ranks)
 }
 
 // olsSlopeSE is the standard error of the least-squares line's slope through

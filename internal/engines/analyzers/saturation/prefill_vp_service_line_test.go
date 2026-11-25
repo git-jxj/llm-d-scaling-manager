@@ -64,8 +64,10 @@ func TestPrefillVPServiceLine_ThroughAnalyze(t *testing.T) {
 	assert.InDelta(t, p/(0.2+p/20000), on.VP, 1e-6)
 	assert.False(t, on.VPLowerBound)
 	assert.InDelta(t, 0.2, on.VPLineS0, 1e-6)
+	assert.InDelta(t, 0.2, on.VPRequestSeconds, 1e-6, "s0 over the pod's one rank")
 	assert.Contains(t, onLine, `"vpLineRefused"=""`)
 	assert.Equal(t, prefill.NoPrefillCapacity, off.VPRefused)
 	assert.Zero(t, off.VPLine)
+	assert.Zero(t, off.VPRequestSeconds)
 	assert.NotContains(t, offLine, "vpLine", "off, the observed line is as before the switch")
 }

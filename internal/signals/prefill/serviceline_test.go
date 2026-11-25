@@ -65,10 +65,15 @@ func TestServiceLine_FillsAFleetThatNeverQueued(t *testing.T) {
 	assert.Equal(t, 40, est.VPLineMinutes)
 	assert.Equal(t, 40, est.VPSamples)
 	assert.InDelta(t, 2500.0, est.VPPromptTokens, 1e-6)
+	// s0 a request on one engine is s0/4 pod-seconds on the row, under the
+	// whole work at E[x], E[x]/V_P.
+	assert.InDelta(t, 0.25/4, est.VPRequestSeconds, 1e-9)
+	assert.Less(t, est.VPRequestSeconds, est.VPPromptTokens/est.VP)
 
 	off := run(NewObserver(), lineCycles(false, rows...)...)
 	assert.Equal(t, NoPrefillCapacity, off.VPRefused)
 	assert.Zero(t, off.VPLine, "off, the line is not read")
+	assert.Zero(t, off.VPRequestSeconds, "off, no split")
 	assert.Empty(t, off.VPLineRefused)
 }
 
@@ -184,6 +189,7 @@ func TestServiceLine_ALowerBoundStandsOnlyAboveTheLine(t *testing.T) {
 	assert.True(t, above.VPLowerBound)
 	assert.InDelta(t, line*2, above.VP, 1e-6)
 	assert.InDelta(t, line, above.VPLine, 1e-6)
+	assert.Zero(t, above.VPRequestSeconds, "a line recorded but not taken splits nothing")
 }
 
 // A lower bound the window kept from a peak Retention aged out carries the

@@ -379,7 +379,8 @@ type Estimate struct {
 	// request's work is VPPromptTokens/VP, and VPRequestSeconds of it is
 	// paid whatever the prompt. Zero is not measured, and V_P is then priced
 	// as one token rate at every prompt, as before
-	// (whatif.Prefill.VPRequestSeconds).
+	// (whatif.Prefill.VPRequestSeconds). The service line sets it
+	// (serviceline.go).
 	VPRequestSeconds float64
 
 	// A is the fixed latency in seconds: the low-load fit's intercept plus
