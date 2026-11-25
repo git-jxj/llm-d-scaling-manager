@@ -74,6 +74,7 @@ const byId = new Map([["ttft", fakeRange()], ["tpot", fakeRange()]]);
 const document = {
   getElementById(id) { if (!byId.has(id)) byId.set(id, fakeElement("div")); return byId.get(id); },
   createElement: fakeElement,
+  createTextNode: text => Object.assign(fakeElement("#text"), {textContent: text}),
   addEventListener() {},
   querySelector() { return fakeElement("div"); },
 };
@@ -86,6 +87,8 @@ function respond(status, doc) {
 async function fakeFetch(path, opt) {
   const body = JSON.parse(opt.body || "null");
   calls.push({path, body});
+  // A 123 ms TTFT is one the fake server refuses.
+  if (path === "v1/dayplan" && body.slo.ttft.target === 0.123) return respond(400, {error: "refused"});
   if (path === "v1/dayplan") {
     const d = JSON.parse(JSON.stringify(golden));
     d.ttft = Object.assign({}, d.ttft, {statistic: body.slo.ttft.statistic, target: body.slo.ttft.target});
@@ -203,6 +206,8 @@ try {
   check("the day plan was asked at 5 s", calls.length === 1 && calls[0].body.slo.ttft.target === 5, JSON.stringify(calls.map(c => c.body.slo)));
   check("the day plan says the targets it used", /TTFT p90 5\.00 s/.test(el("dayused").textContent), el("dayused").textContent);
   check("a fresh day plan is not stale", !el("dayout").classList.contains("stale") && el("daystale").hidden === true);
+  // It was drawn whole: a throw while drawing reads as a refused plan.
+  check("the day plan is drawn without an error", /^Planned /.test(el("status").textContent) && !run("state.dayFailed"), el("status").textContent);
 
   // A target changed in the box marks it stale, with what it used.
   el("ttftbox").value = "500";
@@ -236,6 +241,25 @@ try {
   check("a target changed on the day view plans it again", await until(() => calls.length === before + 1 && !state.dayBusy, 3000) &&
     calls[calls.length - 1].body.slo.ttft.target === 0.7, JSON.stringify(calls.slice(before).map(c => c.body.slo.ttft.target)));
   check("and it says 700 ms", /TTFT p90 700 ms/.test(el("dayused").textContent), el("dayused").textContent);
+  // A plan the server refused is not asked again by itself, until a knob
+  // changes; a knob moved back to it asks it again.
+  const typeTTFT = async v => {
+    el("ttftbox").value = v;
+    el("ttftbox").onchange();
+    await new Promise(r => setTimeout(r, 600));
+    await until(() => !state.dayBusy);
+  };
+  const atRefused = calls.length;
+  await typeTTFT("123");
+  check("a refused day plan is asked once", calls.length === atRefused + 1, calls.length - atRefused);
+  run("dayStale(); dayAgain()");
+  await new Promise(r => setTimeout(r, 600));
+  check("and not asked again by itself", calls.length === atRefused + 1, calls.length - atRefused);
+  await typeTTFT("800");
+  check("a changed knob asks again", calls.length === atRefused + 2 && /TTFT p90 800 ms/.test(el("dayused").textContent), calls.length - atRefused);
+  await typeTTFT("123");
+  check("a knob moved back to the refused request asks it again", calls.length === atRefused + 3, calls.length - atRefused);
+  await typeTTFT("800");
   run("showView(\"answer\")");
   const quiet = calls.length;
   el("headroom").value = "0.7";

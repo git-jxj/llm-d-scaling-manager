@@ -3100,11 +3100,16 @@ async function runDay() {
     state.day = out;
     state.dayAsked = JSON.stringify(req);
     state.dayReq = req;
+    // A refusal is remembered only until a plan is answered: a knob moved
+    // back to the refused request asks it again.
+    state.dayFailed = null;
     renderDay();
     setStatus(`Planned ${out.buckets.length} buckets in ${((performance.now() - t0) / 1000).toFixed(1)} s; ${out.searched} fleets priced.`);
   } catch (e) {
     setStatus("Could not plan the day: " + e.message, true);
-    state.dayFailed = JSON.stringify(req);
+    // Only a request the server did not answer is remembered as refused: a
+    // plan answered and then not drawn is no reason to stop asking.
+    if (state.dayAsked !== JSON.stringify(req)) state.dayFailed = JSON.stringify(req);
   } finally {
     state.dayBusy = false;
     el("dayrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
