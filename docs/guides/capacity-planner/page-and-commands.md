@@ -379,7 +379,8 @@ seven on for the one command you pass it to:
   last 6 hours;
 - `prefill-vp-at-served-work`: V_P raised to the work the prefill Pods
   served, where the prefill knee was raised to it;
-- `slo-ttft-computed-hit`: a stated prompt netted by the computed-token hit;
+- `slo-ttft-computed-hit`: a stated prompt netted by the computed-token hit
+  (the load's shape is netted by it with the switch off too);
 - `slo-ttft-tier-load` and `slo-ttft-tier-kv-wait`: the load of a cached
   token from a host, disk or peer tier, at the engine's measured wait for it;
 - `slo-ttft-ps-by-engine`: the prefill queue priced as processor sharing
@@ -663,6 +664,12 @@ It replays the recording once and answers, for each shape and load:
   4569/1855: asked at the measured shape the report gives no verdict (NOT
   JUDGED, exit 3); at the load's own shape it needs 4 + 2, what `day-plan`
   sizes the same rate at.
+  On a P/D fleet the load's prompt length comes from the decode pods, and
+  their prefix hit is not the prefill pods'. The prefill side therefore
+  prices the load's prompt less the share the prefill pods did not compute
+  (cache hits on every tier: GPU, host memory, peer), the same work the
+  measured shape prices. The answer says so: `prompt netted by the prefill
+  pods' computed-token hit`.
 - **The load's shape as the default.** A model change becomes the default
   only where it moves no figure on the public recordings to under 0.8 of what
   was measured. On the decode-only sample (`throughput-sweep`) the load's

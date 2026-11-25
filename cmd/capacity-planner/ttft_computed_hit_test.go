@@ -88,6 +88,43 @@ func TestTTFT_ComputedHitAStatedHitGoverns(t *testing.T) {
 	assert.InDelta(t, 2000.0, pf.fleet.Prefill.PromptTokens, 1e-9, "a hit the load's cycles read does not")
 }
 
+// The load's shape (--shape load, the report's default) nets its whole
+// prompt by the prefill pods' computed-token hit with
+// slo.SwitchTTFTComputedHit off too: on a P/D fleet the hit it carries is
+// the decode variant's, none here, and netted by that the 8000-token prompt
+// was priced as computed where the pods computed 2000. The prompt is then in
+// the pods' computed tokens, so the served work stays the knee's floor. A
+// stated shape is as before: its hit governs, and no floor is kept.
+func TestTTFT_TheLoadShapeNetsByThePrefillPodsComputedHit(t *testing.T) {
+	served := map[int]float64{1: 6000}
+	state := func() *learnreplay.State {
+		st := computedHitState(0, false)
+		st.Prefill[0].ServedComputed = served
+		return st
+	}
+	asked := func(read bool) *pricedVariant {
+		pv := hitDecode(0, 0)
+		pv.assumedHit, pv.hitRead = true, read
+		return pv
+	}
+
+	load := hitFleetOf(t, state(), asked(true), answerFlags{inputTokens: 8000}, "assume-input-tokens")
+	require.Nil(t, load.refused)
+	assert.InDelta(t, 2000.0, load.fleet.Prefill.PromptTokens, 1e-9, "the load's shape: what the prefill pods computed")
+	assert.Equal(t, 8000.0, load.fleet.Prefill.WholePromptTokens)
+	assert.Contains(t, load.in.Assumed, "prompt netted by the prefill pods' computed-token hit 0.750, not the prefix-cache hit 0.000")
+	assert.Equal(t, served, load.servedComputed, "the served work is the floor at the load's computed prompt")
+
+	stated := hitFleetOf(t, state(), asked(false), answerFlags{inputTokens: 8000}, "assume-input-tokens")
+	require.Nil(t, stated.refused)
+	assert.Equal(t, 8000.0, stated.fleet.Prefill.PromptTokens, "a stated hit governs")
+	assert.Nil(t, stated.servedComputed)
+
+	plain := hitFleetOf(t, state(), hitDecode(0, 0), answerFlags{inputTokens: 8000}, "assume-input-tokens")
+	assert.Equal(t, 8000.0, plain.fleet.Prefill.PromptTokens, "--assume-input-tokens with the switch off: as before")
+	assert.Nil(t, plain.servedComputed)
+}
+
 // Below whatif.MaterialPrefixHitMove on both sides, the two hits agree to
 // within what a minute's counters resolve, and nothing moves: no committed
 // recording has a prefix hit, and none of their figures moves with the
@@ -185,8 +222,10 @@ func rewriteHits(t *testing.T, v any, wholeScale, gpuHit float64) int {
 // cache, a prefix-cache counter that sees half): asked the load's shape, as
 // --shape load asks it (the whole prompt, at the decode variant's hit as the
 // load's cycles read it), the prefill knee matches the knee at the measured
-// shape with slo.SwitchTTFTComputedHit on, and misses it, by about the
-// computed share the counter misses, with it off.
+// shape with slo.SwitchTTFTComputedHit on or off. The load's shape is the
+// report's default, so off it must not price the prompt the pods' caches
+// served as computed: that priced the knee of a P/D fleet with a host tier
+// at a third of the rate its own window served.
 func TestTTFT_ComputedHitTheLoadShapeMatchesTheMeasured(t *testing.T) {
 	const wholeScale, gpuHit = 4.0, 0.5
 	rec := hitRecording(t, wholeScale, gpuHit)
@@ -225,7 +264,7 @@ func TestTTFT_ComputedHitTheLoadShapeMatchesTheMeasured(t *testing.T) {
 	computed, ok := st.Prefill[0].PromptWindow.ComputedHit()
 	require.True(t, ok)
 	require.InDelta(t, 1-1/wholeScale, computed, 0.01, "the injected recording reads a 0.75 computed-token hit")
-	assert.Less(t, offLoad, 0.75*offMeasured, "off: the load's shape priced at twice the work the pods computed")
+	assert.InDelta(t, offMeasured, offLoad, 0.02*offMeasured, "off: the load's shape is the measured one's work")
 
 	onMeasured, onLoad, _ := knees(true)
 	t.Logf("computed-token hit %.4f; prefill knee measured %.3f, load shape off %.3f, on %.3f r/s", computed, onMeasured, offLoad, onLoad)
