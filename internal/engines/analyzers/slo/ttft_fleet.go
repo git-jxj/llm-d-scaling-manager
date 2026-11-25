@@ -366,6 +366,7 @@ func (a *Analyzer) noteTransfer(key, accelerator, args string, rows []domain.Rep
 	if d := a.decodeTTFT[key]; d != nil {
 		w = &d.transfer
 	}
+	w.PullWork = a.ttftPullWork
 	w.Under(accelerator, args)
 	w.Observe(now, rows)
 	return w.Reading()

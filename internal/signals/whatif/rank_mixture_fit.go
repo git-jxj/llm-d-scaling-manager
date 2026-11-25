@@ -35,12 +35,23 @@ type MixtureStep struct {
 	// histograms: computed tokens, whole prompt tokens and queue time
 	// (seconds), upper bound to rate.
 	Computed, Prompt, Queue map[float64]float64
+	// PrefillTTFTHist and DecodeTTFTHist are the prefill and the decode
+	// engines' pooled TTFT histograms (upper bound to rate); nil where not
+	// read.
+	PrefillTTFTHist, DecodeTTFTHist map[float64]float64
 	// PrefillTTFT and DecodeTTFT are the prefill and the decode engines'
 	// mean TTFT, seconds; PromptMean the prefill ranks' mean whole prompt.
 	PrefillTTFT, DecodeTTFT, PromptMean float64
 	// RouterMean and RouterP90 are the router's measured TTFT mean and p90,
 	// seconds; 0 is not measured.
 	RouterMean, RouterP90 float64
+	// RouterProcessingHist is the router's request-processing histogram
+	// (seconds, upper bound to rate) pooled over the step, and
+	// RouterProcessingMean its mean, seconds; nil and 0 where the
+	// recording does not hold them. Only RankMixtureOptions.RemainderSpread
+	// reads them.
+	RouterProcessingHist map[float64]float64
+	RouterProcessingMean float64
 }
 
 // minRankRate is the least rate a rank's means are read at: below it a
@@ -249,20 +260,7 @@ func FitKVDeferral(steps []MixtureStep, s0, v float64, ranks int) (KVDeferral, e
 // ("overhead", "decode", "remainder"); A0 then holds that cost at the
 // prompt read.
 func FitBeta(steps []MixtureStep) (overhead, decode, remainder float64, unidentified []string, err error) {
-	var lo, ov, ls, dec, rem []float64
-	for _, st := range steps {
-		for _, r := range st.Ranks {
-			if r.usable() && r.TTFT > 0 && r.Prompt > 0 {
-				lo = append(lo, r.Prompt)
-				ov = append(ov, r.TTFT-r.PrefillTime-r.QueueTime)
-			}
-		}
-		if st.PromptMean > 0 && st.DecodeTTFT > 0 && st.PrefillTTFT > 0 && st.RouterMean > 0 {
-			ls = append(ls, st.PromptMean)
-			dec = append(dec, st.DecodeTTFT)
-			rem = append(rem, st.RouterMean-st.PrefillTTFT-st.DecodeTTFT)
-		}
-	}
+	lo, ov, ls, dec, rem := zSeries(steps)
 	if len(lo) == 0 && len(ls) == 0 {
 		return 0, 0, 0, nil, errors.New("the prompt-length slopes need ranks' TTFT or steps' decode and router means")
 	}
@@ -278,6 +276,28 @@ func FitBeta(steps []MixtureStep) (overhead, decode, remainder float64, unidenti
 	decode = slope("decode", ls, dec)
 	remainder = slope("remainder", ls, rem)
 	return overhead, decode, remainder, unidentified, nil
+}
+
+// zSeries is the non-queue part's three series on steps: each usable rank's
+// mean prompt (lo) and pre-queue overhead (ov, TTFT less prefill and queue
+// time), and each step's mean prompt (ls) with the decode engine's TTFT
+// (dec) and the router's remainder (rem, router mean less both engines'
+// TTFT).
+func zSeries(steps []MixtureStep) (lo, ov, ls, dec, rem []float64) {
+	for _, st := range steps {
+		for _, r := range st.Ranks {
+			if r.usable() && r.TTFT > 0 && r.Prompt > 0 {
+				lo = append(lo, r.Prompt)
+				ov = append(ov, r.TTFT-r.PrefillTime-r.QueueTime)
+			}
+		}
+		if st.PromptMean > 0 && st.DecodeTTFT > 0 && st.PrefillTTFT > 0 && st.RouterMean > 0 {
+			ls = append(ls, st.PromptMean)
+			dec = append(dec, st.DecodeTTFT)
+			rem = append(rem, st.RouterMean-st.PrefillTTFT-st.DecodeTTFT)
+		}
+	}
+	return lo, ov, ls, dec, rem
 }
 
 // MinPromptSpreadCV is the least spread of the prompts (their coefficient of
@@ -305,8 +325,15 @@ type RankMixtureOptions struct {
 	// Both default off.
 	CleanFitSteps, SharesAtLoad bool
 	// StratifiedMoments prices with stratified service moments
-	// (RankMixture.Stratified); off by default.
+	// (RankMixture.Stratified). The zero value is off; the planner sets it
+	// from DefaultRankMixtureStratified unless the caller says otherwise.
 	StratifiedMoments bool
+	// KVHold holds the KV-deferral lines at the fit window's
+	// KVHoldQuantile rank utilization, and RemainderSpread draws the
+	// router's remainder from its measured request processing
+	// (rank_mixture_modes.go). Both are modes of FitRankMixtureNL, each
+	// off by default; FitRankMixture does not read them.
+	KVHold, RemainderSpread bool
 }
 
 // MinSpreadFitWindow is the shortest fit window the planner calibrates the
@@ -452,6 +479,10 @@ type RankMixtureFit struct {
 	// FitP90 the fit window's median p90 ratio at the spread chosen.
 	FoldSpread []float64
 	FitP90     float64
+	// FitMean is the fit window's median ratio of the model's mean to the
+	// router's measured one, where nothing was calibrated to it
+	// (FitRankMixtureNL); 0 for v2, whose A0 holds that mean.
+	FitMean float64
 	// SpreadAtBound says the folds' p90 did not reach 1 inside
 	// [0, MaxSpread], and the spread is that bound.
 	SpreadAtBound bool

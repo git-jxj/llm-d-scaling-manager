@@ -573,8 +573,9 @@ type SaturationAnalyzer struct {
 	// and never read here (the planner prices the fill a request sees).
 	decodeBurstFill bool
 	// backtestStepOutputDispersion is SwitchBacktestStepOutputDispersion:
-	// off from the constructor, and never read here (the planner's backtest
-	// prices each step's output spread).
+	// off from the constructor, on in the planner
+	// (learnreplay.PlannerSwitches), and never read here (the planner's
+	// backtest prices each step's output spread).
 	backtestStepOutputDispersion bool
 	// prefillVPFloorServed is SwitchPrefillVPFloorServed: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
@@ -597,6 +598,10 @@ type SaturationAnalyzer struct {
 	// prefillVPLoneRate is SwitchPrefillVPLoneRate: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillVPLoneRate bool
+	// prefillVPServiceLine is SwitchPrefillVPServiceLine: off from the
+	// constructor, so the controller and its slo analyzer never read it;
+	// planner-only (learnreplay.PlannerSwitches).
+	prefillVPServiceLine bool
 	// prefillHitAtCount is SwitchPrefillHitAtCount: off from the
 	// constructor, planner-only; the analyzer holds it for the name.
 	prefillHitAtCount bool

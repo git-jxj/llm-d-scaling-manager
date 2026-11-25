@@ -39,6 +39,11 @@ type InputsRequest struct {
 	// fewer pods the hit is the floor hit x N'/N, flagged PrefixHitAtCount;
 	// at more it is held, flagged PrefixHitHeld.
 	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
+	// PrefillVPServiceLine reads V_P from the prefill service line where no
+	// prefill pod queued, or V_P is a lower bound under the line (the CLI's
+	// --prefill-vp-service-line): opt-in, off by default, and not validated,
+	// so every figure reads outside the validated region.
+	PrefillVPServiceLine bool `json:"prefillVPServiceLine,omitempty"`
 	// ExperimentalTTFT prices TTFT with the TTFT model's switches that are
 	// off by default (the CLI's --experimental-ttft): for demonstration,
 	// not validated. Every prefill and TTFT figure is flagged
@@ -50,6 +55,11 @@ type InputsRequest struct {
 	// source's window and abstains where it is not identified; the
 	// planner's TTFT then stands.
 	TTFTModel string `json:"ttftModel,omitempty"`
+	// RankMixtureStratified is BacktestRequest.RankMixtureStratified for
+	// the main view's model: absent, the server's default (on, unless the
+	// server was started with --rank-mixture-stratified=false). Read only
+	// with TTFTModel rank-mixture; false changes the inputsId.
+	RankMixtureStratified *bool `json:"rankMixtureStratified,omitempty"`
 	// TPOTModel prices the main view's TPOT p90 and p95 with an
 	// experimental per-request TPOT distribution: "" is the server's
 	// default (serve --experimental-tpot=v2), and
@@ -112,6 +122,10 @@ type InputsResponse struct {
 	// at each prefill count (InputsRequest.PrefillHitAtCount); absent
 	// otherwise.
 	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
+	// PrefillVPServiceLine says the source was read with V_P from the
+	// prefill service line (InputsRequest.PrefillVPServiceLine); absent
+	// otherwise.
+	PrefillVPServiceLine bool `json:"prefillVPServiceLine,omitempty"`
 	// ExperimentalTTFT says the source was read with the experimental TTFT
 	// model (InputsRequest.ExperimentalTTFT); absent otherwise.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
@@ -296,6 +310,22 @@ type Figure struct {
 	// window served (TTFTModelView.MeasuredUpTo,
 	// TPOTModelView.MeasuredUpTo).
 	Extrapolated bool `json:"extrapolated,omitempty"`
+	// BatchBeyondFit is the batch a decode figure's fill runs past the most
+	// the ITL line's fit rows held, where it is (flag BatchBeyondFit): the
+	// figure is priced all the same, and its TPOT may read low and its knee
+	// high.
+	BatchBeyondFit *BatchBeyondFit `json:"batchBeyondFit,omitempty"`
+}
+
+// BatchBeyondFit is a decode figure's batch against its line's fit, in
+// sequences an engine rank: Priced at the figure's fill, Fitted the most the
+// rows the line was fitted on held (the held fit's for a held line). Ranks
+// is the data-parallel engine ranks a pod runs, where more than one: the
+// batches are then a rank's, not the pod's; absent for one.
+type BatchBeyondFit struct {
+	Priced int64 `json:"priced"`
+	Fitted int64 `json:"fitted"`
+	Ranks  int   `json:"ranks,omitempty"`
 }
 
 // Band is a bootstrap band, Lo to Hi.
@@ -456,6 +486,13 @@ type Assume struct {
 	// AboveFlowControlOnset, a miss); absent, the CLI's default
 	// (whatif.DefaultRouterWaitInPrefill, whatif.DefaultPriceRouterWait).
 	RouterWait string `json:"routerWait,omitempty"`
+	// LoadAwareRouter states that the router balances prefill by load, as
+	// llm-d's EPP queue scorer does (--load-aware-router): f is held to the
+	// utilization it was read at, then falls to 1 at the pooled prefill knee
+	// (whatif.Prefill.LoadAwareRouter). No recording says what the router
+	// scores, so it is stated, never read; absent or false, f is held at
+	// every load (whatif.DefaultPlannerLoadAwareRouter).
+	LoadAwareRouter bool `json:"loadAwareRouter,omitempty"`
 }
 
 // The values Assume.FlowControl takes.

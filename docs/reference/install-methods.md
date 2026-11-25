@@ -10,7 +10,12 @@ a direct Kustomize apply, or seeing exactly what the script does.
 Each release attaches rendered manifests, pinned to its image by digest:
 `kubectl` installs them with no checkout. The guides lead with them
 ([in a namespace](../guides/install-in-namespace/),
-[cluster-wide](../guides/install-cluster-wide/)). What each file holds:
+[cluster-wide](../guides/install-cluster-wide/)). From v0.13.0 a release also
+attaches `scaling-manager.yaml`, one manifest for the whole cluster, with
+`scaling-manager-keda.yaml`, `scaling-manager-grants.yaml`,
+`scaling-manager-monitoring.yaml`, and the scripts `scaling-manager-admin.sh`
+and `scaling-manager-owner.sh` beside it
+([install with kubectl, from one manifest](../guides/kubectl-install/)). What each file holds:
 [the release process](../developer-guide/release-process.md). The capacity
 planner binaries are release files too
 ([Get the planner](../guides/capacity-planner/README.md#get-the-planner)), and
@@ -106,7 +111,7 @@ Options:
 
 The default image tag is the `newTag` in `config/base/manager/kustomization.yaml`:
 `main` on a checkout of `main`, the release tag on a checkout of a release. So
-`git checkout v0.12.4` installs `:v0.12.4` without `-i`. See
+`git checkout v0.13.0` installs `:v0.13.0` without `-i`. See
 [Pin the version](upgrade-and-uninstall.md#pin-the-version).
 
 `--check` is what `make check-prereqs` runs. Run it before a real install. It
@@ -184,12 +189,12 @@ yourself, or when a GitOps tool owns the manifests. Otherwise use Method 1.
 ```bash
 # Use the manifests of the release you install. A release checkout already
 # names its own image, so the image line below only makes it explicit.
-git checkout v0.12.4
+git checkout v0.13.0
 
 # Set the controller image: the release tag, or its digest from the release notes
 cd config/base/manager
-kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.12.4
-# kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:dcca9e445c234283b894b51b8fbce1e52b769f562d1ee10ee706adb0f4c0ab6a
+kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager:v0.13.0
+# kustomize edit set image controller=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:d08f6a159fc8052442f6ce5af562e67ea7902b86ff1af0f77a8a3a6f56b3f8cd
 
 # Apply the overlay for your scope and platform
 kubectl apply -k ../../overlays/cluster-scoped/kubernetes

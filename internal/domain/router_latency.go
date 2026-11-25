@@ -57,11 +57,26 @@ type RouterLatency struct {
 	// Collected only while a learner recording is on, read by nothing yet,
 	// and left out of a recording while nil.
 	FlowControlWaitBuckets []LatencyBucket `learnrec:"omitzero"`
+
+	// ProcessingBuckets is the router's request-processing histogram,
+	// seconds, as per-second bucket rates over the same window, sorted by
+	// bound, and ProcessingSumRate and ProcessingCountRate the rates of its
+	// _sum and _count: the router's own time inside the TTFT above, which
+	// the capacity planner's experimental TTFT model draws its remainder
+	// from (whatif.RankMixtureOptions.RemainderSpread). The series carries
+	// no model, so it is joined to a model only where the router's TTFT
+	// names that model alone in the namespace. Nil and zero with no such
+	// series, a failed query or no join. Collected only while a learner
+	// recording is on, and left out of a recording while absent, so a
+	// recording made before it existed is written again byte for byte.
+	ProcessingBuckets   []LatencyBucket `learnrec:"omitzero"`
+	ProcessingSumRate   float64         `learnrec:"omitzero"`
+	ProcessingCountRate float64         `learnrec:"omitzero"`
 }
 
 // Judgeable reports whether r is a reading of the router's latency: a TTFT
-// histogram or a TPOT request rate. The two recorded histograms alone
-// (TPOTBuckets, FlowControlWaitBuckets) are not one, so the slo analyzer
+// histogram or a TPOT request rate. The recorded histograms alone
+// (TPOTBuckets, FlowControlWaitBuckets, ProcessingBuckets) are not one, so the slo analyzer
 // treats a struct holding only them as no reading, as it did before they
 // were collected. Nil is not judgeable.
 func (r *RouterLatency) Judgeable() bool {

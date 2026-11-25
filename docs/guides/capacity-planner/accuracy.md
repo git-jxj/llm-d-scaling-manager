@@ -192,6 +192,16 @@ capacity-planner replicas-to-slo --recording run.jsonl.gz --prefill 2 --decode 2
   --assume-prompt-cv 0.0577 --arrival-cv2 1 --flow-control off
 ```
 
+**A backtest prices each step at its own output spread.** The spread of
+output lengths sets the KV a running request holds. By default a backtest
+step is priced at the spread its own decode pods' output-length histograms
+read, as it already is at its own lengths; a step that read none keeps the
+fit's. Before, every step took the spread the fit read in its last minutes.
+On the 0.6B staircase, whose warm-ups end on a few minutes of short outputs,
+the predicted decode KV fill on the 1000/1000 phases fell from 1.87 to 1.59
+times what the pods held, and on the Qwen3-32B A-off phase from 1.19 to
+1.05. No backtest figure newly read more than 20% under what was measured.
+
 ## Never validated
 
 These always read `OUTSIDE VALIDATED REGION`:
@@ -244,15 +254,22 @@ With fewer than four steps under 0.9, the two fits read every step; with
 fewer than five steps whose ranks carried a request a second, the shares are
 the fit window's mean. The model's `assumed` line says which it priced.
 
-`--rank-mixture-stratified` (`rankMixtureStratified`, off by default) fixes
-how the draws read each rank's service. Without it, each rank's mean service
-and its spread come from that rank's own few hundred random draws. On a
+**Each rank's service is read from the histogram, by default.** The mean
+service and its spread are read once from the computed-token histogram
+itself, and each rank draws one request per equal slice of it. The older
+way read them from each rank's own few hundred random draws. On a
 computed-token histogram with a long tail (a few requests compute a whole
 uncached prompt), whether those draws catch the tail is chance, and a figure
-moves by several percent with the seed. With the switch, the mean and the
-spread are read once from the histogram itself, and each rank draws one
-request per equal slice of it, so a figure moves far less with the seed. The two switches are
-independent: either, both or neither can be on.
+moved by several percent with the seed. On a production P/D recording,
+priced with three seeds, a step's figure moved by a median 2.4 to 2.9 % and
+at most 12 to 17 % the older way, and by 0.5 to 1.0 % and at most 1.2 to
+2.6 % this way. The median ratios to measured did not move.
+
+To price the older way, set `--rank-mixture-stratified=false` on
+`backtest`, `at-replicas` or `serve`, or send `rankMixtureStratified` false
+in the request. The backtest's `rankMixture.stratified` says which way it
+priced. The two switches are independent: `--rank-mixture-fit-steps` can
+be on or off either way.
 
 The model prices only what its inputs identify. It abstains on the whole backtest where:
 - a prompt slope is not identified;
@@ -274,6 +291,86 @@ or later. It reads each prefill rank's own request rate, prefill time, queue
 time, TTFT and prompt from a LeaderWorkerSet group's engines
 (`GroupEngines`). In an older recording, a row's ranks share its rate evenly,
 and the answer says so.
+
+### The measured non-queue variant (`--experimental-ttft=v2nl-line`)
+
+`backtest --experimental-ttft=v2nl-line` prices with v2's queue and service
+line, and fits them another way. It is off by default, and its figures carry
+the same flags. The answer's `rankMixture.model` reads `rank-mixture-nl-line`.
+
+- **Non-queue part.** `Z` is measured part by part, not calibrated. Each part
+  is its own line in the prompt, with an intercept and slope held at 0 or
+  above: the engine's pre-queue overhead, the decode engine's first token and
+  the router's remainder. `a0` is the sum of the intercepts, so it is never
+  negative, and `s` is 1. `rankMixture.zParts` names each part.
+- **Spreads of the parts.** Each part varies request to request. It is drawn
+  lognormal about its line, so its mean does not move. The decode part's sigma
+  comes from the decode engines' TTFT histogram. The overhead's is the one at
+  which the priced prefill-engine TTFT reads the engines' measured p90. The
+  router's remainder has no histogram of its own and stays a line.
+- **v2's switches, always on.** The variant fits as
+  `--rank-mixture-fit-steps` and `--rank-mixture-stratified` do: the
+  KV-deferral lines and the parts on the steps under utilization 0.9, the
+  shares at the priced load, and each rank's service read from the histogram.
+
+No spread or location is calibrated to the router's TTFT, so the fit window
+must price itself. This check is on the same window, and the router's
+remainder is the router's mean less both engines': a fit window priced at its
+mean mostly says the prefill engine's queue and service are. The variant
+abstains where:
+- the fit window's median ratio of priced to measured mean (`fitMean`) is
+  outside 0.8 to 1.25;
+- its median p90 ratio (`fitP90`) is outside 0.9 to 1.25;
+- the fit window is under 12 hours, too short for those checks;
+- the computed prompts do not spread (one prompt length);
+- or, as for v2, the ranks' own rates or `--max-num-seqs` are not read.
+
+On the public recordings it abstains, mostly on the fit window's length.
+
+Two modes of the variant, each off by default and refused without
+`--experimental-ttft=v2nl-line`. Neither moves `fitMean` or `fitP90`, so
+neither changes whether the variant abstains.
+
+- **KV-deferral hold** (`--rank-mixture-kv-hold`, `rankMixtureKVHold`). The
+  KV-deferral lines are fitted over the fit window's loads. Priced past them,
+  the lines are extrapolated, and on a production P/D recording that read
+  the busier half's queue well over what was measured. With the mode, the
+  lines are read no further than the 0.95 quantile of the rank utilizations
+  the fit window prices (`rankMixture.kv.rhoHold`); past it the wait is held.
+  A figure past the fitted range is still flagged `KVDeferralOutside`.
+- **Router remainder spread** (`--rank-mixture-remainder-spread`,
+  `rankMixtureRemainderSpread`). The router's remainder is drawn from the
+  router's measured request-processing time
+  (`llm_d_epp_request_processing_duration_seconds`): its line less that
+  time's mean, plus a draw of that time's measured law, so a mostly flat
+  line gets the router's own tail. `rankMixture.zParts` gives the mean and
+  the 0.95 quantile over the mean. It needs a recording that holds the
+  series, on at least 4 fit steps. Recordings made before it was recorded,
+  and every public recording here, hold none: the remainder is then its
+  line, as with the mode off, and the assumed line says so.
+
+On the public recordings neither mode moves a figure: the variant abstains
+there, and none holds the router's request-processing series. On a
+production P/D recording, re-captured with the series (development window
+only):
+
+- The hold alone took the load split's p90 and p95 figures under 1.25 of
+  measured, and read one more mean under 0.8. That mean is one test step,
+  the split's lowest, which already read just over 0.8 with the mode off; the
+  hold lowers it a little, as it lowers every busier step. The offline
+  reference lowers the same step by the same amount, and keeps it just over
+  0.8 only because it reads the step a little higher with the mode off. It is
+  how the hold acts on one outlier step, not a difference in the hold.
+- The remainder spread alone brought the time split's p90 and p95 toward
+  measured, and most of its figures under 0.8 back within, but it raised
+  the load split's figures over 1.25 several times over.
+- Both together kept the time split's gain, left fewer figures over 1.25
+  on the load split than with both off, and read no figure under 0.8 that
+  read within with both off. Use the two together.
+
+The hold given without the remainder spread is not refused, so each can
+still be compared alone, but `backtest` prints a warning and the assumed
+line says so.
 
 ## Experimental: the per-request TPOT distribution
 

@@ -50,7 +50,8 @@ func MixtureSeriesFrom(src Source, q StateQuery, v SeriesVariants) ([]whatif.Mix
 // (domain.EngineReading.RequestRateKnown) gives one rank per engine; any
 // other row gives its ranks (domain.ReplicaMetrics.Ranks), the row's rate
 // split evenly between them and each with the row's means, counted in
-// EvenWithinRows.
+// EvenWithinRows. The router's request-processing histogram and mean are
+// the cycle's router latency's, where recorded.
 func mixtureCycleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) whatif.MixtureCycle {
 	c := whatif.MixtureCycle{At: at, Computed: map[float64]float64{}, Prompt: map[float64]float64{}, Queue: map[float64]float64{}}
 	roles := rolesOf(in)
@@ -77,6 +78,7 @@ func mixtureCycleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) wha
 			rate = rm.RequestRate
 		}
 		if role == domain.RoleDecode {
+			c.DecodeTTFTHist = addBuckets(c.DecodeTTFTHist, rm.TTFTBuckets)
 			if rm.AvgTTFTKnown && rate > 0 {
 				dw += rate
 				dt += rate * rm.AvgTTFT
@@ -96,6 +98,7 @@ func mixtureCycleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) wha
 		for _, b := range rm.QueueTimeBuckets {
 			c.Queue[b.UpperBound] += b.Rate
 		}
+		c.PrefillTTFTHist = addBuckets(c.PrefillTTFTHist, rm.TTFTBuckets)
 		if engines := rm.GroupEngines; len(engines) > 0 && engineRatesRead(engines) {
 			for _, e := range engines {
 				c.Ranks = append(c.Ranks, whatif.MixtureRankReading{Key: e.PodName, MixtureRank: rankOf(e.RequestRate,
@@ -120,7 +123,24 @@ func mixtureCycleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) wha
 	if dw > 0 {
 		c.DecodeTTFT = dt / dw
 	}
+	if rl := in.RouterLatency; rl != nil {
+		c.RouterProcessingHist = addBuckets(nil, rl.ProcessingBuckets)
+		if rl.ProcessingCountRate > 0 && whatif.Finite(rl.ProcessingSumRate) && whatif.Finite(rl.ProcessingCountRate) {
+			c.RouterProcessingMean = rl.ProcessingSumRate / rl.ProcessingCountRate
+		}
+	}
 	return c
+}
+
+// addBuckets is h with bs added bucket by bucket; nil while there is none.
+func addBuckets(h map[float64]float64, bs []domain.LatencyBucket) map[float64]float64 {
+	for _, b := range bs {
+		if h == nil {
+			h = map[float64]float64{}
+		}
+		h[b.UpperBound] += b.Rate
+	}
+	return h
 }
 
 // engineRatesRead says every engine of a group recorded its own request rate.

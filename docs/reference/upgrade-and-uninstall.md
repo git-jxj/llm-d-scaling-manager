@@ -7,6 +7,11 @@ in.
 > Part of the [deployment guide](../../deploy/). Day-to-day checks are in
 > [After the install](operations.md); symptoms in [Troubleshooting](troubleshooting.md).
 
+Installed with kubectl from the one manifest? Its
+[upgrade and rollback](../guides/kubectl-install/README.md#upgrade-and-rollback) and
+[uninstall](../guides/kubectl-install/README.md#uninstall) are in its guide.
+This page covers the `smt`, release-file and checkout installs.
+
 ## Pin the version
 
 An install from a checkout of `main` deploys
@@ -20,19 +25,19 @@ Pin a release tag or a digest, and deploy with the manifests from the **same**
 release. An image older than the manifests crash-loops on flags it does not
 know. Releases are listed on the
 [Releases page](https://github.com/llm-d-incubation/llm-d-scaling-manager/releases);
-the current one is `v0.12.4`.
+the current one is `v0.13.0`.
 A checked-out release deploys its own tag, so `IMG_TAG` below only makes that
 explicit. Each release's notes list its image digest; a digest names one build,
 and a tag could in principle be re-pushed.
 
 ```bash
-git checkout v0.12.4
-make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.12.4
-# or by digest (v0.12.4's, from its release notes)
+git checkout v0.13.0
+make deploy-scaling-manager NAMESPACE=<namespace> IMG_TAG=v0.13.0
+# or by digest (v0.13.0's, from its release notes)
 make deploy-scaling-manager NAMESPACE=<namespace> \
-  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:dcca9e445c234283b894b51b8fbce1e52b769f562d1ee10ee706adb0f4c0ab6a
+  IMG=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:d08f6a159fc8052442f6ce5af562e67ea7902b86ff1af0f77a8a3a6f56b3f8cd
 # out-of-reach shape (the cluster admin runs it): the controller runs in llmsm-<namespace>
-NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.12.4
+NAMESPACE=<namespace> make deploy-scaling-manager LLMSM_NS=llmsm-<namespace> LLMSM_WATCH_NS=<namespace> IMG_TAG=v0.13.0
 ```
 
 `IMG_TAG` sets the tag of the default `IMG`; `IMG` replaces the whole reference.
@@ -128,6 +133,40 @@ changed, and there is no compatibility path. Reinstall.
    ```
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
+
+### Upgrading from v0.12.4 to v0.13.0
+
+[Upgrade](#upgrade) as for any release. An existing install is unchanged: `smt`,
+the existing release files and `make deploy-scaling-manager` install as in
+v0.12.4, the controller's RBAC, settings and alerts are the same, and
+`make workload-patch` need not be run again.
+
+- **A new install, opt-in.** The release also carries the kubectl install from
+  one manifest (`scaling-manager.yaml` and its companions, applied by
+  `scaling-manager-admin.sh` and `scaling-manager-owner.sh`). Its behaviour is
+  behind flags only that manifest sets. To move an existing install to it, see
+  [Install with kubectl, from one manifest](../guides/kubectl-install/).
+- **New controller metrics.** `llmsm_replicas_suggested`,
+  `llmsm_replicas_provided`, `llmsm_replicas_short`, `llmsm_replicas_borrowed`
+  and `llmsm_quota_remaining_after_suggested_gpus` appear with no change to
+  scaling. The `ResourceConstrained` Event states both numbers.
+- **Capacity planner verdicts and sizes can move.** Each has a flag that gives
+  the v0.12.4 figure back:
+  - `at-replicas` and `day-plan` judge and size at the p95 of the arrival rate
+    less its one-minute counting noise: `--load-statistic p95` or
+    `--size-for p95` for the old figure;
+  - the report judges at the traffic's own shape: `--shape measured` for the
+    old answer;
+  - an OVER-PROVISIONED verdict keeps decode at its error bound, and a shape
+    priced more than 20% lighter than the load reads NOT JUDGED.
+- **The page checks its accuracy only when asked** ("Check accuracy on this
+  recording"); it no longer runs the check after each load.
+- **The experimental models stay off by default.** A planner served with
+  `--experimental-ttft=v2 --experimental-tpot=v2` now also prices the page's
+  main view, its sizes and the growth row with them
+  ([the experimental models](../guides/capacity-planner/page-and-commands.md)).
+- **Recordings.** `capture` collects more optional series. Record with v0.13.0
+  tools for this planner.
 
 ### Upgrading from v0.12.3 to v0.12.4
 

@@ -98,9 +98,9 @@ type Knobs struct {
 	// observed one (flagged AssumedShape).
 	PrefixHit *float64
 	// PrefixHitRead says PrefixHit was read from the source (the load's
-	// cycles, ReportShapeAsk.Load), not stated: a computed-token hit replaces
-	// it where the replay turned slo.SwitchTTFTComputedHit on, and a stated
-	// one governs.
+	// cycles, ReportShapeAsk.Load), not stated: on a P/D fleet the prefill
+	// pods' computed-token hit replaces it, with slo.SwitchTTFTComputedHit on
+	// or off, and a stated one governs.
 	PrefixHitRead bool
 	// PrefillComputedTokens is the prompt the prefill pods computed a
 	// request, read from the same rows as PromptTokens (a backtest's step);
@@ -129,8 +129,8 @@ type Knobs struct {
 	// OutputDispersion is the spread of the output lengths, D =
 	// E[O^2]/E[O]^2 (shape.Dispersion), that a backtest step's decode rows
 	// read, priced in place of the fit's where the replay turned
-	// saturation.SwitchBacktestStepOutputDispersion on; 0 is the fit's. No
-	// flag sets it.
+	// saturation.SwitchBacktestStepOutputDispersion on (the planner's
+	// default); 0 is the fit's. No flag sets it.
 	OutputDispersion float64
 	ArrivalCV2       *float64
 	// Headroom is the operating point's fraction of the lower knee.

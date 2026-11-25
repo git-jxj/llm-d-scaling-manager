@@ -19,7 +19,7 @@ had over every bucket with data: 2.67 prefill + 2.67 decode replica-hours, 5.33 
 hours under (SLO risk): 02:00, 03:00
 hours over (waste): none
 measured TTFT over its target (p95 190.0 ms): 16 of the 16 buckets the router measured
-flags: RateFromDecodeRows, FewCyclesForP95, PrefillNotPriced, AssumedShape, ExtrapolatedFill
+flags: RateFromDecodeRows, FewCyclesForP95, PrefillNotPriced, AssumedShape, ExtrapolatedFill, BatchBeyondFit
 note: Steady state: each bucket is sized as if its rate held. A replica must be Ready when its bucket starts, so it starts one lead time before (prefill 122 s learned, decode 107 s learned): held is each role's most need over the bucket and every bucket that starts within its lead after it ends, and the held replica-hours count each scale-up's replicas from one lead before their bucket. The verdicts judge the need, not the held fleet.
 note: Each bucket is sized for the p95 less counting noise (the p95 less a steady one-minute rate's Poisson spread, var - share x mean/60, the share of it readings closer than a minute hold) of its cycles' rates. A p95 needs 20 cycles in the bucket; with fewer the bucket is sized for its mean, which is less conservative (FewCyclesForP95).
 note: Needed is the fewest replicas whose fleet limit, at the SLO and headroom 0.85, reaches the rate: the fewest in all, ties to fewer decode (POST /v1/size's search, whatifapi.SmallestFleet). Another mix may serve the rate too. The fleet the bucket had is judged as one fleet at the same rate: under when its limit falls short, over when one replica fewer of either role would still serve it.

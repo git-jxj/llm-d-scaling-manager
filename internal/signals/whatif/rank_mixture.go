@@ -135,6 +135,11 @@ type KVDeferral struct {
 	RhoLo, RhoHi   float64
 	// Known says it was fitted; unknown, q is 0.
 	Known bool
+	// RhoHold is the utilization the lines are read no further than
+	// (RankMixtureOptions.KVHold, rank_mixture_modes.go): past it the wait
+	// is held, not extrapolated. 0 holds nothing; the lines then run to
+	// MaxKVRho.
+	RhoHold float64
 }
 
 // MinKVDeferralP and MinKVDeferralMean bound the fitted lines where they
@@ -148,9 +153,13 @@ const (
 // MaxKVRho caps the utilization the KV lines are read at.
 const MaxKVRho = 0.95
 
-// at is the deferral's probability and mean at rho.
+// at is the deferral's probability and mean at rho, read no further than
+// RhoHold where it is set.
 func (k KVDeferral) at(rho float64) (p, m float64) {
 	rho = min(rho, MaxKVRho)
+	if k.RhoHold > 0 {
+		rho = min(rho, k.RhoHold)
+	}
 	return min(max(k.P0+k.P1*rho, MinKVDeferralP), 1), max(k.M0+k.M1*rho, MinKVDeferralMean)
 }
 
@@ -193,6 +202,14 @@ type RankMixture struct {
 	// (rank_mixture_stratified.go); false reads them from each rank's own
 	// draws.
 	Stratified bool
+	// Parts is Z measured part by part (FitRankMixtureNL,
+	// QueueRankMixtureNLLine): A0 and Beta are then their sums, Spread is 1
+	// and each request's Z is drawn from the parts; nil is v2's Z.
+	Parts *ZParts
+	// KVHold and RemainderSpread say the fit was asked for those modes of
+	// QueueRankMixtureNLLine (RankMixtureOptions, rank_mixture_modes.go);
+	// KV.RhoHold and Parts.Remainder.Shape say whether each applies.
+	KVHold, RemainderSpread bool
 }
 
 // MaxRelaxationShare is the largest relaxation time, as a share of the step
@@ -332,6 +349,9 @@ func (h cumHist) ppf(u float64) float64 {
 // Spread.
 type RankMixtureDraws struct {
 	QP, L, W []float64
+	// Z is each request's non-queue part where it is drawn (ZParts.draws);
+	// Stats then adds it in place of a0 + sb L.
+	Z []float64
 	// Checks is the assumptions' checks at the rate.
 	Checks RankMixtureChecks
 }
@@ -446,6 +466,7 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 			out.W = append(out.W, w)
 		}
 	}
+	out.Z = m.Parts.draws(out.L)
 	if m.KV.Known {
 		mean := rhoSum / float64(len(shares))
 		out.Checks.KVOutside = mean < m.KV.RhoLo || mean > m.KV.RhoHi
@@ -519,6 +540,9 @@ func (d RankMixtureDraws) Stats(a0, sb float64, qs ...float64) (mean float64, qu
 	var tw float64
 	for i := range d.QP {
 		y := a0 + d.QP[i] + sb*d.L[i]
+		if d.Z != nil {
+			y = d.QP[i] + d.Z[i]
+		}
 		ps[i] = pt{y, d.W[i]}
 		mean += y * d.W[i]
 		tw += d.W[i]
@@ -564,6 +588,9 @@ func (m RankMixture) Price(rate float64, computed, prompt map[float64]float64, q
 
 // Assumed is the model's parameters in words, for an answer's assumed line.
 func (m RankMixture) Assumed() string {
+	if m.Parts != nil {
+		return m.assumedNL()
+	}
 	busiest := 0.0
 	if len(m.Shares) > 0 {
 		busiest = m.Shares[0] * float64(len(m.Shares))

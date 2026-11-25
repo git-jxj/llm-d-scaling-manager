@@ -31,6 +31,8 @@ function fakeElement(tag) {
     appendChild(c) { this.children.push(c); return c; },
     replaceChildren(...cs) { this.children = cs; },
     querySelector() { return fakeElement("div"); },
+    // wire() renumbers the shape rows it adds; a fake row holds no inputs.
+    querySelectorAll() { return []; },
     addEventListener() {},
     setAttribute() {},
   };
@@ -269,6 +271,45 @@ try {
   await run("startExecutive()");
   check("a decode-only source sends no size", !calls.some(c => c.path === "v1/size"), calls.map(c => c.path).join(","));
   check("and says why", row("+25% / +50% traffic").text === run("GROWTH_NO_PD"), row("+25% / +50% traffic").text);
+
+  // The router's balancing, ticked under the assumptions, is
+  // assume.loadAwareRouter in the plan asked and loadAwareRouter=1 in the
+  // link, a link an import admits; unticked, neither is sent, so the
+  // server's default (off) stands.
+  load(inputsPD, pricedPlan);
+  run("wire(); schedule = () => {};");
+  const lar = document.getElementById("a-lar");
+  const asked = () => run("planRequest()");
+  const linked = () => run("linkParams().toString()");
+  check("unticked: no assume sent", asked().assume === undefined, JSON.stringify(asked().assume));
+  check("unticked: the link carries none", !linked().includes("loadAwareRouter"), linked());
+  lar.checked = true;
+  lar.onchange();
+  check("ticked: assume.loadAwareRouter sent", asked().assume && asked().assume.loadAwareRouter === true, JSON.stringify(asked().assume));
+  check("ticked: the link carries it", linked().includes("loadAwareRouter=1"), linked());
+  check("ticked: an import admits the link", run(`linkProblem(${JSON.stringify(linked())})`) === "", run(`linkProblem(${JSON.stringify(linked())})`));
+  check("ticked: counted as typed", document.getElementById("assumecount").textContent === "1 typed", document.getElementById("assumecount").textContent);
+  // The link reopens it ticked (applyLink), and a link without it unticked.
+  for (const [link, want] of [[linked(), true], ["recording=r&prefill=3", false]]) {
+    run(`linked = new URLSearchParams(${JSON.stringify(link)}); state.k.assume = {}; el("a-lar").checked = !${want}; applyLink();`);
+    check(`opened from ${link}: ticked ${want}`, lar.checked === want && (state.k.assume.loadAwareRouter === true) === want,
+      `${lar.checked} ${JSON.stringify(state.k.assume)}`);
+  }
+  run("state.k.assume.loadAwareRouter = true;");
+  lar.checked = false;
+  lar.onchange();
+  check("unticked again: no assume sent", asked().assume === undefined, JSON.stringify(asked().assume));
+
+  // The day plan is asked with the experimental models the inputs were
+  // resolved with, as the Answer view prices them, and without where none.
+  load(inputsPD, pricedPlan);
+  delete state.inputs.ttftModel;
+  check("no model: the day plan is the planner's own", run("dayRequest()").experimentalModels === undefined, JSON.stringify(run("dayRequest()")));
+  state.inputs.ttftModel = {model: "rank-mixture", label: "Experimental TTFT model"};
+  check("a TTFT model: the day plan asks for it", run("dayRequest()").experimentalModels === true);
+  delete state.inputs.ttftModel;
+  state.inputs.tpotModel = {model: "renewal-lognormal", label: "Experimental TPOT model"};
+  check("a TPOT model: the day plan asks for it", run("dayRequest()").experimentalModels === true);
 } catch (e) {
   failures.push("threw: " + (e && e.stack || e));
 }

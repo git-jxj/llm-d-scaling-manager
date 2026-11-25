@@ -20,7 +20,7 @@ func TestBacktest_RankMixtureSwitchesCompose(t *testing.T) {
 	test.mixture = btMixture(ts)
 	for _, c := range []struct{ fitSteps, stratified bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
 		req := BacktestRequest{TTFTModel: string(whatif.QueueRankMixture), PrefillSlots: 4,
-			RankMixtureFitSteps: c.fitSteps, RankMixtureStratified: c.stratified}
+			RankMixtureFitSteps: c.fitSteps, RankMixtureStratified: &c.stratified}
 		q, err := backtestQuestionOf(fit, test, req, time.Time{}, "")
 		require.NoError(t, err, "%+v", c)
 		require.NotNil(t, q.mixture, "%+v", c)

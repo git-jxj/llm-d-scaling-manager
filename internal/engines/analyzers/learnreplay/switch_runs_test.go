@@ -303,6 +303,12 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// holds it (heldBy).
 	slo.SwitchTTFTQuietTransfer: nil,
 
+	// The KV pull's work read from each decode row at its request rate
+	// (issue llm-d-incubation/llm-d-scaling-manager#301). It moves no golden:
+	// no committed recording prices a line in the analyzer (the decode term's
+	// reason, above). Its unit tests hold it (heldBy).
+	slo.SwitchTTFTPullWork: nil,
+
 	// llm-d-incubation/llm-d-scaling-manager#302 on the slo price: off from
 	// the constructor, so every golden replay runs it off. On, it moves
 	// nothing either: no committed recording runs a step budget under its
@@ -1293,9 +1299,10 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// golden moves. Its unit tests hold it.
 	saturation.SwitchDecodeBurstFill: nil,
 	// llm-d-incubation/llm-d-scaling-manager#274: a backtest step priced at
-	// its own output spread. Planner-only, off; read by the planner's
-	// answer at a spread the backtest states, not the replay, so no learner
-	// golden moves. Its unit tests hold it.
+	// its own output spread. Planner-only, off from the constructor and on
+	// in the planner; read by the planner's answer at a spread the backtest
+	// states, not the replay, so no learner golden moves (the planner's
+	// backtest goldens do). Its unit tests hold it.
 	saturation.SwitchBacktestStepOutputDispersion: nil,
 	saturation.SwitchPrefillVPFloorServed:         nil,
 	// The planner's V_P on a fleet that never queued (served peak as a
@@ -1324,6 +1331,11 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// it off and off alone from all on moves nothing. Its unit tests hold
 	// it (heldBy).
 	saturation.SwitchPrefillVPLoneRate: nil,
+	// llm-d-incubation/llm-d-scaling-manager#368, #416: V_P from the
+	// prefill service line. Planner-only, off from the constructor, so every
+	// golden replay runs it off and off alone from all on moves nothing. Its
+	// unit tests hold it (heldBy).
+	saturation.SwitchPrefillVPServiceLine: nil,
 	// llm-d-incubation/llm-d-scaling-manager#384: the prefix hit at another
 	// prefill count. Planner-only, off from the constructor, so every golden
 	// replay runs it off and off alone from all on moves nothing. Its unit
@@ -1820,6 +1832,18 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/whatif", "TestPromptNotCovered_InsideTheRangeIsPriced"},
 		{"../saturation", "TestPrefillVPPromptCoverage_ThroughAnalyze"},
 	},
+	saturation.SwitchPrefillVPServiceLine: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestServiceLine_FillsAFleetThatNeverQueued"},
+		{"../../../signals/prefill", "TestServiceLine_TheSharingIsTakenOut"},
+		{"../../../signals/prefill", "TestServiceLine_AbstainsWithTooFewMinutes"},
+		{"../../../signals/prefill", "TestServiceLine_RefusesPromptsThatDoNotSpread"},
+		{"../../../signals/prefill", "TestServiceLine_RefusesANegativeInterceptOrSlope"},
+		{"../../../signals/prefill", "TestServiceLine_RefusesAnUncertainSlope"},
+		{"../../../signals/prefill", "TestServiceLine_BusyMinutesWin"},
+		{"../../../signals/prefill", "TestServiceLine_ALowerBoundStandsOnlyAboveTheLine"},
+		{"../saturation", "TestPrefillVPServiceLine_ThroughAnalyze"},
+	},
 	saturation.SwitchPrefillVPLoneRate: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestLoneRate_IsVPWhereTheServedPeakAgrees"},
@@ -1941,6 +1965,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../../cmd/capacity-planner", "TestStepOutputDispersion_TheStepsSpreadOnTheSwitch"},
 		{"../../../whatifapi", "TestBacktestStep_ReadsItsOwnOutputSpread"},
+		{".", "TestPlannerSwitches_TheStepOutputDispersionIsOn"},
 		{".", "TestSeries_TheDecodeRowsOutputSpread"},
 		{".", "TestDecodeSwitches_EachSetsOnlyItsOwnField"},
 	},
@@ -2040,6 +2065,15 @@ var heldBy = map[string][]heldTest{
 	},
 	// Runs the switch on and off and asserts both.
 	slo.SwitchTTFTQuietTransfer: {{"../slo", "TestTTFT_TheQuietTransferSwitch"}, {"../slo", "TestTTFT_TheHeldTransferAgesOut"}},
+	// Issue llm-d-incubation/llm-d-scaling-manager#301: the window's reading on
+	// and off, in the analyzer and in the planner's replay, and the planner's
+	// KV pull at the staircase's load on and off.
+	slo.SwitchTTFTPullWork: {
+		{"../../../signals/prefill", "TestTransferWindow_PullWorkTakesTheStretchOut"},
+		{"../slo", "TestTTFT_ThePullWorkSwitch"},
+		{".", "TestStateAt_ThePullWorkSwitchReachesTheTransfer"},
+		{"../../../../cmd/capacity-planner", "TestAtReplicas_PullWorkPricesTheMeasuredPull"},
+	},
 	// llm-d-incubation/llm-d-scaling-manager#302: off from the constructor,
 	// and the price's cap on and off.
 	slo.SwitchCapAtStepBudget: {{"../slo", "TestCapAtStepBudget_TheSwitch"}},

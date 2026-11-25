@@ -295,6 +295,10 @@ const DAY_VERDICT_DECODE = {under: "under: SLO risk (decode only)", over: "decod
 // DAY_DECODE_ONLY says why a decode-only verdict is not a recommendation.
 const DAY_DECODE_ONLY = "Prefill was not sized, so this is not a fleet recommendation.";
 
+// DAY_TYPE_VP points a day plan that could not price prefill to the box
+// that lets it: a stated V_P sizes prefill in every bucket.
+const DAY_TYPE_VP = "To size prefill, type a prefill speed (V_P per pod) under Assumptions, above the tabs, and plan the day again.";
+
 // dayVerdict is a bucket's or an hour's verdict in words, "" with none: a
 // bucket the model would call over whose measured TTFT missed its target
 // says so in place of a verdict.
@@ -358,7 +362,7 @@ function dayRefusedHTML(plan) {
   // code stays in small type.
   return (plan.refused || []).map(r => r.reason === "NoPrefillCapacity" ?
     `<li title="${esc(r.reason)}"><b>${r.buckets} bucket(s):</b> ${esc(noPrefillWords({reason: r.reason, detail: r.detail, flags: /only the rate a prefill pod/.test(r.detail) ? ["VPLowerBound"] : []}))} ` +
-      `Decode is sized alone.</li>` :
+      `Decode is sized alone. ${esc(DAY_TYPE_VP)}</li>` :
     `<li><b>${esc(DAY_TERMS[r.term] || r.term)} refused (${esc(r.reason)}), ${r.buckets} bucket(s).</b> ` +
     `${esc(r.detail)}. ${esc(r.effect)} <span class="hint">${esc(r.hint)}</span></li>`).join("");
 }
@@ -384,6 +388,29 @@ function dayHoursTable(plan) {
   return s + "</table>";
 }
 
+// dayModelsText is the experimental models a day plan was asked to price
+// with, in words: abstained, or how many sized buckets each priced, marked
+// with the dagger; "" with none. The notes say why the rest are the
+// planner's own.
+function dayModelsText(plan) {
+  const sized = plan.summary && plan.summary.counts ? plan.summary.counts.sized || 0 : 0;
+  return [[plan.ttftModel, "RankMixtureTTFT"], [plan.tpotModel, "TPOTDistribution"]].filter(([m]) => m).map(([m, flag]) => m.abstained ?
+    `${m.label}: abstained (${m.abstained}); the planner's own prices every bucket.` :
+    `${m.label}: priced ${(plan.buckets || []).filter(b => b.limit && (b.limit.flags || []).includes(flag)).length} of the ${sized} sized buckets, ` +
+      `each marked ${DAGGER} (not validated: outside the validated region); the notes say why the rest are the planner's own.`).join(" ");
+}
+
+// DAY_MODEL_FLAGS are the flags a model the plan was asked to price with
+// puts on a bucket's limit: what the dagger in the bucket table marks, as
+// the command's hours table marks them. Other experimental flags (a
+// plateau V_P, the TTFT switches) are named in the flags column only.
+const DAY_MODEL_FLAGS = ["RankMixtureTTFT", "TPOTDistribution"];
+
+// dayModelDagger is the dagger where a model set the limit, else "".
+function dayModelDagger(limit) {
+  return limit && (limit.flags || []).some(f => DAY_MODEL_FLAGS.includes(f)) ? DAGGER : "";
+}
+
 // dayBucketsTable is every bucket, the table view of the charts: what the
 // tooltip shows, keyboard and screen reader alike.
 function dayBucketsTable(plan) {
@@ -395,7 +422,8 @@ function dayBucketsTable(plan) {
     s += `<tr><td>${esc(b.start.slice(0, 16).replace("T", " "))}</td><td>${esc(DAY_STATUS[b.status] || b.status)}</td>` +
       `<td>${b.rate ? dayFmt(b.rate.mean) : "-"}</td><td>${b.rate ? dayFmt(b.rate.p95) : "-"}</td>` +
       `<td>${b.sizedRate != null ? dayFmt(b.sizedRate) + " (" + esc(b.sizedFor) + ")" : "-"}</td>` +
-      `<td>${n(b.needed && b.needed.prefill)}</td><td>${n(b.needed && b.needed.decode)}</td><td>${n(b.actual && b.actual.prefill)}</td><td>${n(b.actual && b.actual.decode)}</td>` +
+      `<td>${n(b.needed && b.needed.prefill)}${b.needed ? dayModelDagger(b.limit) : ""}</td><td>${n(b.needed && b.needed.decode)}${b.needed ? dayModelDagger(b.limit) : ""}</td>` +
+      `<td>${n(b.actual && b.actual.prefill)}</td><td>${n(b.actual && b.actual.decode)}</td>` +
       `<td>${esc(dayVerdict(b) + (b.trust ? "; " + b.trust.split(":")[0] : ""))}</td><td>${esc(why)}</td><td>${esc((b.flags || []).join(", "))}</td></tr>`;
   }
   return s + "</table>";
@@ -436,7 +464,10 @@ function daySummaryText(plan) {
       (g ? `the fewest GPUs, at ${g.prefill} a prefill and ${g.decode} a decode replica` : "the fewest replicas in all") +
       ", and another mix may serve it too. The fleet the bucket had is judged whole, at the bucket's rate.");
     if (s.neededGpuHours != null) out.push(`Over the ${c.sized} sized buckets: GPU-hours needed ${s.neededGpuHours.toFixed(1)}, had ${s.hadGpuHours.toFixed(1)}.`);
-    else if (c.prefillNotPriced) out.push(`No GPU-hours of the need: prefill is not sized in ${c.prefillNotPriced} of the ${c.sized} sized buckets.`);
+    else if (c.prefillNotPriced) {
+      out.push(`No GPU-hours of the need: prefill is not sized in ${c.prefillNotPriced} of the ${c.sized} sized buckets.` +
+        ((plan.refused || []).some(r => r.reason === "NoPrefillCapacity") ? " " + DAY_TYPE_VP : ""));
+    }
     if (s.heldReplicaHours) {
       const r = s.heldReplicaHours;
       out.push(`Held with the scale-up lead (each scale-up's replicas from one lead before their bucket): ` +

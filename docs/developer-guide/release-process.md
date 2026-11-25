@@ -531,6 +531,11 @@ Design and rules: [install-from-release.md](../proposals/install-from-release.md
 | `scaling-manager-metrics-reader.yaml` | optional, Kubernetes: binds the scraping Prometheus account to the metrics-reader ClusterRole |
 | `scaling-manager-preflight.yaml` | the preflight Job (`manager preflight check`, image by digest), its ServiceAccount, and its read-only Role and ClusterRole; reads pods and PodMonitors in the controller's namespace only, and no Secret ([preflight.md](../reference/preflight.md)) |
 | `scaling-manager-preflight-cluster.yaml` | the same for the cluster-wide install in `scaling-manager-system` (`--scope=cluster`): lists pods, Deployments and PodMonitors in every namespace. Applies as is |
+| `scaling-manager.yaml` | the one manifest for the cluster ([kubectl install](../guides/kubectl-install/)), in `scaling-manager-system`, applied as is: the controller with the in-controller preflight, its own scaler certificates, the suggested-plan ConfigMap and passive by default (`LLMSM_PASSIVE=true`) |
+| `scaling-manager-keda.yaml` | the one manifest's side in KEDA's namespace, with no namespace: KEDA's copy of the client certificate and the Role that lets the controller fill it by name. Applied with `-n <KEDA's namespace>` |
+| `scaling-manager-grants.yaml` | the one manifest's per-namespace grants, with no namespace: `pod-writer` and `dset-role-writer`, selected by label, applied by the namespace owner with `-n` |
+| `scaling-manager-monitoring.yaml` | for a model namespace, with no namespace: the model-server PodMonitor and the NetworkPolicy rule for the EPP's `/metrics`, selected by label |
+| `scaling-manager-admin.sh`, `scaling-manager-owner.sh` | the cluster admin's and the namespace owner's scripts for the one manifest: `kubectl` only, files applied as downloaded, `--print` for GitOps. Summed and signed like the manifests |
 | `scaling-manager-dset-role-writer.yaml`, `-dset-role-writer-cluster.yaml` | optional: the DisaggregatedSet role writer's grant, `get`, `list` and `patch` on `disaggregatedsets` (a Role in `__NAMESPACE__`, or a ClusterRole for `scaling-manager-system`), copied from `config/components/dset-role-writer*`. The only files that grant more than `get` on them; `smt --dset-role-writer` applies them |
 
 `make test-e2e-release-manifests` installs the namespaced files on kind with

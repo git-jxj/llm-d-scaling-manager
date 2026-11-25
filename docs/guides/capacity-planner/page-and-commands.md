@@ -17,6 +17,17 @@ The planner answers five questions about one model's prefill/decode fleet:
 
 ## Read the page
 
+Above the tabs, under the source, one card holds what every view reads:
+**Targets and assumptions**. It has the TTFT and TPOT statistic and target,
+the safety margin (headroom), the prompt and output length to price at, and
+**Assume a term the source did not learn**. The Answer view prices them, the
+day plan sizes each bucket under them, and the Right-size view judges the
+fleet under them. **Check the planner** reads none of them: it learns its own
+terms from the source. Change one and every view that used it says so: the
+Answer prices again, a day plan on screen plans again (another view's waits,
+dimmed, with a note naming the targets it used, and plans again when you open
+it), and a right-size answer is hidden with the targets it was judged at.
+
 The page has four tabs:
 
 - **Answer**: the answer first, then the figures behind it and the what-if
@@ -52,9 +63,10 @@ The **Answer** tab, top down:
 5. **The figures**: the limits, then TTFT and TPOT against the rate, side by
    side. **Download CSV** and **Download JSON** export the curves and the
    plan.
-6. **What if**: fleet, traffic and SLO in one row (one column on a phone).
-7. Closed below: assumed terms, saved scenarios, the flags, the inputs and a
-   glossary of the planner's symbols.
+6. **What if**: the fleet and the request rate, in one row (one column on a
+   phone). The targets are above the tabs.
+7. Closed below: saved scenarios, the flags, the inputs and a glossary of the
+   planner's symbols.
 
 The page uses plain words; the symbols stay in tooltips and the glossary:
 
@@ -72,9 +84,19 @@ The rest of this section describes the controls and figures, in the
 planner's own terms:
 
 - **Fleet, traffic, SLO.** The page starts from now: the replica counts the
-  source saw, and the policy's SLO and headroom. The source carries no request
+  source saw, and the policy's SLO and headroom. With no policy objective the
+  page sets one (TTFT p90 1 s, TPOT mean 50 ms); where that is under 1.5 times
+  the floor the first plan priced (the least latency any load gives), it
+  starts at a round value above 1.5 times the floor instead, and says so under
+  the target. A policy's target, or yours, is never moved: under the floor it
+  is marked "no load meets it". The source carries no request
   rate, so the rate starts at the operating point, headroom times the lower
   knee (or the one knee that priced: see "One knee refused" below). Move the rate slider, step the replicas, pick a statistic, set a target.
+  A target box takes milliseconds and any value: typed outside the slider's
+  range, the slider moves to take it in. The target sliders are on a log
+  scale, in steps of about 2%, from a twentieth of the target or floor to ten
+  times it, so every target above the floor is in reach; a slider let go where
+  it stands keeps the value typed.
   The request rate is the total rate: traffic classes are not priced apart
   yet.
 - **Concurrency.** Under the rate, the page says how many requests are in
@@ -193,8 +215,10 @@ planner's own terms:
     figures rest on.
   - **How accurate is this?** What no run has validated yet.
 
-  The report uses the knobs above: fleet, targets, headroom and typed terms.
-  Change a knob and the page asks you to judge again. A server from before
+  The report uses the fleet under What if and the targets, headroom and typed
+  terms above the tabs, and says the targets it was judged at. Change a knob
+  and the page hides the answer and asks you to judge again, naming the
+  targets it was judged at. A server from before
   the report says so under the button; the rest of the page works. The same
   report is `capacity-planner at-replicas` and `POST /v1/report`.
 
@@ -226,10 +250,36 @@ The `kvPerRequest` term says where its figure came from:
 
 A source that did not see enough load cannot learn every term, and the page
 then shows refusals instead of numbers. Open **Assume a term the source did
-not learn** and type a value: the prefill rate V_P, the fixed latency a, the
-prompt cv, the router hop, or decode's ITL B. The learned value, or the reason
-it is missing, is shown under each box. A typed value flags every figure that
-rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
+not learn**, above the tabs, and type a value: the prefill rate V_P, the fixed latency a, the
+prompt cv, the router hop, or decode's ITL B. A refused term's box is empty,
+with the reason under it. A typed value flags every figure that rests on it.
+[Each reason and its fix](troubleshooting.md#refused-figures).
+
+A box whose value the source learned shows that value, muted and tagged
+**learned**: the boxes above, the output length (the observed one) and R_q
+(the one the plan priced, at a percentile TPOT). A learned value is not an
+assumption: the page does not send it, the server uses its own, and no figure
+is flagged for it. Edit the box and the value is yours: tagged **assumed**,
+sent, and flagged, as before; **Use learned** beside it puts the learned value
+back. Emptying the box, or typing the learned value, does the same. A V_P
+learned from the served peak is tagged **lower bound**: the note says the real
+speed is likely higher, and prefill is not sized until you type a V_P (that
+value too, typed, is yours). A link or a saved scenario that carries a value keeps
+it as an assumption.
+
+The box opens by itself when a term is refused, and when V_P is only a lower
+bound: the prefill pods never queued, so the source saw their load, not their
+speed. Prefill's limit is then unknown, a day plan sizes decode alone, and
+the note beside **Prefill speed V_P per pod** says so. Type a V_P there to
+size prefill; the day plan's refusal points to the same box.
+
+The same box holds **My router balances prefill by load**. Tick it when the
+router scores each prefill pod's queue (llm-d's EPP queue scorer): it is the
+CLI's `--load-aware-router` and the API's `assume.loadAwareRouter` (**A
+load-aware router** under [Check a fleet at N replicas](#check-a-fleet-at-n-replicas)
+says what it does). It is off by default, the link
+carries it, and with it ticked every figure reads outside the validated
+region.
 
 Decode refused with `PinnedDefaultB` is the common case on a real P/D window:
 the latency line's intercept B, the per-token latency with the cache empty,
@@ -320,6 +370,15 @@ it, and `POST /v1/inputs` takes `prefillHitAtCount` ([API](api.md)). For
 example, from a recording on 2 prefill pods:
 `capacity-planner slo-to-rate --recording run.jsonl.gz --ttft 2s@p90 --prefill 1 --prefill-hit-at-count`.
 
+**V_P from the prefill service line (`--prefill-vp-service-line`, not
+validated).** Where the prefill pods never queued, the planner has only a
+lower bound on their speed. This flag reads it from each pod's prefill time
+against the tokens it computed a request instead: a fixed time a request
+plus a time a token. It is off by default because on the public recordings
+it read some TTFT figures under what was measured. Set, every figure reads
+OUTSIDE VALIDATED REGION. The same commands take it, and `POST /v1/inputs`
+takes `prefillVPServiceLine` ([API](api.md)).
+
 **An experimental TTFT model (`--experimental-ttft`, for demonstration).**
 The TTFT model has seven switches that are off by default, because none of
 them has passed the release's validation. `--experimental-ttft` turns all
@@ -329,7 +388,8 @@ seven on for the one command you pass it to:
   last 6 hours;
 - `prefill-vp-at-served-work`: V_P raised to the work the prefill Pods
   served, where the prefill knee was raised to it;
-- `slo-ttft-computed-hit`: a stated prompt netted by the computed-token hit;
+- `slo-ttft-computed-hit`: a stated prompt netted by the computed-token hit
+  (the load's shape is netted by it with the switch off too);
 - `slo-ttft-tier-load` and `slo-ttft-tier-kv-wait`: the load of a cached
   token from a host, disk or peer tier, at the engine's measured wait for it;
 - `slo-ttft-ps-by-engine`: the prefill queue priced as processor sharing
@@ -401,8 +461,11 @@ In a cluster, add both to the StatefulSet's `args`
   them (a prefill that never queued). See
   [The v2 TTFT curve](#the-v2-ttft-curve). Sizes follow, from the model's
   prefill limit. With `--experimental-tpot=v2` the main view's TPOT p90
-  and p95 too: see [The v2 TPOT curve](#the-v2-tpot-curve). Day plans and
-  predictions are the default's. `=v2` does not turn
+  and p95 too: see [The v2 TPOT curve](#the-v2-tpot-curve). A day plan
+  prices with them too when asked: the page asks whenever the loaded inputs
+  carry a model, so the day plan matches the Answer view (see
+  [Plan replicas over a day](#plan-replicas-over-a-day)). Predictions are
+  the default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
@@ -415,6 +478,11 @@ In a cluster, add both to the StatefulSet's `args`
   and each TPOT p90 and p95 says whether it is in the measured bucket.
 - **What it costs.** Every source the server loads is read once more for
   each model, so loading is slower.
+- **The draws.** The v2 TTFT model reads each prefill rank's service from
+  the computed-token histogram itself, so its figures barely move with the
+  random draws ([accuracy](accuracy.md)). To price from each rank's own
+  draws instead, the older way, add `--rank-mixture-stratified=false` to
+  `serve`, `backtest` or `at-replicas`.
 - Without the flags, the server's answers are the default's, byte for byte.
 
 #### The v2 TTFT curve
@@ -463,8 +531,8 @@ In a cluster, add both to the StatefulSet's `args`
   or p95 target: the rate whose mean meets the target over that ratio. A
   size at such a target sizes decode on it. The report's measured-shape
   table prices its TPOT percentile the same way. The report's verdict,
-  capacity and summary cells stay the planner's own. Day plans do not use
-  it.
+  capacity and summary cells stay the planner's own. A day plan asked for
+  the experimental models sizes decode on it.
 - **Solid, then dashed.** As the TTFT curve: solid up to the highest load
   the source served, per decode replica, and dashed beyond it. Each figure
   past that load carries `extrapolated` true, a size's steps among them.
@@ -605,6 +673,12 @@ It replays the recording once and answers, for each shape and load:
   4569/1855: asked at the measured shape the report gives no verdict (NOT
   JUDGED, exit 3); at the load's own shape it needs 4 + 2, what `day-plan`
   sizes the same rate at.
+  On a P/D fleet the load's prompt length comes from the decode pods, and
+  their prefix hit is not the prefill pods'. The prefill side therefore
+  prices the load's prompt less the share the prefill pods did not compute
+  (cache hits on every tier: GPU, host memory, peer), the same work the
+  measured shape prices. The answer says so: `prompt netted by the prefill
+  pods' computed-token hit`.
 - **The load's shape as the default.** A model change becomes the default
   only where it moves no figure on the public recordings to under 0.8 of what
   was measured. On the decode-only sample (`throughput-sweep`) the load's
@@ -704,7 +778,9 @@ It replays the recording once and answers, for each shape and load:
   fleets at f 1 and f 1.5 are priced the same way. A pod much busier than the
   rest still saturates first. With no load measured for f, f is held. The
   recording does not say what the router scores, so the flag is off by
-  default.
+  default. The API takes it as `assume.loadAwareRouter: true`, `backtest`
+  and `predict` as `--load-aware-router`, and the page as **My router
+  balances prefill by load** under **Assume a term**.
   Since no run measured it, the sentence also gives the fleet needed at f 1
   and at f 1.5 on every count above one prefill pod ("at f 1 needs 3 + 3,
   at f 1.5 needs 4 + 3", or "the same at f 1 to 1.5"), and `-o json` gives
@@ -891,6 +967,44 @@ bucket the fleet had fewer replicas than it needed is washed red; a bucket no
 fleet within the bound serves is hatched, in the panel of the role short.
 Hover a bucket for every value at that time; the table views list every hour
 and every bucket, with why a bucket was not sized.
+The plan says the SLO and headroom it was sized for. Change a target, the
+headroom, a length or an assumed term above the tabs and a plan on screen
+plans again; on another tab it dims, with a note naming the targets it used,
+and plans again when you open it.
+
+**With the experimental models.** On inputs loaded with the experimental
+TTFT or TPOT model (a server started with `--experimental-ttft=v2` or
+`--experimental-tpot=v2`), the page plans the day with them, as the Answer
+view prices with them; from the command line, `day-plan
+--experimental-ttft=v2 --experimental-tpot=v2` fits them on the
+`--recording`. Where the TTFT model prices a TTFT the planner refuses (a
+prefill that never queued), prefill is sized on it. A bucket a model sized
+carries its flag (`RankMixtureTTFT`, `TPOTDistribution`) on its limit, its
+needed replicas are marked † on the page and in the command's hours table,
+and the plan names each model, with how many buckets it priced. The models
+are fitted at the window's request shape, so where one prices a target the
+plan asks, each bucket is priced at its own rate but at the window's shape, flagged `WindowShape`, and a note
+says that per-bucket shape changes are not modelled: a bucket of longer or
+shorter requests than the day's is sized as if they were the day's. A stated
+shape or term stays the planner's own. The TPOT model prices a p90 or p95
+TPOT target, not the mean. The plan's notes
+say, for each model, why each bucket it did not price is the planner's. On
+a window under 12 hours a model abstains, the plan says so, and every figure
+is the planner's own. Not validated: every figure a model sets reads
+OUTSIDE VALIDATED REGION.
+
+Each bucket is sized on its own, so a day of 5-minute buckets (289) takes
+minutes. While a plan runs, the Day plan tab says so: how many buckets, when
+it started and the seconds since, with **Cancel**, which stops the request
+and frees **Plan the day**. The server reports no share done, so the time is
+all it shows. One plan runs at a time: opening the tab again shows the one
+running, and a plan you cancelled is not asked again until a knob changes.
+Loading new inputs cancels a plan still running.
+The **Bucket** starts at 5 minutes, the server's default, or at 15 minutes or
+an hour where the window would otherwise cut into more than 300 buckets; pick
+another to plan finer. A bucket you pick stays when you load again, unless
+the new window would cut it into more than the 3000 buckets the server
+sizes.
 
 From the command line, on the sample recording (about an hour, so two hours
 in the table):
@@ -966,7 +1080,7 @@ alone. A higher `--ttft` sizes them.
   held ahead, and a note says so.
 - **Shape.** Each bucket is priced at its own observed prompt and output
   length. A bucket whose cycles read none is priced at the source's shape and
-  flagged `WindowShape`. `--assume-input-tokens` and `--assume-output-tokens`
+  flagged `WindowShape`, as is every bucket where an experimental model prices a target the plan asks. `--assume-input-tokens` and `--assume-output-tokens`
   price every bucket at one stated length, flagged `EXTRAPOLATED` when it lies
   outside what the buckets observed.
 - **No TTFT target.** With no `--ttft` and none in the policy, prefill is

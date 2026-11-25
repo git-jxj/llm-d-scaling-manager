@@ -116,6 +116,51 @@ func TestBacktest_RankMixturePricesTTFT(t *testing.T) {
 	assert.Greater(t, priced, 20)
 }
 
+// The fitted shares hold one entry per rank of the fit's prefill pods, so a
+// test step on another count is priced at the rate each of its ranks takes:
+// the step's fleet rate times the fit's pods over the step's, as the answer
+// path prices another count (mixtureFleet.scale). A test on twice the pods
+// at twice the rate loads each rank as the fit's count at the base rate does,
+// and prices the same TTFT; split over the fit's shares unscaled it priced
+// each rank at twice its rate.
+func TestBacktest_RankMixturePricesTheTestsPrefillCount(t *testing.T) {
+	r := &stubResolver{}
+	fit := rmFit(t, r, 3120)
+	run := func(name string, pods int) *BacktestResponse {
+		ts, tl := btSeries(240, 0, 1)
+		x := float64(pods) / 2
+		for i := range ts {
+			ts[i].Prefill, ts[i].Rate = pods, ts[i].Rate*x
+		}
+		test := btEntry(t, r, name, ts, tl, btConfig("H100"))
+		test.mixture = btMixture(ts)
+		return btRun(t, fit, test, BacktestRequest{TTFTModel: string(whatif.QueueRankMixture), PrefillSlots: 4})
+	}
+	base, twice := run("test2", 2), run("test4", 4)
+	require.NotNil(t, base.RankMixture)
+	require.Empty(t, base.RankMixture.Abstained)
+	require.Len(t, twice.Steps, len(base.Steps))
+	compared := 0
+	for i, b := range base.Steps {
+		w := twice.Steps[i]
+		if b.Excluded != "" || w.Excluded != "" || b.RankMixture == nil || b.RankMixture.Refused != "" {
+			continue
+		}
+		require.NotNil(t, w.RankMixture)
+		require.Empty(t, w.RankMixture.Refused, "step %d", i)
+		for j := range b.TTFT {
+			bv, wv := b.TTFT[j].Predicted.Value, w.TTFT[j].Predicted.Value
+			if bv == nil {
+				continue
+			}
+			require.NotNil(t, wv)
+			assert.InEpsilon(t, *bv, *wv, 1e-9, "step %d stat %d: 4 pods at twice the rate price as 2 at the rate", i, j)
+			compared++
+		}
+	}
+	assert.Greater(t, compared, 20)
+}
+
 // Where an identifiability check fails the model abstains: every TTFT is the
 // planner's own, flagged RankMixtureAbstained, and the answer says why. A
 // 2 h fit window does not calibrate the spread.
