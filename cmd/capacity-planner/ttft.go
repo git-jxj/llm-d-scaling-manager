@@ -1056,10 +1056,11 @@ func (pf *pricedFleet) effectivePrompt(il float64) (float64, float64) {
 // governs; one the load's cycles filled in (--shape load) is read, not
 // stated, and does not.
 //
-// The load's shape nets by it with the switch off too (loadShapeRead): its
-// hit is the decode variant's, which on a P/D fleet is not a hit of the
-// prefill pods at all, and netting by it priced the whole prompt as computed
-// where the measured shape prices what the prefill pods computed.
+// The load's shape, and a whole prompt read from the source's cycles, nets
+// by it with the switch off too (loadShapeRead): its hit is the decode
+// variant's, which on a P/D fleet is not a hit of the prefill pods at all,
+// and netting by it priced the whole prompt as computed where the measured
+// shape prices what the prefill pods computed.
 func (pf *pricedFleet) netByComputedHit() (computed, replaced float64, ok bool) {
 	if !pf.computedHit && !pf.loadShapeRead() {
 		return 0, 0, false
@@ -1078,10 +1079,19 @@ func (pf *pricedFleet) netByComputedHit() (computed, replaced float64, ok bool) 
 	return computed, replaced, true
 }
 
-// loadShapeRead says the prompt priced is the load's cycles' (--shape load,
-// the report's default shape), its hit read from the source, not stated.
+// loadShapeRead says the prompt priced is the source's own, its hit read
+// from the source, not stated: the load's cycles' (--shape load, the
+// report's default shape), or a whole prompt read from them with no hit
+// stated (whatifapi.Knobs.PromptTokensRead: a day plan's bucket, a
+// backtest's step). A stated hit governs either way.
 func (pf *pricedFleet) loadShapeRead() bool {
-	return pf.pv != nil && pf.pv.assumedHit && pf.pv.hitRead
+	switch {
+	case pf.pv == nil:
+		return false
+	case pf.pv.assumedHit:
+		return pf.pv.hitRead
+	}
+	return pf.pv.assumedIL && pf.pv.ilRead
 }
 
 // prefixCachePrompt is effectivePrompt netted by a prefix-cache hit rate, as
