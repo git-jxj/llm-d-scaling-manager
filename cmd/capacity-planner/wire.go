@@ -476,6 +476,18 @@ type wireBasis struct {
 	// PrefillOnlyRate is the rate the prefill side alone allows, on a TTFT
 	// rate; Floor and KneeRate then read the TTFT's (whatif.TTFTBasis).
 	PrefillOnlyRate float64 `json:"prefillOnlyRate,omitempty"`
+	// BatchBeyondFit is the batch the answer's fill runs past the most the
+	// decode line's fit rows held, where it is (flag BatchBeyondFit).
+	BatchBeyondFit *wireBatchBeyondFit `json:"batchBeyondFit,omitempty"`
+}
+
+// wireBatchBeyondFit is whatif.BatchBeyondFit on the wire, in sequences an
+// engine rank: a pod's with one rank, and Ranks, absent then, says how many
+// a pod runs otherwise.
+type wireBatchBeyondFit struct {
+	Priced int64 `json:"priced"`
+	Fitted int64 `json:"fitted"`
+	Ranks  int   `json:"ranks,omitempty"`
 }
 
 // wireRefusal is whatif.Unanswerable on the wire.
@@ -525,6 +537,9 @@ func toWire(r whatif.Result, unit string) *wireResult {
 		}
 		if t := v.Basis.TTFT; t != nil {
 			a.Basis.Floor, a.Basis.KneeRate, a.Basis.PrefillOnlyRate = t.Floor, t.KneeRate, t.PrefillOnlyRate
+		}
+		if b := v.Basis.Batch; b != nil {
+			a.Basis.BatchBeyondFit = &wireBatchBeyondFit{Priced: b.Priced, Fitted: b.Fitted, Ranks: b.Ranks}
 		}
 		for _, f := range v.Flags {
 			a.Flags = append(a.Flags, string(f))

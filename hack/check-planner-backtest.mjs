@@ -19,7 +19,7 @@ const [scen, day, bt, golden] = [
 const ctx = vm.createContext({URLSearchParams});
 for (const f of [scen, day, bt]) vm.runInContext(fs.readFileSync(f, "utf8"), ctx, {filename: f});
 const {btSVG, btPoint, btSummaryText, btLegend, btStepAt, btTipHTML, btScoreTable, btStepTable, btPredictionCSV, selfCheckBadge, selfCheckHTML,
-  dayTime, btUnresolved, btPointClass, btVerdictCard, btNotice, btFailing, btStepsCSV, btBucketTip, btUnscoredList} = ctx;
+  dayTime, btBatchChip, btUnresolved, btPointClass, btVerdictCard, btNotice, btFailing, btStepsCSV, btBucketTip, btUnscoredList} = ctx;
 const answer = JSON.parse(fs.readFileSync(golden, "utf8"));
 const copy = x => JSON.parse(JSON.stringify(x));
 
@@ -209,6 +209,16 @@ try {
   check("the golden has TPOT p90 unscored on a coarse bucket", coarse !== undefined, answer.verdictLines.join(" | "));
   check("the verdict tells how to measure it", coarse !== undefined && coarse.includes("metrics.requestTPOTBuckets") &&
     coarse.includes("--custom-histogram-buckets") && btSummaryText(answer).includes(coarse));
+  // A step past the batch its decode line was fitted on carries a chip
+  // beside its time with both batches, a pod's or an engine rank's.
+  const past = copy(answer);
+  past.steps[0].batchBeyondFit = {priced: 251, fitted: 210};
+  check("a step past the fit's batch has a chip in the step table", btStepTable(past).includes(">BatchBeyondFit</span>"));
+  check("the chip says both batches a pod", btBatchChip(past.steps[0]).includes("fitted on up to 210 sequences a pod; this step runs about 251"),
+    btBatchChip(past.steps[0]));
+  check("on a pod of several ranks the chip counts a rank's",
+    btBatchChip({batchBeyondFit: {priced: 31, fitted: 26, ranks: 8}}).includes("up to 26 sequences an engine rank; this step runs about 31"));
+  check("a step inside the fit has no chip", btBatchChip({}) === "");
 } catch (e) {
   failures.push("threw: " + (e && e.stack || e));
 }

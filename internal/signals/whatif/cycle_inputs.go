@@ -52,6 +52,7 @@ func MixtureCycleOf(in domain.AnalyzerInput, at time.Time, prefillVariant, decod
 			rate = rm.RequestRate
 		}
 		if role == domain.RoleDecode {
+			c.DecodeTTFTHist = addBuckets(c.DecodeTTFTHist, rm.TTFTBuckets)
 			if rm.AvgTTFTKnown && rate > 0 {
 				dw += rate
 				dt += rate * rm.AvgTTFT
@@ -71,6 +72,7 @@ func MixtureCycleOf(in domain.AnalyzerInput, at time.Time, prefillVariant, decod
 		for _, b := range rm.QueueTimeBuckets {
 			c.Queue[b.UpperBound] += b.Rate
 		}
+		c.PrefillTTFTHist = addBuckets(c.PrefillTTFTHist, rm.TTFTBuckets)
 		if engines := rm.GroupEngines; len(engines) > 0 && engineRatesRead(engines) {
 			for _, e := range engines {
 				c.Ranks = append(c.Ranks, MixtureRankReading{Key: e.PodName, MixtureRank: rankOf(e.RequestRate,
@@ -166,6 +168,17 @@ func rolesOf(in domain.AnalyzerInput) map[string]string {
 		roles[vs.VariantName] = vs.Role
 	}
 	return roles
+}
+
+// addBuckets is h with bs added bucket by bucket; nil while there is none.
+func addBuckets(h map[float64]float64, bs []domain.LatencyBucket) map[float64]float64 {
+	for _, b := range bs {
+		if h == nil {
+			h = map[float64]float64{}
+		}
+		h[b.UpperBound] += b.Rate
+	}
+	return h
 }
 
 // engineRatesRead says every engine of a group recorded its own request rate.

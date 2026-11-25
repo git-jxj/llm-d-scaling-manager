@@ -33,7 +33,7 @@ SLO vs load        r/s    TTFT p50/90 ms   TPOT mean/p90 ms  e2e mean (sum)  in 
 checks
   2 prefill + 2 decode  does not hold: 12.46 r/s is above 0.85 x the fleet knee 13.35 r/s = 11.35 r/s; TTFT p95 is at most 1419.6 ms, over 200.0 ms, but not judged: it is priced from a lower bound of V_P, and the true TTFT may be lower, so the miss is not known
 assumed: prompt 1000 tokens (--shape); prompt cv 2 (no computed-prompt histogram); router hop 20 ms (no fit: NonPositiveHop); --assume-router-hop supplies one; flow control off (no queue series); Poisson arrivals
-flags: UnvalidatedTTFT; VPLowerBound; AssumedPromptSpread; AssumedShape; HeldLine; RouterHopAssumed; SpreadBeyondProcessorSharing; FlowControlInferredOff; BelowFittedBand; AssumedPoissonArrivals; TransferHeld; PromptSpreadAbovePeak; CoarseTPOTBucket; MeanBoundedTPOTPercentile
+flags: UnvalidatedTTFT; VPLowerBound; AssumedPromptSpread; AssumedShape; HeldLine; BatchBeyondFit; RouterHopAssumed; SpreadBeyondProcessorSharing; FlowControlInferredOff; BelowFittedBand; AssumedPoissonArrivals; TransferHeld; PromptSpreadAbovePeak; CoarseTPOTBucket; MeanBoundedTPOTPercentile
 
 not validated:
   - decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 43% to 99% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)

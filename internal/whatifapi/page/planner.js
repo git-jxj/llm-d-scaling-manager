@@ -102,7 +102,7 @@ const FLAG_WORDS = {
   SGLangNoMixedChunk: ["An aggregated SGLang pod without --enable-mixed-chunk: a prefill step stalls every running sequence.", "--enable-mixed-chunk"],
   ExtensibleKVCache: ["vLLM's extensible KV cache: the KV capacity read at start-up can grow while the engine runs.", "--no-enable-extensible-kv-cache, or a recording of the grown cache"],
   DefaultBatchCapBelowRelease: ["The batch cap priced is the parser's default of 256, but this vLLM release runs 1024 on this accelerator: the decode figures can ask for up to 4 times too many replicas.", "--max-num-seqs on the engine, or --batch-cap"],
-  BatchBeyondFit: ["The shape's KV per request is under half that of the rows the ITL line was read on, and the batch priced is past the largest they held: ITL also rises with batch tokens, which the line does not carry across shapes.", "a recording at this shape"],
+  BatchBeyondFit: ["At this load a decode pod runs more sequences than the most the rows its ITL line was fitted on held: ITL also rises with the batch, which the line does not carry, so TPOT may read low and the decode knee high. The figure is priced all the same.", "a recording that runs this many sequences a pod"],
 };
 
 // BUCKET_NOTE is what the per-bucket lines are, every time they are drawn.
@@ -217,16 +217,25 @@ function shapeOf(p) {
 // the rest are counted there and listed in the flags drawer. UnvalidatedTTFT
 // is the banner, on every TTFT figure.
 const SHOWN_FLAGS = new Set(["AboveFlowControlOnset", "FlowControlWaitPriced", "SpreadBeyondProcessorSharing", "HeldByDecodeAdmission",
-  "AssumedTPOTRatio", "AssumedVP", "AssumedA", "AssumedShape", "AssumedPromptSpread", "AssumedImbalance", "AssumedArrivalCV2"]);
+  "AssumedTPOTRatio", "AssumedVP", "AssumedA", "AssumedShape", "AssumedPromptSpread", "AssumedImbalance", "AssumedArrivalCV2",
+  "BatchBeyondFit"]);
 
 // flagChips is a figure's flags: the ones that change its trust by name,
 // with their words on hover, and how many more the drawer lists.
 function flagChips(f) {
   const flags = (f && f.flags) || [];
   const shown = flags.filter(n => SHOWN_FLAGS.has(n)), rest = flags.filter(n => !SHOWN_FLAGS.has(n) && n !== "UnvalidatedTTFT");
-  return shown.map(n => `<span class="chip flagged" title="${esc((FLAG_WORDS[n] || [n])[0])}">${esc(n)}</span>`).join(" ") +
+  return shown.map(n => `<span class="chip flagged" title="${esc(flagTitle(n, f))}">${esc(n)}</span>`).join(" ") +
     // The rest are in the Flags drawer: no "+N more" chip beside a figure.
     "";
+}
+
+// flagTitle is a flag's words on hover, with the batches a BatchBeyondFit
+// figure carries.
+function flagTitle(n, f) {
+  const words = (FLAG_WORDS[n] || [n])[0], b = f && f.batchBeyondFit;
+  if (n !== "BatchBeyondFit" || !b) return words;
+  return batchFitWords(b, "this load") + ". " + words;
 }
 
 // setStatus writes the status line, which a screen reader announces. While
@@ -640,6 +649,7 @@ function showLearned(inputs) {
     el("l-" + a.box).textContent = text;
   }
   if (inputs.terms.some(x => x.name === "prefill" && x.refused)) refused = true;
+  el("a-lar").checked = false;
   el("assumebox").open = refused;
   el("assumecount").textContent = "none typed";
 }
@@ -764,6 +774,7 @@ function applyLink() {
   k.edges = le.edges;
   state.linkNote = le.note;
   for (const a of ASSUMABLE) if (num(a.key) != null) k.assume[a.key] = num(a.key);
+  if (g("loadAwareRouter") === "1") k.assume.loadAwareRouter = true;
   if (num("max") != null) k.maxRep = Math.min(64, Math.max(1, Math.round(num("max"))));
   k.sizeLow = g("low") === "1";
   // A scenario opened in the other mode switches the question. The
@@ -788,6 +799,7 @@ function applyLink() {
   el("bucketedges").value = k.edges;
   el("ratio").value = k.ratio != null ? k.ratio : "";
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) el("a-" + a.box).value = Number((k.assume[a.key] * a.scale).toPrecision(6));
+  el("a-lar").checked = !!k.assume.loadAwareRouter;
   showTyped();
   syncControls();
 }
@@ -835,6 +847,7 @@ function linkParams() {
   if (k.priceAs !== "mix") p.set("priceAs", k.priceAs);
   if (k.outputTokens != null) p.set("out", Math.round(k.outputTokens));
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) p.set(a.key, k.assume[a.key]);
+  if (k.assume.loadAwareRouter) p.set("loadAwareRouter", "1");
   if (k.perBucket) p.set("perBucket", "1");
   if (k.edges) p.set("edges", k.edges);
   return p;
@@ -2241,6 +2254,15 @@ function wire() {
       schedule(0);
     };
   }
+  // The router's balancing is stated, not typed: assume.loadAwareRouter,
+  // sent only when ticked, so the server's default (off) stands otherwise.
+  el("a-lar").onchange = () => {
+    if (!ready()) return;
+    if (el("a-lar").checked) k().assume.loadAwareRouter = true;
+    else delete k().assume.loadAwareRouter;
+    showTyped();
+    schedule(0);
+  };
   el("perbucket").onchange =() => { if (ready()) { k().perBucket = el("perbucket").checked; syncControls(); schedule(0); } };
   el("bucketedges").onchange = () => {
     if (!ready()) return;

@@ -14,6 +14,11 @@ Use it when one team runs the cluster. Where namespaces belong to different
 teams, install [one controller per namespace](../install-in-namespace/) instead:
 failure domains, policy and upgrades stay separate.
 
+**Or with kubectl, from one manifest** (v0.13.0 and later):
+[install with kubectl](../kubectl-install/), where the admin lists the
+managed namespaces in `watchNamespaces`, live. That guide also moves an
+install made here onto the manifest.
+
 **This scope is work in progress.** The steps are the namespaced guide's, with
 the cluster-wide files; read that guide for what each step does.
 
@@ -54,7 +59,7 @@ weights](../../reference/workload-preparation.md#gate-replicas-on-the-weights)).
 <!-- guide:tools.setup start -->
 ```bash
 # Once per machine. The release's tools image, by the digest the release prints.
-TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:0e70901bbc138cf910b7e24409a09b6b6b03138be1c9170465ea9c4e8dfc071e
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:v0.13.0
 mkdir -p ~/.smt && kubectl config view --minify --flatten > ~/.smt/kubeconfig && chmod 600 ~/.smt/kubeconfig
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }
