@@ -121,7 +121,7 @@ func (v experimentalTTFTValue) Set(s string) error {
 		*v.switches, *v.v2 = false, true
 	case experimentalTTFTV2NLLine:
 		if v.nlLine == nil {
-			return fmt.Errorf("--%s=%s is backtest's, serve's and at-replicas'", experimentalTTFTFlag, s)
+			return fmt.Errorf("--%s=%s is backtest's, serve's, at-replicas' and day-plan's", experimentalTTFTFlag, s)
 		}
 		*v.switches, *v.v2 = false, true
 	default:
