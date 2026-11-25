@@ -933,10 +933,13 @@ type backtestQuestion struct {
 	promptCV  *float64
 	// promptMaxRatio is promptCV's bound (stepInputs.promptMaxRatio).
 	promptMaxRatio float64
-	config         BacktestConfig
-	assumed        []string
-	testIndices    []int
-	assume         Assume
+	// contextTokens is the test's engines' context window (contextWindowOf),
+	// which holds each step's prompt spread; 0 where unknown.
+	contextTokens float64
+	config        BacktestConfig
+	assumed       []string
+	testIndices   []int
+	assume        Assume
 	// targetAsked is the target as the answer names it.
 	targetAsked *Objective
 	// source is the latency scored against; measureWindow, when above 0,
@@ -1081,7 +1084,8 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	}
 	// The test's prompt spread is an input, its lengths, never its latency:
 	// pooled over the test's cycles, for a step whose own reads none.
-	if whole := stepInputsOf(seriesAt(test.series, q.testIndices)); whole.promptCV != nil {
+	q.contextTokens, _ = contextWindowOf(&test.doc)
+	if whole := stepInputsOf(seriesAt(test.series, q.testIndices), q.contextTokens); whole.promptCV != nil {
 		q.promptCV, q.promptMaxRatio = whole.promptCV, whole.promptMaxRatio
 	}
 	if a := req.Assume; a != nil {
@@ -1559,7 +1563,7 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		out.Excluded, out.Detail = ExcludedNoMeasurement, "no cycle in the step"
 		return out
 	}
-	in := stepInputsOf(seriesAt(q.test.series, st.window))
+	in := stepInputsOf(seriesAt(q.test.series, st.window), q.contextTokens)
 	out.Rate, out.Prefill, out.Decode = in.rate, in.prefill, in.decode
 	if in.hasShape {
 		out.PromptTokens, out.OutputTokens = ptr(in.prompt), ptr(in.output)
@@ -1750,8 +1754,10 @@ type stepInputs struct {
 }
 
 // stepInputsOf is the step's inputs: its mean rate, the median serving pods
-// of each role, and its lengths weighted by rate.
-func stepInputsOf(samples []SeriesSample) stepInputs {
+// of each role, and its lengths weighted by rate. contextTokens is the
+// engines' context window, which holds the prompt spread's mass past the
+// histogram's last bound (whatif.ReadPromptSpreadWithin); 0 where unknown.
+func stepInputsOf(samples []SeriesSample, contextTokens float64) stepInputs {
 	in := stepInputs{rate: rateOf(samples).Mean}
 	a := actualOf(samples)
 	in.prefill, in.decode = a.Prefill, a.Decode
@@ -1771,7 +1777,7 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 		}
 	}
 	if requests > 0 {
-		if sp := whatif.ReadPromptSpread(pooled, computed/requests); !sp.Assumed {
+		if sp := whatif.ReadPromptSpreadWithin(pooled, computed/requests, contextTokens); !sp.Assumed {
 			in.promptCV = ptr(math.Round(sp.CV/promptCVGrid) / (1 / promptCVGrid))
 			in.promptMaxRatio = maxRatioOnGrid(sp.MaxRatio)
 		}

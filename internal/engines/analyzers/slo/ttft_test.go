@@ -625,7 +625,7 @@ func TestTTFT_TheMeasuredSpreadSwitch(t *testing.T) {
 
 	spread := func(on bool) whatif.PromptSpread {
 		r := rig(on)
-		return r.a.promptSpread("ns|m|pre", r.in.ReplicaMetrics, r.now)
+		return r.a.promptSpread("ns|m|pre", r.in.ReplicaMetrics, r.now, 0)
 	}
 	assert.False(t, spread(true).Assumed)
 	assert.Equal(t, whatif.PromptSpread{CV: whatif.AssumedPromptCV, Assumed: true}, spread(false))
@@ -650,7 +650,7 @@ func TestTTFT_TheSpreadIsTheWindowsNotTheCycles(t *testing.T) {
 	for i, rows := range cycles {
 		at := r.now.Add(time.Duration(i) * time.Minute)
 		cli.Note(rows, i, at)
-		got := r.a.promptSpread("k", rows, at)
+		got := r.a.promptSpread("k", rows, at, 0)
 		want := cli.Spread()
 		want.MaxRatio = 0 // SwitchTTFTPromptSupport, off from the constructor
 		assert.Equal(t, want, got, "S1 and the CLI, cycle %d", i)
