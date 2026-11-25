@@ -93,6 +93,10 @@ type answerFlags struct {
 	assumeRouterHop      time.Duration
 	prefill              int
 	set                  map[string]bool
+	// inputTokensRead says inputTokens was read from the source's cycles (a
+	// day plan's bucket, a backtest's step), not stated
+	// (whatifapi.Knobs.PromptTokensRead).
+	inputTokensRead bool
 	// prefixHit is a stated prefix-cache hit rate, nil the measured one (a
 	// report shape, at-replicas --shape).
 	prefixHit *float64
@@ -535,6 +539,9 @@ type pricedVariant struct {
 	check whatif.LineCheck
 	// assumedIL and assumedOL say which lengths the flags assumed.
 	assumedIL, assumedOL bool
+	// ilRead says the assumed prompt was read from the source, not stated
+	// (answerFlags.inputTokensRead).
+	ilRead bool
 	// assumedHit says the prefix-hit rate was stated.
 	assumedHit bool
 	// hitRead says that hit was read from the source, not stated
@@ -687,7 +694,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		vs = pv.state
 		il, ol := vs.Shape.InputTokens, vs.Shape.OutputTokens
 		if f.set["assume-input-tokens"] {
-			il, pv.assumedIL = f.inputTokens, true
+			il, pv.assumedIL, pv.ilRead = f.inputTokens, true, f.inputTokensRead
 		}
 		if f.set["assume-output-tokens"] {
 			ol, pv.assumedOL = f.outputTokens, true

@@ -613,7 +613,7 @@ across a restart, are otherwise visible only in the logs.
 - **Type**: Counter
 - **Description**: Total number of metrics collection errors
 - **Labels**:
-  - `query_type`: Type of metrics query that failed. `pod_list` is the controller's per-namespace Pod listing, a Kubernetes API read rather than a Prometheus query. `pool_list` is the per-namespace InferencePool listing that decides which replicas the router can reach; on a failure the namespace's supply is counted without that check. A pool kind the API server does not serve is not a failure. `router_latency` is the router's TTFT histogram and TPOT mean the `slo` analyzer reads. `learner_recording` is a query only a learner recording reads (the TTFT inputs: per-pod histograms and means, the router's TPOT, flow-control wait and request-processing histograms, the flow-control pools); these run only while `LEARNER_RECORDING_DIR` names a directory, so the series never appears otherwise, and a failure there leaves scaling untouched: it shows on this counter and does not raise `LLMSMMetricsCollectionFailing`. `ttft_inputs` is a per-pod query the shadow TTFT pricing reads (the queue minimum, the computed-prefill-token histogram, the KV transfer time): these run in a namespace with a model whose policy has a TTFT target and lists the `slo` analyzer, and while recording. A failure leaves scaling untouched and does not raise `LLMSMMetricsCollectionFailing` either: the pricing reads the input as unknown and flags it. A `router_latency`, `learner_recording`, `ttft_inputs` or `arrival_rate` failure is counted once per query the controller ran, not once per model that read its result in the same cycle. Before the TTFT recorder (R1) `router_latency` counted once per model per failed query, so with several models in a namespace the same outage now reads a lower rate. `arrival_rate` counted once per model too until it was fixed (ev-shindin/llm-scaling-manager#461), so it also reads a lower rate on namespaces with several models
+  - `query_type`: Type of metrics query that failed. `pod_list` is the controller's per-namespace Pod listing, a Kubernetes API read rather than a Prometheus query. `pool_list` is the per-namespace InferencePool listing that decides which replicas the router can reach; on a failure the namespace's supply is counted without that check. A pool kind the API server does not serve is not a failure. `router_latency` is the router's TTFT histogram and TPOT mean the `slo` analyzer reads. `learner_recording` is a query only a learner recording reads (the TTFT inputs: per-pod histograms and means, the router's TPOT, flow-control wait and request-processing histograms, the flow-control pools); these run only while `LEARNER_RECORDING_DIR` names a directory, so the series never appears otherwise, and a failure there leaves scaling untouched: it shows on this counter and does not raise `LLMSMMetricsCollectionFailing`. `ttft_inputs` is a per-pod query the shadow TTFT pricing reads (the queue minimum, the computed-prefill-token histogram, the KV transfer time): these run in a namespace with a model whose policy has a TTFT target and lists the `slo` analyzer, and while recording. A failure leaves scaling untouched and does not raise `LLMSMMetricsCollectionFailing` either: the pricing reads the input as unknown and flags it. `slo_model_inputs` is a query only the slo analyzer's v2 latency models read, issued with its switch `slo-v2-inputs` on ([v2 latency models](#slo-analyzer-v2-latency-models)); its failure does not alert either, and the input reads missing. A `router_latency`, `learner_recording`, `ttft_inputs` or `arrival_rate` failure is counted once per query the controller ran, not once per model that read its result in the same cycle. Before the TTFT recorder (R1) `router_latency` counted once per model per failed query, so with several models in a namespace the same outage now reads a lower rate. `arrival_rate` counted once per model too until it was fixed (ev-shindin/llm-scaling-manager#461), so it also reads a lower rate on namespaces with several models
   - `reason`: Reason for the error. For `pod_list` and `pool_list`: `forbidden`, `unavailable` or `other`
 - **Use Case**: Track metrics collection failures and identify problematic queries. A failed `pod_list` makes the controller treat every Pod in that namespace as Ready and present for the cycle, so a not-Ready Pod's saturated reading can become its variant's k2; a steady rate of `pod_list` errors (`reason="forbidden"` after an RBAC change) is worth an alert
 - **Example**:
@@ -1593,6 +1593,53 @@ model reads all of them `0`, including the two marked "on every answer":
 | `BelowFittedBand`, `KVBoundSlots` | Decode ran below its fitted band, or KV set its slots rather than the batch cap. |
 | `AssumedVP`, `DecodeOnsetUnchecked` | Always 0 here. Listed so the series set does not change. |
 
+### SLO analyzer v2 latency models
+
+Shadow. The slo analyzer will price TTFT and TPOT with the capacity
+planner's v2 models (the rank-mixture TTFT, the renewal-lognormal TPOT) beside
+its own. It does not price with them yet: the models are still being
+validated. Today these series say which of the models' inputs your fleet
+exports. They are published for every passive model (`llmsm_passive_mode`
+not `active`) and, while the utilization share plans in shadow, for every
+model: the controller moves nothing for those, so the extra queries are the
+only cost. For an active model they need the slo analyzer's switch
+`slo-v2-inputs`, off from the constructor until the evidence from passive and
+shadow deployments turns it on. Active scaling decisions never read them.
+Design: [the proposal](../proposals/predicted-latency-in-controller.md).
+
+Labels are `namespace` (the model's, scraped as `exported_namespace`) and
+`model_name`, plus `controller_instance` when `CONTROLLER_INSTANCE` is set.
+`objective` is `ttft` or `tpot`. A model's series are deleted when it is no
+longer reconciled, and every series when a cycle reconciles no model.
+
+| metric | type | labels | value |
+| --- | --- | --- | --- |
+| `llmsm_slo_model_coverage` | gauge | `objective`, `reason` | `1` for the one reason that holds, `0` for the others: `priced`; `abstained` (the model refused the window, as the planner would); `signal-missing` (an input was not read this cycle); `window-short` (every input was read, too few steps to fit yet); `not-built` (every input was read, and the analyzer does not price with the model yet) |
+| `llmsm_slo_model_input_missing` | gauge | `objective`, `signal` | `1` for each input not read this cycle; absent for one that was |
+| `llmsm_slo_predicted_tpot_seconds` | gauge | `variant_name`, `statistic` (`mean`, `p90`, `p95`), `learner` (`slo`, the analyzer's own; `tpot-distribution`, the v2 model) | the TPOT predicted for a decode variant at its current load, both models side by side, beside `llmsm_slo_predicted_ttft_seconds`. Registered, never published yet |
+
+The `signal` values, by objective. A signal is read when at least one
+serving pod of its role reports it, or the router does:
+
+| objective | role | signals |
+| --- | --- | --- |
+| `ttft` | prefill pods | `prefill-pods`, `prefill-request-rate`, `prefill-ttft-mean`, `prefill-time-mean` (vLLM only), `queue-time-mean`, `computed-token-rate`, `computed-tokens-histogram` (vLLM only), `prompt-tokens-histogram` (SGLang: `--collect-tokens-histogram`), `queue-time-histogram` |
+| `ttft` | decode pods | `decode-ttft-mean` |
+| `ttft` | router | `router-ttft-histogram`, `router-ttft-mean` |
+| `tpot` | decode pods (every serving pod on a fleet with no decode role) | `decode-pods`, `decode-request-rate`, `itl-mean`, `output-tokens-histogram`, `running-requests` |
+| `tpot` | router | `router-tpot-histogram`, `router-tpot-mean` |
+
+`prefill-pods` missing means the model has no prefill role: the TTFT model
+covers prefill/decode fleets only. A failed query the switch alone added is
+counted in `llmsm_metrics_collection_errors_total` under
+`query_type="slo_model_inputs"`.
+
+Example: models whose TTFT model lacks an input, and which:
+
+```promql
+llmsm_slo_model_input_missing{objective="ttft"} == 1
+```
+
 ### Utilization-share optimizer metrics
 
 Published when the [utilization-share optimizer](scaling-policy.md#optimizer-cluster-default-only-live)
@@ -2338,7 +2385,7 @@ notifications link to it.
 | `LLMSMModelSLOMissed` | warning | 2m | in at least half of the judged minutes of the last 30, and at least 7 of them (one bad interval of a minute reaches six windows), a model's router-measured TPOT mean was above its declared target, while the analyzer still publishes and the model has replicas | observe-only: a tuning finding, not an outage. Check the target can be met at all, then raise the floor or lower the model-level `scaleUpThreshold` (the `slo` entry's own band moves only its prediction), then find the cause in the runbook | [SLO runbook](troubleshooting.md#a-model-misses-or-is-never-judged-against-its-slo) |
 | `LLMSMModelSLOUnjudged` | info | 15m | a target set for 55 of the last 60 minutes, replicas present, nothing judged in the hour, and a cause to act on: excluded for at least half the hour, the router's series missing, or TPOT without requests while the router serves streaming requests. Not for too little traffic | the runbook's table: a fleet that never holds still, the router not scraped or not in the namespace, clients not streaming or not sending `include_usage` | [SLO runbook](troubleshooting.md#a-model-misses-or-is-never-judged-against-its-slo) |
 | `LLMSMHighErrorRate` | warning | 5m | `llmsm_errors_total` above 6/min for one `component`/`error_type` | grep the controller log for the `error_type` text | [Logs](monitoring.md#the-logs) |
-| `LLMSMMetricsCollectionFailing` | warning | 5m | `llmsm_metrics_collection_errors_total` above 5/min for one `query_type`/`reason`: decisions run on stale data. `query_type="learner_recording"` and `query_type="ttft_inputs"` are left out: those queries feed only a learner recording and the shadow TTFT pricing, so their failures show on the counter and do not alert | check Prometheus reachability and the controller's Prometheus settings | [T: metrics stale](troubleshooting.md#metrics-stale-or-missing) |
+| `LLMSMMetricsCollectionFailing` | warning | 5m | `llmsm_metrics_collection_errors_total` above 5/min for one `query_type`/`reason`: decisions run on stale data. `query_type="learner_recording"`, `query_type="ttft_inputs"` and `query_type="slo_model_inputs"` are left out: those queries feed only a learner recording, the shadow TTFT pricing and the slo analyzer's shadow v2 latency models, so their failures show on the counter and do not alert | check Prometheus reachability and the controller's Prometheus settings | [T: metrics stale](troubleshooting.md#metrics-stale-or-missing) |
 | `LLMSMPolicyNamespaceUnverified` | warning | 10m | the controller may not read Namespaces, so it cannot tell whether an admin published cluster policy for it. It runs on its own ConfigMap, which may be weaker than the admin intends | (cluster admin) `NAMESPACE=<ns> make setup-prereqs`, then restart the controller: the value is set once at startup | [T: policy namespace unverified](troubleshooting.md#cluster-policy-is-not-applied-policy-namespace-unverified) |
 | `LLMSMConstraintProviderSkipped` | warning | 10m | a declared limiter has been left out of decisions (`provider`, `reason`); the others still bound, so models scale past what it would allow | `node_read_denied`: (cluster admin) `make setup-prereqs`, or drop `gpu-inventory`. `failed`: the `GPU constraint provider skipped` log line says why | [T: GPUs held](troubleshooting.md#gpus-held-or-quota-spent) |
 | `LLMSMGPUResourceExhausted` | warning | 5m | GPU-labeled nodes report zero allocatable GPUs of a type. Only with a `gpu-inventory` limiter | (cluster admin) check the nodes' allocatable GPUs and the device-plugin pods. No alert does not mean GPUs are free: the metric exists only with that limiter | [T: GPUs held](troubleshooting.md#gpus-held-or-quota-spent) |
