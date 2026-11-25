@@ -108,6 +108,12 @@ readings, in a window whose replicas also ran below the band: a borrowed or
 default line, or one with no readings below the band, is read at the band's
 bottom by both. A figure read below the band carries `BelowFittedBand`.
 
+The planner never reads the line under the lowest ITL its replicas showed below
+the band, the floor. That floor stands for the number of requests a replica ran
+when it was read, and for more. A figure at fewer requests a replica than any
+of those readings is held to the floor extended down to its own count, and
+carries `ExtrapolatedBelowFloor`.
+
 ## API errors
 
 | You see | Fix |

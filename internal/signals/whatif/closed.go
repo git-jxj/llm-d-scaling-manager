@@ -93,6 +93,20 @@ type BelowBand struct {
 	// bottom, readings the line's fit drops as idle. The line is never read
 	// below it. 0 when there were too few such readings to trust one.
 	LeastITL float64
+	// LeastSequences is the fewest sequences a replica ran in the readings
+	// LeastITL was read from, and ByCount the floor kept by the sequences it
+	// was read at, as the line is kept by fill: the line ITL = A n + B
+	// through the floors of those readings grouped by their sequences n
+	// (itl.Model, n in place of the fill). A replica running fewer sequences
+	// steps faster, so LeastITL stands for LeastSequences and more; a TPOT
+	// priced at fewer is held to the floor ByCount reads at its own count,
+	// never above LeastITL, and flagged ExtrapolatedBelowFloor (issue
+	// llm-d-incubation/llm-d-scaling-manager#286). LeastSequences 0 is
+	// unknown, and LeastITL then stands for every count; a ByCount that is
+	// not a valid line (itl.ValidModel) or reads no positive floor leaves
+	// LeastITL, the lowest-count floor, flagged all the same.
+	LeastSequences float64
+	ByCount        itl.Model
 }
 
 // check refuses a Decode the planner cannot price, naming the first input
@@ -208,6 +222,30 @@ func (d Decode) lowestFill() float64 {
 		return d.Band.Lo
 	}
 	return LowestFill(d.Band, d.Tier, d.Line, d.BelowBand.LeastITL)
+}
+
+// lowestFillAt is the lowest fill d reads its line at for a TPOT at fill k:
+// lowestFill where k holds at least the sequences the floor was read at
+// (BelowBand.LeastSequences); under them, LowestFill at the floor kept by
+// count (BelowBand.ByCount) at k's own sequences, never above LeastITL.
+// extrapolated reports the second: the floor is read below every count it
+// saw.
+func (d Decode) lowestFillAt(k float64) (fill float64, extrapolated bool) {
+	least := d.BelowBand.LeastSequences
+	if !d.BelowBand.Read || !(least > 0) || !Finite(least) {
+		return d.lowestFill(), false
+	}
+	n := CappedSequences(k, d.CapacityTokens, d.KVPerRequest, float64(d.ReplicaCap))
+	if !(n < least) {
+		return d.lowestFill(), false
+	}
+	floor := d.BelowBand.LeastITL
+	if m := d.BelowBand.ByCount; itl.ValidModel(m.A, m.B) {
+		if f := m.A*n + m.B; f > 0 && f < floor {
+			floor = f
+		}
+	}
+	return LowestFill(d.Band, d.Tier, d.Line, floor), true
 }
 
 // fullPoint is where a replica saturates: the sequences it runs there, the
@@ -754,11 +792,16 @@ func SLOAtReplicas(d Decode, q ReplicasQuery) DecodeSLO {
 // tpotAt is the TPOT at fill k, times R_q at that fill, never below the floor.
 // The line is read at the fill a request sees (seenFill); Basis.Fill is the
 // replica's time-average k, and Basis.Floor the line's floor at the lowest
-// fill, not the higher floor a burst puts under every request.
+// fill, not the higher floor a burst puts under every request. A TPOT at
+// fewer sequences than the floor was read at is held to the floor at its own
+// count (lowestFillAt), and says so.
 func (d Decode) tpotAt(k, knee float64, r TPOTRatio, flags []Flag) Answer {
-	lowest := d.lowestFill()
-	floor, _ := d.tpotAtFill(lowest, r)
 	seen := d.seenFill(k)
+	lowest, extrapolated := d.lowestFillAt(seen)
+	if extrapolated {
+		flags = append(flags, ExtrapolatedBelowFloor)
+	}
+	floor, _ := d.tpotAtFill(lowest, r)
 	at := max(seen, lowest)
 	// Below the band where the line is read: the fill the request sees.
 	if seen < d.Band.Lo {
