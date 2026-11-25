@@ -1711,11 +1711,14 @@ func scoreStep(out *BacktestStep, m measured, target *ReportTarget) {
 	}
 	for i := range out.TTFT {
 		why := m.ttftWhy[i]
-		if why == "" && out.Unsettled {
+		// A refused figure counts by its refusal, not twice: a step
+		// that does not settle or is a burst unscores only a figure
+		// priced.
+		priced := out.TTFT[i].Predicted.Value != nil
+		if why == "" && out.Unsettled && priced {
 			why = UnscoredUnsettled
 		}
-		if why == "" && out.TTFTBurst && out.TTFT[i].Predicted.Value != nil {
-			// A refused figure counts by its refusal, not twice.
+		if why == "" && out.TTFTBurst && priced {
 			why = UnscoredBurst
 		}
 		out.TTFT[i] = scoredPoint(out.TTFT[i], m.ttft[i], m.requests, m.ttftTop, why, m.ttftBucket[i])
