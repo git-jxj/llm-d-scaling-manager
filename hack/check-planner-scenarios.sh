@@ -5,7 +5,9 @@
 # plan, check and first screen (check-planner-dayplan.mjs, -backtest.mjs, -answer.mjs), and
 # the answer panel asked again as the knobs change (check-planner-exec.mjs), and the SLO
 # target controls and the day plan marked stale when they change (check-planner-targets.mjs),
-# and the colour tokens against WCAG 2.1 AA (check-planner-contrast.mjs).
+# the colour tokens against WCAG 2.1 AA (check-planner-contrast.mjs), the boxes that show
+# the value the source learned (check-planner-learned.mjs), and the day plan while it runs
+# (check-planner-dayprogress.mjs).
 #
 # The page saves scenarios in the browser and imports them from files, and
 # both are untrusted when read back. The Go tests can only read the page's
@@ -36,3 +38,7 @@ node hack/check-planner-exec.mjs internal/whatifapi/page/scenario.js internal/wh
 node hack/check-planner-targets.mjs internal/whatifapi/page/scenario.js internal/whatifapi/page/dayplan.js internal/whatifapi/page/backtest.js \
   internal/whatifapi/page/planner.js cmd/capacity-planner/testdata/day-plan-ols-sweep-json.golden internal/whatifapi/page/index.html
 node hack/check-planner-contrast.mjs internal/whatifapi/page/planner.css
+node hack/check-planner-learned.mjs internal/whatifapi/page/scenario.js internal/whatifapi/page/dayplan.js internal/whatifapi/page/backtest.js \
+  internal/whatifapi/page/planner.js internal/whatifapi/page/index.html
+node hack/check-planner-dayprogress.mjs internal/whatifapi/page/scenario.js internal/whatifapi/page/dayplan.js internal/whatifapi/page/backtest.js \
+  internal/whatifapi/page/planner.js cmd/capacity-planner/testdata/day-plan-ols-sweep-json.golden

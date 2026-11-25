@@ -251,9 +251,21 @@ The `kvPerRequest` term says where its figure came from:
 A source that did not see enough load cannot learn every term, and the page
 then shows refusals instead of numbers. Open **Assume a term the source did
 not learn**, above the tabs, and type a value: the prefill rate V_P, the fixed latency a, the
-prompt cv, the router hop, or decode's ITL B. The learned value, or the reason
-it is missing, is shown under each box. A typed value flags every figure that
-rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
+prompt cv, the router hop, or decode's ITL B. A refused term's box is empty,
+with the reason under it. A typed value flags every figure that rests on it.
+[Each reason and its fix](troubleshooting.md#refused-figures).
+
+A box whose value the source learned shows that value, muted and tagged
+**learned**: the boxes above, the output length (the observed one) and R_q
+(the one the plan priced, at a percentile TPOT). A learned value is not an
+assumption: the page does not send it, the server uses its own, and no figure
+is flagged for it. Edit the box and the value is yours: tagged **assumed**,
+sent, and flagged, as before; **Use learned** beside it puts the learned value
+back. Emptying the box, or typing the learned value, does the same. A V_P
+learned from the served peak is tagged **lower bound**: the note says the real
+speed is likely higher, and prefill is not sized until you type a V_P (that
+value too, typed, is yours). A link or a saved scenario that carries a value keeps
+it as an assumption.
 
 The box opens by itself when a term is refused, and when V_P is only a lower
 bound: the prefill pods never queued, so the source saw their load, not their
@@ -969,6 +981,19 @@ say, for each model, why each bucket it did not price is the planner's. On
 a window under 12 hours a model abstains, the plan says so, and every figure
 is the planner's own. Not validated: every figure a model sets reads
 OUTSIDE VALIDATED REGION.
+
+Each bucket is sized on its own, so a day of 5-minute buckets (289) takes
+minutes. While a plan runs, the Day plan tab says so: how many buckets, when
+it started and the seconds since, with **Cancel**, which stops the request
+and frees **Plan the day**. The server reports no share done, so the time is
+all it shows. One plan runs at a time: opening the tab again shows the one
+running, and a plan you cancelled is not asked again until a knob changes.
+Loading new inputs cancels a plan still running.
+The **Bucket** starts at 5 minutes, the server's default, or at 15 minutes or
+an hour where the window would otherwise cut into more than 300 buckets; pick
+another to plan finer. A bucket you pick stays when you load again, unless
+the new window would cut it into more than the 3000 buckets the server
+sizes.
 
 From the command line, on the sample recording (about an hour, so two hours
 in the table):

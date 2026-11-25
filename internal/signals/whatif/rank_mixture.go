@@ -135,6 +135,11 @@ type KVDeferral struct {
 	RhoLo, RhoHi   float64
 	// Known says it was fitted; unknown, q is 0.
 	Known bool
+	// RhoHold is the utilization the lines are read no further than
+	// (RankMixtureOptions.KVHold, rank_mixture_modes.go): past it the wait
+	// is held, not extrapolated. 0 holds nothing; the lines then run to
+	// MaxKVRho.
+	RhoHold float64
 }
 
 // MinKVDeferralP and MinKVDeferralMean bound the fitted lines where they
@@ -148,9 +153,13 @@ const (
 // MaxKVRho caps the utilization the KV lines are read at.
 const MaxKVRho = 0.95
 
-// at is the deferral's probability and mean at rho.
+// at is the deferral's probability and mean at rho, read no further than
+// RhoHold where it is set.
 func (k KVDeferral) at(rho float64) (p, m float64) {
 	rho = min(rho, MaxKVRho)
+	if k.RhoHold > 0 {
+		rho = min(rho, k.RhoHold)
+	}
 	return min(max(k.P0+k.P1*rho, MinKVDeferralP), 1), max(k.M0+k.M1*rho, MinKVDeferralMean)
 }
 
@@ -197,6 +206,10 @@ type RankMixture struct {
 	// QueueRankMixtureNLLine): A0 and Beta are then their sums, Spread is 1
 	// and each request's Z is drawn from the parts; nil is v2's Z.
 	Parts *ZParts
+	// KVHold and RemainderSpread say the fit was asked for those modes of
+	// QueueRankMixtureNLLine (RankMixtureOptions, rank_mixture_modes.go);
+	// KV.RhoHold and Parts.Remainder.Shape say whether each applies.
+	KVHold, RemainderSpread bool
 }
 
 // MaxRelaxationShare is the largest relaxation time, as a share of the step

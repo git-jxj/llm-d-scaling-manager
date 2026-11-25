@@ -28,6 +28,16 @@ const (
 	// (docs/proposals/analyzer-learner.md, 2.9), so issued only while a
 	// learner recording is on.
 	QuerySLORouterTPOTBuckets = "slo_router_tpot_buckets"
+	// QuerySLORouterProcessingBuckets is the router's request-processing
+	// histogram, as per-second bucket rates, and QuerySLORouterProcessingSum
+	// and QuerySLORouterProcessingCount the rates of its _sum and _count:
+	// the router's own time inside its TTFT. The series carries no model
+	// label, so these are per namespace (the collector joins them to a
+	// model). Recorded for the capacity planner's experimental TTFT model,
+	// so issued only while a learner recording is on.
+	QuerySLORouterProcessingBuckets = "slo_router_processing_buckets"
+	QuerySLORouterProcessingSum     = "slo_router_processing_sum"
+	QuerySLORouterProcessingCount   = "slo_router_processing_count"
 
 	// SLORouterWindow is the rate window of the queries above. Five
 	// minutes, not the one minute the engine queries use: a percentile and an
@@ -63,6 +73,12 @@ const (
 		`rate(llm_d_epp_request_streaming_tpot_seconds_count{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
 	sloRouterTPOTBuckets = `sum by (model_name, target_model_name, le) (` +
 		`rate(llm_d_epp_request_streaming_tpot_seconds_bucket{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
+	sloRouterProcessingBuckets = `sum by (le) (` +
+		`rate(llm_d_epp_request_processing_duration_seconds_bucket{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
+	sloRouterProcessingSum = `sum(` +
+		`rate(llm_d_epp_request_processing_duration_seconds_sum{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
+	sloRouterProcessingCount = `sum(` +
+		`rate(llm_d_epp_request_processing_duration_seconds_count{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
 )
 
 // RegisterSLOQueries registers the router latency queries the slo analyzer
@@ -118,5 +134,26 @@ func RegisterSLOQueries(sourceRegistry *source.SourceRegistry) {
 		Template:    sloRouterTPOTBuckets,
 		Params:      []string{source.ParamNamespace},
 		Description: "Router (EPP) streaming TPOT histogram bucket rates per model",
+	})
+	registry.MustRegister(source.QueryTemplate{
+		Name:        QuerySLORouterProcessingBuckets,
+		Type:        source.QueryTypePromQL,
+		Template:    sloRouterProcessingBuckets,
+		Params:      []string{source.ParamNamespace},
+		Description: "Router (EPP) request-processing histogram bucket rates per namespace; the series carries no model",
+	})
+	registry.MustRegister(source.QueryTemplate{
+		Name:        QuerySLORouterProcessingSum,
+		Type:        source.QueryTypePromQL,
+		Template:    sloRouterProcessingSum,
+		Params:      []string{source.ParamNamespace},
+		Description: "Router (EPP) request-processing histogram _sum rate per namespace",
+	})
+	registry.MustRegister(source.QueryTemplate{
+		Name:        QuerySLORouterProcessingCount,
+		Type:        source.QueryTypePromQL,
+		Template:    sloRouterProcessingCount,
+		Params:      []string{source.ParamNamespace},
+		Description: "Router (EPP) request-processing histogram _count rate per namespace",
 	})
 }

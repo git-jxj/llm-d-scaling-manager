@@ -45,6 +45,13 @@ type MixtureStep struct {
 	// RouterMean and RouterP90 are the router's measured TTFT mean and p90,
 	// seconds; 0 is not measured.
 	RouterMean, RouterP90 float64
+	// RouterProcessingHist is the router's request-processing histogram
+	// (seconds, upper bound to rate) pooled over the step, and
+	// RouterProcessingMean its mean, seconds; nil and 0 where the
+	// recording does not hold them. Only RankMixtureOptions.RemainderSpread
+	// reads them.
+	RouterProcessingHist map[float64]float64
+	RouterProcessingMean float64
 }
 
 // minRankRate is the least rate a rank's means are read at: below it a
@@ -321,6 +328,12 @@ type RankMixtureOptions struct {
 	// (RankMixture.Stratified). The zero value is off; the planner sets it
 	// from DefaultRankMixtureStratified unless the caller says otherwise.
 	StratifiedMoments bool
+	// KVHold holds the KV-deferral lines at the fit window's
+	// KVHoldQuantile rank utilization, and RemainderSpread draws the
+	// router's remainder from its measured request processing
+	// (rank_mixture_modes.go). Both are modes of FitRankMixtureNL, each
+	// off by default; FitRankMixture does not read them.
+	KVHold, RemainderSpread bool
 }
 
 // MinSpreadFitWindow is the shortest fit window the planner calibrates the

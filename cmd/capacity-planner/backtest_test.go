@@ -97,6 +97,34 @@ func TestBacktestAPIParity(t *testing.T) {
 	assert.NotEmpty(t, api.Steps)
 }
 
+// The KV-deferral hold given without the remainder spread is warned of, not
+// refused: each mode alone is how the two are compared. Given with it, or
+// not given, there is no warning.
+func TestBacktestFlags_KVHoldAloneWarns(t *testing.T) {
+	base := []string{"backtest", "--recording", "a", "--experimental-ttft=v2nl-line", "--ttft-target", "fast"}
+	for name, c := range map[string]struct {
+		extra []string
+		warns bool
+	}{
+		"hold alone":  {[]string{"--rank-mixture-kv-hold"}, true},
+		"both":        {[]string{"--rank-mixture-kv-hold", "--rank-mixture-remainder-spread"}, false},
+		"spread only": {[]string{"--rank-mixture-remainder-spread"}, false},
+		"neither":     {nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var out, warn strings.Builder
+			err := run(t.Context(), append(slices.Clone(base), c.extra...), &out, &warn)
+			require.Error(t, err, "the bad target stops it after the modes are checked")
+			assert.Contains(t, err.Error(), "--ttft-target")
+			if c.warns {
+				assert.Contains(t, warn.String(), "--rank-mixture-kv-hold without --rank-mixture-remainder-spread")
+			} else {
+				assert.NotContains(t, warn.String(), "--rank-mixture-kv-hold")
+			}
+		})
+	}
+}
+
 // The flags are checked before any recording is read.
 func TestBacktestFlags(t *testing.T) {
 	for name, c := range map[string]struct {
@@ -110,6 +138,11 @@ func TestBacktestFlags(t *testing.T) {
 		"bad output":       {[]string{"backtest", "--recording", "a", "-o", "yaml"}, "-o"},
 		"fit without test": {[]string{"backtest", "--fit", "a"}, "give --recording"},
 		"fit steps alone":  {[]string{"backtest", "--recording", "a", "--rank-mixture-fit-steps"}, "--experimental-ttft=v2"},
+		"kv hold alone":    {[]string{"backtest", "--recording", "a", "--rank-mixture-kv-hold"}, "--experimental-ttft=v2nl-line"},
+		"kv hold with v2": {[]string{"backtest", "--recording", "a", "--experimental-ttft=v2", "--rank-mixture-kv-hold"},
+			"--experimental-ttft=v2nl-line"},
+		"spread with v2": {[]string{"backtest", "--recording", "a", "--experimental-ttft=v2", "--rank-mixture-remainder-spread"},
+			"--experimental-ttft=v2nl-line"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var out strings.Builder

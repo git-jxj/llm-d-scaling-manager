@@ -259,10 +259,20 @@ async function api(method, path, body, signal) {
     }
     const resp = await fetch(path, opt);
     let doc = null;
-    try { doc = await resp.json(); } catch (e) { doc = null; }
+    // A body not JSON reads as none; one cut off by the signal is the abort.
+    try { doc = await resp.json(); } catch (e) {
+      if (e.name === "AbortError") throw e;
+      doc = null;
+    }
     const wait = retryDelay(resp.status, resp.headers.get("Retry-After"), attempt);
     if (wait >= 0) {
-      await new Promise(r => setTimeout(r, wait));
+      // The wait before a retry ends at the abort, not after it.
+      await new Promise((resolve, reject) => {
+        const aborted = () => { clearTimeout(t); reject(new DOMException("aborted", "AbortError")); };
+        const t = setTimeout(resolve, wait);
+        if (signal && signal.aborted) aborted();
+        else if (signal) signal.addEventListener("abort", aborted, {once: true});
+      });
       continue;
     }
     if (!resp.ok) {
@@ -556,13 +566,18 @@ function setInputs(inputs) {
   progress("");
   el("exec").hidden = true;
   el("trustchip").hidden = true;
+  // A day plan of the inputs before is dropped, a run of them cancelled.
+  dayCancel(true);
   state.day = null;
-  state.dayAsked = state.dayReq = null;
+  state.dayAsked = state.dayReq = state.dayCancelled = null;
   state.reportUsed = null;
   state.vpOpened = false;
   el("daystale").hidden = true;
   el("dayout").hidden = true;
   el("dayrun").disabled = !inputs.fleet.prefill;
+  // The bucket starts where the window cuts into no more than
+  // DAY_BUCKETS_AIMED of them, unless one was picked that still fits.
+  el("daystep").value = dayStepFor(state.dayStepPicked);
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
   state.bt = null;
   el("btout").hidden = true;
@@ -613,6 +628,8 @@ function setInputs(inputs) {
   el("pnow").textContent = inputs.fleet.prefill ? "now " + inputs.fleet.prefill.replicas : "no prefill variant";
   el("dnow").textContent = "now " + inputs.fleet.decode.replicas;
   el("ratio").value = "";
+  el("ratio").dataset.learned = "";
+  refreshBoxes();
   showSource(inputs);
   showInputs(inputs);
   syncControls();
@@ -638,6 +655,7 @@ function showLearned(inputs) {
   let refused = false;
   for (const a of ASSUMABLE) {
     el("a-" + a.box).value = "";
+    el("a-" + a.box).dataset.learned = "";
     // A line refused for any other reason (NoLine) has no B to state.
     const t = inputs.terms.find(x => x.name === a.term) ||
       (a.refusedAs && inputs.terms.find(x => x.name === a.refusedAs && x.refused && x.refused.reason === "PinnedDefaultB"));
@@ -649,6 +667,9 @@ function showLearned(inputs) {
       refused = true;
     } else if (t) {
       text = "learned " + fmtNum(t.value * a.scale);
+      // The box shows the learned value, muted: it is the source's, not
+      // an assumption, and is not sent (refreshBoxes).
+      el("a-" + a.box).dataset.learned = String(learnedShown(t.value * a.scale));
     }
     el("l-" + a.box).textContent = text;
   }
@@ -658,13 +679,70 @@ function showLearned(inputs) {
   // The box opens and says so: a stated V_P is what prices prefill.
   if (vpLowerBound(inputs)) {
     const vp = inputs.terms.find(x => x.name === "vp");
-    el("l-vp").textContent = `learned ${fmtNum(vp.value)}, only a lower bound: the prefill pods never queued, so prefill's limit is unknown. ` +
-      "Type a V_P to size prefill.";
+    el("l-vp").textContent = `learned ${fmtNum(vp.value)}, only a lower bound: the prefill pods never queued, so the real speed is likely higher ` +
+      "and prefill's limit is unknown. The box shows it but sends nothing: type a V_P to size prefill.";
     refused = true;
   }
   el("a-lar").checked = false;
   el("assumebox").open = refused;
   el("assumecount").textContent = "none typed";
+}
+
+// learnedShown is a learned value as its box shows it: whole above 100, else
+// four significant digits. The box sends nothing while it holds it, so the
+// server prices the exact value.
+function learnedShown(x) {
+  return Math.abs(x) >= 100 ? Math.round(x) : Number(x.toPrecision(4));
+}
+
+// markBox shows whose value a box holds: "learned" or "lowerBound" (the
+// source's, muted, not sent), "assumed" (typed, flagged and sent), or ""
+// (empty, or nothing learned). Where a learned value exists and the box
+// holds another, "Use learned" puts it back.
+function markBox(id, how) {
+  const box = el(id), learned = box.dataset.learned;
+  box.classList.toggle("learned", how === "learned" || how === "lowerBound");
+  const tag = el("t-" + id);
+  tag.textContent = {learned: "learned", lowerBound: "lower bound", assumed: "assumed"}[how] || "";
+  tag.className = "tag" + (how ? " " + how : "");
+  el("r-" + id).hidden = !(how === "assumed" && learned !== undefined && learned !== "");
+}
+
+// refreshBoxes puts in each box whose value the source learned either the
+// value typed (an assumption, sent) or the learned one (not sent), and says
+// which. A box being edited keeps what is in it, but its tag says whose value
+// is used now (a spinner or Enter commits with the box still focused); it is
+// refilled when it loses focus.
+function refreshBoxes() {
+  const k = state.k, inputs = state.inputs;
+  if (!k || !inputs) return;
+  const active = document.activeElement;
+  const put = (id, typed) => {
+    const box = el(id), learned = box.dataset.learned;
+    const how = typed != null ? "assumed" : !learned ? "" : id === "a-vp" && vpLowerBound(inputs) ? "lowerBound" : "learned";
+    if (box !== active) box.value = typed != null ? String(typed) : learned || "";
+    markBox(id, how);
+  };
+  for (const a of ASSUMABLE) put("a-" + a.box, k.assume[a.key] != null ? Number((k.assume[a.key] * a.scale).toPrecision(6)) : null);
+  const observed = val(inputs.observed.outputTokens);
+  el("outtok").dataset.learned = observed != null ? String(Math.round(observed)) : "";
+  put("outtok", k.outputTokens != null && (observed == null || Math.abs(k.outputTokens - observed) >= 0.5) ? Math.round(k.outputTokens) : null);
+  put("ratio", k.ratio != null ? k.ratio : null);
+}
+
+// typedOrLearned reads a box a source learned a value for: null where it
+// is empty or holds the learned value (the source's stands), else the
+// number typed. An emptied box shows the learned value again. Two learned
+// values are not the source's when typed: a V_P that is only a lower bound
+// (typed, it is your statement, and prices prefill), and an R_q learned at
+// another percentile than the one asked now.
+function typedOrLearned(id) {
+  const box = el(id), raw = box.value;
+  let learned = box.dataset.learned;
+  if (id === "a-vp" && vpLowerBound(state.inputs)) learned = "";
+  if (id === "ratio" && box.dataset.learnedAt !== state.k.tpotStat) learned = "";
+  if (raw === "" || (learned && +raw === +learned)) return null;
+  return +raw;
 }
 
 // vpLowerBound says the inputs' V_P is a lower bound alone: learned from the
@@ -912,6 +990,8 @@ function applyLink() {
   el("ratio").value = k.ratio != null ? k.ratio : "";
   for (const a of ASSUMABLE) if (k.assume[a.key] != null) el("a-" + a.box).value = Number((k.assume[a.key] * a.scale).toPrecision(6));
   el("a-lar").checked = !!k.assume.loadAwareRouter;
+  // A value the link carries is typed: an assumption, as before.
+  refreshBoxes();
   showTyped();
   syncControls();
 }
@@ -1461,6 +1541,15 @@ function renderAtTarget() {
   if (ratio && ratio.refused) note = "R_q is not learned (" + ratio.refused.reason + "): type a ratio, or pick the mean.";
   else if (ratio && ratio.value != null) note = `R_q ${fmtNum(ratio.value)} (${ratio.source || "?"})`;
   el("rationote").textContent = note;
+  // The R_q the plan priced, where it is the source's and not typed, is
+  // the ratio box's learned value.
+  // It is remembered with its percentile: a ratio typed later at another
+  // percentile is not that one's learned value.
+  if (state.k.ratio == null) {
+    el("ratio").dataset.learned = val(ratio) != null ? String(Number(val(ratio).toPrecision(3))) : "";
+    el("ratio").dataset.learnedAt = state.k.tpotStat;
+  }
+  refreshBoxes();
 }
 
 // targetNote is what the page says under a target: whose it is, why a page
@@ -2393,8 +2482,9 @@ function wire() {
   };
   el("ratio").onchange = () => {
     if (!ready()) return;
-    const v = +el("ratio").value;
-    k().ratio = el("ratio").value === "" || !(v > 0) ? null : v;
+    const v = typedOrLearned("ratio");
+    k().ratio = v == null || !(v > 0) ? null : v;
+    refreshBoxes();
     showTyped();
     schedule(0);
   };
@@ -2404,19 +2494,54 @@ function wire() {
   };
   el("priceas").onchange = () => { if (ready()) { k().priceAs = el("priceas").value; schedule(0); } };
   el("outtok").onchange = () => {
-    const v = +el("outtok").value;
-    if (ready() && v > 0) { k().outputTokens = v; schedule(0); }
+    if (!ready()) return;
+    const v = typedOrLearned("outtok");
+    if (v == null) k().outputTokens = val(state.inputs.observed.outputTokens);
+    else if (v > 0) k().outputTokens = v;
+    refreshBoxes();
+    schedule(0);
   };
+  // A box that shows a learned value sends nothing until it is edited: then
+  // the value typed is an assumption, flagged and sent. Emptied, or set back
+  // to the learned value (Use learned), the source's stands again.
   for (const a of ASSUMABLE) {
-    el("a-" + a.box).onchange = () => {
+    const id = "a-" + a.box;
+    el(id).onchange = () => {
       if (!ready()) return;
-      const raw = el("a-" + a.box).value, v = +raw;
-      if (raw === "" || !(v >= 0)) delete k().assume[a.key];
+      const v = typedOrLearned(id);
+      if (v == null || !(v >= 0)) delete k().assume[a.key];
       else k().assume[a.key] = v / a.scale;
+      refreshBoxes();
       showTyped();
       schedule(0);
     };
+    el("r-" + id).onclick = () => {
+      if (!ready()) return;
+      delete k().assume[a.key];
+      refreshBoxes();
+      showTyped();
+      schedule(0);
+      el(id).focus();
+    };
   }
+  el("r-outtok").onclick = () => {
+    if (!ready()) return;
+    k().outputTokens = val(state.inputs.observed.outputTokens);
+    refreshBoxes();
+    schedule(0);
+    el("outtok").focus();
+  };
+  el("r-ratio").onclick = () => {
+    if (!ready()) return;
+    k().ratio = null;
+    refreshBoxes();
+    showTyped();
+    schedule(0);
+    el("ratio").focus();
+  };
+  // A box committed while focused (Enter, the spinner) is refilled once it
+  // loses focus: emptied, it shows the learned value again.
+  for (const id of [...ASSUMABLE.map(a => "a-" + a.box), "outtok", "ratio"]) el(id).onblur = () => setTimeout(refreshBoxes, 0);
   // The router's balancing is stated, not typed: assume.loadAwareRouter,
   // sent only when ticked, so the server's default (off) stands otherwise.
   el("a-lar").onchange = () => {
@@ -2461,7 +2586,9 @@ function wire() {
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
-  el("daystep").onchange = el("daysize").onchange = dayStale;
+  el("daycancel").onclick = dayCancel;
+  el("daystep").onchange = () => { state.dayStepPicked = el("daystep").value; dayStale(); };
+  el("daysize").onchange = dayStale;
   el("btrun").onclick = runBacktest;
   el("btstart").onclick = checkAccuracy;
   el("bprun").onclick = runPredict;
@@ -2734,7 +2861,7 @@ function showView(name, focus) {
   }
   if (focus) el("tab-" + name).focus();
   // A day plan for knobs since changed is planned again when its view opens.
-  if (name === "day" && !state.dayBusy && !el("dayrun").disabled && dayStale()) runDay();
+  if (name === "day" && !state.dayBusy && !el("dayrun").disabled && dayStale() && state.dayCancelled !== JSON.stringify(dayRequest())) runDay();
   // Any other view drops a pending re-plan of the day.
   if (name !== "day") clearTimeout(dayTimer);
 }
@@ -2769,6 +2896,8 @@ function useVP(given) {
   if (!state.k || !(vp > 0)) return;
   state.k.assume.vp = vp;
   el("a-vp").value = String(Math.round(vp));
+  // Its box is tagged assumed, no longer the lower bound it showed.
+  refreshBoxes();
   showTyped();
   schedule(0);
 }
@@ -3091,15 +3220,22 @@ function dayRequest() {
 // runDay asks the day plan and draws it. The request it answers is kept
 // (state.dayAsked), so a knob changed since marks it stale (dayStale).
 async function runDay() {
-  if (!state.inputs || !state.k) return;
+  // One day plan runs at a time: a second ask while one runs, from the
+  // button or from the view opening, shows the run already going.
+  if (!state.inputs || !state.k || state.dayBusy) return;
   const inputsId = state.inputs.inputsId, t0 = performance.now();
   const req = dayRequest();
   el("dayrun").disabled = true;
   state.dayBusy = true;
+  state.dayCancelled = null;
+  const abort = state.dayAbort = new AbortController();
   el("dayout").classList.add("stale");
-  setStatus("Planning the day: each bucket sized on its own (seconds)...");
+  setStatus("Planning the day: each bucket sized on its own (seconds to minutes)...");
+  const stop = dayProgress(req, t0);
   try {
-    const out = await api("POST", "v1/dayplan", req);
+    const out = await api("POST", "v1/dayplan", req, abort.signal);
+    // An answer that lands after Cancel, or after a new load, is not drawn.
+    if (abort.signal.aborted) throw new DOMException("cancelled", "AbortError");
     if (!state.inputs || inputsId !== state.inputs.inputsId) return;
     state.day = out;
     state.dayAsked = JSON.stringify(req);
@@ -3110,16 +3246,108 @@ async function runDay() {
     renderDay();
     setStatus(`Planned ${out.buckets.length} buckets in ${((performance.now() - t0) / 1000).toFixed(1)} s; ${out.searched} fleets priced.`);
   } catch (e) {
-    setStatus("Could not plan the day: " + e.message, true);
-    // Only a request the server did not answer is remembered as refused: a
-    // plan answered and then not drawn is no reason to stop asking.
-    if (state.dayAsked !== JSON.stringify(req)) state.dayFailed = JSON.stringify(req);
+    if (e.name === "AbortError") {
+      // Cancelled: not asked again by itself until a knob changes. A run a
+      // new load cancelled says nothing, even a load of the same inputs:
+      // the load speaks, and its day plan is asked as any other.
+      if (!abort.byLoad && state.inputs && inputsId === state.inputs.inputsId) {
+        setStatus("Day plan cancelled.");
+        state.dayCancelled = JSON.stringify(req);
+      }
+    } else {
+      setStatus("Could not plan the day: " + e.message, true);
+      // Only a request the server did not answer is remembered as refused: a
+      // plan answered and then not drawn is no reason to stop asking.
+      if (state.dayAsked !== JSON.stringify(req)) state.dayFailed = JSON.stringify(req);
+    }
   } finally {
+    // Cancel goes with the progress: a keyboard on it moves to Plan the day.
+    const onCancel = document.activeElement === el("daycancel");
+    stop();
+    state.dayAbort = null;
     state.dayBusy = false;
     el("dayrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
+    if (onCancel) el(el("dayrun").disabled ? "tab-day" : "dayrun").focus();
     // A knob changed while it ran: the view on screen plans again.
     if (dayStale()) dayAgain();
   }
+}
+
+// dayBuckets is how many buckets a day plan of step cuts the source's
+// window into, or null where the window is not known. The server aligns
+// buckets to the step in UTC (bucketize), from the first cycle's bucket to
+// the last's, and so does this.
+function dayBuckets(step) {
+  const s = state.inputs && state.inputs.source, d = dayStepSeconds(step) * 1000;
+  if (!s || !s.firstAt || !s.lastAt || !d) return null;
+  const a = Date.parse(s.firstAt), b = Date.parse(s.lastAt);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null;
+  return Math.floor(b / d) - Math.floor(a / d) + 1;
+}
+
+// dayStepSeconds is a bucket's length ("5m", "1h") in seconds, or 0.
+function dayStepSeconds(step) {
+  const m = /^(\d+)(s|m|h)$/.exec(step || "");
+  return m ? +m[1] * {s: 1, m: 60, h: 3600}[m[2]] : 0;
+}
+
+// DAY_STEPS are the bucket lengths the page offers a day plan, and
+// DAY_BUCKETS_AIMED the most buckets the step it starts at cuts the window
+// into: each bucket is sized on its own, so a day of 5-minute buckets (289)
+// takes minutes. The server's default (5m) stands where it stays under; the
+// server sizes up to maxDayPlanBuckets (3000) on any step asked.
+const DAY_STEPS = ["5m", "15m", "1h"];
+const DAY_BUCKETS_AIMED = 300;
+// DAY_BUCKETS_MAX is the server's maxDayPlanBuckets: a step picked that
+// cuts the window into more is refused (the server counts one bucket over,
+// so the page keeps under it).
+const DAY_BUCKETS_MAX = 3000;
+
+// dayStepFor is the step a day plan starts at on the loaded window: the
+// step picked, where there is one and the server sizes its buckets, or else
+// the finest of DAY_STEPS that cuts the window into DAY_BUCKETS_AIMED
+// buckets or fewer.
+function dayStepFor(picked) {
+  if (picked) {
+    const n = dayBuckets(picked);
+    if (n == null || n < DAY_BUCKETS_MAX) return picked;
+  }
+  for (const s of DAY_STEPS) {
+    const n = dayBuckets(s);
+    if (n == null || n <= DAY_BUCKETS_AIMED) return s;
+  }
+  return DAY_STEPS[DAY_STEPS.length - 1];
+}
+
+// dayProgress shows, in the Day plan view, that a plan runs: how many
+// buckets, when it started and the seconds since, with Cancel. The server
+// reports no share done, so the time is all it says. The first line is
+// announced; the seconds are not. It returns the function that hides it.
+function dayProgress(req, t0) {
+  const n = dayBuckets(req.step);
+  const started = new Date().toISOString().slice(11, 19);
+  // Shown first, then written: a live region hidden when its text changes
+  // is not announced.
+  el("dayprogress").hidden = false;
+  el("dayprogtext").textContent = `Planning the day: ${n != null ? n + " buckets of " + req.step + ", " : ""}each sized on its own, ` +
+    `started ${started} UTC.`;
+  const tick = () => { el("dayprogtime").textContent = `${Math.round((performance.now() - t0) / 1000)} s so far; a day of 5-minute buckets takes minutes.`; };
+  tick();
+  const timer = setInterval(tick, 1000);
+  return () => {
+    clearInterval(timer);
+    el("dayprogress").hidden = true;
+    el("dayprogtext").textContent = "";
+  };
+}
+
+// dayCancel stops the day plan running: its request is aborted, and the
+// button is free again. byLoad is a new load cancelling it, which the run
+// does not remember as a plan cancelled.
+function dayCancel(byLoad) {
+  if (!state.dayAbort) return;
+  state.dayAbort.byLoad = byLoad === true;
+  state.dayAbort.abort();
 }
 
 // dayAgain plans a stale day plan again, after a pause for the knob still
@@ -3130,7 +3358,8 @@ function dayAgain() {
   clearTimeout(dayTimer);
   dayTimer = setTimeout(() => {
     if (el("view-day").hidden || state.dayBusy || el("dayrun").disabled || !dayStale()) return;
-    if (state.dayFailed === JSON.stringify(dayRequest())) return;
+    const asked = JSON.stringify(dayRequest());
+    if (state.dayFailed === asked || state.dayCancelled === asked) return;
     runDay();
   }, 400);
 }
@@ -3140,11 +3369,14 @@ function dayAgain() {
 // stated lengths, bucket or rate statistic changed. It says what the plan
 // used and asks for a re-run; it is true when stale.
 function dayStale() {
-  const stale = !!(state.day && state.inputs && state.k && JSON.stringify(dayRequest()) !== state.dayAsked);
+  const asked = state.inputs && state.k ? JSON.stringify(dayRequest()) : null;
+  const stale = !!(state.day && asked && asked !== state.dayAsked);
   el("dayout").classList.toggle("stale", stale || !!state.dayBusy);
   el("daystale").hidden = !stale;
-  el("daystale").textContent = stale ? `The knobs changed since this plan, which used ${dayUsedText(state.dayReq)}: ` +
-    "this view plans the day again when it is shown, or press Plan the day." : "";
+  // A plan cancelled is not asked again by itself: the note does not say it is.
+  const again = state.dayCancelled === asked ? "you cancelled the plan for them: press Plan the day to plan it." :
+    "this view plans the day again when it is shown, or press Plan the day.";
+  el("daystale").textContent = stale ? `The knobs changed since this plan, which used ${dayUsedText(state.dayReq)}: ${again}` : "";
   return stale;
 }
 
