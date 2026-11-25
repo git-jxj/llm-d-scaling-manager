@@ -485,7 +485,7 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 		experimentalTTFT: s.experimentalTTFT}
 	set := func(name string) { f.set[name] = true }
 	if k.PromptTokens > 0 {
-		f.inputTokens = k.PromptTokens
+		f.inputTokens, f.inputTokensRead = k.PromptTokens, k.PromptTokensRead
 		set("assume-input-tokens")
 	}
 	f.prefixHit, f.prefixHitRead = k.PrefixHit, k.PrefixHitRead

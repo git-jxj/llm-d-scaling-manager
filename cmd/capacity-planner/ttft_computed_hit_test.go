@@ -125,6 +125,44 @@ func TestTTFT_TheLoadShapeNetsByThePrefillPodsComputedHit(t *testing.T) {
 	assert.Nil(t, plain.servedComputed)
 }
 
+// A whole prompt read from the source's cycles with no hit stated (a day
+// plan's bucket, a backtest's step: whatifapi.Knobs.PromptTokensRead) is the
+// source's shape too: netted by the prefill pods' computed-token hit with
+// slo.SwitchTTFTComputedHit off, and the served work stays the knee's floor.
+// Netted by the decode variant's hit, none on a P/D fleet, the 8000-token
+// prompt was priced as computed where the pods computed 2000. A hit stated
+// beside it governs, and a stated prompt is as before.
+func TestTTFT_AReadPromptNetsByThePrefillPodsComputedHit(t *testing.T) {
+	served := map[int]float64{1: 6000}
+	state := func() *learnreplay.State {
+		st := computedHitState(0, false)
+		st.Prefill[0].ServedComputed = served
+		return st
+	}
+	asked := func(read, statedHit bool) *pricedVariant {
+		pv := hitDecode(0, 0)
+		pv.assumedIL, pv.ilRead, pv.assumedHit = true, read, statedHit
+		return pv
+	}
+
+	read := hitFleetOf(t, state(), asked(true, false), answerFlags{inputTokens: 8000}, "assume-input-tokens")
+	require.Nil(t, read.refused)
+	assert.InDelta(t, 2000.0, read.fleet.Prefill.PromptTokens, 1e-9, "a read prompt: what the prefill pods computed")
+	assert.Equal(t, 8000.0, read.fleet.Prefill.WholePromptTokens)
+	assert.Contains(t, read.in.Assumed, "prompt netted by the prefill pods' computed-token hit 0.750, not the prefix-cache hit 0.000")
+	assert.Equal(t, served, read.servedComputed, "the served work is the floor at the read prompt's computed tokens")
+
+	hit := hitFleetOf(t, state(), asked(true, true), answerFlags{inputTokens: 8000}, "assume-input-tokens")
+	require.Nil(t, hit.refused)
+	assert.Equal(t, 8000.0, hit.fleet.Prefill.PromptTokens, "a stated hit governs a read prompt")
+	assert.Nil(t, hit.servedComputed)
+
+	stated := hitFleetOf(t, state(), asked(false, false), answerFlags{inputTokens: 8000}, "assume-input-tokens")
+	require.Nil(t, stated.refused)
+	assert.Equal(t, 8000.0, stated.fleet.Prefill.PromptTokens, "a stated prompt with the switch off: as before")
+	assert.Nil(t, stated.servedComputed)
+}
+
 // Below whatif.MaterialPrefixHitMove on both sides, the two hits agree to
 // within what a minute's counters resolve, and nothing moves: no committed
 // recording has a prefix hit, and none of their figures moves with the
@@ -229,6 +267,7 @@ func rewriteHits(t *testing.T, v any, wholeScale, gpuHit float64) int {
 func TestTTFT_ComputedHitTheLoadShapeMatchesTheMeasured(t *testing.T) {
 	const wholeScale, gpuHit = 4.0, 0.5
 	rec := hitRecording(t, wholeScale, gpuHit)
+	var read float64
 	knees := func(on bool) (measured, load float64, st *learnreplay.State) {
 		t.Helper()
 		sw := map[string]map[string]bool{learnreplay.PackageSLO: {slo.SwitchTTFTComputedHit: on}}
@@ -258,6 +297,9 @@ func TestTTFT_ComputedHitTheLoadShapeMatchesTheMeasured(t *testing.T) {
 			return a.Value
 		}
 		hit := dec.Shape.PrefixHitRate
+		// A day plan's bucket and a backtest's step state the whole
+		// prompt they read and no hit (Knobs.PromptTokensRead).
+		read = knee(whatifapi.Knobs{Headroom: 0.8, PromptTokens: dec.Shape.InputTokens, PromptTokensRead: true})
 		return knee(whatifapi.Knobs{Headroom: 0.8}), knee(whatifapi.Knobs{Headroom: 0.8, PromptTokens: dec.Shape.InputTokens, PrefixHit: &hit, PrefixHitRead: true}), st
 	}
 	offMeasured, offLoad, st := knees(false)
@@ -265,6 +307,7 @@ func TestTTFT_ComputedHitTheLoadShapeMatchesTheMeasured(t *testing.T) {
 	require.True(t, ok)
 	require.InDelta(t, 1-1/wholeScale, computed, 0.01, "the injected recording reads a 0.75 computed-token hit")
 	assert.InDelta(t, offMeasured, offLoad, 0.02*offMeasured, "off: the load's shape is the measured one's work")
+	assert.InDelta(t, offMeasured, read, 0.02*offMeasured, "off: a read prompt is the measured one's work")
 
 	onMeasured, onLoad, _ := knees(true)
 	t.Logf("computed-token hit %.4f; prefill knee measured %.3f, load shape off %.3f, on %.3f r/s", computed, onMeasured, offLoad, onLoad)

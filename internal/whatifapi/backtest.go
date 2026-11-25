@@ -1889,7 +1889,9 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		}
 		fl, ok := p.fleets[k]
 		if !ok {
-			kn := Knobs{Prefill: k.np, Decode: k.nd, PromptTokens: k.prompt, OutputTokens: k.output, TTFTPercentile: q, TPOTPercentile: q,
+			// The step's prompt is read from its cycles, not stated
+			// (Knobs.PromptTokensRead).
+			kn := Knobs{Prefill: k.np, Decode: k.nd, PromptTokens: k.prompt, PromptTokensRead: k.prompt > 0, OutputTokens: k.output, TTFTPercentile: q, TPOTPercentile: q,
 				ArrivalCV2: p.cv2, Headroom: p.headroom}
 			kn.Assume = p.assume
 			kn.Assume.PromptCV = cv
