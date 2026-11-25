@@ -434,7 +434,9 @@ func ttftInput() domain.AnalyzerInput {
 			TTFTBuckets: []domain.LatencyBucket{{UpperBound: 1, Rate: 2}, {UpperBound: inf, Rate: 2.5}},
 			TPOTSumRate: 0.0625, TPOTCountRate: 2.5,
 			TPOTBuckets:            []domain.LatencyBucket{{UpperBound: 0.05, Rate: 2.25}, {UpperBound: inf, Rate: 2.5}},
-			FlowControlWaitBuckets: []domain.LatencyBucket{{UpperBound: 0.01, Rate: 2}, {UpperBound: inf, Rate: 2.5}}},
+			FlowControlWaitBuckets: []domain.LatencyBucket{{UpperBound: 0.01, Rate: 2}, {UpperBound: inf, Rate: 2.5}},
+			ProcessingBuckets:      []domain.LatencyBucket{{UpperBound: 0.05, Rate: 1.5}, {UpperBound: inf, Rate: 2.5}},
+			ProcessingSumRate:      0.25, ProcessingCountRate: 2.5},
 		FlowControlPools: []domain.FlowControlPool{{WindowSeconds: 300,
 			EffectiveSaturation: 0.875, EffectiveSaturationKnown: true,
 			PrefillSaturation: 0.375, PrefillSaturationKnown: true, DecodeSaturation: 0.875, DecodeSaturationKnown: true,
@@ -465,7 +467,8 @@ var r1Goldens = append([]string{ttftThreePodsFixture, ttftSaturatedFixture, ttft
 var ttftFieldNames = []string{"QueueLengthKnown", "AvgServiceTimeKnown", "AvgTTFTKnown", "PromptTokensBuckets",
 	"OutputTokensBuckets", "TTFTBuckets", "AvgQueueTime", "AvgQueueTimeKnown", "QueueTimeBuckets", "AvgPrefillTime",
 	"AvgPrefillTimeKnown", "AvgKVTransferTime", "AvgKVTransferTimeKnown", "TPOTBuckets", "QueueMin", "QueueMinKnown",
-	"RouterLatency", "FlowControlWaitBuckets", "FlowControlPools", "EffectiveSaturation", "PrefillSaturation",
+	"RouterLatency", "FlowControlWaitBuckets", "ProcessingBuckets", "ProcessingSumRate", "ProcessingCountRate",
+	"FlowControlPools", "EffectiveSaturation", "PrefillSaturation",
 	"DecodeSaturation", "DispatchedRate", "OutcomesKnown"}
 
 // Part 3 (analyzer-learner.md, 2.9): every Analyze records the TTFT model's

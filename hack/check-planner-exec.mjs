@@ -299,6 +299,17 @@ try {
   lar.checked = false;
   lar.onchange();
   check("unticked again: no assume sent", asked().assume === undefined, JSON.stringify(asked().assume));
+
+  // The day plan is asked with the experimental models the inputs were
+  // resolved with, as the Answer view prices them, and without where none.
+  load(inputsPD, pricedPlan);
+  delete state.inputs.ttftModel;
+  check("no model: the day plan is the planner's own", run("dayRequest()").experimentalModels === undefined, JSON.stringify(run("dayRequest()")));
+  state.inputs.ttftModel = {model: "rank-mixture", label: "Experimental TTFT model"};
+  check("a TTFT model: the day plan asks for it", run("dayRequest()").experimentalModels === true);
+  delete state.inputs.ttftModel;
+  state.inputs.tpotModel = {model: "renewal-lognormal", label: "Experimental TPOT model"};
+  check("a TPOT model: the day plan asks for it", run("dayRequest()").experimentalModels === true);
 } catch (e) {
   failures.push("threw: " + (e && e.stack || e));
 }

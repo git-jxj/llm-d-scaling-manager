@@ -68,6 +68,29 @@ func TestSLORouterQueries(t *testing.T) {
 			t.Errorf("%s selects on a streaming label the TPOT histogram does not carry: %s", name, q)
 		}
 	}
+	for name, metric := range map[string]string{
+		QuerySLORouterProcessingBuckets: "llm_d_epp_request_processing_duration_seconds_bucket",
+		QuerySLORouterProcessingSum:     "llm_d_epp_request_processing_duration_seconds_sum",
+		QuerySLORouterProcessingCount:   "llm_d_epp_request_processing_duration_seconds_count",
+	} {
+		q := build(name)
+		// The series carries no model: summed over the namespace, rate
+		// inside the sum, over the router latency's window.
+		for _, want := range []string{metric, `namespace="ns"`, "rate(", "[" + SLORouterWindow + "]"} {
+			if !strings.Contains(q, want) {
+				t.Errorf("%s lacks %q: %s", name, want, q)
+			}
+		}
+		if strings.Contains(q, "model_name") || strings.Contains(q, "streaming=") {
+			t.Errorf("%s groups or selects on a label the series does not carry: %s", name, q)
+		}
+		if strings.Index(q, "sum") > strings.Index(q, "rate(") {
+			t.Errorf("%s must rate inside the sum: %s", name, q)
+		}
+	}
+	if !strings.Contains(build(QuerySLORouterProcessingBuckets), "sum by (le)") {
+		t.Errorf("the processing buckets are not grouped by bound: %s", build(QuerySLORouterProcessingBuckets))
+	}
 	if SLORouterWindowSeconds != 300 || SLORouterWindow != "5m" {
 		t.Errorf("window %q / %v disagree", SLORouterWindow, SLORouterWindowSeconds)
 	}
