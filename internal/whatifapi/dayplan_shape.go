@@ -30,17 +30,17 @@ import (
 // The TTFT model was fitted on the window's DefaultBacktestStep steps, so a
 // bucket is priced at its own shape only where that shape lies inside what
 // those steps served: its mean prompt and computed tokens within the steps'
-// rate-weighted 5th to 95th percentiles widened by MeanRangeMargin, and its
-// computed-token p90 at most the largest step's. A bucket outside is priced
+// rate-weighted 5th to 95th percentiles, and its computed-token p90 at
+// most the largest step's. A bucket outside is priced
 // at the window's shape, flagged WindowShape and ShapeOutsideFit
 // (DayModelShape.OutsideFit says which and the range).
 
 // The window a bucket's shape is read over (bucketShapeWindow).
 const (
 	// MinShapeRequests is the fewest requests the window must hold.
-	MinShapeRequests = 8000.0
+	MinShapeRequests = 16000.0
 	// MinShapeWindow is the shortest span the window must cover.
-	MinShapeWindow = 30 * time.Minute
+	MinShapeWindow = time.Hour
 	// MaxShapeWindow is the longest span it may cover: past it, the
 	// bucket's shape is the hours around it, not its own.
 	MaxShapeWindow = 2 * time.Hour
@@ -49,13 +49,6 @@ const (
 // MinShapeFitSteps is the fewest fit steps the TTFT model's range is read
 // from; with fewer, no bucket is in range.
 const MinShapeFitSteps = 20
-
-// MeanRangeMargin widens the fit steps' 5th to 95th percentile of the mean
-// prompt and computed tokens, each way, into the range a bucket's own shape
-// is priced in: on the held-out steps of a time-split backtest, the model
-// priced from each step's own histograms beat the fit window's pooled ones
-// out to a quarter past the percentiles.
-const MeanRangeMargin = 1.25
 
 // The flags a day plan with the experimental models adds to a bucket priced
 // at the window's shape in place of its own.
@@ -242,11 +235,10 @@ func (m *experimentalModels) outsideFit(h *bucketHists) []string {
 	}
 	var out []string
 	span := func(what string, v float64, s fitSpan) {
-		lo, hi := s.lo/MeanRangeMargin, s.hi*MeanRangeMargin
 		// Within rounding: a uniform window reads its own mean back.
-		if v < lo*(1-rangeTolerance) || v > hi*(1+rangeTolerance) {
-			out = append(out, fmt.Sprintf("%s %.0f outside %.0f to %.0f (the fit's rate-weighted 5th to 95th percentile of %d steps, %.0f to %.0f, "+
-				"widened by %g each way)", what, v, lo, hi, s.steps, s.lo, s.hi, MeanRangeMargin))
+		if v < s.lo*(1-rangeTolerance) || v > s.hi*(1+rangeTolerance) {
+			out = append(out, fmt.Sprintf("%s %.0f outside %.0f to %.0f (the fit's rate-weighted 5th to 95th percentile of %d steps)",
+				what, v, s.lo, s.hi, s.steps))
 		}
 	}
 	span("prompt tokens", h.prompt, r.prompt)
@@ -314,10 +306,10 @@ func modelShapeNote(shapes map[string]int) string {
 		"minutes (at most %.0f), as a backtest prices each step, and the planner's terms take the lengths over the same window; buckets whose shape so read agrees on the 5%% grid share the first one's "+
 		"priced fleets; the TPOT model keeps its ratio at the window's output lengths. %d buckets were priced at their own shape; %d at the "+
 		"window's (WindowShape, %s), their shape outside the range the TTFT model's fit steps served (their mean prompt and computed tokens' "+
-		"rate-weighted 5th to 95th percentile, widened by %g each way, and their largest computed-token p90; shape.model.outsideFit says "+
+		"rate-weighted 5th to 95th percentile, and their largest computed-token p90; shape.model.outsideFit says "+
 		"which); %d at the window's (WindowShape, %s), their window holding too few requests.",
 		MinShapeRequests, MinShapeWindow.Minutes(), MaxShapeWindow.Minutes(), shapes[""], shapes[FlagShapeOutsideFit], FlagShapeOutsideFit,
-		MeanRangeMargin, shapes[FlagShapeFewRequests], FlagShapeFewRequests)
+		shapes[FlagShapeFewRequests], FlagShapeFewRequests)
 }
 
 // key is h on the 5% shape grid (shapeKnob): its mean computed tokens and

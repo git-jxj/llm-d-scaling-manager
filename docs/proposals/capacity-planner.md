@@ -1205,23 +1205,30 @@ than at the window's, so it gains nothing from the bucket's own.
 
 One five-minute bucket's computed-token tail is too noisy to price on, so
 the histograms are read over a window centred on the bucket, grown a
-bucket each side at a time until it holds 8000 requests and spans 30
-minutes, and no further than 2 hours (`ShapeFewRequests` past it). The
-thresholds come from the noise of the bucket's prefill price: the gap
+bucket each side at a time until it holds 16000 requests and spans an
+hour, and no further than 2 hours (`ShapeFewRequests` past it). The
+thresholds come from the noise of the bucket's prefill price, read on the
+fit part of a time-split day only (never its held-out part): the gap
 between the prices of the window's two interleaved halves (alternate
-2-minute blocks) against the hour-to-hour change of the price, picked where
-the change clearly exceeds the noise.
+2-minute blocks) against the hour-to-hour change of the price. The window
+is the shortest whose median change is four times its median noise; the
+requests, the fewest at which the noise's 90th percentile is under that
+median change. The rules were set before the data were read. The noise
+and the change are close at every size (their ratio 3 to 4.5), so the hour
+is a soft choice.
 
 A bucket is priced at its own shape only inside what the fit served: its
 mean prompt and computed tokens within the TTFT model's fit steps'
 rate-weighted 5th to 95th percentiles (percentiles, so one odd step does
-not widen the range), widened by a quarter each way, and its
-computed-token p90 at most the largest step's (a tail the fit never served
-is outside even at an in-range mean); with fewer than 20 fit steps there
-is no range. The quarter is what the backtest's held-out steps support: at
-the percentiles alone, the steps outside still priced closer from their
-own histograms than from the fit window's pooled ones, out to a quarter
-past them. Outside, the bucket is priced at the window's shape, flagged
+not widen the range), and its computed-token p90 at most the largest
+step's (a tail the fit never served is outside even at an in-range mean);
+with fewer than 20 fit steps there is no range. The range is not widened.
+A margin was looked for on the fit part alone, split again in time: at
+no margin did own histograms price that split's held-out steps closer than
+the pooled ones on the median, so none is taken. On the outer split the
+steps just outside the range still priced closer from their own histograms,
+so the range is conservative there; widening it on that evidence would be
+tuning on the held-out steps. Outside, the bucket is priced at the window's shape, flagged
 `WindowShape` and `ShapeOutsideFit`, and `shape.model.outsideFit` names
 what lies outside and the range. The fallback is a pricing choice, not a
 refusal: the models' `notPricedAt` gains no reason.

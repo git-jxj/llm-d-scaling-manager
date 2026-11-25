@@ -232,14 +232,14 @@ func TestBucketShapeWindow(t *testing.T) {
 	full := slices.Repeat([]float64{2000}, 48)
 	from, to, ok := bucketShapeWindow(full, 20, step)
 	assert.True(t, ok)
-	assert.Equal(t, [2]int{17, 23}, [2]int{from, to}, "30 minutes is seven five-minute buckets centred")
+	assert.Equal(t, [2]int{14, 26}, [2]int{from, to}, "an hour is thirteen five-minute buckets centred")
 	from, to, ok = bucketShapeWindow(full, 0, step)
 	assert.True(t, ok)
-	assert.Equal(t, [2]int{0, 5}, [2]int{from, to}, "clipped at the start: six buckets, 30 minutes")
-	thin := slices.Repeat([]float64{400}, 48)
+	assert.Equal(t, [2]int{0, 11}, [2]int{from, to}, "clipped at the start: twelve buckets, an hour")
+	thin := slices.Repeat([]float64{800}, 48)
 	from, to, ok = bucketShapeWindow(thin, 20, step)
 	assert.True(t, ok)
-	assert.Equal(t, [2]int{10, 30}, [2]int{from, to}, "8000 requests at 400 a bucket")
+	assert.Equal(t, [2]int{10, 30}, [2]int{from, to}, "16000 requests at 800 a bucket")
 	none := slices.Repeat([]float64{10}, 48)
 	from, to, ok = bucketShapeWindow(none, 20, step)
 	assert.False(t, ok)
@@ -289,7 +289,7 @@ func TestDayPlan_CommandReadsEachBucketsOwnShape(t *testing.T) {
 }
 
 // The range check: a bucket's mean prompt and computed tokens inside the
-// fit steps' 5th to 95th percentile widened by MeanRangeMargin, its
+// fit steps' 5th to 95th percentile, its
 // computed-token p90 at most the largest step's, and enough fit steps.
 func TestOutsideFit(t *testing.T) {
 	span := fitSpan{lo: 1000, hi: 2000, steps: 40}
@@ -297,10 +297,10 @@ func TestOutsideFit(t *testing.T) {
 	in := &bucketHists{mixtureOK: true, prompt: 1500, computed: 1500, computedP90: 4000}
 	assert.Empty(t, m.outsideFit(in))
 	edge := *in
-	edge.prompt, edge.computed = 1000/MeanRangeMargin, 2000*MeanRangeMargin
-	assert.Empty(t, m.outsideFit(&edge), "at the widened edges")
+	edge.prompt, edge.computed = 1000, 2000
+	assert.Empty(t, m.outsideFit(&edge), "at the edges")
 	out := *in
-	out.computed = 2000*MeanRangeMargin + 1
+	out.computed = 2001
 	assert.Len(t, m.outsideFit(&out), 1)
 	assert.Contains(t, m.outsideFit(&out)[0], "computed tokens")
 	tail := *in
