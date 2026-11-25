@@ -618,7 +618,11 @@ func DayPlan(ctx context.Context, res *Resolved, req DayPlanRequest, whatifSchem
 	if req.ExperimentalModels {
 		// The models are fitted on the source as POST /v1/inputs fits them:
 		// each one the source was resolved for (Resolved.Mixture, Decode).
-		withModels(e, res, whatif.DefaultRankMixtureStratified)
+		o := res.TTFTModel
+		if o.Model == "" {
+			o = TTFTModelOptions{Model: string(whatif.QueueRankMixture), Stratified: whatif.DefaultRankMixtureStratified}
+		}
+		withModels(e, res, o)
 	}
 	req.InputsID = e.id
 	q, err := dayQuestionOf(e, req)
@@ -677,7 +681,7 @@ func (q *dayQuestion) modelNotes(out *DayPlanResponse, sized map[int]sizedBucket
 	if m.ttft != nil {
 		info := m.ttft.info
 		out.TTFTModel = &info
-		notes = append(notes, note(TTFTModelLabel, string(whatif.QueueRankMixture), whatif.RankMixtureTTFT, info.Abstained, func(g *dayGroup) string {
+		notes = append(notes, note(info.Label, info.Model, whatif.RankMixtureTTFT, info.Abstained, func(g *dayGroup) string {
 			if q.noTTFT {
 				return "the plan prices no TTFT target"
 			}
@@ -708,9 +712,9 @@ func probeKnobs(g *dayGroup) Knobs {
 // withModels fits on e the experimental models res was resolved for: the
 // TTFT model where it carries each cycle's rank mixture, the TPOT model
 // where it carries each cycle's decode, each as POST /v1/inputs fits it.
-func withModels(e *inputsEntry, res *Resolved, stratified bool) {
+func withModels(e *inputsEntry, res *Resolved, o TTFTModelOptions) {
 	if res.Mixture != nil {
-		e.ttftModel = fitMainMixture(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, rankMixtureSwitches{stratified: stratified})
+		e.ttftModel = fitMainMixture(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, o.switches())
 	}
 	if res.Decode != nil {
 		e.tpotModel = fitMainTPOT(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})

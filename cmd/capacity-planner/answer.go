@@ -152,6 +152,9 @@ type answerFlags struct {
 	// rankMixtureTTFT (whatifapi.ApplyTTFTModel): nil is the default
 	// (whatif.DefaultRankMixtureStratified).
 	rankMixtureStratified *bool
+	// rankMixtureFit is the variant's modes and the shortest fit window
+	// (rank_mixture_fit.go), read with rankMixtureTTFT.
+	rankMixtureFit rankMixtureFit
 	// experimentalTPOT is --experimental-tpot (=v2): at-replicas prices its
 	// tables' TPOT p90 and p95 with the experimental per-request TPOT
 	// distribution, fitted on the recording (experimental_tpot.go); refused
@@ -223,6 +226,8 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 		experimentalTTFTUsage+". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on "+
 			"the --recording, and "+experimentalTTFTNLLineUsage)
 	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
+	f.rankMixtureFit.registerModes(fs)
+	f.rankMixtureFit.registerWindow(fs)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "at-replicas only: =v2 prices the measured shape's (--shape measured) TPOT p90 and p95 with an "+
 		"experimental per-request TPOT distribution fitted on the --recording, around the planner's own mean; every percentile it prices "+
 		"is flagged TPOTDistribution and reads OUTSIDE VALIDATED REGION")
@@ -249,6 +254,9 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 		return err
 	}
 	f.tpotDistribution = on
+	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
+		return err
+	}
 	switch {
 	case f.tpotDistribution && f.question != reportQuestion:
 		return usagef("--%s=%s is backtest's, day-plan's, serve's and at-replicas'", experimentalTPOTFlag, experimentalTPOTV2)

@@ -216,7 +216,7 @@ func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.Rep
 	}
 	if f.rankMixtureTTFT {
 		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q,
-			whatifapi.TTFTModelOptions{Model: req.TTFTModel, Stratified: stratifiedOr(f.rankMixtureStratified)})
+			f.rankMixtureFit.options(req.TTFTModel, stratifiedOr(f.rankMixtureStratified)))
 	}
 	if f.tpotDistribution {
 		rep.TPOTModel = whatifapi.ApplyTPOTModel(res, rep, q)

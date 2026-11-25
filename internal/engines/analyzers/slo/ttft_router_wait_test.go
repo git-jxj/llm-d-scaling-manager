@@ -137,6 +137,7 @@ var notOnTheTTFTPath = map[string]string{
 	"PSSlotsExceeded":           "planner only: slo-ttft-ps-by-engine, which the analyzer never prices with",
 	"RankMixtureTTFT":           "planner backtest only: --experimental-ttft=v2",
 	"RankMixtureAbstained":      "planner backtest only: --experimental-ttft=v2",
+	"RankMixtureShortFitWindow": "planner only: --rank-mixture-min-fit-window",
 	"LimitedPSHeavyTraffic":     "planner backtest only: --experimental-ttft=v2",
 	"KVDeferralOutside":         "planner backtest only: --experimental-ttft=v2",
 	"RelaxationLong":            "planner backtest only: --experimental-ttft=v2",

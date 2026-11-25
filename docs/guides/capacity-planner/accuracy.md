@@ -372,6 +372,13 @@ The hold given without the remainder spread is not refused, so each can
 still be compared alone, but `backtest` prints a warning and the assumed
 line says so.
 
+The 12-hour minimum, for v2 and the variant alike, is a default:
+`--rank-mixture-min-fit-window` (`rankMixtureMinFitWindow`) lowers it, on
+`backtest`, `serve`, `at-replicas` and `day-plan`. A model fitted on a shorter
+window prices as it would on a long one, but its own checks (v2's spread
+calibration, the variant's fit-window ratios) read fewer hours and loads, so
+every TTFT it prices is flagged `RankMixtureShortFitWindow`.
+
 `serve` and `at-replicas` take `--experimental-ttft=v2nl-line` too, and fit
 and price the variant exactly as `backtest` does, abstentions included
 ([serve with the experimental models](page-and-commands.md#serve-with-the-experimental-v2-models)).

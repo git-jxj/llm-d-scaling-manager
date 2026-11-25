@@ -56,6 +56,16 @@ type InputsRequest struct {
 	// server was started with --rank-mixture-stratified=false). Read only
 	// with TTFTModel rank-mixture; false changes the inputsId.
 	RankMixtureStratified *bool `json:"rankMixtureStratified,omitempty"`
+	// RankMixtureKVHold, RankMixtureRemainderSpread and
+	// RankMixtureMinFitWindow are BacktestRequest's for the main view's
+	// model: each, where the request does not set it, the server's default
+	// (serve --rank-mixture-kv-hold, --rank-mixture-remainder-spread,
+	// --rank-mixture-min-fit-window). The two modes are the variant's
+	// (TTFTModel rank-mixture-nl-line) only; the window is either model's.
+	// Each changes the inputsId.
+	RankMixtureKVHold          bool   `json:"rankMixtureKVHold,omitempty"`
+	RankMixtureRemainderSpread bool   `json:"rankMixtureRemainderSpread,omitempty"`
+	RankMixtureMinFitWindow    string `json:"rankMixtureMinFitWindow,omitempty"`
 	// TPOTModel prices the main view's TPOT p90 and p95 with an
 	// experimental per-request TPOT distribution: "" is the server's
 	// default (serve --experimental-tpot=v2), and

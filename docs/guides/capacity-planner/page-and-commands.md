@@ -467,6 +467,24 @@ In a cluster, add both to the StatefulSet's `args`
   from folds fitted the variant's way. It abstains more often than v2,
   wherever its fit window does not price its own mean and p90, and says
   why, as v2 does.
+- **The variant's modes.** `--rank-mixture-kv-hold` and
+  `--rank-mixture-remainder-spread`, with `=v2nl-line`, turn the variant's
+  two modes on for every check and source, as on `backtest`. Give them
+  together ([accuracy](accuracy.md)).
+- **Shorter recordings.** Both TTFT models abstain on a fit window under
+  12 hours, which every lab recording is. `--rank-mixture-min-fit-window 2h`
+  lowers that minimum for every check and source; each TTFT a model prices
+  from a window under 12 hours is flagged `RankMixtureShortFitWindow`.
+  `backtest`, `at-replicas` and `day-plan` take the same flag.
+- **All of them at once.** On a production recording of 12 hours or more:
+
+  ```bash
+  bin/capacity-planner serve --recordings ./recordings --experimental-ttft=v2nl-line \
+    --rank-mixture-kv-hold --rank-mixture-remainder-spread --experimental-tpot=v2
+  ```
+
+  On a lab recording, add `--rank-mixture-min-fit-window 2h` (no longer than
+  the recording).
 - **The planner's opt-in switches.** `serve --prefill-vp-plateau` and
   `serve --prefill-hit-at-count` read every source as if its request had
   asked for the switch ([flags](api.md#flags)); the figures they move

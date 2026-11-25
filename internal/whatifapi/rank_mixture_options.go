@@ -1,0 +1,88 @@
+package whatifapi
+
+import (
+	"time"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
+)
+
+// This file holds the server's defaults for the rank mixture's switches
+// beyond the model's name: the variant's modes and the shortest fit window
+// (Config RankMixtureKVHold, RankMixtureRemainderSpread,
+// RankMixtureMinFitWindow), read where a backtest or a source's request
+// does not set them, as Config.TTFTModel is.
+
+// minFitWindowOf is a request's rankMixtureMinFitWindow as a duration, 0
+// where it is absent, is the default (whatif.MinSpreadFitWindow), or does
+// not parse (checkMinFitWindow refuses it).
+func minFitWindowOf(s string) time.Duration {
+	d, ok := parseFitWindow(s)
+	if !ok || d == whatif.MinSpreadFitWindow {
+		return 0
+	}
+	return d
+}
+
+// parseFitWindow is s as a positive duration; ok is false where it is not.
+func parseFitWindow(s string) (time.Duration, bool) {
+	d, err := time.ParseDuration(s)
+	return d, err == nil && d > 0
+}
+
+// checkMinFitWindow refuses a rankMixtureMinFitWindow that is not a
+// positive duration, or one given with no TTFT model to fit.
+func checkMinFitWindow(s, model string) error {
+	if s == "" {
+		return nil
+	}
+	if model == "" {
+		return InputErrorf("rankMixtureMinFitWindow is the experimental TTFT model's: give it with ttftModel %q or %q",
+			whatif.QueueRankMixture, whatif.QueueRankMixtureNLLine)
+	}
+	if _, ok := parseFitWindow(s); !ok {
+		return InputErrorf("rankMixtureMinFitWindow %q, want a positive duration such as 4h (the default is %s)", s, whatif.MinSpreadFitWindow)
+	}
+	return nil
+}
+
+// rankMixtureDefaults sets on req, a backtest whose TTFTModel the server
+// has already defaulted, the server's switches it does not set: the
+// shortest fit window wherever a model is asked, and the variant's modes
+// where the variant is.
+func (s *Server) rankMixtureDefaults(req *BacktestRequest) {
+	if req.TTFTModel == "" {
+		return
+	}
+	if req.RankMixtureMinFitWindow == "" && s.minFitWindow > 0 {
+		req.RankMixtureMinFitWindow = s.minFitWindow.String()
+	}
+	if req.TTFTModel == string(whatif.QueueRankMixtureNLLine) {
+		req.RankMixtureKVHold = req.RankMixtureKVHold || s.kvHold
+		req.RankMixtureRemainderSpread = req.RankMixtureRemainderSpread || s.remainderSpread
+	}
+}
+
+// mainTTFTOptions is how the main view fits req's model (req.TTFTModel,
+// already defaulted): the request's switches, else the server's, checked
+// as a backtest checks them. Stratified is the caller's to set.
+func (s *Server) mainTTFTOptions(req InputsRequest) (TTFTModelOptions, error) {
+	o := TTFTModelOptions{Model: req.TTFTModel, KVHold: req.RankMixtureKVHold, RemainderSpread: req.RankMixtureRemainderSpread}
+	if err := checkMinFitWindow(req.RankMixtureMinFitWindow, req.TTFTModel); err != nil {
+		return o, err
+	}
+	if err := o.Check(); err != nil {
+		return o, err
+	}
+	if req.TTFTModel == "" {
+		return o, nil
+	}
+	o.MinFitWindow = minFitWindowOf(req.RankMixtureMinFitWindow)
+	if req.RankMixtureMinFitWindow == "" {
+		o.MinFitWindow = s.minFitWindow
+	}
+	if req.TTFTModel == string(whatif.QueueRankMixtureNLLine) {
+		o.KVHold = o.KVHold || s.kvHold
+		o.RemainderSpread = o.RemainderSpread || s.remainderSpread
+	}
+	return o, nil
+}

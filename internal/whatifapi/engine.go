@@ -62,6 +62,9 @@ type Resolved struct {
 	// them; zero where neither model was asked for. A backtest request that
 	// does not state them takes the fit's.
 	Engine EngineSlots
+	// TTFTModel is how a caller outside a server fits the TTFT model on
+	// Mixture (DayPlan): the zero value is v2 at its defaults.
+	TTFTModel TTFTModelOptions
 	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
 	// the Series and the Inputs), its weight in the inputs cache
 	// (Config.MaxInputsBytes); 0 weighs nothing.

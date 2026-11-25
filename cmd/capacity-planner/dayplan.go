@@ -56,6 +56,11 @@ type dayPlanFlags struct {
 	rankMixtureTTFT  bool
 	experimentalTPOT string
 	tpotDistribution bool
+	// rankMixtureNLLine is --experimental-ttft=v2nl-line, and
+	// rankMixtureFit the variant's modes and the shortest fit window
+	// (rank_mixture_fit.go): the TTFT model is fitted as serve fits it.
+	rankMixtureNLLine bool
+	rankMixtureFit    rankMixtureFit
 }
 
 // runDayPlan is `capacity-planner day-plan`: the prefill and decode replicas
@@ -97,9 +102,11 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.Float64Var(&f.outputTokens, "assume-output-tokens", 0, "price every bucket at this mean output, in place of each bucket's own (flagged; EXTRAPOLATED outside the observed)")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
-	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
+	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag, experimentalTTFTUsage+
 		". =v2 instead sizes with the experimental rank-mixture TTFT model fitted on the recording, as at-replicas and serve price with it, "+
-		"each bucket at its own rate but at the window's request shape the model is fitted at (WindowShape): where it prices TTFT the planner refuses, prefill is sized on it; every figure it sets is flagged RankMixtureTTFT and reads OUTSIDE VALIDATED REGION")
+		"each bucket at its own rate but at the window's request shape the model is fitted at (WindowShape): where it prices TTFT the planner refuses, prefill is sized on it; every figure it sets is flagged RankMixtureTTFT and reads OUTSIDE VALIDATED REGION; "+experimentalTTFTNLLineUsage)
+	f.rankMixtureFit.registerModes(fs)
+	f.rankMixtureFit.registerWindow(fs)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage+"; on day-plan it sizes decode with it at a p90 or p95 TPOT target, each bucket at the window's request shape")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
@@ -110,6 +117,9 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 		return err
 	}
 	f.tpotDistribution = on
+	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
+		return err
+	}
 	if (f.rankMixtureTTFT || f.tpotDistribution) && f.recording == "" {
 		return usagef("--%s=v2 and --%s=v2 fit their model on a --recording", experimentalTTFTFlag, experimentalTPOTFlag)
 	}
@@ -235,7 +245,7 @@ func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant, SelfCheck: &check,
 		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, ExperimentalTTFT: f.experimentalTTFT}
 	if f.rankMixtureTTFT {
-		in.TTFTModel = string(whatif.QueueRankMixture)
+		in.TTFTModel = rankMixtureModel(f.rankMixtureNLLine)
 	}
 	if f.tpotDistribution {
 		in.TPOTModel = whatif.TPOTRenewalLognormal
@@ -267,6 +277,9 @@ func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.
 	res, err := src.Resolve(ctx, in)
 	if err != nil && whatifapi.IsInputError(err) {
 		return nil, usageError{err}
+	}
+	if res != nil && f.rankMixtureTTFT {
+		res.TTFTModel = f.rankMixtureFit.options(in.TTFTModel, whatif.DefaultRankMixtureStratified)
 	}
 	return res, err
 }
