@@ -188,16 +188,16 @@ func dayModelsText(p *whatifapi.DayPlanResponse) string {
 	return b.String()
 }
 
-// experimentalHours is the hours holding a sized bucket whose limit an
+// experimentalHours is the hours, by their Unix second, holding a sized bucket whose limit an
 // experimental model set (whatif.RankMixtureTTFT, TPOTDistribution).
-func experimentalHours(p *whatifapi.DayPlanResponse) map[time.Time]bool {
-	out := map[time.Time]bool{}
+func experimentalHours(p *whatifapi.DayPlanResponse) map[int64]bool {
+	out := map[int64]bool{}
 	for _, bk := range p.Buckets {
 		if bk.Limit == nil {
 			continue
 		}
 		if slices.Contains(bk.Limit.Flags, string(whatif.RankMixtureTTFT)) || slices.Contains(bk.Limit.Flags, string(whatif.TPOTDistribution)) {
-			out[bk.Start.Truncate(time.Hour)] = true
+			out[bk.Start.Truncate(time.Hour).Unix()] = true
 		}
 	}
 	return out
@@ -464,7 +464,7 @@ func writeDayPlanText(out io.Writer, in whatifapi.InputsResponse, p *whatifapi.D
 		np, nd, ap, ad := "-", "-", "-", "-"
 		if h.Needed != nil {
 			np, nd = neededCells(h.Needed)
-			if modelHours[h.Start] {
+			if modelHours[h.Start.Unix()] {
 				np, nd = np+dagger, nd+dagger
 			}
 		}

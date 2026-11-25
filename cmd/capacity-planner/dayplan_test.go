@@ -606,3 +606,27 @@ func TestDayPlanV2AbstainedIsTheDefault(t *testing.T) {
 	_, code = runCmd(t, "day-plan", "--recording", stair("ttft-staircase-b-on"), "--experimental-tpot=v3")
 	assert.Equal(t, 2, code, "no TPOT model v3")
 }
+
+// A bucket a model priced marks its hour with the dagger, whatever zone
+// its start was read in, and the models' line counts what each priced.
+// No golden carries such a bucket: the public recordings are too short for
+// the models to fit.
+func TestDayPlanMarksTheHoursAModelPriced(t *testing.T) {
+	hour := time.Date(2026, 11, 6, 2, 0, 0, 0, time.UTC)
+	zoned := hour.Add(5 * time.Minute).In(time.FixedZone("x", 3600))
+	p := &whatifapi.DayPlanResponse{
+		Buckets: []whatifapi.DayBucket{
+			{Start: zoned, Status: whatifapi.BucketSized, Limit: &whatifapi.Figure{Flags: []string{string(whatif.RankMixtureTTFT)}}},
+			{Start: hour.Add(time.Hour), Status: whatifapi.BucketSized, Limit: &whatifapi.Figure{}},
+		},
+		TTFTModel: &whatifapi.TTFTModelInfo{Label: "Experimental TTFT model"},
+		TPOTModel: &whatifapi.TPOTModelInfo{Label: "Experimental TPOT model"},
+	}
+	p.Summary.Counts.Sized = 2
+	marked := experimentalHours(p)
+	assert.True(t, marked[hour.Unix()], "the hour of the bucket the model priced")
+	assert.False(t, marked[hour.Add(time.Hour).Unix()], "the hour of a bucket the planner priced")
+	text := dayModelsText(p)
+	assert.Contains(t, text, "Experimental TTFT model: priced 1 of the 2 sized buckets, each marked "+dagger)
+	assert.Contains(t, text, "Experimental TPOT model: priced 0 of the 2 sized buckets")
+}
