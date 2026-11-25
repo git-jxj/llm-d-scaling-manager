@@ -333,33 +333,38 @@ func TestDayPlan_SharedRateAtTargetIsThePerFleetSearch(t *testing.T) {
 	}
 	hs, flag := q.modelShapeOf(buckets, req, len(buckets)-6)
 	require.Empty(t, flag)
-	shared := q.models.atBucket(hs).ttft
-	plain := *shared
-	plain.prices, plain.atTarget = nil, nil
 	floor, _, u := mm.rq.m.Price(1e-6, hs.mixture.Computed, hs.mixture.Prompt, 0.9)
 	require.Nil(t, u)
 	compared := 0
-	for _, x := range []float64{1.2, 1.5, 2, 3} {
-		for _, n := range []FleetCounts{{Prefill: 1, Decode: 1}, {Prefill: 1, Decode: 3}, {Prefill: 2, Decode: 2}, {Prefill: 3, Decode: 8}} {
-			k := q.k
-			k.Prefill, k.Decode = n.Prefill, n.Decode
-			inner, err := e.pricer.Fleet(k)
-			require.NoError(t, err)
-			a, okA := shared.fleet(inner, k).(*mixtureFleet)
-			b, okB := plain.fleet(inner, k).(*mixtureFleet)
-			require.True(t, okA && okB)
-			ra, endA, okRA := a.rateAtTarget(x * floor)
-			rb, endB, okRB := b.rateAtTarget(x * floor)
-			require.Equal(t, okRB, okRA, "x %g fleet %+v", x, n)
-			assert.Equal(t, endB, endA, "x %g fleet %+v", x, n)
-			if okRA {
-				// The drawn curve wiggles at a few parts in a hundred thousand where it
-				// is flat: two bisections over different spans land that far apart.
-				assert.InEpsilon(t, rb, ra, 1e-3, "x %g fleet %+v", x, n)
-				compared++
+	// With PrefillHitAtCount the histogram, and the search, move with the
+	// prefill count.
+	for _, hit := range []bool{false, true} {
+		shared := q.models.atBucket(hs).ttft
+		shared.hitAtCount = hit
+		plain := *shared
+		plain.prices, plain.atTarget = nil, nil
+		for _, x := range []float64{1.2, 1.5, 2, 3} {
+			for _, n := range []FleetCounts{{Prefill: 1, Decode: 1}, {Prefill: 1, Decode: 3}, {Prefill: 2, Decode: 2}, {Prefill: 3, Decode: 8}} {
+				k := q.k
+				k.Prefill, k.Decode = n.Prefill, n.Decode
+				inner, err := e.pricer.Fleet(k)
+				require.NoError(t, err)
+				a, okA := shared.fleet(inner, k).(*mixtureFleet)
+				b, okB := plain.fleet(inner, k).(*mixtureFleet)
+				require.True(t, okA && okB)
+				ra, endA, okRA := a.rateAtTarget(x * floor)
+				rb, endB, okRB := b.rateAtTarget(x * floor)
+				require.Equal(t, okRB, okRA, "hit %v x %g fleet %+v", hit, x, n)
+				assert.Equal(t, endB, endA, "hit %v x %g fleet %+v", hit, x, n)
+				if okRA {
+					// The drawn curve wiggles at a few parts in a hundred thousand where it
+					// is flat: two bisections over different spans land that far apart.
+					assert.InEpsilon(t, rb, ra, 1e-3, "hit %v x %g fleet %+v", hit, x, n)
+					compared++
+				}
 			}
 		}
+		assert.NotEmpty(t, shared.prices, "the bucket model kept its prices")
 	}
 	assert.Positive(t, compared)
-	assert.NotEmpty(t, shared.prices, "the bucket model kept its prices")
 }
