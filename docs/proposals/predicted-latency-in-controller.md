@@ -187,7 +187,9 @@ models at once (`ModelMaxWindows`): the v2 models run for every passive
 model, and for every model with the utilization share in shadow, and 100
 windows would not fit in the controller's 512 MiB limit
 (`config/base/manager`). A model past the bound reads coverage
-`model-limit` until a window is freed.
+`model-limit` until a window is freed. A model whose policy does not list
+the `slo` analyzer is not observed at all: its `Analyze`, which publishes the
+figures, does not run, so a window would cost a slot for nothing.
 
 ## Packages and import direction
 

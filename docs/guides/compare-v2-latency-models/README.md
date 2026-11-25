@@ -19,8 +19,9 @@ the design is in [the proposal](../../proposals/predicted-latency-in-controller.
 - [ ] The scaling manager installed in passive mode, with the model
   registered: [try it in passive mode](../try-in-passive-mode/), steps 1 to 3.
   A model you keep active needs the utilization share in shadow instead.
-- [ ] A TTFT or TPOT objective in the model's [scaling
-  policy](../../reference/scaling-policy.md), for the prefill ask.
+- [ ] The model's [scaling policy](../../reference/scaling-policy.md) lists
+  the `slo` analyzer, and sets a TTFT objective for the prefill ask. Without
+  the `slo` analyzer the v2 models do not run for the model.
 - [ ] Prometheus scraping the controller, reachable from your machine, and
   `curl` and `jq`.
 - [ ] For the TTFT model: a prefill/decode model with one prefill variant on

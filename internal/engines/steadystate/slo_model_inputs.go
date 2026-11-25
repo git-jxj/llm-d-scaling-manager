@@ -5,6 +5,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
@@ -82,9 +83,15 @@ func (e *Engine) predictionNamespaces(modelGroups map[string][]llmdvariant.Varia
 // analyzers read (routing drops a pod no InferencePool selects), the
 // model's variant states, arrival rate and policy (the TTFT objective the
 // v2 prefill ask is priced at), and the router's latency as the models fit
-// on it.
+// on it. A model whose policy does not list the slo analyzer is skipped: the
+// v2 figures are published by its Analyze, which does not run for that
+// model, so its window would hold one of the analyzer's ModelMaxWindows for
+// nothing anyone reads.
 func (e *Engine) observeModelInputs(ctx context.Context, data *modelData, policy domain.AnalyzerConfig) {
 	if data == nil {
+		return
+	}
+	if p, ok := policy.(*config.ScalingPolicy); ok && p != nil && !p.AnalyzerEnabled(domain.SLOAnalyzerName) {
 		return
 	}
 	obs := e.modelInputs(data.namespace, data.modelID)

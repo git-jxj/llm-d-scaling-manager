@@ -1599,7 +1599,8 @@ Shadow. The slo analyzer prices TTFT and TPOT with the capacity planner's v2
 models (the rank-mixture TTFT, the renewal-lognormal TPOT) beside its own, so
 you can compare both with what the router measured. They run for every
 passive model (`llmsm_passive_mode` not `active`) and, while the utilization
-share plans in shadow, for every model: the controller moves nothing for
+share plans in shadow, for every model, where the model's policy lists the
+`slo` analyzer (which publishes them): the controller moves nothing for
 those, so the cost is the extra queries and fits. For an active model they
 need the slo analyzer's switch `slo-v2-inputs`, off from the constructor until
 the evidence from passive and shadow deployments turns it on. Active scaling

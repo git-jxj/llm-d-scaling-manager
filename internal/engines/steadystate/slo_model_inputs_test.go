@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
@@ -26,6 +27,16 @@ func TestSLOV2Inputs_OffByDefault(t *testing.T) {
 	e.observeModelInputs(context.Background(), &modelData{namespace: "ns", modelID: "m"}, nil)
 	assert.Empty(t, e.sloModelInputs)
 	e.retainModelInputs(nil)
+}
+
+// A model whose policy does not list the slo analyzer is not observed, the
+// switch on or not: nothing would publish its v2 figures, and its window
+// would hold one of the analyzer's slots for nothing.
+func TestSLOV2Inputs_SkipsAModelThatDoesNotListSLO(t *testing.T) {
+	e := &Engine{sloAnalyzer: sloReadingModelInputs(t)}
+	policy := &config.ScalingPolicy{Analyzers: []config.AnalyzerScoreConfig{{Name: domain.SaturationAnalyzerName}}}
+	e.observeModelInputs(context.Background(), &modelData{namespace: "ns", modelID: "m"}, policy)
+	assert.Empty(t, e.sloModelInputs)
 }
 
 // On, every namespace with a model is named, once.
