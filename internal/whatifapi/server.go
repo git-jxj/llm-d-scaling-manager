@@ -107,6 +107,16 @@ type Config struct {
 // a --plan-budget past 9 minutes).
 const DefaultPlanBudget = 5 * time.Minute
 
+// LongRequestDeadline is how long a request that computes (POST /v1/inputs,
+// /v1/plan, /v1/size, /v1/report, /v1/dayplan, /v1/backtest, /v1/predict and
+// /v1/compare) may run once its body is read: the connection's write
+// deadline moves to it, past the server's own write timeout. A replay of a
+// 24 h recording with every model fitted takes over 5 minutes on an idle
+// 22-CPU node and about twice that on a busy one, and the server's 10-minute
+// write timeout cut the connection before the answer. The other routes keep
+// the server's timeouts.
+const LongRequestDeadline = 30 * time.Minute
+
 // ReasonPlanBudgetExceeded is the reason an ErrorResponse gives for a plan
 // stopped at the server's plan budget.
 const ReasonPlanBudgetExceeded = "PlanBudgetExceeded"
@@ -173,6 +183,9 @@ type Server struct {
 	// uploadDeadline how long it may take in all (uploadDeadline).
 	uploadIdle     time.Duration
 	uploadDeadline time.Duration
+	// longDeadline is how long a request that computes may run once its body
+	// is read (LongRequestDeadline).
+	longDeadline time.Duration
 	// ttftModel and tpotModel are Config's.
 	ttftModel, tpotModel string
 	// noStratified is Config.NoRankMixtureStratified.
@@ -239,7 +252,7 @@ func New(c Config) *Server {
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget,
 		uploader: c.Uploader, uploadMax: uploadMax, uploadSlots: make(chan struct{}, 1), uploadIdle: uploadIdle, uploadDeadline: uploadDeadline,
-		ttftModel: c.TTFTModel, tpotModel: c.TPOTModel, noStratified: c.NoRankMixtureStratified}
+		longDeadline: LongRequestDeadline, ttftModel: c.TTFTModel, tpotModel: c.TPOTModel, noStratified: c.NoRankMixtureStratified}
 }
 
 // stratified is whether the rank mixture is priced with stratified service
@@ -317,7 +330,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 // and answered with the caller's own source.
 func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	var req InputsRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	if !acquire(s.inputSlots) {
@@ -404,7 +417,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 // handlePlan is POST /v1/plan: the scenario priced, or its cached bytes.
 func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	var req PlanRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	body, err := s.plan(r.Context(), req)
@@ -513,15 +526,24 @@ func LoopbackOnly(next http.Handler) http.Handler {
 	})
 }
 
-// readJSON reads the request body into v strictly: a media type other than
-// application/json (none included, so that no form a page posts across sites
-// is read) is 415; an unknown field, a second value, or a body past maxBody
-// is a 400.
-func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	return readJSONUpTo(w, r, v, maxBody)
+// readLongJSON is readJSONUpTo for a request that computes: once the body is
+// read, within the server's read timeout, the connection's write deadline
+// moves to longDeadline from now (LongRequestDeadline). The read deadline is
+// left alone: once the body is read the server clears it, and its read of
+// the idle connection ends the request's context when the client leaves. A
+// recorder in a test has no connection to set a deadline on.
+func (s *Server) readLongJSON(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	if !readJSONUpTo(w, r, v, limit) {
+		return false
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(s.longDeadline))
+	return true
 }
 
-// readJSONUpTo is readJSON with a body of at most limit bytes.
+// readJSONUpTo reads the request body into v strictly: a media type other
+// than application/json (none included, so that no form a page posts across
+// sites is read) is 415; an unknown field, a second value, or a body past
+// limit bytes (maxBody for most routes) is a 400.
 func readJSONUpTo(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
 		writeError(w, http.StatusUnsupportedMediaType, fmt.Errorf("content type %q, want application/json", r.Header.Get("Content-Type")))

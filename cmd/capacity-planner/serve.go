@@ -336,7 +336,9 @@ func newHTTPServer(addr string, h http.Handler) *http.Server {
 }
 
 // The server's timeouts. A write may run as long as a cold plan, or a capture
-// of a Prometheus window, takes.
+// of a Prometheus window, takes. A route that computes moves its write deadline
+// to whatifapi.LongRequestDeadline once its body is read, and an upload to its
+// own; these hold for the rest.
 const (
 	readTimeout  = 30 * time.Second
 	writeTimeout = 10 * time.Minute

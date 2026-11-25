@@ -273,7 +273,14 @@ cycle, with no recording of its own) and `learnreplay.SeriesFrom`. Each pass
 holds one line (`learnrec.Scanner`). `TestServeResolvesALargeRecordingWithoutHoldingIt`
 holds it to that. A plan whose client goes away stops between figures.
 The HTTP server's timeouts are in `serve.go`: read 30 s, idle 2 minutes,
-write 10 minutes (`writeTimeout`).
+write 10 minutes (`writeTimeout`). A handler that computes reads its body
+with `Server.readLongJSON`, which then moves the connection's write deadline
+to `whatifapi.LongRequestDeadline` (30 minutes) through
+`http.ResponseController`. The read deadline is left alone: `net/http`
+clears it once the body is read, so the 30 s read timeout bounds only the
+body, and a client that leaves still ends the request's context.
+`TestLongRequestOutlivesServerTimeouts` holds it. Uploads set their own
+deadlines (`uploadDeadline`).
 
 ## The plan budget
 

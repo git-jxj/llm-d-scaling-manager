@@ -607,8 +607,13 @@ act on also has a `reason`:
 | 503 with `reason: PlanBudgetExceeded` | The plan ran past `--plan-budget`. See below. |
 | 503, no reason | The request ended (its client went away) before it was priced. |
 
-Reading a request may take 30 s, an idle connection is closed after 2 minutes,
-and a response may take 10 minutes (a cold plan, or a capture).
+Reading a request may take 30 s, and an idle connection is closed after 2
+minutes. Once its body has arrived, a request that computes (`POST /v1/inputs`,
+`/v1/plan`, `/v1/size`, `/v1/report`, `/v1/dayplan`, `/v1/backtest`,
+`/v1/predict`, `/v1/compare`) may run for 30 minutes: loading a day-long
+recording takes minutes. Any other response may take 10 minutes, and an upload
+has its own 15. A proxy in front of the planner must wait as long
+([OpenShift](in-cluster.md#long-recordings-load-slowly)).
 [Fixes for each](troubleshooting.md#api-errors).
 
 ### The plan budget

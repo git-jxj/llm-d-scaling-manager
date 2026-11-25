@@ -123,6 +123,7 @@ bottom by both. A figure read below the band carries `BelowFittedBand`.
 | `503` with `PlanBudgetExceeded` | The plan took longer than `--plan-budget` (default 5m) and was stopped. Untick "Show if all traffic were bucket b", use fewer bucket edges, or restart the server with a larger `--plan-budget` (at most 9m). [Details](api.md#the-plan-budget). |
 | `503` "the request ended before it was priced" | The client went away or timed out. Ask again. |
 | `500` | A server error; the message, or with `--auth=kubernetes` the server's stderr, says what. |
+| `504`, or the connection closes with no answer, while a long recording loads | A proxy in front of the planner gave up first: an OpenShift Route and oauth-proxy wait 30 s by default. Raise both to 31m ([Long recordings load slowly](in-cluster.md#long-recordings-load-slowly)). The planner itself lets a request run 30 minutes. |
 
 ## A recording is refused: engine rows do not stand for the fleet
 
