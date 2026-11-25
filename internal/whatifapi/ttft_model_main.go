@@ -132,8 +132,9 @@ type mainMixture struct {
 	atTarget map[mixturePriceKey]mixturePrice
 }
 
-// mixturePriceKey is one TTFT the model priced: at n prefill replicas, the
-// rate one recorded replica's worth of ranks takes, and the statistic.
+// mixturePriceKey is one TTFT the model priced: at the computed-token
+// histogram of n prefill replicas (mixtureFleet.histogramCount), the rate
+// one recorded replica's worth of ranks takes, and the statistic.
 type mixturePriceKey struct {
 	n    int
 	x, q float64
@@ -337,7 +338,7 @@ func (mm *mainMixture) fleet(inner Fleet, k Knobs) Fleet {
 
 // price is the model's TTFT at the fleet's rate; ok false where it refused.
 func (f *mixtureFleet) price(rate float64) (float64, bool) {
-	key := mixturePriceKey{n: f.n, x: rate * f.scale, q: f.q}
+	key := mixturePriceKey{n: f.histogramCount(), x: rate * f.scale, q: f.q}
 	if p, ok := f.mm.prices[key]; ok {
 		return p.v, p.ok
 	}
@@ -628,10 +629,22 @@ func (f *mixtureFleet) rateAtTarget(target float64) (rate float64, atEnd, ok boo
 	return lo, false, true
 }
 
+// histogramCount is the prefill count f's computed-token histogram is
+// priced at (mainMixture.computedAt): the fleet's with PrefillHitAtCount,
+// else 0, since every count then draws from the same histogram, and a
+// rate one recorded replica's worth of ranks takes prices the same TTFT at
+// any count.
+func (f *mixtureFleet) histogramCount() int {
+	if f.mm.hitAtCount {
+		return f.n
+	}
+	return 0
+}
+
 // rateAtTargetShared is rateAtTarget on a day-plan bucket's model
 // (mainMixture.atTarget), whose sizer asks it at many fleets of one prefill
-// count: the fleet's rate is read off one search a prefill count
-// (sharedRate), capped at its curve's end, and refused where the model's
+// count: the fleet's rate is read off one search a computed-token
+// histogram (sharedRate), capped at its curve's end, and refused where the model's
 // TTFT with no queue (the floor) is over target. The TTFT is taken to rise
 // with the rate, as rateAtTarget takes it.
 func (f *mixtureFleet) rateAtTargetShared(target float64) (rate float64, atEnd, ok bool) {
@@ -650,12 +663,12 @@ func (f *mixtureFleet) rateAtTargetShared(target float64) (rate float64, atEnd, 
 
 // sharedRate is the highest rate, as one recorded prefill replica's worth
 // of ranks takes it, whose TTFT the model prices at or under target at the
-// fleet's prefill count: searched once a prefill count, statistic and
-// target (mainMixture.atTarget). It doubles from the highest step rate
+// fleet's computed-token histogram: searched once a histogram
+// (histogramCount), statistic and target (mainMixture.atTarget). It doubles from the highest step rate
 // served until the target is missed, then bisects to a millionth of the
 // rate: a replica count is decided far coarser.
 func (f *mixtureFleet) sharedRate(target float64) float64 {
-	key := mixturePriceKey{n: f.n, x: target, q: f.q}
+	key := mixturePriceKey{n: f.histogramCount(), x: target, q: f.q}
 	if p, ok := f.mm.atTarget[key]; ok {
 		return p.v
 	}
