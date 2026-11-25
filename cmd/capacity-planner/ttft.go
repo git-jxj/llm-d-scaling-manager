@@ -1031,8 +1031,8 @@ func (pf *pricedFleet) transferPerToken(read, base float64) float64 {
 // hits, not decode's; else the decode variant's, as off.
 //
 // With slo.SwitchTTFTComputedHit on, or for the load's shape, where
-// netByComputedHit holds, it is il
-// less the prefill pods' computed-token hit instead, which counts the hits
+// netByComputedHit holds, it is il less the prefill pods' computed-token
+// hit instead, which counts the hits
 // of every tier; the hit rate beside it stays a prefix-cache one, the
 // prefill variant's where read, so it compares with V_P's (prefixMoved).
 func (pf *pricedFleet) effectivePrompt(il float64) (float64, float64) {

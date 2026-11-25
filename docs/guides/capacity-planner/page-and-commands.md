@@ -379,7 +379,8 @@ seven on for the one command you pass it to:
   last 6 hours;
 - `prefill-vp-at-served-work`: V_P raised to the work the prefill Pods
   served, where the prefill knee was raised to it;
-- `slo-ttft-computed-hit`: a stated prompt netted by the computed-token hit;
+- `slo-ttft-computed-hit`: a stated prompt netted by the computed-token hit
+  (the load's shape is netted by it with the switch off too);
 - `slo-ttft-tier-load` and `slo-ttft-tier-kv-wait`: the load of a cached
   token from a host, disk or peer tier, at the engine's measured wait for it;
 - `slo-ttft-ps-by-engine`: the prefill queue priced as processor sharing

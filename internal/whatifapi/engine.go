@@ -98,9 +98,9 @@ type Knobs struct {
 	// observed one (flagged AssumedShape).
 	PrefixHit *float64
 	// PrefixHitRead says PrefixHit was read from the source (the load's
-	// cycles, ReportShapeAsk.Load), not stated: a computed-token hit replaces
-	// it where the replay turned slo.SwitchTTFTComputedHit on, and a stated
-	// one governs.
+	// cycles, ReportShapeAsk.Load), not stated: on a P/D fleet the prefill
+	// pods' computed-token hit replaces it, with slo.SwitchTTFTComputedHit on
+	// or off, and a stated one governs.
 	PrefixHitRead bool
 	// CachedTokenCost is phi, the cost of a cached prompt token, priced in
 	// place of the one the pricer fitted (CachedTokenCost); nil is the
