@@ -67,10 +67,15 @@ func TestSLOV2Inputs_RetainDeletesInactiveModels(t *testing.T) {
 	require.NoError(t, metrics.InitMetrics(registry))
 	a := sloReadingModelInputs(t)
 	e := &Engine{sloAnalyzer: a, sloModelInputs: map[string][2]string{}}
-	for _, m := range []string{"m", "n"} {
-		a.ObserveModelInputs(domain.AnalyzerInput{Namespace: "ns", ModelID: m}, nil)
-		e.sloModelInputs["ns/"+m] = [2]string{"ns", m}
+	observe := func(models ...string) {
+		e.sloModelInputsSeen = map[string]bool{}
+		for _, m := range models {
+			a.ObserveModelInputs(domain.AnalyzerInput{Namespace: "ns", ModelID: m}, nil)
+			e.sloModelInputs["ns/"+m] = [2]string{"ns", m}
+			e.sloModelInputsSeen["ns/"+m] = true
+		}
 	}
+	observe("m", "n")
 	count := func() int {
 		n, err := testutil.GatherAndCount(registry, constants.LLMSMSLOModelCoverage)
 		require.NoError(t, err)
@@ -79,6 +84,11 @@ func TestSLOV2Inputs_RetainDeletesInactiveModels(t *testing.T) {
 	require.Equal(t, 4*len(constants.SLOModelReasons), count())
 	e.retainModelInputs(map[string]bool{"ns/n": true})
 	assert.Equal(t, 2*len(constants.SLOModelReasons), count())
+	// Still reconciled, but not observed on the last cycle (it turned
+	// active, say): its series go too, not frozen at their last value.
+	e.retainModelInputs(map[string]bool{"ns/n": true})
+	assert.Zero(t, count())
+	observe("n")
 	e.retainModelInputs(nil)
 	assert.Zero(t, count())
 }

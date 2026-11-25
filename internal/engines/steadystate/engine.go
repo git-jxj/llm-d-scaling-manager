@@ -241,6 +241,9 @@ type Engine struct {
 	// published for (slo_model_inputs.go), by utils.GetNamespacedKey, so the
 	// prune can delete them.
 	sloModelInputs map[string][2]string
+	// sloModelInputsSeen is the models whose v2 model series were published
+	// since the last prune (retainModelInputs).
+	sloModelInputsSeen map[string]bool
 
 	// clock is the cycle clock: pinned once per optimize cycle (optimizeV2),
 	// it is what the analyzers and the capacity store stamp and age their

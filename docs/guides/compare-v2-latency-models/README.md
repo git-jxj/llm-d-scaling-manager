@@ -107,7 +107,9 @@ q "llmsm_replicas_suggested{exported_namespace=\"${NAMESPACE}\", model_name=\"${
 
 The `ttft-mixture` series is the analyzers' ask with the SLO analyzer sizing
 prefill on the v2 TTFT model at the policy's TTFT objective. It is never
-applied; a model you make active stops publishing it.
+applied. A model you make active stops publishing it, unless the
+utilization share plans in shadow: then every model publishes it, and an
+active model's own target is still the one applied.
 
 ## What next
 

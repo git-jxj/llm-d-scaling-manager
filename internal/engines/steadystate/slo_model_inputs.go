@@ -108,11 +108,18 @@ func (e *Engine) observeModelInputs(ctx context.Context, data *modelData, policy
 		ReplicaMetrics: sameReplicas(rows, data.replicaMetrics), VariantStates: data.variantStates,
 		ArrivalRate: data.arrivalRate, Config: policy}
 	router := e.ReplicaMetricsCollector.CollectPredictionLatency(ctx, data.modelID, data.namespace)
-	obs.ObserveModelInputs(in, router)
+	published := obs.ObserveModelInputs(in, router) != nil
 	if e.sloModelInputs == nil {
 		e.sloModelInputs = map[string][2]string{}
 	}
-	e.sloModelInputs[utils.GetNamespacedKey(data.namespace, data.modelID)] = [2]string{data.namespace, data.modelID}
+	key := utils.GetNamespacedKey(data.namespace, data.modelID)
+	e.sloModelInputs[key] = [2]string{data.namespace, data.modelID}
+	if published {
+		if e.sloModelInputsSeen == nil {
+			e.sloModelInputsSeen = map[string]bool{}
+		}
+		e.sloModelInputsSeen[key] = true
+	}
 }
 
 // modelPrefillAsk is the slo analyzer's v2 TTFT prefill ask for a model this
@@ -143,13 +150,18 @@ func sameReplicas(kept, read []domain.ReplicaMetrics) []domain.ReplicaMetrics {
 }
 
 // retainModelInputs deletes the v2 model series of every model activeKeys
-// does not hold; nil deletes every one. Published before the model reaches
-// recordAnalyzerMetrics, so tracked apart from lastAnalyzerSeries.
+// does not hold, and of every model the last cycle did not publish them for
+// (sloModelInputsSeen): one still reconciled that turned active, left the
+// share's shadow or dropped slo from its policy would otherwise keep its last
+// coverage for good. nil deletes every one. Published before the model
+// reaches recordAnalyzerMetrics, so tracked apart from lastAnalyzerSeries.
+// It runs at the start of a cycle, before the cycle observes any model.
 func (e *Engine) retainModelInputs(activeKeys map[string]bool) {
 	for key, m := range e.sloModelInputs {
-		if !activeKeys[key] {
+		if !activeKeys[key] || !e.sloModelInputsSeen[key] {
 			metrics.DeleteSLOModelInputs(m[0], m[1])
 			delete(e.sloModelInputs, key)
 		}
 	}
+	e.sloModelInputsSeen = nil
 }
