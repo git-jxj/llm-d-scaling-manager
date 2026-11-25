@@ -556,13 +556,18 @@ function setInputs(inputs) {
   progress("");
   el("exec").hidden = true;
   el("trustchip").hidden = true;
+  // A day plan of the inputs before is dropped, a run of them cancelled.
+  dayCancel();
   state.day = null;
-  state.dayAsked = state.dayReq = null;
+  state.dayAsked = state.dayReq = state.dayCancelled = null;
   state.reportUsed = null;
   state.vpOpened = false;
   el("daystale").hidden = true;
   el("dayout").hidden = true;
   el("dayrun").disabled = !inputs.fleet.prefill;
+  // The bucket starts where the window cuts into no more than
+  // DAY_BUCKETS_AIMED of them.
+  el("daystep").value = dayStepFor();
   el("dayrun").title = inputs.fleet.prefill ? "" : "A day plan sizes a P/D fleet: the source has no prefill variant";
   state.bt = null;
   el("btout").hidden = true;
@@ -2461,6 +2466,7 @@ function wire() {
   el("srcform").onsubmit = e => { e.preventDefault(); loadInputs(); };
   el("upload").onclick = uploadRecording;
   el("dayrun").onclick = runDay;
+  el("daycancel").onclick = dayCancel;
   el("daystep").onchange = el("daysize").onchange = dayStale;
   el("btrun").onclick = runBacktest;
   el("btstart").onclick = checkAccuracy;
@@ -2734,7 +2740,7 @@ function showView(name, focus) {
   }
   if (focus) el("tab-" + name).focus();
   // A day plan for knobs since changed is planned again when its view opens.
-  if (name === "day" && !state.dayBusy && !el("dayrun").disabled && dayStale()) runDay();
+  if (name === "day" && !state.dayBusy && !el("dayrun").disabled && dayStale() && state.dayCancelled !== JSON.stringify(dayRequest())) runDay();
   // Any other view drops a pending re-plan of the day.
   if (name !== "day") clearTimeout(dayTimer);
 }
@@ -3087,15 +3093,20 @@ function dayRequest() {
 // runDay asks the day plan and draws it. The request it answers is kept
 // (state.dayAsked), so a knob changed since marks it stale (dayStale).
 async function runDay() {
-  if (!state.inputs || !state.k) return;
+  // One day plan runs at a time: a second ask while one runs, from the
+  // button or from the view opening, shows the run already going.
+  if (!state.inputs || !state.k || state.dayBusy) return;
   const inputsId = state.inputs.inputsId, t0 = performance.now();
   const req = dayRequest();
   el("dayrun").disabled = true;
   state.dayBusy = true;
+  state.dayCancelled = null;
+  const abort = state.dayAbort = new AbortController();
   el("dayout").classList.add("stale");
-  setStatus("Planning the day: each bucket sized on its own (seconds)...");
+  setStatus("Planning the day: each bucket sized on its own (seconds to minutes)...");
+  const stop = dayProgress(req, t0);
   try {
-    const out = await api("POST", "v1/dayplan", req);
+    const out = await api("POST", "v1/dayplan", req, abort.signal);
     if (!state.inputs || inputsId !== state.inputs.inputsId) return;
     state.day = out;
     state.dayAsked = JSON.stringify(req);
@@ -3106,16 +3117,84 @@ async function runDay() {
     renderDay();
     setStatus(`Planned ${out.buckets.length} buckets in ${((performance.now() - t0) / 1000).toFixed(1)} s; ${out.searched} fleets priced.`);
   } catch (e) {
-    setStatus("Could not plan the day: " + e.message, true);
-    // Only a request the server did not answer is remembered as refused: a
-    // plan answered and then not drawn is no reason to stop asking.
-    if (state.dayAsked !== JSON.stringify(req)) state.dayFailed = JSON.stringify(req);
+    if (e.name === "AbortError") {
+      // Cancelled: not asked again by itself until a knob changes. A run a
+      // new load cancelled says nothing: the load speaks.
+      if (state.inputs && inputsId === state.inputs.inputsId) {
+        setStatus("Day plan cancelled.");
+        state.dayCancelled = JSON.stringify(req);
+      }
+    } else {
+      setStatus("Could not plan the day: " + e.message, true);
+      // Only a request the server did not answer is remembered as refused: a
+      // plan answered and then not drawn is no reason to stop asking.
+      if (state.dayAsked !== JSON.stringify(req)) state.dayFailed = JSON.stringify(req);
+    }
   } finally {
+    stop();
+    state.dayAbort = null;
     state.dayBusy = false;
     el("dayrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
     // A knob changed while it ran: the view on screen plans again.
     if (dayStale()) dayAgain();
   }
+}
+
+// dayBuckets is about how many buckets a day plan of step cuts the source's
+// window into, or null where the window is not known.
+function dayBuckets(step) {
+  const s = state.inputs && state.inputs.source, d = dayStepSeconds(step);
+  if (!s || !s.firstAt || !s.lastAt || !d) return null;
+  return Math.floor((new Date(s.lastAt) - new Date(s.firstAt)) / 1000 / d) + 1;
+}
+
+// dayStepSeconds is a bucket's length ("5m", "1h") in seconds, or 0.
+function dayStepSeconds(step) {
+  const m = /^(\d+)(s|m|h)$/.exec(step || "");
+  return m ? +m[1] * {s: 1, m: 60, h: 3600}[m[2]] : 0;
+}
+
+// DAY_STEPS are the bucket lengths the page offers a day plan, and
+// DAY_BUCKETS_AIMED the most buckets the step it starts at cuts the window
+// into: each bucket is sized on its own, so a day of 5-minute buckets (289)
+// takes minutes. The server's default (5m) stands where it stays under; the
+// server sizes up to maxDayPlanBuckets (3000) on any step asked.
+const DAY_STEPS = ["5m", "15m", "1h"];
+const DAY_BUCKETS_AIMED = 300;
+
+// dayStepFor is the step a day plan starts at on the loaded window: the
+// finest of DAY_STEPS that cuts it into DAY_BUCKETS_AIMED buckets or fewer.
+function dayStepFor() {
+  for (const s of DAY_STEPS) {
+    const n = dayBuckets(s);
+    if (n == null || n <= DAY_BUCKETS_AIMED) return s;
+  }
+  return DAY_STEPS[DAY_STEPS.length - 1];
+}
+
+// dayProgress shows, in the Day plan view, that a plan runs: how many
+// buckets, when it started and the seconds since, with Cancel. The server
+// reports no share done, so the time is all it says. The first line is
+// announced; the seconds are not. It returns the function that hides it.
+function dayProgress(req, t0) {
+  const n = dayBuckets(req.step);
+  const started = new Date().toISOString().slice(11, 19);
+  el("dayprogtext").textContent = `Planning the day: ${n != null ? n + " buckets of " + req.step + ", " : ""}each sized on its own, ` +
+    `started ${started} UTC.`;
+  const tick = () => { el("dayprogtime").textContent = `${Math.round((performance.now() - t0) / 1000)} s so far; a day of 5-minute buckets takes minutes.`; };
+  tick();
+  el("dayprogress").hidden = false;
+  const timer = setInterval(tick, 1000);
+  return () => {
+    clearInterval(timer);
+    el("dayprogress").hidden = true;
+  };
+}
+
+// dayCancel stops the day plan running: its request is aborted, and the
+// button is free again.
+function dayCancel() {
+  if (state.dayAbort) state.dayAbort.abort();
 }
 
 // dayAgain plans a stale day plan again, after a pause for the knob still
@@ -3126,7 +3205,8 @@ function dayAgain() {
   clearTimeout(dayTimer);
   dayTimer = setTimeout(() => {
     if (el("view-day").hidden || state.dayBusy || el("dayrun").disabled || !dayStale()) return;
-    if (state.dayFailed === JSON.stringify(dayRequest())) return;
+    const asked = JSON.stringify(dayRequest());
+    if (state.dayFailed === asked || state.dayCancelled === asked) return;
     runDay();
   }, 400);
 }

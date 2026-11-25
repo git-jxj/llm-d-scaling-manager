@@ -941,6 +941,17 @@ headroom, a length or an assumed term above the tabs and a plan on screen
 plans again; on another tab it dims, with a note naming the targets it used,
 and plans again when you open it.
 
+Each bucket is sized on its own, so a day of 5-minute buckets (289) takes
+minutes. While a plan runs, the Day plan tab says so: how many buckets, when
+it started and the seconds since, with **Cancel**, which stops the request
+and frees **Plan the day**. The server reports no share done, so the time is
+all it shows. One plan runs at a time: opening the tab again shows the one
+running, and a plan you cancelled is not asked again until a knob changes.
+The **Bucket** starts at 5 minutes, the server's default, or at 15 minutes or
+an hour where the window would otherwise cut into more than 300 buckets; pick
+another to plan finer. The server itself sizes up to 3000 buckets on any
+step you ask.
+
 From the command line, on the sample recording (about an hour, so two hours
 in the table):
 
