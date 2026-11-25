@@ -558,6 +558,8 @@ function setInputs(inputs) {
   el("trustchip").hidden = true;
   state.day = null;
   state.dayAsked = state.dayReq = null;
+  state.reportUsed = null;
+  state.vpOpened = false;
   el("daystale").hidden = true;
   el("dayout").hidden = true;
   el("dayrun").disabled = !inputs.fleet.prefill;
@@ -651,9 +653,26 @@ function showLearned(inputs) {
     el("l-" + a.box).textContent = text;
   }
   if (inputs.terms.some(x => x.name === "prefill" && x.refused)) refused = true;
+  // A V_P from the served peak alone is a lower bound: the prefill pods never
+  // queued, so prefill's limit is unknown and a day plan sizes decode alone.
+  // The box opens and says so: a stated V_P is what prices prefill.
+  if (vpLowerBound(inputs)) {
+    const vp = inputs.terms.find(x => x.name === "vp");
+    el("l-vp").textContent = `learned ${fmtNum(vp.value)}, only a lower bound: the prefill pods never queued, so prefill's limit is unknown. ` +
+      "Type a V_P to size prefill.";
+    refused = true;
+  }
   el("a-lar").checked = false;
   el("assumebox").open = refused;
   el("assumecount").textContent = "none typed";
+}
+
+// vpLowerBound says the inputs' V_P is a lower bound alone: learned from the
+// highest rate a pod served, queued or not (source served-peak, or flagged
+// VPLowerBound), never from a pod that held a queue.
+function vpLowerBound(inputs) {
+  const vp = (inputs.terms || []).find(x => x.name === "vp");
+  return !!vp && !vp.refused && (/served-peak/.test(vp.source || "") || (vp.flags || []).includes("VPLowerBound"));
 }
 
 function fillStats(id, stats, current) {
@@ -661,18 +680,49 @@ function fillStats(id, stats, current) {
   el(id).innerHTML = all.map(s => `<option${s === current ? " selected" : ""}>${esc(s)}</option>`).join("");
 }
 
+// A target's slider is on a log scale: its value is log10 of the target in
+// ms, in steps of SLIDER_STEP (about 2.3%), so 50 ms and 50 s are equally
+// easy to reach and a tenfold range is the same length anywhere.
+const SLIDER_STEP = 0.01;
+
+// sliderMs is the target, in ms, a target's slider stands at, rounded to the
+// box's step (1 ms for TTFT, 0.1 ms for TPOT).
+function sliderMs(id, step) {
+  const ms = Math.pow(10, +el(id).value);
+  return Math.max(step, Math.round(ms / step) * step);
+}
+
+// setSlider puts a target's slider at v (ms) and says the value in words for
+// a screen reader. The browser snaps the position to the step: the position
+// it took is kept, so a release where it stands keeps v exactly
+// (sliderTarget).
+function setSlider(id, v) {
+  el(id).value = Math.log10(v);
+  el(id).dataset.pos = el(id).value;
+  el(id).dataset.ms = v;
+  el(id).setAttribute("aria-valuetext", fmtSec(v / 1000));
+}
+
+// sliderTarget is the target, in ms, a released slider sets: the one it was
+// put at where it was not moved, else where it stands.
+function sliderTarget(id, step) {
+  const r = el(id);
+  return r.dataset.pos !== undefined && r.value === r.dataset.pos ? +r.dataset.ms : sliderMs(id, step);
+}
+
 // slider sets a target's slider around v (ms) and the floor (ms, or null):
-// from a twentieth of the lower to four times the higher, so every position
+// from a twentieth of the lower to ten times the higher, so every position
 // past the floor is one the slider reaches. The number box takes any value.
 // max is set before value: a value set first is clamped to the old range.
-// min is a whole number of steps: a range snaps its value to min plus whole
-// steps, so an unaligned min would turn a typed 150 into 149.865.
+// min is a whole number of steps, and a range snaps its value to min plus
+// whole steps, so a typed 150 stands near 150, not at it: setSlider keeps the
+// target it was put at, so touching the slider without moving it keeps 150.
 function slider(id, v, step, floor) {
   const r = el(id), lo = floor > 0 ? Math.min(v, floor) : v, hi = floor > 0 ? Math.max(v, floor) : v;
-  r.step = step;
-  r.min = Number(Math.max(step, Math.floor(lo / 20 / step) * step).toFixed(step < 1 ? 1 : 0));
-  r.max = Math.ceil(hi * 4);
-  r.value = v;
+  r.step = SLIDER_STEP;
+  r.min = Number((Math.floor(Math.log10(Math.max(step, lo / 20)) / SLIDER_STEP) * SLIDER_STEP).toFixed(2));
+  r.max = Number((Math.ceil(Math.log10(hi * 10) / SLIDER_STEP) * SLIDER_STEP).toFixed(2));
+  setSlider(id, v);
   el(id + "box").value = Number(v.toFixed(step < 1 ? 1 : 0));
 }
 
@@ -680,10 +730,47 @@ function slider(id, v, step, floor) {
 // lies outside its range: a value the browser would clamp to the range's end
 // is a target the next touch of the slider would replace.
 function fitSlider(id, v, step, floor) {
-  const r = el(id), min = +r.min, max = +r.max;
-  const outside = x => x > 0 && (!(min > 0) || !(max > 0) || x < min || x > max);
+  // Compared in the slider's own log units, within half a step: the end of
+  // the slider, rounded to the box's step, is inside it.
+  const r = el(id), tol = SLIDER_STEP / 2;
+  const outside = x => x > 0 && (r.min === "" || r.max === "" || Math.log10(x) < +r.min - tol || Math.log10(x) > +r.max + tol);
   if (outside(v) || outside(floor)) slider(id, v, step, floor);
-  else r.value = v;
+  else setSlider(id, v);
+}
+
+// FLOOR_MARGIN is how far above the floor a page default is raised: a
+// target at the floor itself is met only with no load at all.
+const FLOOR_MARGIN = 1.5;
+
+// readableUp is the least of 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8 times a power
+// of ten that is at least ms, and at least step.
+function readableUp(ms, step) {
+  if (!(ms > step)) return step;
+  const p = Math.pow(10, Math.floor(Math.log10(ms)));
+  for (const m of [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) {
+    if (m * p >= ms * (1 - 1e-9)) return Number((m * p).toPrecision(6));
+  }
+  return 10 * p;
+}
+
+// raiseDefaults raises a target the page set (no policy objective, no link,
+// not yours) that sits under FLOOR_MARGIN times the floor the plan priced to
+// a readable value above it, once a load, and says so (k.ttftRaised,
+// k.tpotRaised, renderAtTarget). A policy's or your target is never moved:
+// under the floor it is flagged. It is true when a target was raised.
+function raiseDefaults() {
+  const k = state.k;
+  let raised = false;
+  for (const [id, step] of [["ttft", 1], ["tpot", 0.1]]) {
+    const floor = targetFloor(id), was = k[id + "Target"] * 1000;
+    if (!k[id + "Default"] || k[id + "Raised"] || floor == null || was >= floor * FLOOR_MARGIN) continue;
+    const v = readableUp(floor * FLOOR_MARGIN, step);
+    k[id + "Raised"] = {from: was, floor, to: v};
+    k[id + "Target"] = v / 1000;
+    slider(id, v, step, floor);
+    raised = true;
+  }
+  return raised;
 }
 
 // targetFloor is the plan's floor for a target's slider ("ttft" or "tpot"),
@@ -977,7 +1064,8 @@ function enterPlan() {
 let planTimer = null;
 function schedule(ms) {
   reportStale();
-  dayStale();
+  // A common control changed with the day plan on screen plans it again.
+  if (dayStale()) dayAgain();
   clearTimeout(planTimer);
   planTimer = setTimeout(plan, ms);
 }
@@ -1174,6 +1262,16 @@ function render() {
   // The targets' sliders reach the floor this plan priced, and the targets.
   fitSlider("ttft", state.k.ttftTarget * 1000, 1, targetFloor("ttft"));
   fitSlider("tpot", state.k.tpotTarget * 1000, 0.1, targetFloor("tpot"));
+  // A page default under the floor is raised above it, and priced again.
+  if (raiseDefaults()) schedule(0);
+  // Prefill unpriced for a V_P that is only a lower bound: the assumptions
+  // open, once a load, at the box that prices it.
+  const pk = p.ttft.markers.prefillKnee;
+  if (!state.vpOpened && pk && pk.refused && pk.refused.reason === "NoPrefillCapacity" &&
+      (pk.refused.flags || []).includes("VPLowerBound") && state.k.assume.vp == null) {
+    el("assumebox").open = true;
+    state.vpOpened = true;
+  }
   el("banner").textContent = p.banner;
   el("bannerbox").hidden = !p.banner;
   renderNotice(p.flags, p.banner);
@@ -1350,11 +1448,11 @@ function renderAtTarget() {
     if (v == null) return `<span class="miss">not known at ${rate}: ${esc(fig && fig.refused ? plainReasonWord(fig.refused) : "not estimated")}</span>`;
     return `<span class="${v <= target ? "ok" : "miss"}">${fmtSec(v)} at ${rate}, ${v <= target ? "meets it" : "misses"}.</span>`;
   };
-  el("ttftat").innerHTML = at(p.ttft.line.atRate.figure, p.ttft.line.target) + (state.k.ttftDefault ? ' <span class="hint">The policy sets no TTFT target: this one is the page\'s. Set yours.</span>' : "");
-  el("tpotat").innerHTML = p.tpot ? at(p.tpot.atRate.figure, p.tpot.target) + (state.k.tpotDefault ? ' <span class="hint">The policy sets no TPOT target: this one is the page\'s. Set yours.</span>' : "") : "";
-  const set = [];
-  if (state.k.ttftDefault) set.push(`TTFT ${PAGE_TTFT.statistic} ${fmtSec(PAGE_TTFT.seconds)}`);
-  if (state.k.tpotDefault) set.push(`TPOT ${PAGE_TPOT.statistic} ${fmtSec(PAGE_TPOT.seconds)}`);
+  el("ttftat").innerHTML = at(p.ttft.line.atRate.figure, p.ttft.line.target) + targetNote("ttft", "TTFT", PAGE_TTFT, p.ttft.line.target);
+  el("tpotat").innerHTML = p.tpot ? at(p.tpot.atRate.figure, p.tpot.target) + targetNote("tpot", "TPOT", PAGE_TPOT, p.tpot.target) : "";
+  const k = state.k, set = [];
+  if (k.ttftDefault) set.push(`TTFT ${k.ttftStat} ${fmtSec(k.ttftTarget)}`);
+  if (k.tpotDefault) set.push(`TPOT ${k.tpotStat} ${fmtSec(k.tpotTarget)}`);
   el("pagetargets").textContent = set.length ? `Targets set by the page, not the policy: ${set.join(", ")}. Set your own above.` : "";
   // The answer panel's SLO line says it once; the controls prompt for yours.
   el("pagetargets").hidden = true;
@@ -1363,6 +1461,24 @@ function renderAtTarget() {
   if (ratio && ratio.refused) note = "R_q is not learned (" + ratio.refused.reason + "): type a ratio, or pick the mean.";
   else if (ratio && ratio.value != null) note = `R_q ${fmtNum(ratio.value)} (${ratio.source || "?"})`;
   el("rationote").textContent = note;
+}
+
+// targetNote is what the page says under a target: whose it is, why a page
+// default was raised above the floor, and a target under the floor, which no
+// load meets, whoever set it.
+function targetNote(id, name, page, target) {
+  const k = state.k, floor = targetFloor(id), r = k[id + "Raised"];
+  let s = "";
+  if (floor != null && target * 1000 < floor) {
+    s += ` <span class="miss">Under this model's floor (${esc(fmtSec(floor / 1000))}): no load meets it.</span>`;
+  }
+  if (k[id + "Default"] && r) {
+    s += ` <span class="hint">The policy sets no ${name} target, and the page's ${esc(fmtSec(page.seconds))} is ${r.from < r.floor ? "under" : "close to"} this model's floor ` +
+      `(${esc(fmtSec(r.floor / 1000))}): it starts at ${esc(fmtSec(r.to / 1000))}, about ${FLOOR_MARGIN} times the floor. Set yours.</span>`;
+  } else if (k[id + "Default"]) {
+    s += ` <span class="hint">The policy sets no ${name} target: this one is the page's. Set yours.</span>`;
+  }
+  return s;
 }
 
 // aboveCap marks a rate the target allows past the operating-point cap: the
@@ -2241,8 +2357,19 @@ function wire() {
   // The box is authoritative: a value typed outside the slider's range
   // re-derives the range around it (fitSlider), never clamps it.
   const target = (id, scale) => {
-    el(id).oninput = () => { el(id + "box").value = Number((+el(id).value).toFixed(scale < 1 ? 1 : 0)); };
-    el(id).onchange = () => { if (ready()) { k()[id + "Target"] = +el(id).value / 1000; k()[id + "Default"] = false; schedule(0); } };
+    el(id).oninput = () => {
+      const v = sliderMs(id, scale);
+      el(id + "box").value = Number(v.toFixed(scale < 1 ? 1 : 0));
+      el(id).setAttribute("aria-valuetext", fmtSec(v / 1000));
+    };
+    el(id).onchange = () => {
+      if (!ready()) return;
+      const v = sliderTarget(id, scale);
+      k()[id + "Target"] = v / 1000;
+      k()[id + "Default"] = false;
+      setSlider(id, v);
+      schedule(0);
+    };
     el(id + "box").onchange = () => {
       const v = +el(id + "box").value;
       if (ready() && v > 0) {
@@ -2608,6 +2735,8 @@ function showView(name, focus) {
   if (focus) el("tab-" + name).focus();
   // A day plan for knobs since changed is planned again when its view opens.
   if (name === "day" && !state.dayBusy && !el("dayrun").disabled && dayStale()) runDay();
+  // Any other view drops a pending re-plan of the day.
+  if (name !== "day") clearTimeout(dayTimer);
 }
 
 // wireTabs makes the tab list work by click and by arrow keys, Home and End.
@@ -2971,15 +3100,35 @@ async function runDay() {
     state.day = out;
     state.dayAsked = JSON.stringify(req);
     state.dayReq = req;
+    // A refusal is remembered only until a plan is answered: a knob moved
+    // back to the refused request asks it again.
+    state.dayFailed = null;
     renderDay();
     setStatus(`Planned ${out.buckets.length} buckets in ${((performance.now() - t0) / 1000).toFixed(1)} s; ${out.searched} fleets priced.`);
   } catch (e) {
     setStatus("Could not plan the day: " + e.message, true);
+    // Only a request the server did not answer is remembered as refused: a
+    // plan answered and then not drawn is no reason to stop asking.
+    if (state.dayAsked !== JSON.stringify(req)) state.dayFailed = JSON.stringify(req);
   } finally {
     state.dayBusy = false;
     el("dayrun").disabled = !(state.inputs && state.inputs.fleet.prefill);
-    dayStale();
+    // A knob changed while it ran: the view on screen plans again.
+    if (dayStale()) dayAgain();
   }
+}
+
+// dayAgain plans a stale day plan again, after a pause for the knob still
+// moving, when its view is the one shown: a plan the server just refused is
+// not asked again until a knob changes.
+let dayTimer = null;
+function dayAgain() {
+  clearTimeout(dayTimer);
+  dayTimer = setTimeout(() => {
+    if (el("view-day").hidden || state.dayBusy || el("dayrun").disabled || !dayStale()) return;
+    if (state.dayFailed === JSON.stringify(dayRequest())) return;
+    runDay();
+  }, 400);
 }
 
 // dayStale marks the day plan on screen stale when the request the knobs ask
@@ -2991,7 +3140,7 @@ function dayStale() {
   el("dayout").classList.toggle("stale", stale || !!state.dayBusy);
   el("daystale").hidden = !stale;
   el("daystale").textContent = stale ? `The knobs changed since this plan, which used ${dayUsedText(state.dayReq)}: ` +
-    "opening this view plans the day again, or press Plan the day." : "";
+    "this view plans the day again when it is shown, or press Plan the day." : "";
   return stale;
 }
 
@@ -3107,7 +3256,14 @@ function reportStale() {
   state.reportGen = (state.reportGen || 0) + 1;
   if (el("rresult").hidden && !state.reportBusy) return;
   el("rresult").hidden = true;
-  el("rstatus").textContent = "The knobs changed: judge the fleet again.";
+  el("rstatus").textContent = reportChangedText();
+}
+
+// reportChangedText asks for the fleet to be judged again, naming the
+// targets the hidden answer was judged at.
+function reportChangedText() {
+  return state.reportUsed ? `The knobs changed since the fleet was judged at ${state.reportUsed}: judge the fleet again.` :
+    "The knobs changed: judge the fleet again.";
 }
 
 // reportToken names the question on screen: the inputs and every change
@@ -3153,6 +3309,8 @@ async function runReport() {
     // An answer to a question since changed is dropped.
     if (!reportCurrent(token, reportToken())) return;
     renderReport(r);
+    state.reportUsed = dayUsedText({slo: plan.slo, headroom: plan.headroom});
+    el("rused").textContent = `Judged at ${state.reportUsed}.`;
     el("rstatus").textContent = judgedText(r);
     el("rverdicts").focus();
   } catch (e) {
@@ -3165,7 +3323,7 @@ async function runReport() {
   } finally {
     state.reportBusy = false;
     el("rrun").removeAttribute("aria-disabled");
-    if (!reportCurrent(token, reportToken())) el("rstatus").textContent = "The knobs changed: judge the fleet again.";
+    if (!reportCurrent(token, reportToken())) el("rstatus").textContent = reportChangedText();
   }
 }
 
