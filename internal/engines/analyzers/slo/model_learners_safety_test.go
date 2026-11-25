@@ -101,3 +101,22 @@ func waitNoRefit(t *testing.T, a *Analyzer) {
 		return !a.modelRefitting
 	}, 10*time.Second, 5*time.Millisecond)
 }
+
+// The window keeps its own copy of the router's reading: a background refit
+// reads it while the caller is free to reuse or change its own.
+func TestModelLearners_WindowOwnsTheRouterReading(t *testing.T) {
+	a := New(nil, nil).WithModelRefits(ModelRefitEvery, false)
+	in, router := modelInputsCycle()
+	fillAllInputs(&in, router)
+	a.beginCycle()
+	a.ObserveModelInputs(in, router)
+	router.TTFTBuckets[0].Rate = 99
+	router.TPOTBuckets[0].Rate = 99
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	kept := a.models[reportModel("ns", "m")].cycles[0].Router
+	require.NotNil(t, kept)
+	assert.NotSame(t, router, kept)
+	assert.Equal(t, 2.0, kept.TTFTBuckets[0].Rate)
+	assert.Equal(t, 2.0, kept.TPOTBuckets[0].Rate)
+}

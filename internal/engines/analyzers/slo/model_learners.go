@@ -291,7 +291,7 @@ func (a *Analyzer) observeModelLocked(in domain.AnalyzerInput, router *domain.Ro
 		a.models[key] = w
 	}
 	w.seen, w.observed, w.counts = now, a.cycle, map[learn.Reason]int64{}
-	c := whatif.FitCycleOf(in, router, now, pv, dv)
+	c := whatif.FitCycleOf(in, ownedRouter(router), now, pv, dv)
 	if len(c.Mixture.Ranks) == 0 && len(c.Decode.Groups) == 0 && len(c.Decode.Output) == 0 {
 		w.counts[modelIdle]++
 	} else {
@@ -309,6 +309,21 @@ func (a *Analyzer) observeModelLocked(in domain.AnalyzerInput, router *domain.Ro
 	a.priceModelLocked(w, in, &c, now)
 	due := !w.fitting && !now.Before(w.refitAt) && len(w.cycles) > 0
 	return w, c, due
+}
+
+// ownedRouter is a copy of r the window can keep: the caller's reading, and
+// its buckets, stay the caller's, while a background refit reads the copy.
+// Nil for nil.
+func ownedRouter(r *domain.RouterLatency) *domain.RouterLatency {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	c.TTFTBuckets = slices.Clone(r.TTFTBuckets)
+	c.TPOTBuckets = slices.Clone(r.TPOTBuckets)
+	c.FlowControlWaitBuckets = slices.Clone(r.FlowControlWaitBuckets)
+	c.ProcessingBuckets = slices.Clone(r.ProcessingBuckets)
+	return &c
 }
 
 // refitModel refits a model's two learners on a copy of its window, off the
