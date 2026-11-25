@@ -1051,6 +1051,15 @@ func shapeKnob(x float64) float64 {
 	return math.Round(math.Exp(math.Round(math.Log(x)/g) * g))
 }
 
+// readShape is k at lengths read from the source's own cycles, each on the
+// shape grid (shapeKnob): the prompt is the source's, not stated, so on a
+// P/D fleet the prefill pods' computed-token hit nets it
+// (Knobs.PromptTokensRead).
+func readShape(k Knobs, prompt, output float64) Knobs {
+	k.PromptTokens, k.OutputTokens, k.PromptTokensRead = shapeKnob(prompt), shapeKnob(output), true
+	return k
+}
+
 // bucketShape is the lengths samples read, weighted by rate (equally where
 // none carried one), and whether any read one.
 func bucketShape(samples []SeriesSample) (prompt, output, hit float64, ok bool) {
@@ -1643,14 +1652,14 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 					// the same window.
 					p, o = hs.lengths[0], hs.lengths[1]
 				}
-				k.PromptTokens, k.OutputTokens = shapeKnob(p), shapeKnob(o)
+				k = readShape(k, p, o)
 				db.Shape.Source = "bucket"
 				db.Shape.PromptTokens, db.Shape.OutputTokens = ptr(p), ptr(o)
 				models, model = q.models.atBucket(hs), hs.key()
 			case withModels:
 				db.Flags = append(db.Flags, FlagWindowShape)
 			case !stated:
-				k.PromptTokens, k.OutputTokens = shapeKnob(p), shapeKnob(o)
+				k = readShape(k, p, o)
 				db.Shape.Source = "bucket"
 				db.Shape.PromptTokens, db.Shape.OutputTokens = ptr(p), ptr(o)
 			}

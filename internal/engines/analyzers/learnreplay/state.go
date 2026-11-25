@@ -243,6 +243,15 @@ type VariantState struct {
 	// itl.BelowBandMinReadings, where the line is not read below the band.
 	// BelowBandFill is the fill that reading was taken at, 0 with none.
 	BelowBandITL, BelowBandFill float64
+	// BelowBandLeastSequences is the fewest sequences a replica ran in the
+	// readings the floor was read from (whatif.BelowBand.LeastSequences): a
+	// floor read at 20 sequences a replica does not stand for one (issue
+	// llm-d-incubation/llm-d-scaling-manager#286). 0 with no floor, or where
+	// a reading's count was not read. BelowBandByCount is the floor kept by
+	// those sequences (whatif.BelowBand.ByCount), the zero Model where it was
+	// not read.
+	BelowBandLeastSequences float64
+	BelowBandByCount        itl.Model
 	// BusiestRankFill says the line, its readings, its band and its rows are
 	// read at the variant's busiest engine rank, not the mean over its ranks:
 	// a data-parallel MoE engine under saturation.SwitchMoEBusiestRank, whose
@@ -634,7 +643,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		st                       *State
 		windows, engine, arrived int
 		rows, fit                map[string][]whatif.LineRow
-		below                    map[string][2]float64 // ITL seconds, fill
+		below                    map[string]belowBand
 		ratios                   map[string]float64
 	}
 	snaps := map[int]*snap{}
@@ -776,13 +785,14 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 				return true
 			}
 			sn := &snap{st: s, windows: len(windows), engine: len(engine), arrived: len(arrivals),
-				rows: map[string][]whatif.LineRow{}, fit: map[string][]whatif.LineRow{}, below: map[string][2]float64{}, ratios: map[string]float64{}}
+				rows: map[string][]whatif.LineRow{}, fit: map[string][]whatif.LineRow{}, below: map[string]belowBand{}, ratios: map[string]float64{}}
 			for _, v := range s.Variants {
 				sn.rows[v.Variant] = slices.Clone(lines.rows(v.Variant))
 				v.ReadingsFrom, v.ReadingsTo = cyclesSpanned(v.LineReadings, cycleAt)
 				sn.fit[v.Variant] = lines.fitRows(v)
 				itlSec, fill := lines.leastBelowBand(v.Variant)
-				sn.below[v.Variant] = [2]float64{itlSec, fill}
+				least, byCount := lines.belowBandLeastSequences(v.Variant)
+				sn.below[v.Variant] = belowBand{itlSec: itlSec, fill: fill, least: least, byCount: byCount}
 				sn.ratios[v.Variant] = lines.busiestRatio(v.Variant)
 			}
 			snaps[n] = sn
@@ -808,6 +818,7 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 		st.Variants[i].LineRows = lines.rows(st.Variants[i].Variant)
 		st.Variants[i].FitRows = lines.fitRows(st.Variants[i])
 		st.Variants[i].BelowBandITL, st.Variants[i].BelowBandFill = lines.leastBelowBand(st.Variants[i].Variant)
+		st.Variants[i].BelowBandLeastSequences, st.Variants[i].BelowBandByCount = lines.belowBandLeastSequences(st.Variants[i].Variant)
 		st.Variants[i].BusiestRankRatio = lines.busiestRatio(st.Variants[i].Variant)
 		st.Variants[i].liftToFloor(lineAtFloor && st.disaggregated())
 	}
@@ -829,7 +840,8 @@ func StatesFrom(ctx context.Context, src Source, opts Options, q StateQuery, als
 			s.Variants[i].LineRows = sn.rows[s.Variants[i].Variant]
 			s.Variants[i].FitRows = sn.fit[s.Variants[i].Variant]
 			b := sn.below[s.Variants[i].Variant]
-			s.Variants[i].BelowBandITL, s.Variants[i].BelowBandFill = b[0], b[1]
+			s.Variants[i].BelowBandITL, s.Variants[i].BelowBandFill = b.itlSec, b.fill
+			s.Variants[i].BelowBandLeastSequences, s.Variants[i].BelowBandByCount = b.least, b.byCount
 			s.Variants[i].BusiestRankRatio = sn.ratios[s.Variants[i].Variant]
 			s.Variants[i].liftToFloor(lineAtFloor && s.disaggregated())
 		}
