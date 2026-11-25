@@ -55,6 +55,9 @@ type servedSources struct {
 	// and --experimental-tpot=v2: every source also gives the cycles the
 	// experimental backtest models read (experimentalSeries).
 	rankMixture, tpotDistribution bool
+	// replay is serve's opt-in replay switches, each on for every source
+	// (serve_replay.go).
+	replay replayDefaults
 	// onPass, when set, is called as each pass over a recording file opens,
 	// with the pass's count (recordingSource.onPass): a test's hook.
 	onPass func(pass int)
@@ -81,6 +84,8 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		seed:           whatif.DefaultResampling().Seed, vpPlateau: req.PrefillVPPlateau, hitAtCount: req.PrefillHitAtCount,
 		experimentalTTFT: req.ExperimentalTTFT || s.experimentalTTFT, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
 		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
+
+	s.replay.apply(&f)
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {
 		src = *req.Source

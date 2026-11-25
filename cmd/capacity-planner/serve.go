@@ -67,6 +67,9 @@ type serveFlags struct {
 	// default for a request that does not say, nil the planner's
 	// (whatifapi.Config.NoRankMixtureStratified).
 	rankMixtureStratified *bool
+	// replay is the opt-in replay switches serve turns on for every source
+	// (serve_replay.go).
+	replay replayDefaults
 	// experimentalTPOT is --experimental-tpot (=v2): every backtest, and
 	// the main view of every source, priced with the per-request TPOT
 	// distribution.
@@ -109,6 +112,7 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.StringVar(&f.audiences, "token-audiences", "", "with --auth=kubernetes, the audiences a TokenReview checks a token for, comma-separated; default the API server's")
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag, "price every request with the experimental TTFT model, as if each asked for experimentalTTFT: for a planner served to people who should see it without asking; =v2 instead prices every backtest with the rank-mixture TTFT model, as if each asked for ttftModel "+string(whatif.QueueRankMixture)+", and the main view of every source (plan, size, report). "+experimentalTTFTV2Usage+"; "+experimentalTTFTNLLineUsage+", as if each asked for ttftModel "+string(whatif.QueueRankMixtureNLLine))
 	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage+"; a request's rankMixtureStratified overrides it")
+	f.replay.register(fs)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "price every backtest, and the main view's TPOT p90 and p95 (plan, size, report), with the experimental per-request TPOT distribution, as if each asked for tpotModel "+whatif.TPOTRenewalLognormal+": "+experimentalTPOTUsage)
 	fs.BoolVar(&f.noSelfCheck, "no-self-check", false, "do not check the planner on each source beside its inputs, unless a request asks (selfCheck true)")
 	fs.BoolVar(&f.allowUpload, "allow-upload", false, "take recordings uploaded from the page (POST /v1/recordings): kept as sent, in a private temporary directory (TMPDIR; TMP on Windows), the last 4, until the server stops. Off by default: whoever may open the planner may then upload")
@@ -274,7 +278,7 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, err
 	}
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed, experimentalTTFT: f.experimentalTTFT,
-		rankMixture: f.rankMixtureTTFT, tpotDistribution: tpotV2}
+		rankMixture: f.rankMixtureTTFT, tpotDistribution: tpotV2, replay: f.replay}
 	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlannerVersion: plannerVersion(), SelfCheck: defaultSelfCheck && !f.noSelfCheck, PlanBudget: f.planBudget,
 		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes, NoRankMixtureStratified: !stratifiedOr(f.rankMixtureStratified)}
 	if f.rankMixtureTTFT {

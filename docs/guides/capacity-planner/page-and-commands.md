@@ -452,6 +452,10 @@ In a cluster, add both to the StatefulSet's `args`
   from folds fitted the variant's way. It abstains more often than v2,
   wherever its fit window does not price its own mean and p90, and says
   why, as v2 does.
+- **The planner's opt-in switches.** `serve --prefill-vp-plateau` and
+  `serve --prefill-hit-at-count` read every source as if its request had
+  asked for the switch ([flags](api.md#flags)); the figures they move
+  carry their flags and read outside the validated region.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
   that it abstained and why, and every figure is then the planner's own.
