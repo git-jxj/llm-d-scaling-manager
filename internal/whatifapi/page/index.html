@@ -85,6 +85,64 @@
     <div class="status" id="status" role="status" aria-live="polite"></div>
   </header>
 
+  <section class="card controls common" id="common" aria-labelledby="commontitle">
+    <h2 class="whatif" id="commontitle">Targets and assumptions <span class="hint">every view uses these: the answer, the day plan and the
+      right-size judgment. A change marks each view's answer stale until it is asked again; the check of the planner reads none of them.</span></h2>
+    <div class="group">
+      <h2>SLO</h2>
+      <div class="ctl">
+        <label for="ttftstat">TTFT</label>
+        <select id="ttftstat"></select>
+        <div class="slide"><input type="range" id="ttft" aria-label="TTFT target">
+          <input type="number" id="ttftbox" min="0" step="1" aria-label="TTFT target, milliseconds"> ms</div>
+        <div class="at" id="ttftat"></div>
+      </div>
+      <div class="ctl">
+        <label for="tpotstat">TPOT</label>
+        <select id="tpotstat"></select>
+        <div class="slide"><input type="range" id="tpot" aria-label="TPOT target">
+          <input type="number" id="tpotbox" min="0" step="0.1" aria-label="TPOT target, milliseconds"> ms</div>
+        <div class="at" id="tpotat"></div>
+        <div class="ratio" id="ratiorow" hidden>
+          <label for="ratio">Assume R_q (percentile over mean)</label>
+          <span class="boxrow"><input type="number" id="ratio" aria-describedby="t-ratio rationote" min="1" step="0.05" placeholder="e.g. 1.3"><span class="tag" id="t-ratio"></span><button type="button" class="reset" id="r-ratio" aria-label="Use the learned R_q" hidden>Use learned</button></span>
+          <div class="hint" id="rationote"></div>
+        </div>
+      </div>
+    </div>
+    <div class="group">
+      <h2>Margin and request shape</h2>
+      <div class="ctl">
+        <label for="headroom" title="headroom: the share of the limit the fleet is run at">Safety margin (share of the limit to run at)</label>
+        <input type="number" id="headroom" min="0.05" max="1" step="0.05">
+      </div>
+      <div class="ctl">
+        <label for="priceas">Price at</label>
+        <select id="priceas">
+          <option value="mix">the current mix</option>
+        </select>
+      </div>
+      <div class="ctl">
+        <label for="outtok">Output length, tokens</label>
+        <span class="boxrow"><input type="number" id="outtok" aria-describedby="t-outtok outnote" min="1" step="50"><span class="tag" id="t-outtok"></span><button type="button" class="reset" id="r-outtok" aria-label="Use the learned output length" hidden>Use learned</button></span>
+        <span class="hint" id="outnote"></span>
+      </div>
+    </div>
+    <details class="assume" id="assumebox">
+      <summary>Assume a term the source did not learn (<span id="assumecount">none typed</span>)</summary>
+      <div class="row">
+        <div class="field"><label for="a-vp" title="V_P">Prefill speed V_P per pod, tokens/s</label><span class="boxrow"><input type="number" id="a-vp" aria-describedby="t-a-vp l-vp" min="0" step="1000"><span class="tag" id="t-a-vp"></span><button type="button" class="reset" id="r-a-vp" aria-label="Use the learned V_P" hidden>Use learned</button></span><span class="hint" id="l-vp"></span></div>
+        <div class="field"><label for="a-a" title="a">Fixed prefill latency, ms</label><span class="boxrow"><input type="number" id="a-a" aria-describedby="t-a-a l-a" min="0" step="1"><span class="tag" id="t-a-a"></span><button type="button" class="reset" id="r-a-a" aria-label="Use the learned fixed prefill latency" hidden>Use learned</button></span><span class="hint" id="l-a"></span></div>
+        <div class="field"><label for="a-cv" title="cv">Prompt-length spread</label><span class="boxrow"><input type="number" id="a-cv" aria-describedby="t-a-cv l-cv" min="0" step="0.1"><span class="tag" id="t-a-cv"></span><button type="button" class="reset" id="r-a-cv" aria-label="Use the learned prompt-length spread" hidden>Use learned</button></span><span class="hint" id="l-cv"></span></div>
+        <div class="field"><label for="a-hop">Router hop, ms</label><span class="boxrow"><input type="number" id="a-hop" aria-describedby="t-a-hop l-hop" min="0" step="1"><span class="tag" id="t-a-hop"></span><button type="button" class="reset" id="r-a-hop" aria-label="Use the learned router hop" hidden>Use learned</button></span><span class="hint" id="l-hop"></span></div>
+        <div class="field"><label for="a-itlb">Decode ITL B (per-token latency, cache empty), ms</label><span class="boxrow"><input type="number" id="a-itlb" aria-describedby="t-a-itlb l-itlb" min="0.001" step="0.5"><span class="tag" id="t-a-itlb"></span><button type="button" class="reset" id="r-a-itlb" aria-label="Use the learned ITL B" hidden>Use learned</button></span><span class="hint" id="l-itlb"></span></div>
+      </div>
+      <div class="hint">A box shows the value the source learned, tagged learned, and sends nothing. A value you type replaces it, tagged assumed, and flags every figure that rests on it; Use learned puts the source's back. ITL B is used only where decode is refused PinnedDefaultB; the assumed list says when it was not.</div>
+      <label class="toggle" for="a-lar"><input type="checkbox" id="a-lar"> My router balances prefill by load</label>
+      <div class="hint">Tick it when the router scores each prefill pod's queue (llm-d's EPP queue scorer): the busiest pod's extra share is held up to the load it was learned at, then falls to none at the pooled prefill limit, which lifts that limit. No recording shows what the router scores, so it is your statement, and every figure reads outside the validated region with it.</div>
+    </details>
+  </section>
+
   <div class="tabs" role="tablist" aria-label="Views">
     <button type="button" class="tab" role="tab" id="tab-answer" aria-selected="true" aria-controls="view-answer">Answer</button>
     <button type="button" class="tab" role="tab" id="tab-day" aria-selected="false" aria-controls="view-day" tabindex="-1">Day plan</button>
@@ -217,57 +275,7 @@
           <input type="number" id="concbox" min="0" step="1" aria-describedby="concnote">
           <div class="at" id="concnote"></div>
         </div>
-        <div class="ctl">
-          <label for="priceas">Price at</label>
-          <select id="priceas">
-            <option value="mix">the current mix</option>
-          </select>
-        </div>
-        <div class="ctl">
-          <label for="outtok">Output length, tokens</label>
-          <input type="number" id="outtok" min="1" step="50">
-          <span class="hint" id="outnote"></span>
-        </div>
       </div>
-      <div class="group">
-        <h2>SLO</h2>
-        <div class="ctl">
-          <label for="ttftstat">TTFT</label>
-          <select id="ttftstat"></select>
-          <div class="slide"><input type="range" id="ttft" aria-label="TTFT target">
-            <input type="number" id="ttftbox" min="0" step="1" aria-label="TTFT target, milliseconds"> ms</div>
-          <div class="at" id="ttftat"></div>
-        </div>
-        <div class="ctl">
-          <label for="tpotstat">TPOT</label>
-          <select id="tpotstat"></select>
-          <div class="slide"><input type="range" id="tpot" aria-label="TPOT target">
-            <input type="number" id="tpotbox" min="0" step="0.1" aria-label="TPOT target, milliseconds"> ms</div>
-          <div class="at" id="tpotat"></div>
-          <div class="ratio" id="ratiorow" hidden>
-            <label for="ratio">Assume R_q (percentile over mean)</label>
-            <input type="number" id="ratio" min="1" step="0.05" placeholder="e.g. 1.3">
-            <div class="hint" id="rationote"></div>
-          </div>
-        </div>
-        <div class="ctl">
-          <label for="headroom" title="headroom: the share of the limit the fleet is run at">Safety margin (share of the limit to run at)</label>
-          <input type="number" id="headroom" min="0.05" max="1" step="0.05">
-        </div>
-      </div>
-      <details class="assume" id="assumebox">
-        <summary>Assume a term the source did not learn (<span id="assumecount">none typed</span>)</summary>
-        <div class="row">
-          <div class="field"><label for="a-vp" title="V_P">Prefill speed per pod, tokens/s</label><input type="number" id="a-vp" min="0" step="1000"><span class="hint" id="l-vp"></span></div>
-          <div class="field"><label for="a-a" title="a">Fixed prefill latency, ms</label><input type="number" id="a-a" min="0" step="1"><span class="hint" id="l-a"></span></div>
-          <div class="field"><label for="a-cv" title="cv">Prompt-length spread</label><input type="number" id="a-cv" min="0" step="0.1"><span class="hint" id="l-cv"></span></div>
-          <div class="field"><label for="a-hop">Router hop, ms</label><input type="number" id="a-hop" min="0" step="1"><span class="hint" id="l-hop"></span></div>
-          <div class="field"><label for="a-itlb">Decode ITL B (per-token latency, cache empty), ms</label><input type="number" id="a-itlb" min="0.001" step="0.5"><span class="hint" id="l-itlb"></span></div>
-        </div>
-        <div class="hint">A typed value replaces the learned one and flags every figure that rests on it. Leave a box empty to use the source's. ITL B is used only where decode is refused PinnedDefaultB; the assumed list says when it was not.</div>
-        <label class="toggle" for="a-lar"><input type="checkbox" id="a-lar"> My router balances prefill by load</label>
-        <div class="hint">Tick it when the router scores each prefill pod's queue (llm-d's EPP queue scorer): the busiest pod's extra share is held up to the load it was learned at, then falls to none at the pooled prefill limit, which lifts that limit. No recording shows what the router scores, so it is your statement, and every figure reads outside the validated region with it.</div>
-      </details>
     </section>
 
     <details class="card drawer scenarios" id="scendrawer">
@@ -310,15 +318,22 @@
         For a day, load a 24-hour window in Source.</p>
       <div class="row">
         <div class="field"><label for="daystep">Bucket</label>
-          <select id="daystep"><option>1m</option><option selected>5m</option><option>15m</option><option>1h</option></select></div>
+          <select id="daystep" aria-describedby="daystephint"><option>1m</option><option selected>5m</option><option>15m</option><option>1h</option></select>
+          <span class="hint" id="daystephint">starts where the window cuts into 300 buckets or fewer; each is sized on its own</span></div>
         <div class="field"><label for="daysize">Size each bucket for its</label>
           <select id="daysize"><option value="">p95 rate less counting noise (the mean, less conservative, where a bucket holds fewer than 20 cycles)</option>
             <option value="mean">mean rate</option><option value="p95">p95 rate</option><option value="p95-modulation">p95 rate less counting noise</option><option value="max">highest rate</option></select></div>
         <button type="button" id="dayrun" disabled>Plan the day</button>
       </div>
+      <p class="notice dayprogress" id="dayprogress" hidden><span class="spinner" aria-hidden="true"></span>
+        <span id="dayprogtext" role="status" aria-live="polite"></span> <span id="dayprogtime"></span>
+        <button type="button" id="daycancel">Cancel</button></p>
+      <p class="notice" id="daystale" role="note" aria-live="polite" hidden></p>
       <div id="dayout" hidden>
         <ul class="dayrefused" id="dayrefused" hidden></ul>
         <p class="dayhead" id="dayhead"></p>
+        <p class="hint" id="daymodels" hidden></p>
+        <p class="hint" id="dayused"></p>
         <div class="legend" id="daylegend"></div>
         <svg id="daychart" viewBox="0 0 960 500" role="img" aria-labelledby="daytitle daydesc"></svg>
         <p class="sr" id="daydesc"></p>
@@ -390,7 +405,7 @@
 
   <div class="view" id="view-right" role="tabpanel" aria-labelledby="tab-right" hidden>
     <section class="card report" id="reportcard" aria-labelledby="reporttitle">
-      <h2 id="reporttitle">Is this fleet the right size? <span class="hint">the fleet above, judged at the load the source saw</span></h2>
+      <h2 id="reporttitle">Is this fleet the right size? <span class="hint">the fleet set under What if in Answer, judged at the load the source saw, under the targets above the tabs</span></h2>
       <div class="reportform">
         <fieldset>
           <legend>Request shapes</legend>
@@ -420,6 +435,7 @@
       <p id="rstatus" class="hint" aria-live="polite"></p>
       <div id="rresult" hidden>
         <p id="rload" class="hint"></p>
+        <p id="rused" class="hint"></p>
         <div class="exports" id="rexports"></div>
         <ul id="rverdicts" class="rverdicts" tabindex="-1" aria-label="Verdicts"></ul>
         <p class="hint" id="rlegend"><span class="rmark met">ok</span> every target met
