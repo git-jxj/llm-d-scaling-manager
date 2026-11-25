@@ -295,6 +295,10 @@ const DAY_VERDICT_DECODE = {under: "under: SLO risk (decode only)", over: "decod
 // DAY_DECODE_ONLY says why a decode-only verdict is not a recommendation.
 const DAY_DECODE_ONLY = "Prefill was not sized, so this is not a fleet recommendation.";
 
+// DAY_TYPE_VP points a day plan that could not price prefill to the box
+// that lets it: a stated V_P sizes prefill in every bucket.
+const DAY_TYPE_VP = "To size prefill, type a prefill speed (V_P per pod) under Assumptions, above the tabs, and plan the day again.";
+
 // dayVerdict is a bucket's or an hour's verdict in words, "" with none: a
 // bucket the model would call over whose measured TTFT missed its target
 // says so in place of a verdict.
@@ -358,7 +362,7 @@ function dayRefusedHTML(plan) {
   // code stays in small type.
   return (plan.refused || []).map(r => r.reason === "NoPrefillCapacity" ?
     `<li title="${esc(r.reason)}"><b>${r.buckets} bucket(s):</b> ${esc(noPrefillWords({reason: r.reason, detail: r.detail, flags: /only the rate a prefill pod/.test(r.detail) ? ["VPLowerBound"] : []}))} ` +
-      `Decode is sized alone.</li>` :
+      `Decode is sized alone. ${esc(DAY_TYPE_VP)}</li>` :
     `<li><b>${esc(DAY_TERMS[r.term] || r.term)} refused (${esc(r.reason)}), ${r.buckets} bucket(s).</b> ` +
     `${esc(r.detail)}. ${esc(r.effect)} <span class="hint">${esc(r.hint)}</span></li>`).join("");
 }
@@ -460,7 +464,10 @@ function daySummaryText(plan) {
       (g ? `the fewest GPUs, at ${g.prefill} a prefill and ${g.decode} a decode replica` : "the fewest replicas in all") +
       ", and another mix may serve it too. The fleet the bucket had is judged whole, at the bucket's rate.");
     if (s.neededGpuHours != null) out.push(`Over the ${c.sized} sized buckets: GPU-hours needed ${s.neededGpuHours.toFixed(1)}, had ${s.hadGpuHours.toFixed(1)}.`);
-    else if (c.prefillNotPriced) out.push(`No GPU-hours of the need: prefill is not sized in ${c.prefillNotPriced} of the ${c.sized} sized buckets.`);
+    else if (c.prefillNotPriced) {
+      out.push(`No GPU-hours of the need: prefill is not sized in ${c.prefillNotPriced} of the ${c.sized} sized buckets.` +
+        ((plan.refused || []).some(r => r.reason === "NoPrefillCapacity") ? " " + DAY_TYPE_VP : ""));
+    }
     if (s.heldReplicaHours) {
       const r = s.heldReplicaHours;
       out.push(`Held with the scale-up lead (each scale-up's replicas from one lead before their bucket): ` +
