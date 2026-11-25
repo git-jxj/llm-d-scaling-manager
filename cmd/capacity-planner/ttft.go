@@ -372,6 +372,10 @@ type pricedFleet struct {
 	// the fleet's prefill count (priceHitAtCount); nil where it priced none.
 	hitAtCountOn bool
 	hitAtCount   *prefill.HitAtCount
+	// hitModel is the reuse-gap law fitted on the prompt window with the
+	// switch on (whatif.PromptWindow.HitModel); nil where the recording
+	// holds no KV residency histograms.
+	hitModel *prefill.HitModel
 	// servedWork is the prefill pods' sustained computed-token work by pod
 	// count over the whole window (learnreplay.PrefillState
 	// .ServedComputedWindow) whatever the prompt
