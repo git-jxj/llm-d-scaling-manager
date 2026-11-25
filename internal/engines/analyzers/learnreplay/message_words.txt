@@ -483,6 +483,7 @@ TPOT
 TPOTBucketTooWide
 TPOTDistribution
 TPOTDistributionAbstained
+TPOTDistributionShortFit
 TPOTQuantileUnbounded
 TTFT
 TYPE

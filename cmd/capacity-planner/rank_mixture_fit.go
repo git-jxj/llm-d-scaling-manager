@@ -89,3 +89,45 @@ func (r rankMixtureFit) options(model string, stratified bool) whatifapi.TTFTMod
 	return whatifapi.TTFTModelOptions{Model: model, Stratified: stratified, KVHold: r.kvHold, RemainderSpread: r.remainderSpread,
 		MinFitWindow: r.window()}
 }
+
+// tpotDistMinFitStepsFlag is the TPOT distribution's fewest-fit-steps flag,
+// the TPOT model's counterpart of --rank-mixture-min-fit-window.
+const tpotDistMinFitStepsFlag = "tpot-dist-min-fit-steps"
+
+// tpotDistMinFitStepsUsage is its help.
+const tpotDistMinFitStepsUsage = "with --experimental-tpot=v2, the fewest 5-minute fit steps the distribution fits on; under it the " +
+	"distribution abstains. Default 24 (two hours). A lab recording reads fewer: lower it (8), at least 4, to fit the distribution " +
+	"there, and every percentile it prices from fewer than 24 steps is flagged TPOTDistributionShortFit"
+
+// tpotDistFit is the TPOT distribution's fewest fit steps one command was
+// given.
+type tpotDistFit struct{ minFitSteps int }
+
+// register registers the flag.
+func (d *tpotDistFit) register(fs *flag.FlagSet) {
+	fs.IntVar(&d.minFitSteps, tpotDistMinFitStepsFlag, whatifapi.MinTPOTDistFitSteps, tpotDistMinFitStepsUsage)
+}
+
+// steps is the fewest fit steps asked, 0 at the default (and in a zero
+// tpotDistFit, as a test builds one).
+func (d tpotDistFit) steps() int {
+	if d.minFitSteps == whatifapi.MinTPOTDistFitSteps {
+		return 0
+	}
+	return d.minFitSteps
+}
+
+// check refuses the flag without --experimental-tpot=v2, and a count under
+// whatifapi.MinTPOTDistFitStepsFloor.
+func (d tpotDistFit) check(v2 bool) error {
+	switch n := d.steps(); {
+	case n == 0:
+		return nil
+	case n < whatifapi.MinTPOTDistFitStepsFloor:
+		return usagef("--%s %d, want %d or more", tpotDistMinFitStepsFlag, n, whatifapi.MinTPOTDistFitStepsFloor)
+	case !v2:
+		return usagef("--%s changes the fit of the experimental TPOT distribution: give it with --%s=%s",
+			tpotDistMinFitStepsFlag, experimentalTPOTFlag, experimentalTPOTV2)
+	}
+	return nil
+}

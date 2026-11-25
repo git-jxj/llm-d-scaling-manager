@@ -422,6 +422,14 @@ where a slot queue would form, where under two hours of fit steps read the
 router's TPOT histogram and the output lengths, or where `C` ends at its bound.
 Every percentile is then the planner's own, flagged `TPOTDistributionAbstained`.
 
+The two hours of fit steps (24 five-minute steps) are a default:
+`--tpot-dist-min-fit-steps` (`tpotDistMinFitSteps`, at least 4) lowers it on
+`backtest`, `serve`, `at-replicas` and `day-plan`, so a lab recording gets the
+distribution too. A distribution fitted on fewer than 24 steps reports
+`shortFit` and `minFitSteps`, and flags every percentile it prices
+`TPOTDistributionShortFit`: its renewal coefficient and its self-check folds
+read fewer steps.
+
 ## Adding a run
 
 The regions are data, in `internal/signals/whatif/envelope.json`. A new run

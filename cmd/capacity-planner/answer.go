@@ -155,6 +155,9 @@ type answerFlags struct {
 	// rankMixtureFit is the variant's modes and the shortest fit window
 	// (rank_mixture_fit.go), read with rankMixtureTTFT.
 	rankMixtureFit rankMixtureFit
+	// tpotFit is --tpot-dist-min-fit-steps (rank_mixture_fit.go), read
+	// with tpotDistribution.
+	tpotFit tpotDistFit
 	// experimentalTPOT is --experimental-tpot (=v2): at-replicas prices its
 	// tables' TPOT p90 and p95 with the experimental per-request TPOT
 	// distribution, fitted on the recording (experimental_tpot.go); refused
@@ -228,6 +231,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
 	f.rankMixtureFit.registerModes(fs)
 	f.rankMixtureFit.registerWindow(fs)
+	f.tpotFit.register(fs)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "at-replicas only: =v2 prices the measured shape's (--shape measured) TPOT p90 and p95 with an "+
 		"experimental per-request TPOT distribution fitted on the --recording, around the planner's own mean; every percentile it prices "+
 		"is flagged TPOTDistribution and reads OUTSIDE VALIDATED REGION")
@@ -255,6 +259,9 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 	}
 	f.tpotDistribution = on
 	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
+		return err
+	}
+	if err := f.tpotFit.check(f.tpotDistribution); err != nil {
 		return err
 	}
 	switch {

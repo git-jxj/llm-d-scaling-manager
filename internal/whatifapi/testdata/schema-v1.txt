@@ -436,8 +436,10 @@ backtest.tpotDistribution.fold[].p95Inside number
 backtest.tpotDistribution.fold[].shapeKsMedian number
 backtest.tpotDistribution.fold[].shapeKsP90 number
 backtest.tpotDistribution.fold[].steps number
+backtest.tpotDistribution.minFitSteps number
 backtest.tpotDistribution.model string
 backtest.tpotDistribution.renewal number
+backtest.tpotDistribution.shortFit boolean
 backtest.tpotDistribution.slotWait number
 backtest.tpotDistribution.specTokens number
 backtest.tpotDistribution.test object
@@ -490,6 +492,7 @@ backtestRequest.split string
 backtestRequest.step string
 backtestRequest.testAbove string
 backtestRequest.testInputsId string
+backtestRequest.tpotDistMinFitSteps number
 backtestRequest.tpotModel string
 backtestRequest.ttft object
 backtestRequest.ttft.bucketTargets object
@@ -729,8 +732,10 @@ inputs.tpotModel.fit.fold[].p95Inside number
 inputs.tpotModel.fit.fold[].shapeKsMedian number
 inputs.tpotModel.fit.fold[].shapeKsP90 number
 inputs.tpotModel.fit.fold[].steps number
+inputs.tpotModel.fit.minFitSteps number
 inputs.tpotModel.fit.model string
 inputs.tpotModel.fit.renewal number
+inputs.tpotModel.fit.shortFit boolean
 inputs.tpotModel.fit.slotWait number
 inputs.tpotModel.fit.specTokens number
 inputs.tpotModel.fit.test object
@@ -843,6 +848,7 @@ inputsRequest.source.kind string
 inputsRequest.source.name string
 inputsRequest.source.namespace string
 inputsRequest.source.to string
+inputsRequest.tpotDistMinFitSteps number
 inputsRequest.tpotModel string
 inputsRequest.ttftModel string
 plan object
@@ -1598,8 +1604,10 @@ report.tpotModel.fit.fold[].p95Inside number
 report.tpotModel.fit.fold[].shapeKsMedian number
 report.tpotModel.fit.fold[].shapeKsP90 number
 report.tpotModel.fit.fold[].steps number
+report.tpotModel.fit.minFitSteps number
 report.tpotModel.fit.model string
 report.tpotModel.fit.renewal number
+report.tpotModel.fit.shortFit boolean
 report.tpotModel.fit.slotWait number
 report.tpotModel.fit.specTokens number
 report.tpotModel.fit.test object

@@ -43,6 +43,11 @@ const (
 	// TPOTDistribution is on every TPOT percentile priced by the
 	// experimental per-request TPOT distribution (TPOTRenewalLognormal).
 	TPOTDistribution Flag = "TPOTDistribution"
+	// TPOTDistributionShortFit is on every TPOT percentile priced by the
+	// distribution fitted on fewer steps than the default minimum because
+	// the caller lowered it: its renewal coefficient and its self-check
+	// folds read fewer steps than the default asks.
+	TPOTDistributionShortFit Flag = "TPOTDistributionShortFit"
 	// TPOTDistributionAbstained is a TPOT percentile the planner priced
 	// itself where the experimental distribution was asked for and did not
 	// price it.

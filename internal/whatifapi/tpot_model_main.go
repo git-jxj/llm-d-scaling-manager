@@ -120,8 +120,9 @@ func tpotModelOf(req, server string) (string, error) {
 
 // fitMainTPOT fits the model on e's cycles up to the cycle answered, cut
 // into DefaultBacktestStep steps, with the decode engine's max-num-seqs and
-// num_speculative_tokens read from the source.
-func fitMainTPOT(e *inputsEntry) *mainTPOT {
+// num_speculative_tokens read from the source, on at least minSteps steps
+// (0 MinTPOTDistFitSteps), as a backtest fits it (fitTPOTDist).
+func fitMainTPOT(e *inputsEntry, minSteps int) *mainTPOT {
 	mt := &mainTPOT{decode: e.doc.Fleet.Decode.Replicas,
 		info: TPOTModelInfo{Model: whatif.TPOTRenewalLognormal, Experimental: true, Label: TPOTModelLabel}}
 	abstain := func(why string) *mainTPOT {
@@ -144,7 +145,7 @@ func fitMainTPOT(e *inputsEntry) *mainTPOT {
 			idx = append(idx, i)
 		}
 	}
-	tq := fitTPOTDist(e, idx, DefaultBacktestStep, e.engine.DecodeSlots, e.engine.SpecTokens)
+	tq := fitTPOTDist(e, idx, DefaultBacktestStep, e.engine.DecodeSlots, e.engine.SpecTokens, minSteps)
 	r := tq.report
 	mt.info.Fit = &r
 	if r.Abstained != "" {
@@ -221,7 +222,7 @@ func (mt *mainTPOT) fleet(inner Fleet, k Knobs) Fleet {
 	if !ok {
 		return inner
 	}
-	return x.WithTPOTRatio(ModelRatio{Value: mt.ratio(k.TPOTPercentile), Flag: whatif.TPOTDistribution, Source: tpotModelSource,
+	return x.WithTPOTRatio(ModelRatio{Value: mt.ratio(k.TPOTPercentile), Flag: whatif.TPOTDistribution, More: mt.tq.report.flags()[1:], Source: tpotModelSource,
 		Assumed: mt.assumed(k)})
 }
 
@@ -326,7 +327,7 @@ func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
 			if !whatif.Finite(v) {
 				continue
 			}
-			st.Figure = Figure{Value: ptr(v), Unit: unitSeconds, Flags: []string{string(whatif.TPOTDistribution)},
+			st.Figure = Figure{Value: ptr(v), Unit: unitSeconds, Flags: flagStrings(mt.tq.report.flags()),
 				Extrapolated: mt.extrapolated(k, row.Rate)}
 			moved = true
 		}
@@ -345,10 +346,11 @@ func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
 
 // ApplyTPOTModel fits the experimental TPOT model on res, a source resolved
 // with InputsRequest.TPOTModel, and prices out's TPOT percentiles with it as
-// POST /v1/report does: at-replicas --experimental-tpot=v2. It returns the
-// model as fitted, abstained or not.
-func ApplyTPOTModel(res *Resolved, out *ReportResponse, q ReportQuery) *TPOTModelInfo {
-	mt := fitMainTPOT(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
+// POST /v1/report does: at-replicas --experimental-tpot=v2, on at least
+// minSteps fit steps (0 MinTPOTDistFitSteps). It returns the model as
+// fitted, abstained or not.
+func ApplyTPOTModel(res *Resolved, out *ReportResponse, q ReportQuery, minSteps int) *TPOTModelInfo {
+	mt := fitMainTPOT(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine}, minSteps)
 	mt.applyToReport(out, q)
 	info := mt.info
 	return &info

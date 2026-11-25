@@ -219,7 +219,7 @@ func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.Rep
 			f.rankMixtureFit.options(req.TTFTModel, stratifiedOr(f.rankMixtureStratified)))
 	}
 	if f.tpotDistribution {
-		rep.TPOTModel = whatifapi.ApplyTPOTModel(res, rep, q)
+		rep.TPOTModel = whatifapi.ApplyTPOTModel(res, rep, q, f.tpotFit.steps())
 	}
 	return nil
 }

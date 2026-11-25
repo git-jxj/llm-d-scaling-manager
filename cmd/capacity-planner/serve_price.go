@@ -625,7 +625,7 @@ type servedFleet struct {
 // bucket.
 func (sf *servedFleet) WithTPOTRatio(r whatifapi.ModelRatio) whatifapi.Fleet {
 	c := *sf
-	c.ratio = resolvedRatio{ratio: whatif.TPOTRatio{Value: r.Value}, flags: []whatif.Flag{r.Flag}}
+	c.ratio = resolvedRatio{ratio: whatif.TPOTRatio{Value: r.Value}, flags: append([]whatif.Flag{r.Flag}, r.More...)}
 	c.model = &r
 	c.assumed = append(slices.Clone(sf.assumed), r.Assumed)
 	return &c

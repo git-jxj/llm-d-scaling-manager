@@ -372,6 +372,12 @@ type BacktestRequest struct {
 	// SpecTokens, no speculative decoding).
 	DecodeSlots int `json:"decodeSlots,omitempty"`
 	SpecTokens  int `json:"specTokens,omitempty"`
+	// TPOTDistMinFitSteps is the fewest fit steps the TPOT distribution
+	// fits on: absent, the server's default, else MinTPOTDistFitSteps (24,
+	// two hours of 5-minute steps). A distribution fitted on fewer than 24
+	// is flagged TPOTDistributionShortFit. At least MinTPOTDistFitStepsFloor;
+	// only with a TPOTModel.
+	TPOTDistMinFitSteps int `json:"tpotDistMinFitSteps,omitempty"`
 }
 
 // BacktestResponse is POST /v1/backtest's answer, and capacity-planner
@@ -1109,6 +1115,9 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	if err := checkMinFitWindow(req.RankMixtureMinFitWindow, req.TTFTModel); err != nil {
 		return nil, err
 	}
+	if err := checkTPOTMinFitSteps(req.TPOTDistMinFitSteps, req.TPOTModel); err != nil {
+		return nil, err
+	}
 	if (req.RankMixtureKVHold || req.RankMixtureRemainderSpread) && req.TTFTModel != string(whatif.QueueRankMixtureNLLine) {
 		return nil, InputErrorf("rankMixtureKVHold and rankMixtureRemainderSpread are modes of ttftModel %q: give them with that model",
 			whatif.QueueRankMixtureNLLine)
@@ -1147,7 +1156,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 			q.tpotDist = &tpotDistQ{report: TPOTDistReport{Model: whatif.TPOTRenewalLognormal, Experimental: true, FoldC: []float64{},
 				Fold: []TPOTDistScore{}, Abstained: "the test source did not give the decode series"}}
 		} else {
-			q.tpotDist = fitTPOTDist(fit, fitIdx, q.step, req.DecodeSlots, req.SpecTokens)
+			q.tpotDist = fitTPOTDist(fit, fitIdx, q.step, req.DecodeSlots, req.SpecTokens, req.TPOTDistMinFitSteps)
 		}
 		q.assumed = append(q.assumed, q.tpotDist.assumedLines()...)
 	default:

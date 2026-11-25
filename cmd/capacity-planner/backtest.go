@@ -76,8 +76,10 @@ type backtestFlags struct {
 	// variant's modes (whatifapi.BacktestRequest RankMixtureKVHold and
 	// RankMixtureRemainderSpread).
 	rankMixtureKVHold, rankMixtureRemainderSpread bool
-	// fitWindow is --rank-mixture-min-fit-window (rank_mixture_fit.go).
+	// fitWindow is --rank-mixture-min-fit-window and tpotFit
+	// --tpot-dist-min-fit-steps (rank_mixture_fit.go).
 	fitWindow rankMixtureFit
+	tpotFit   tpotDistFit
 	// experimentalTPOT is --experimental-tpot (experimental_tpot.go),
 	// backtest's only.
 	experimentalTPOT string
@@ -146,6 +148,7 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 		"the router's remainder from the router's measured request-processing time where the fit window recorded it "+
 		"(its line where not, as off); off by default")
 	f.fitWindow.registerWindow(fs)
+	f.tpotFit.register(fs)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage)
 	fs.BoolVar(&f.allowMismatch, "allow-config-mismatch", false, "price a test whose configuration differs from the fit's, with the difference as a caveat")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
@@ -164,6 +167,13 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 			"give them with --experimental-ttft=v2nl-line")
 	}
 	if err := f.fitWindow.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
+		return err
+	}
+	tpotV2, err := experimentalTPOTOf(f.experimentalTPOT)
+	if err != nil {
+		return err
+	}
+	if err := f.tpotFit.check(tpotV2); err != nil {
 		return err
 	}
 	if f.rankMixtureKVHold && !f.rankMixtureRemainderSpread {

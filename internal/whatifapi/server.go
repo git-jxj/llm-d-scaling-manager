@@ -109,6 +109,11 @@ type Config struct {
 	// --rank-mixture-min-fit-window.
 	RankMixtureKVHold, RankMixtureRemainderSpread bool
 	RankMixtureMinFitWindow                       time.Duration
+	// TPOTDistMinFitSteps is the fewest fit steps the TPOT distribution
+	// fits on where a backtest or a source's request names none: 0 is
+	// MinTPOTDistFitSteps. The CLI's serve sets it with
+	// --tpot-dist-min-fit-steps.
+	TPOTDistMinFitSteps int
 }
 
 // DefaultPlanBudget is the plan budget a server has when its Config names
@@ -192,6 +197,8 @@ type Server struct {
 	// RankMixtureMinFitWindow.
 	kvHold, remainderSpread bool
 	minFitWindow            time.Duration
+	// tpotMinFitSteps is Config.TPOTDistMinFitSteps.
+	tpotMinFitSteps int
 }
 
 // inputsEntry is a source resolved: its id, the inputs a plan reads its
@@ -255,7 +262,8 @@ func New(c Config) *Server {
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget,
 		uploader: c.Uploader, uploadMax: uploadMax, uploadSlots: make(chan struct{}, 1), uploadIdle: uploadIdle, uploadDeadline: uploadDeadline,
 		ttftModel: c.TTFTModel, tpotModel: c.TPOTModel, noStratified: c.NoRankMixtureStratified,
-		kvHold: c.RankMixtureKVHold, remainderSpread: c.RankMixtureRemainderSpread, minFitWindow: c.RankMixtureMinFitWindow}
+		kvHold: c.RankMixtureKVHold, remainderSpread: c.RankMixtureRemainderSpread, minFitWindow: c.RankMixtureMinFitWindow,
+		tpotMinFitSteps: c.TPOTDistMinFitSteps}
 }
 
 // stratified is whether the rank mixture is priced with stratified service
@@ -357,6 +365,11 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.TTFTModel, req.TPOTModel = model, tpotModel
+	tpotSteps, err := s.tpotMinFitStepsOf(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	opts, err := s.mainTTFTOptions(req)
 	if err != nil {
 		writeErr(w, err)
@@ -393,9 +406,16 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 			Content              any
 			TTFTModel, TPOTModel string
 		}{res.Content, model, tpotModel})
-		mt = fitMainTPOT(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
+		mt = fitMainTPOT(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine}, tpotSteps)
 		info := mt.info
 		doc.TPOTModel = &info
+	}
+	if tpotModel != "" && tpotSteps > 0 {
+		// And so is the distribution fitted on another fewest steps.
+		doc.InputsID = contentID("inputs", struct {
+			ID                  string
+			TPOTDistMinFitSteps int
+		}{doc.InputsID, tpotSteps})
 	}
 	if model != "" && !stratified {
 		// And so is the model read from each rank's own draws.

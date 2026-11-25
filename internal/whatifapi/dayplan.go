@@ -717,7 +717,7 @@ func withModels(e *inputsEntry, res *Resolved, o TTFTModelOptions) {
 		e.ttftModel = fitMainMixture(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, o.switches())
 	}
 	if res.Decode != nil {
-		e.tpotModel = fitMainTPOT(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
+		e.tpotModel = fitMainTPOT(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine}, res.TPOTMinFitSteps)
 	}
 }
 

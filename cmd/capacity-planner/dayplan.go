@@ -61,6 +61,8 @@ type dayPlanFlags struct {
 	// (rank_mixture_fit.go): the TTFT model is fitted as serve fits it.
 	rankMixtureNLLine bool
 	rankMixtureFit    rankMixtureFit
+	// tpotFit is --tpot-dist-min-fit-steps (rank_mixture_fit.go).
+	tpotFit tpotDistFit
 }
 
 // runDayPlan is `capacity-planner day-plan`: the prefill and decode replicas
@@ -107,6 +109,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 		"each bucket at its own rate but at the window's request shape the model is fitted at (WindowShape): where it prices TTFT the planner refuses, prefill is sized on it; every figure it sets is flagged RankMixtureTTFT and reads OUTSIDE VALIDATED REGION; "+experimentalTTFTNLLineUsage)
 	f.rankMixtureFit.registerModes(fs)
 	f.rankMixtureFit.registerWindow(fs)
+	f.tpotFit.register(fs)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage+"; on day-plan it sizes decode with it at a p90 or p95 TPOT target, each bucket at the window's request shape")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
@@ -118,6 +121,9 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	}
 	f.tpotDistribution = on
 	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
+		return err
+	}
+	if err := f.tpotFit.check(f.tpotDistribution); err != nil {
 		return err
 	}
 	if (f.rankMixtureTTFT || f.tpotDistribution) && f.recording == "" {
@@ -280,6 +286,9 @@ func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.
 	}
 	if res != nil && f.rankMixtureTTFT {
 		res.TTFTModel = f.rankMixtureFit.options(in.TTFTModel, whatif.DefaultRankMixtureStratified)
+	}
+	if res != nil && f.tpotDistribution {
+		res.TPOTMinFitSteps = f.tpotFit.steps()
 	}
 	return res, err
 }

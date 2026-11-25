@@ -63,3 +63,28 @@ func TestServeRankMixtureFit_Config(t *testing.T) {
 	_, err = f.handler(newFlags("serve", io.Discard), io.Discard)
 	require.Error(t, err, "the modes need =v2nl-line")
 }
+
+// --tpot-dist-min-fit-steps defaults to the distribution's own 24, needs
+// --experimental-tpot=v2 below or above it, and is at least 4.
+func TestTPOTDistFit_Flags(t *testing.T) {
+	fs := newFlags("x", io.Discard)
+	var d tpotDistFit
+	d.register(fs)
+	require.NoError(t, fs.Parse(nil))
+	assert.Zero(t, d.steps(), "24 is the default")
+	require.NoError(t, d.check(false))
+	require.NoError(t, fs.Parse([]string{"--" + tpotDistMinFitStepsFlag, "8"}))
+	assert.Equal(t, 8, d.steps())
+	require.NoError(t, d.check(true))
+	assert.Error(t, d.check(false), "the count is the distribution's")
+	assert.Error(t, tpotDistFit{minFitSteps: 3}.check(true))
+	for _, args := range [][]string{
+		{"at-replicas", "--recording", q32Recording, "--" + tpotDistMinFitStepsFlag, "8"},
+		{"day-plan", "--recording", q32Recording, "--" + tpotDistMinFitStepsFlag, "8"},
+		{"backtest", "--recording", q32Recording, "--" + tpotDistMinFitStepsFlag, "8"},
+		{"serve", "--recordings", t.TempDir(), "--" + tpotDistMinFitStepsFlag, "8"},
+	} {
+		out, code := runCmd(t, args...)
+		assert.Equal(t, 2, code, "%v: %s", args, out)
+	}
+}

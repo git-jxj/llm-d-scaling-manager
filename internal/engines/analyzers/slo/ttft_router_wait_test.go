@@ -143,6 +143,7 @@ var notOnTheTTFTPath = map[string]string{
 	"RelaxationLong":            "planner backtest only: --experimental-ttft=v2",
 	"TPOTDistribution":          "TPOT, planner backtest only: --experimental-tpot=v2",
 	"TPOTDistributionAbstained": "TPOT, planner backtest only: --experimental-tpot=v2",
+	"TPOTDistributionShortFit":  "TPOT, planner only: --tpot-dist-min-fit-steps",
 }
 
 // Every flag the whatif package declares is on the TTFT series' list, the

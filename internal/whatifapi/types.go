@@ -66,6 +66,11 @@ type InputsRequest struct {
 	RankMixtureKVHold          bool   `json:"rankMixtureKVHold,omitempty"`
 	RankMixtureRemainderSpread bool   `json:"rankMixtureRemainderSpread,omitempty"`
 	RankMixtureMinFitWindow    string `json:"rankMixtureMinFitWindow,omitempty"`
+	// TPOTDistMinFitSteps is BacktestRequest's for the main view's TPOT
+	// distribution: absent, the server's default (serve
+	// --tpot-dist-min-fit-steps), else 24. Only with a TPOTModel; another
+	// count changes the inputsId.
+	TPOTDistMinFitSteps int `json:"tpotDistMinFitSteps,omitempty"`
 	// TPOTModel prices the main view's TPOT p90 and p95 with an
 	// experimental per-request TPOT distribution: "" is the server's
 	// default (serve --experimental-tpot=v2), and

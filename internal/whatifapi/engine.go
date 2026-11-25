@@ -65,6 +65,9 @@ type Resolved struct {
 	// TTFTModel is how a caller outside a server fits the TTFT model on
 	// Mixture (DayPlan): the zero value is v2 at its defaults.
 	TTFTModel TTFTModelOptions
+	// TPOTMinFitSteps is the fewest fit steps the TPOT distribution fits on
+	// for that caller (DayPlan), 0 MinTPOTDistFitSteps.
+	TPOTMinFitSteps int
 	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
 	// the Series and the Inputs), its weight in the inputs cache
 	// (Config.MaxInputsBytes); 0 weighs nothing.
@@ -185,8 +188,10 @@ type TPOTRatioFleet interface {
 // every figure priced with it, the Source the plan's ratio names, and the
 // Assumed line the fleet adds.
 type ModelRatio struct {
-	Value   float64
-	Flag    whatif.Flag
+	Value float64
+	Flag  whatif.Flag
+	// More is the flags the ratio's figures carry beside Flag.
+	More    []whatif.Flag
 	Source  string
 	Assumed string
 }

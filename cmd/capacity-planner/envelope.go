@@ -74,6 +74,10 @@ var (
 		// (refused without), whose every TTFT is flagged RankMixtureTTFT; a
 		// window under 12h adds RankMixtureShortFitWindow.
 		"rank-mixture-kv-hold", "rank-mixture-remainder-spread", rankMixtureMinFitWindowFlag,
+		// Read only with --experimental-tpot=v2 (refused without), whose
+		// every percentile is flagged TPOTDistribution; under 24 steps it
+		// adds TPOTDistributionShortFit.
+		tpotDistMinFitStepsFlag,
 		// The same: every TPOT percentile it prices is flagged
 		// TPOTDistribution, which no envelope row allows.
 		experimentalTPOTFlag}

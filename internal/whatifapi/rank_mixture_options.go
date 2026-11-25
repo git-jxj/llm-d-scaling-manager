@@ -50,6 +50,9 @@ func checkMinFitWindow(s, model string) error {
 // shortest fit window wherever a model is asked, and the variant's modes
 // where the variant is.
 func (s *Server) rankMixtureDefaults(req *BacktestRequest) {
+	if req.TPOTModel != "" && req.TPOTDistMinFitSteps == 0 {
+		req.TPOTDistMinFitSteps = s.tpotMinFitSteps
+	}
 	if req.TTFTModel == "" {
 		return
 	}
@@ -85,4 +88,49 @@ func (s *Server) mainTTFTOptions(req InputsRequest) (TTFTModelOptions, error) {
 		o.RemainderSpread = o.RemainderSpread || s.remainderSpread
 	}
 	return o, nil
+}
+
+// MinTPOTDistFitStepsFloor is the fewest fit steps the TPOT distribution
+// may be allowed to fit on: its two self-check folds fit on half and three
+// quarters of the steps, so each reads at least two.
+const MinTPOTDistFitStepsFloor = 4
+
+// checkTPOTMinFitSteps refuses a tpotDistMinFitSteps under
+// MinTPOTDistFitStepsFloor, or one given with no TPOT model to fit; 0 is
+// the default.
+func checkTPOTMinFitSteps(n int, model string) error {
+	switch {
+	case n == 0:
+		return nil
+	case model == "":
+		return InputErrorf("tpotDistMinFitSteps is the experimental TPOT distribution's: give it with tpotModel %q", whatif.TPOTRenewalLognormal)
+	case n < MinTPOTDistFitStepsFloor:
+		return InputErrorf("tpotDistMinFitSteps %d, want %d or more (the default is %d)", n, MinTPOTDistFitStepsFloor, MinTPOTDistFitSteps)
+	}
+	return nil
+}
+
+// tpotMinFitStepsOf is the fewest fit steps a source's TPOT distribution
+// fits on: the request's, else the server's; 0 the default.
+func (s *Server) tpotMinFitStepsOf(req InputsRequest) (int, error) {
+	if err := checkTPOTMinFitSteps(req.TPOTDistMinFitSteps, req.TPOTModel); err != nil {
+		return 0, err
+	}
+	n := req.TPOTDistMinFitSteps
+	if n == 0 && req.TPOTModel != "" {
+		n = s.tpotMinFitSteps
+	}
+	if n == MinTPOTDistFitSteps {
+		return 0, nil
+	}
+	return n, nil
+}
+
+// flagStrings is flags as a figure carries them.
+func flagStrings(flags []whatif.Flag) []string {
+	out := make([]string, len(flags))
+	for i, f := range flags {
+		out[i] = string(f)
+	}
+	return out
 }

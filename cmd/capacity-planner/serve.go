@@ -76,6 +76,9 @@ type serveFlags struct {
 	// RankMixtureKVHold, RankMixtureRemainderSpread,
 	// RankMixtureMinFitWindow).
 	rankMixtureFit rankMixtureFit
+	// tpotFit is --tpot-dist-min-fit-steps (rank_mixture_fit.go): the
+	// server's default (whatifapi.Config.TPOTDistMinFitSteps).
+	tpotFit tpotDistFit
 	// experimentalTPOT is --experimental-tpot (=v2): every backtest, and
 	// the main view of every source, priced with the per-request TPOT
 	// distribution.
@@ -121,6 +124,7 @@ func runServe(ctx context.Context, args []string, out, warn io.Writer) error {
 	f.replay.register(fs)
 	f.rankMixtureFit.registerModes(fs)
 	f.rankMixtureFit.registerWindow(fs)
+	f.tpotFit.register(fs)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "price every backtest, and the main view's TPOT p90 and p95 (plan, size, report), with the experimental per-request TPOT distribution, as if each asked for tpotModel "+whatif.TPOTRenewalLognormal+": "+experimentalTPOTUsage)
 	fs.BoolVar(&f.noSelfCheck, "no-self-check", false, "do not check the planner on each source beside its inputs, unless a request asks (selfCheck true)")
 	fs.BoolVar(&f.allowUpload, "allow-upload", false, "take recordings uploaded from the page (POST /v1/recordings): kept as sent, in a private temporary directory (TMPDIR; TMP on Windows), the last 4, until the server stops. Off by default: whoever may open the planner may then upload")
@@ -288,12 +292,15 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
 		return nil, err
 	}
+	if err := f.tpotFit.check(tpotV2); err != nil {
+		return nil, err
+	}
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed, experimentalTTFT: f.experimentalTTFT,
 		rankMixture: f.rankMixtureTTFT, tpotDistribution: tpotV2, replay: f.replay}
 	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlannerVersion: plannerVersion(), SelfCheck: defaultSelfCheck && !f.noSelfCheck, PlanBudget: f.planBudget,
 		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes, NoRankMixtureStratified: !stratifiedOr(f.rankMixtureStratified),
 		RankMixtureKVHold: f.rankMixtureFit.kvHold, RankMixtureRemainderSpread: f.rankMixtureFit.remainderSpread,
-		RankMixtureMinFitWindow: f.rankMixtureFit.window()}
+		RankMixtureMinFitWindow: f.rankMixtureFit.window(), TPOTDistMinFitSteps: f.tpotFit.steps()}
 	if f.rankMixtureTTFT {
 		cfg.TTFTModel = rankMixtureModel(f.rankMixtureNLLine)
 	}

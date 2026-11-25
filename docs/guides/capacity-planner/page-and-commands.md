@@ -485,7 +485,9 @@ In a cluster, add both to the StatefulSet's `args`
   ```
 
   On a lab recording, add `--rank-mixture-min-fit-window 2h` (no longer than
-  the recording).
+  the recording) and `--tpot-dist-min-fit-steps 8`: the TPOT distribution
+  otherwise needs 24 five-minute fit steps. Each percentile it prices from
+  fewer than 24 is flagged `TPOTDistributionShortFit`.
 - **The planner's opt-in switches.** `serve --prefill-vp-plateau` and
   `serve --prefill-hit-at-count` read every source as if its request had
   asked for the switch ([flags](api.md#flags)); the figures they move
