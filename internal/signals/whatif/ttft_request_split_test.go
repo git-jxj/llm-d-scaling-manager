@@ -78,6 +78,8 @@ func TestRequestSplit_KneeIsRequestsAtTheMixesWork(t *testing.T) {
 // work is never priced above the one-rate figure. On fresh prompts the span
 // doubles with the prompt: at twice I_vp the bound is the one-rate work, and
 // the knee is the one-rate knee to the bit, flagged VPShapeMoved as before.
+// Where r is more than two thirds of the work at I_vp, the span's growth
+// leaves the work under the one-rate figure there, and the split prices it.
 // Below I_vp nothing grows, and the split prices it. With some context
 // cached the knee lies between.
 func TestRequestSplit_AboveIVPTheSpanBoundsTheRaise(t *testing.T) {
@@ -90,6 +92,14 @@ func TestRequestSplit_AboveIVPTheSpanBoundsTheRaise(t *testing.T) {
 	one.VPRequestSeconds = 0
 	if want := splitKnee(t, one); held.Value != want.Value || !slices.Equal(held.Flags, want.Flags) {
 		t.Errorf("fresh prompts at twice I_vp: knee %v %v, want the one-rate %v %v", held.Value, held.Flags, want.Value, want.Flags)
+	}
+	most := fresh(4000)
+	most.VPRequestSeconds = 0.08
+	raised := splitKnee(t, most)
+	relNear(t, "fresh prompts, r four fifths of the work", raised.Value, 5*(1-DefaultVPMargin)/(1.3*(0.08+4000*(0.02/2000)*2)), 1e-12)
+	if !(raised.Value > splitKnee(t, one).Value) || !slices.Contains(raised.Flags, VPScaledToPrompt) {
+		t.Errorf("fresh prompts, r four fifths of the work: knee %v %v, want above the one-rate %v, flagged VPScaledToPrompt",
+			raised.Value, raised.Flags, splitKnee(t, one).Value)
 	}
 	short, oneShort := splitKnee(t, fresh(1000)), fresh(1000)
 	oneShort.VPRequestSeconds = 0
@@ -182,6 +192,15 @@ func TestRequestSplit_SensitivityMovesTheWholeWork(t *testing.T) {
 	}
 	if q := splitPrefill(0, 4000).WithVP(1000); q.VPRequestSeconds != 0 || q.VP != 1000 {
 		t.Errorf("WithVP on an unmeasured split: %+v, want VP 1000 and no split", q)
+	}
+	for _, vp := range []float64{0, -1, math.Inf(1), math.NaN()} {
+		q := p.WithVP(vp)
+		if q.VPRequestSeconds != p.VPRequestSeconds {
+			t.Errorf("WithVP(%g): split %g, want it left at %g", vp, q.VPRequestSeconds, p.VPRequestSeconds)
+		}
+		if u, ok := PrefillKnee(q).(Unanswerable); !ok || u.Reason != NoPrefillCapacity {
+			t.Errorf("WithVP(%g): knee %#v, want NoPrefillCapacity", vp, PrefillKnee(q))
+		}
 	}
 }
 

@@ -692,12 +692,14 @@ func (pl prefillPlan) atRate(rate float64) prefillPlan {
 // tokens, and one shorter paid it less than once a request. Where r is two
 // thirds of the work at I_vp and the context is mostly cached (g near 1),
 // the one-rate knee at twice I_vp is two thirds of the split's, and at half
-// I_vp it is 5/3 of it, over-promising. On fresh prompts the span doubles
-// with the prompt, the bound reaches the one-rate figure, and the knee holds
-// where it was: a line through the prompts of a warm-up read the per-token
-// cost of its longest prompts low, and the split alone priced a knee above
-// the rate the pods saturated at (issue
-// llm-d-incubation/llm-d-scaling-manager#368).
+// I_vp it is 5/3 of it, over-promising. Above I_vp the span bounds the
+// raise: a line through the prompts of a warm-up read the per-token cost of
+// its longest prompts low, and the split alone priced a knee above the rate
+// the pods saturated at (issue llm-d-incubation/llm-d-scaling-manager#368).
+// On fresh prompts the span doubles with the prompt, so at twice I_vp the
+// bound reaches the one-rate figure, and the knee holds, wherever r is at
+// most two thirds of the work at I_vp. Where r is more, even the span's
+// growth leaves the work under the one-rate figure, and the knee rises.
 func (p Prefill) shapedVP() (float64, Flag) {
 	vp, flag := p.tokenRateVP()
 	r, ok := p.requestSplit()

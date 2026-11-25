@@ -43,10 +43,12 @@ func SensitivityFleets(fl TTFTFleet) []TTFTFleet {
 }
 
 // WithVP is p at V_P = vp, its per-request work (VPRequestSeconds) scaled by
-// the same ratio, so every request's work, and every knee, moves by p.VP/vp
-// at any prompt. Unmeasured (0), that work stays 0.
+// the same ratio, so every request's work moves by p.VP/vp, and every knee
+// by vp/p.VP, at any prompt. Unmeasured (0), that work stays 0; at a vp
+// that is no capacity it is left as it was, and the V_P is refused
+// (Prefill.check).
 func (p Prefill) WithVP(vp float64) Prefill {
-	if p.VPRequestSeconds > 0 && p.VP > 0 {
+	if p.VPRequestSeconds > 0 && p.VP > 0 && vp > 0 && Finite(vp) {
 		p.VPRequestSeconds *= p.VP / vp
 	}
 	p.VP = vp
