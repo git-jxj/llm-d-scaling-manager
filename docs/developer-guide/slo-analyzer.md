@@ -147,6 +147,11 @@ showed, and V_P is read from that counter. Details:
   decode variant's, which on a P/D fleet is not the prefill pods'. Its prompt
   is then in computed tokens, so it keeps the served-work floor
   (`pricedFleet.servedComputed`).
+- So is a whole prompt read from the source's own cycles with no hit stated
+  (`whatifapi.Knobs.PromptTokensRead`): a day plan's bucket at its own shape
+  (`readShape`) and a backtest's step. `loadShapeRead` is the one rule for
+  both. A stated prompt (`--assume-input-tokens`, a stated mix, a plan's
+  bucket edges) is netted as before.
 - It applies only where the computed-token hit or the hit it replaces is
   above `MaterialPrefixHitMove`. No committed recording has a hit, so it
   moves no golden.

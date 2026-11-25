@@ -8,7 +8,6 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
-	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -44,63 +43,9 @@ func DecodeSeriesFrom(src Source, q StateQuery, v SeriesVariants) ([]whatif.Deco
 	return out, err
 }
 
-// decodeCycleOf is one cycle of in, read at at: the decode rows of the
-// variant v names (every decode row where it names none), or, on a fleet
-// with no decode role, its serving rows.
+// decodeCycleOf is one cycle of in, read at at, for the decode variant v
+// names: whatif.DecodeCycleOf, the builder the controller would read its own
+// cycles with (docs/proposals/predicted-latency-in-controller.md).
 func decodeCycleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) whatif.DecodeCycle {
-	c := whatif.DecodeCycle{At: at, Output: map[float64]float64{}}
-	roles := rolesOf(in)
-	decode := false
-	for _, rm := range in.ReplicaMetrics {
-		if domain.CanonicalRole(roles[rm.VariantName]) == domain.RoleDecode {
-			decode = true
-			break
-		}
-	}
-	var running float64
-	for _, rm := range in.ReplicaMetrics {
-		role := domain.CanonicalRole(roles[rm.VariantName])
-		switch {
-		case decode && role != domain.RoleDecode:
-			continue
-		case !decode && role == domain.RolePrefill:
-			continue
-		case v.Decode != "" && rm.VariantName != v.Decode:
-			continue
-		}
-		if !prefill.Serving(rm) {
-			continue
-		}
-		for _, b := range rm.OutputTokensBuckets {
-			c.Output[b.UpperBound] += b.Rate
-		}
-		if rm.AvgITLKnown && whatif.Finite(rm.AvgITL) && rm.AvgITL > 0 && rm.RequestRateKnown && whatif.Finite(rm.RequestRate) && rm.RequestRate > 0 {
-			g := whatif.DecodeGroup{Rate: rm.RequestRate, TokenTime: rm.AvgITL}
-			if rm.SpecAcceptedPerStepKnown && whatif.Finite(rm.SpecAcceptedPerStep) && rm.SpecAcceptedPerStep >= 0 {
-				g.Accepted, g.AcceptedKnown = rm.SpecAcceptedPerStep, true
-				g.TokenTime = rm.AvgITL / (1 + rm.SpecAcceptedPerStep)
-			}
-			c.Groups = append(c.Groups, g)
-		}
-		if engines := rm.GroupEngines; len(engines) > 0 {
-			for _, e := range engines {
-				if e.RunningRequestsKnown {
-					running += float64(e.RunningRequests)
-					c.MostRunning = max(c.MostRunning, float64(e.RunningRequests))
-					c.RanksReported++
-				}
-			}
-			continue
-		}
-		if rm.RunningRequestsKnown {
-			n := max(rm.Ranks(), 1)
-			running += float64(rm.RunningRequests)
-			c.MostRunning = max(c.MostRunning, float64(rm.RunningRequests)/float64(n))
-			c.RanksReported += n
-		}
-	}
-	if c.RanksReported > 0 {
-		c.MeanRunning = running / float64(c.RanksReported)
-	}
-	return c
+	return whatif.DecodeCycleOf(in, at, v.Decode)
 }

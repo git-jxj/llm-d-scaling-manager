@@ -187,6 +187,7 @@ Events
 Every
 ExperimentalTTFT
 External
+ExtrapolatedBelowFloor
 ExtrapolatedFill
 FMA
 Failed
@@ -444,6 +445,7 @@ SELECTOR
 SETTINGS_CONFIG_MAP_NAME
 SGLang
 SGLangNoComputedTokens
+SLO
 STOP
 Safety
 Saturated
@@ -928,6 +930,8 @@ compute
 computeCapacityHistory
 computed
 computed-token
+computed-token-rate
+computed-tokens-histogram
 computedTokenRate
 computes
 concurrency
@@ -1027,9 +1031,12 @@ decode-burst-fill
 decode-knee
 decode-landed-queue-needs-a-bound
 decode-only
+decode-pods
 decode-queue-unknown
+decode-request-rate
 decode-residence-pull
 decode-style
+decode-ttft-mean
 decodeBase
 decodeBaseNet
 decodeFixed
@@ -1603,6 +1610,7 @@ itl-line-at-floor
 itl-line-borrowed
 itl-line-fits-aggregated
 itl-line-none
+itl-mean
 itl-ols
 itl-per-accepted-token
 itl-pinned
@@ -2347,6 +2355,7 @@ out
 outcome
 outlived
 output
+output-tokens-histogram
 outputDispersion
 outputDispersionRead
 outputTokens
@@ -2521,10 +2530,14 @@ prefill-f-busy-minutes
 prefill-hit-at-count
 prefill-knee
 prefill-latency
+prefill-pods
 prefill-queue-by-capacity
+prefill-request-rate
 prefill-required
 prefill-spare
 prefill-throughput-bound-reading
+prefill-time-mean
+prefill-ttft-mean
 prefill-vp-at-served-work
 prefill-vp-floor-served
 prefill-vp-lone-rate
@@ -2595,6 +2608,7 @@ promisedOnNodes
 promisedUnplaced
 prompt
 prompt-length
+prompt-tokens-histogram
 prompts
 property
 provided
@@ -2620,6 +2634,8 @@ queue
 queue-priced-as-drain
 queue-scorer
 queue-time
+queue-time-histogram
+queue-time-mean
 queueJustifiedReplicas
 queueLength
 queueLengthThreshold
@@ -2847,6 +2863,10 @@ round
 routed
 routedVariants
 router
+router-tpot-histogram
+router-tpot-mean
+router-ttft-histogram
+router-ttft-mean
 routerBacklogOwed
 routerBacklogOwedBy
 routerMeasured
@@ -2860,6 +2880,7 @@ rules
 run
 running
 running-request
+running-requests
 running-unknown
 runs
 s
@@ -3117,6 +3138,7 @@ slo-ttft-sizes-prefill
 slo-ttft-tier-kv-wait
 slo-ttft-tier-load
 slo-ttft-variant
+slo-v2-inputs
 slo-variant
 slo.Analyze
 slo.BeginCycle
@@ -3148,6 +3170,7 @@ source
 spaces
 spare
 spec
+spec-accepted-per-step
 spec.fallback
 speculates
 speculating
@@ -3395,6 +3418,7 @@ total_kv_tokens_override
 tp
 tp_size
 tpot
+tpot-distribution
 tpot-ratio-censored
 tpot.percentile
 tpot.target
@@ -3418,6 +3442,7 @@ truncated
 trustFraction
 trying
 ttft
+ttft-mixture
 ttft.percentile
 ttft.target
 ttftExcluded
@@ -3506,6 +3531,7 @@ utilizationShare.weightClasses
 utilizations
 v
 v100
+v2
 vLLM
 va
 valid
