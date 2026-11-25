@@ -191,7 +191,7 @@ func TestServiceLine_ALowerBoundStandsOnlyAboveTheLine(t *testing.T) {
 // and carries none.
 func TestServiceLine_ReplacesAWindowPeakWithItsAge(t *testing.T) {
 	line := 2500 / (0.25 + 2500.0/20000)
-	var cycles []Cycle
+	cycles := make([]Cycle, 0, PeakRun+int(Retention/minute)+40)
 	for i := range PeakRun {
 		cycles = append(cycles, cycle(t0.Add(minute*time.Duration(i)), queued("p-0", line/2, 2)))
 	}
