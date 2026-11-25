@@ -276,7 +276,8 @@ try {
   v2.ttftModel = {model: "rank-mixture", label: "Experimental TTFT model"};
   const table = dayBucketsTable(v2);
   check("a bucket the model sized is marked", (table.match(/\u2020/g) || []).length === 2, (table.match(/\u2020/g) || []).length);
-  check("the model is said", typeof dayModelsText === "function" && /Experimental TTFT model: a bucket it priced is marked \u2020/.test(dayModelsText(v2)));
+  check("the model is said, with what it priced", typeof dayModelsText === "function" && new RegExp(`Experimental TTFT model: priced 1 of the ${v2.summary.counts.sized} sized buckets, each marked †`).test(dayModelsText(v2)),
+    typeof dayModelsText === "function" ? dayModelsText(v2) : "no dayModelsText");
   v2.ttftModel.abstained = "spread not calibrated";
   check("an abstained model is said", typeof dayModelsText === "function" && /abstained \(spread not calibrated\); the planner's own/.test(dayModelsText(v2)));
   check("no model, nothing said or marked", typeof dayModelsText === "function" && dayModelsText(plan) === "" && !/\u2020/.test(dayBucketsTable(plan)));

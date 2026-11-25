@@ -2959,6 +2959,7 @@ function renderDay() {
   el("daynotes").innerHTML = d.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(d.banner)}</li>`;
   el("dayhead").textContent = dayHeadline(d);
   el("daymodels").textContent = dayModelsText(d);
+  el("daymodels").hidden = !el("daymodels").textContent;
   exportsRow(el("dayexports"), "dayplan", [["CSV", "text/csv", () => dayHoursCSV(d)], ["JSON", "application/json", () => JSON.stringify(d, null, 2) + "\n"]]);
   dayHover(svg, g);
 }

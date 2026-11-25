@@ -160,21 +160,30 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 const dagger = "\u2020"
 
 // dayModelsText is the experimental models a plan was asked to price
-// with, a line each, "" with none: abstained, or what the dagger marks.
+// with, a line each, "" with none: abstained, or how many sized buckets
+// each priced, marked with the dagger; the notes say why the rest are the
+// planner's own.
 func dayModelsText(p *whatifapi.DayPlanResponse) string {
 	var b strings.Builder
-	line := func(label, abstained string) {
+	line := func(label, abstained string, flag whatif.Flag) {
 		if abstained != "" {
 			fmt.Fprintf(&b, "%s: abstained (%s); the planner's own prices every bucket\n", label, abstained)
 			return
 		}
-		fmt.Fprintf(&b, "%s: priced where marked %s (not validated: OUTSIDE VALIDATED REGION)\n", label, dagger)
+		n := 0
+		for _, bk := range p.Buckets {
+			if bk.Limit != nil && slices.Contains(bk.Limit.Flags, string(flag)) {
+				n++
+			}
+		}
+		fmt.Fprintf(&b, "%s: priced %d of the %d sized buckets, each marked %s (not validated: OUTSIDE VALIDATED REGION); the notes say why the rest are the planner's own\n",
+			label, n, p.Summary.Counts.Sized, dagger)
 	}
 	if m := p.TTFTModel; m != nil {
-		line(m.Label, m.Abstained)
+		line(m.Label, m.Abstained, whatif.RankMixtureTTFT)
 	}
 	if m := p.TPOTModel; m != nil {
-		line(m.Label, m.Abstained)
+		line(m.Label, m.Abstained, whatif.TPOTDistribution)
 	}
 	return b.String()
 }

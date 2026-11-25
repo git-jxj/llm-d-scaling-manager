@@ -419,7 +419,7 @@ func TestMainView_ExperimentalModelMarksEveryExtrapolatedLimit(t *testing.T) {
 	assert.Less(t, extrapolated, checked, "and some is not")
 }
 
-// A day plan is the default TTFT model's, also on inputs resolved with the
+// Unasked (no ExperimentalModels), a day plan is the default TTFT model's, also on inputs resolved with the
 // experimental one: its buckets, whose cycles read no lengths, sit at the
 // window's own shape, where the model prices, yet every figure, refusal and
 // count is the default's, so that no plan mixes a model-priced prefill with

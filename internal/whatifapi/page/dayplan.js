@@ -385,11 +385,15 @@ function dayHoursTable(plan) {
 }
 
 // dayModelsText is the experimental models a day plan was asked to price
-// with, in words: abstained, or what the dagger marks; "" with none.
+// with, in words: abstained, or how many sized buckets each priced, marked
+// with the dagger; "" with none. The notes say why the rest are the
+// planner's own.
 function dayModelsText(plan) {
-  return [plan.ttftModel, plan.tpotModel].filter(Boolean).map(m => m.abstained ?
+  const sized = plan.summary && plan.summary.counts ? plan.summary.counts.sized || 0 : 0;
+  return [[plan.ttftModel, "RankMixtureTTFT"], [plan.tpotModel, "TPOTDistribution"]].filter(([m]) => m).map(([m, flag]) => m.abstained ?
     `${m.label}: abstained (${m.abstained}); the planner's own prices every bucket.` :
-    `${m.label}: a bucket it priced is marked ${DAGGER} (not validated: outside the validated region).`).join(" ");
+    `${m.label}: priced ${(plan.buckets || []).filter(b => b.limit && (b.limit.flags || []).includes(flag)).length} of the ${sized} sized buckets, ` +
+      `each marked ${DAGGER} (not validated: outside the validated region); the notes say why the rest are the planner's own.`).join(" ");
 }
 
 // dayBucketsTable is every bucket, the table view of the charts: what the

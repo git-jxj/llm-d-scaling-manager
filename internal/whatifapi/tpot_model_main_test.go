@@ -3,6 +3,7 @@ package whatifapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"slices"
@@ -433,7 +434,7 @@ func TestMainViewTPOT_SelfCheckPricesWithTheModel(t *testing.T) {
 	assert.Positive(t, on.TPOT.p90Steps, "with it the p90 is the model's, scored")
 }
 
-// A day plan is the default's also on inputs resolved with the
+// Unasked (no ExperimentalModels), a day plan is the default's also on inputs resolved with the
 // experimental TPOT model, alone or beside the TTFT model: its buckets,
 // whose cycles read no lengths, sit at the window's own shape, where the
 // models price, yet every figure, refusal and count is the default's, so
@@ -506,4 +507,39 @@ func TestDayPlan_ExperimentalTPOTModelLeavesTheDayPlanToTheDefault(t *testing.T)
 	sb, eb := both(true)
 	require.NotEqual(t, sized(size(sb0, eb0.id)), sized(size(sb, eb.id)), "the models size the same inputs otherwise")
 	same("ttft+tpot", plan(sb0, eb0), plan(sb, eb))
+}
+
+// A day plan asked for the experimental models says why each sized bucket
+// a model did not price is the planner's own: a bucket at its own request
+// shape (its cycles read their lengths, as a recording's do), and a TPOT
+// target at the mean, which the TPOT model does not price. A note that
+// counted "0 of N" without the reason would read as a model that failed.
+func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
+	notes := func(s *Server, e *inputsEntry, slo *SLORequest) (DayPlanResponse, string) {
+		t.Helper()
+		body, err := s.dayPlan(context.Background(), DayPlanRequest{InputsID: e.id, ExperimentalModels: true, SLO: slo})
+		require.NoError(t, err)
+		var out DayPlanResponse
+		require.NoError(t, json.Unmarshal(body, &out))
+		return out, strings.Join(out.Notes, "\n")
+	}
+
+	s, e := mainEntry(t, true)
+	out, text := notes(s, e, &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}})
+	require.Positive(t, out.Summary.Counts.Sized)
+	require.NotNil(t, out.TTFTModel)
+	require.Empty(t, out.TTFTModel.Abstained)
+	assert.Contains(t, text, fmt.Sprintf("priced 0 of the %d sized buckets", out.Summary.Counts.Sized), "at their own shape, no bucket is the model's")
+	assert.Contains(t, text, fmt.Sprintf("the model prices the source's own request shape, not a stated one (%d)", out.Summary.Counts.Sized))
+
+	s, e = tpotEntry(t, true, 64)
+	for i := range e.series {
+		e.series[i].HasShape = false
+	}
+	out, text = notes(s, e, &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}, TPOT: &Objective{Statistic: "mean", Target: f64(tpotTarget)}})
+	require.Positive(t, out.Summary.Counts.Sized)
+	require.NotNil(t, out.TPOTModel)
+	require.Empty(t, out.TPOTModel.Abstained)
+	assert.Contains(t, text, fmt.Sprintf("priced 0 of the %d sized buckets", out.Summary.Counts.Sized), "a mean TPOT is the planner's")
+	assert.Contains(t, text, fmt.Sprintf("the model prices p90 and p95, not mean (%d)", out.Summary.Counts.Sized))
 }

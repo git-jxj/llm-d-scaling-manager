@@ -1168,6 +1168,18 @@ model (`ttftModel`, `tpotModel`, as the inputs fitted them) and counts in a
 note the buckets it priced. A model prices the source's own traffic, so a
 bucket at a shape of its own or a stated term stays the planner's; a model
 that abstained (under 12 hours of window) leaves every bucket the planner's.
+The note gives, per model, why each sized bucket it did not price is the
+planner's, as the model's own `notPricedAt` reads the bucket's knobs.
+
+**Open: the bucket's own shape.** The models are fitted at the window's
+pooled request shape, so a bucket sized at its own observed shape is the
+planner's, as a stated shape is. A recording's cycles read their lengths,
+so on a real recording every bucket is at its own shape and the models
+price none of them: the 65 of 65 buckets the TTFT model sized on the
+synthetic 13-hour source were at the window's shape. Pricing a bucket at
+its observed shape would read the model off the shape it was fitted at;
+it needs its own validation before a day plan takes it. Likewise the TPOT
+model prices a p90 or p95 TPOT target, not the mean.
 
 ## Decisions
 

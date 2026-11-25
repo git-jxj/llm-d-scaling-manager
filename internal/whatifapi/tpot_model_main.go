@@ -355,8 +355,8 @@ func ApplyTPOTModel(res *Resolved, out *ReportResponse, q ReportQuery) *TPOTMode
 }
 
 // experimentalModels is the experimental models a source was resolved
-// with, either nil: what a plan and a size price with, and a day plan,
-// which is the default's, does not (sizer.models).
+// with, either nil: what a plan and a size price with, and a day plan
+// asked for them (DayPlanRequest.ExperimentalModels; sizer.models).
 type experimentalModels struct {
 	ttft *mainMixture
 	tpot *mainTPOT

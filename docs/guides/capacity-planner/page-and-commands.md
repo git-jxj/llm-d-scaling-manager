@@ -921,9 +921,14 @@ carries its flag (`RankMixtureTTFT`, `TPOTDistribution`) on its limit, its
 needed replicas are marked † on the page and in the command's hours table,
 and the plan names each model, with how many buckets it priced. A model
 prices the source's own traffic: a bucket at a request shape of its own, or
-a stated term, stays the planner's own. On a window under 12 hours a model
-abstains, the plan says so, and every figure is the planner's own. Not
-validated: every figure a model sets reads OUTSIDE VALIDATED REGION.
+a stated term, stays the planner's own. A recording whose cycles read their
+request lengths sizes every bucket at its own shape, so on it the models
+price no bucket; they price only buckets sized at the window's shape. The
+TPOT model prices a p90 or p95 TPOT target, not the mean. The plan's notes
+say, for each model, why each bucket it did not price is the planner's. On
+a window under 12 hours a model abstains, the plan says so, and every figure
+is the planner's own. Not validated: every figure a model sets reads
+OUTSIDE VALIDATED REGION.
 
 From the command line, on the sample recording (about an hour, so two hours
 in the table):
