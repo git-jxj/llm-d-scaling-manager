@@ -44,7 +44,7 @@ func registerSLOModelInputMetrics(registry prometheus.Registerer) error {
 			constants.LabelLearner))
 	sloModelCoverage = gauge(constants.LLMSMSLOModelCoverage,
 		"SLO analyzer, shadow only (switch slo-v2-inputs): 1 for why an objective's v2 latency model stands where it "+
-			"does for a model, 0 for the others: priced, abstained, signal-missing, window-short, not-built.",
+			"does for a model, 0 for the others: priced, abstained, signal-missing, window-short, model-limit.",
 		withInstance(constants.LabelNamespace, constants.LabelModelName, constants.LabelObjective, constants.LabelReason))
 	sloModelInputMissing = gauge(constants.LLMSMSLOModelInputMissing,
 		"SLO analyzer, shadow only (switch slo-v2-inputs): 1 for each input of an objective's v2 latency model the "+

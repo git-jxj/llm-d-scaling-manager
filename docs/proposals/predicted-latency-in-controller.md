@@ -154,7 +154,7 @@ the role (or the router) read this cycle. It lives beside the models, so the
 planner can report the same names for a recording. The slo analyzer publishes
 `llmsm_slo_model_input_missing{objective,signal}` and the one-hot
 `llmsm_slo_model_coverage{objective,reason}` (`priced`, `abstained`,
-`signal-missing`, `window-short`). A failed query reads the same
+`signal-missing`, `window-short`, `model-limit`). A failed query reads the same
 as a series not exported: missing, never zero.
 
 ### Cost per cycle on a large fleet
@@ -170,7 +170,7 @@ one core of a 22-core laptop, other work running):
 | TTFT refit (rank mixture, folds, held-out score) | 2.7 s | every 30 min per model, in the background, one model at a time | 270 s per 30 min: 15 % of one core, never on the decision path |
 | TPOT refit and the default R_q | 0.05 s | with the TTFT refit | 5 s per 30 min |
 | pricing: the mean, p90, p95 and the objective's percentile from one set of draws, and the prefill ask | 25 ms | at most once a minute per model | 2.5 s per minute, about 0.6 s per 15 s cycle, on the engine's loop |
-| the window | 13 MiB per model | held | 1.3 GiB |
+| the window | 13 MiB per model | held | 1.3 GiB; held for 16 models at most (`ModelMaxWindows`): 208 MiB |
 | queries | `6N` a cycle, `N` the namespaces | every cycle | 120 a cycle for 20 namespaces |
 
 The budgets the first draft set (200 ms per refit, 5 ms per pricing, 10 MB
@@ -182,8 +182,12 @@ one model at a time (a refit over 5 s spaces the next one twice as far),
 and a model is priced at most once a minute. The memory is the open cost:
 holding the histograms as slices, or the window as pooled steps, would cut
 it, at the price of a change to the fit cores' inputs that the parity test
-would then hold. A fleet of P/D models that large should run the v2 models
-on a subset (passive or shadow), as it does today.
+would then hold. Until then the analyzer keeps the windows of at most 16
+models at once (`ModelMaxWindows`): the v2 models run for every passive
+model, and for every model with the utilization share in shadow, and 100
+windows would not fit in the controller's 512 MiB limit
+(`config/base/manager`). A model past the bound reads coverage
+`model-limit` until a window is freed.
 
 ## Packages and import direction
 
@@ -227,7 +231,9 @@ on a subset (passive or shadow), as it does today.
    percentile) and the prefill ask: the least pods, up to four times those
    serving, at which the objective's percentile meets the target.
 7. Coverage is published: `priced`, `abstained`, `window-short` (under 12 h
-   for the TTFT model, 2 h for the TPOT model) or `signal-missing`.
+   for the TTFT model, 2 h for the TPOT model), `signal-missing`, or
+   `model-limit` (the analyzer keeps the windows of `ModelMaxWindows`, 16,
+   models at once).
 8. In `Analyze`, for a model observed on this cycle only (so a replay
    publishes what it did before), the slo analyzer publishes the default's
    TTFT mean, p90 and p95 beside its objective's percentile, the v2 TTFT,

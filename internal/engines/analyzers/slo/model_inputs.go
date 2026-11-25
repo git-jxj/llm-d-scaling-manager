@@ -1,6 +1,11 @@
 package slo
 
 import (
+	"fmt"
+	"runtime/debug"
+
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
@@ -71,29 +76,51 @@ type ModelCoverage struct {
 // window-short (model_learners.go). A refit runs in the background, and a
 // cycle after it prices with what it fitted. The figures are published by Analyze on
 // the same cycle, beside the default model's. The engine decides which
-// models it is called for (the switch, and the controller's mode).
-func (a *Analyzer) ObserveModelInputs(in domain.AnalyzerInput, router *domain.RouterLatency) map[string]ModelCoverage {
+// models it is called for (the switch, and the controller's mode), and
+// calls it outside any analyzer's recovery: a panic here is logged and
+// costs the model's v2 figures for the cycle, never the controller, and
+// nil is returned.
+func (a *Analyzer) ObserveModelInputs(in domain.AnalyzerInput, router *domain.RouterLatency) (out map[string]ModelCoverage) {
+	defer func() {
+		if r := recover(); r != nil {
+			ctrl.Log.WithName("slo").Error(fmt.Errorf("panic: %v\n%s", r, debug.Stack()),
+				"v2 latency models: observing the cycle failed; the model has no v2 figures this cycle",
+				"namespace", in.Namespace, "modelID", in.ModelID)
+			out = nil
+		}
+	}()
 	now := a.now()
 	missing := whatif.MissingModelInputs(in, router, "", "")
-	a.mu.Lock()
-	w, c, due := a.observeModelLocked(in, router, now)
-	a.mu.Unlock()
-	if due && a.startModelRefit(in.Namespace, in.ModelID, w, now) {
-		a.mu.Lock()
-		a.priceModelLocked(w, in, &c, now)
-		a.mu.Unlock()
+	var (
+		w   *modelWindow
+		c   whatif.FitCycle
+		due bool
+	)
+	a.locked(func() { w, c, due = a.observeModelLocked(in, router, now) })
+	reasons := map[string]string{whatif.ObjectiveTTFT: constants.SLOModelModelLimit, whatif.ObjectiveTPOT: constants.SLOModelModelLimit}
+	if w != nil {
+		if due && a.startModelRefit(in.Namespace, in.ModelID, w, now) {
+			a.locked(func() { a.priceModelLocked(w, in, &c, now) })
+		}
+		a.locked(func() {
+			reasons = map[string]string{whatif.ObjectiveTTFT: w.now.ttftReason, whatif.ObjectiveTPOT: w.now.tpotReason}
+		})
 	}
-	a.mu.Lock()
-	reasons := map[string]string{whatif.ObjectiveTTFT: w.now.ttftReason, whatif.ObjectiveTPOT: w.now.tpotReason}
-	a.mu.Unlock()
-	out := make(map[string]ModelCoverage, len(modelLearners))
+	out = make(map[string]ModelCoverage, len(modelLearners))
 	for _, l := range modelLearners {
 		c := ModelCoverage{Learner: l.name, Reason: reasons[l.objective], Missing: missing[l.objective]}
-		if len(c.Missing) > 0 && c.Reason != constants.SLOModelPriced {
+		if len(c.Missing) > 0 && c.Reason != constants.SLOModelPriced && c.Reason != constants.SLOModelModelLimit {
 			c.Reason = constants.SLOModelSignalMissing
 		}
 		out[l.objective] = c
 		metrics.RecordSLOModelInputs(in.Namespace, in.ModelID, l.objective, c.Reason, c.Missing)
 	}
 	return out
+}
+
+// locked runs f under a.mu, released however f returns.
+func (a *Analyzer) locked(f func()) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	f()
 }

@@ -39,12 +39,16 @@ const (
 	// to fit yet (the TTFT model calibrates its spread on 12 hours, the
 	// TPOT model fits on two).
 	SLOModelWindowShort = "window-short"
+	// SLOModelModelLimit: the analyzer already keeps the v2 models' windows
+	// of as many models as it holds at once (slo.ModelMaxWindows), so this
+	// model is not fitted until one of them leaves.
+	SLOModelModelLimit = "model-limit"
 )
 
 // SLOModelReasons is every coverage reason, in the order the series are
 // published.
 var SLOModelReasons = []string{
-	SLOModelPriced, SLOModelAbstained, SLOModelSignalMissing, SLOModelWindowShort,
+	SLOModelPriced, SLOModelAbstained, SLOModelSignalMissing, SLOModelWindowShort, SLOModelModelLimit,
 }
 
 // The statistics of llmsm_slo_predicted_ttft_seconds and

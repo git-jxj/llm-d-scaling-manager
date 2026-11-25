@@ -1,10 +1,14 @@
 package slo
 
 import (
+	"fmt"
 	"maps"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"time"
+
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
@@ -67,6 +71,15 @@ const (
 	// modelMaxCycles bounds a window's cycles, whatever the interval: the
 	// window at a 5 s cycle.
 	modelMaxCycles = int(ModelWindow / (5 * time.Second))
+	// ModelMaxWindows is the most models whose v2 windows the analyzer keeps
+	// at once. A window of a large P/D model at the default 15 s cycle holds
+	// about 13 MiB (model_cost_test.go), and the v2 models run for every
+	// passive model and, with the utilization share in shadow, for every
+	// model, so without a bound a large fleet would hold more than the
+	// controller's memory limit (512 MiB in config/base/manager). A model
+	// over the bound reads coverage model-limit until a window is freed:
+	// its model leaves (evictStale) or is forgotten.
+	ModelMaxWindows = 16
 	// ModelHoldFor is how long a fit that passed is held while the refits
 	// after it do not.
 	ModelHoldFor = time.Hour
@@ -259,12 +272,17 @@ func cycleRate(c *whatif.FitCycle) float64 {
 
 // observeModelLocked files one cycle into the model's window and prices it
 // with the fits in use; it returns the window, the cycle, and whether a
-// refit is due (refitModel, run off the lock). Callers hold a.mu.
+// refit is due (refitModel, run off the lock). The window is nil for a new
+// model while the analyzer keeps a.modelMaxWindows windows already
+// (ModelMaxWindows). Callers hold a.mu.
 func (a *Analyzer) observeModelLocked(in domain.AnalyzerInput, router *domain.RouterLatency, now time.Time) (*modelWindow, whatif.FitCycle, bool) {
 	key := reportModel(in.Namespace, in.ModelID)
 	pv, dv := modelPair(in)
 	pArgs, dArgs := a.engineParams(in.Namespace, in.ModelID, pv).ArgsTag(), a.engineParams(in.Namespace, in.ModelID, dv).ArgsTag()
 	w := a.models[key]
+	if w == nil && len(a.models) >= a.modelMaxWindows {
+		return nil, whatif.FitCycle{}, false
+	}
 	if w == nil || w.prefill != pv || w.decode != dv || w.prefillArgs != pArgs || w.decodeArgs != dArgs {
 		if w != nil && len(w.cycles) > 0 {
 			a.noteModelForgottenLocked(in.Namespace, in.ModelID, w, learn.ByArguments)
@@ -305,32 +323,7 @@ func (a *Analyzer) refitModel(namespace, modelID string, w *modelWindow, now tim
 	a.mu.Unlock()
 
 	start := time.Now()
-	var tt whatif.MixtureWindowFit
-	if pv != "" {
-		tt = whatif.FitMixtureWindow(cycles, ModelStep, a.engineParams(namespace, modelID, pv).PrefillSlots(), modelHeldOutTolerance,
-			whatif.DefaultRankMixtureStratified)
-	} else {
-		tt = whatif.MixtureWindowFit{Fitted: whatif.AbstainedRankMixture("the model has not one prefill variant")}
-	}
-	var tp whatif.TPOTWindowFit
-	if dv != "" {
-		slots, spec := a.engineParams(namespace, modelID, dv).DecodeSlots()
-		tp = whatif.FitTPOTWindow(cycles, ModelStep, slots, spec)
-	} else {
-		tp = whatif.TPOTWindowFit{Abstained: "the model has not one decode variant"}
-	}
-	var windows []whatif.TPOTWindow
-	for i := range cycles {
-		if tw, ok := whatif.TPOTWindowOf(cycles[i].Router); ok {
-			windows = append(windows, tw)
-		}
-	}
-	var defaultRatio [2]float64
-	for i, q := range []float64{0.9, 0.95} {
-		if r, _, u := whatif.TPOTRatioFromWindows(windows, q); u == nil {
-			defaultRatio[i] = r.Value
-		}
-	}
+	tt, tp, defaultRatio := a.fitModel(namespace, modelID, pv, dv, cycles)
 	cost := time.Since(start)
 
 	a.mu.Lock()
@@ -364,6 +357,53 @@ func (a *Analyzer) refitModel(namespace, modelID string, w *modelWindow, now tim
 	default:
 		w.tpot.held = true
 	}
+}
+
+// fitMixtureWindow is whatif.FitMixtureWindow, the TTFT learner's fit; a
+// test replaces it to fail a refit.
+var fitMixtureWindow = whatif.FitMixtureWindow
+
+// fitModel fits a model's two learners on cycles, the window of the prefill
+// variant pv and the decode variant dv, and reads the default model's R_q
+// from the same window. A panic in a fit core fails the refit, not the
+// controller: it is logged and both fits abstain, so the fits in use are
+// held as after any refit that does not pass.
+func (a *Analyzer) fitModel(namespace, modelID, pv, dv string, cycles []whatif.FitCycle) (
+	tt whatif.MixtureWindowFit, tp whatif.TPOTWindowFit, defaultRatio [2]float64) {
+	defer func() {
+		if r := recover(); r != nil {
+			ctrl.Log.WithName("slo").Error(fmt.Errorf("panic: %v\n%s", r, debug.Stack()),
+				"v2 latency models: the refit failed; the fits in use are held", "namespace", namespace, "modelID", modelID)
+			why := fmt.Sprintf("the refit failed: %v", r)
+			tt = whatif.MixtureWindowFit{Fitted: whatif.AbstainedRankMixture(why)}
+			tp = whatif.TPOTWindowFit{Abstained: why}
+			defaultRatio = [2]float64{}
+		}
+	}()
+	if pv != "" {
+		tt = fitMixtureWindow(cycles, ModelStep, a.engineParams(namespace, modelID, pv).PrefillSlots(), modelHeldOutTolerance,
+			whatif.DefaultRankMixtureStratified)
+	} else {
+		tt = whatif.MixtureWindowFit{Fitted: whatif.AbstainedRankMixture("the model has not one prefill variant")}
+	}
+	if dv != "" {
+		slots, spec := a.engineParams(namespace, modelID, dv).DecodeSlots()
+		tp = whatif.FitTPOTWindow(cycles, ModelStep, slots, spec)
+	} else {
+		tp = whatif.TPOTWindowFit{Abstained: "the model has not one decode variant"}
+	}
+	var windows []whatif.TPOTWindow
+	for i := range cycles {
+		if tw, ok := whatif.TPOTWindowOf(cycles[i].Router); ok {
+			windows = append(windows, tw)
+		}
+	}
+	for i, q := range []float64{0.9, 0.95} {
+		if r, _, u := whatif.TPOTRatioFromWindows(windows, q); u == nil {
+			defaultRatio[i] = r.Value
+		}
+	}
+	return tt, tp, defaultRatio
 }
 
 // priceModelLocked prices the cycle c with the fits in use: the v2 TTFT at
@@ -594,10 +634,12 @@ func (a *Analyzer) startModelRefit(namespace, modelID string, w *modelWindow, no
 	w.fitting = true
 	a.mu.Unlock()
 	go func() {
+		defer func() {
+			a.mu.Lock()
+			a.modelRefitting = false
+			a.mu.Unlock()
+		}()
 		a.refitModel(namespace, modelID, w, now)
-		a.mu.Lock()
-		a.modelRefitting = false
-		a.mu.Unlock()
 	}()
 	return false
 }

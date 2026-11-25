@@ -132,9 +132,9 @@ func BenchmarkModelLearners_PriceCycle(b *testing.B) {
 	}
 }
 
-// One model's window at its largest stays under 16 MiB: 100 such models fit
-// in the controller's memory beside the rest of its state. The figure is
-// logged for the cost table.
+// One model's window at its largest stays under 16 MiB: the ModelMaxWindows
+// windows the analyzer keeps at once fit in the controller's 512 MiB limit
+// beside the rest of its state. The figure is logged for the cost table.
 func TestModelLearners_WindowMemoryIsBounded(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()

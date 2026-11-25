@@ -1615,7 +1615,11 @@ keeps the previous one for an hour. The window is forgotten when the
 model's prefill or decode variant or its engine arguments change, on the
 `llm-d.ai/forget-learned-state` annotation, and after the state timeout
 without a cycle. It is not kept across a controller restart: after one, the
-window fills again.
+window fills again. The controller keeps the windows of at most 16 models at
+once, about 13 MiB each for a large P/D model, so that a fleet of passive
+models stays inside the controller's 512 MiB memory limit. A model past that
+reads coverage `model-limit` and publishes no v2 figures until a window is
+freed: a model leaves, or is forgotten.
 
 Labels are `namespace` (the model's, scraped as `exported_namespace`) and
 `model_name`, plus `controller_instance` when `CONTROLLER_INSTANCE` is set.
@@ -1624,7 +1628,7 @@ longer reconciled, and every series when a cycle reconciles no model.
 
 | metric | type | labels | value |
 | --- | --- | --- | --- |
-| `llmsm_slo_model_coverage` | gauge | `objective`, `reason` | `1` for the one reason that holds, `0` for the others: `priced`; `abstained` (the model's checks refused the window, as the planner would, or the current rate); `signal-missing` (an input was not read this cycle and no fit prices); `window-short` (the window does not yet hold what the model fits on) |
+| `llmsm_slo_model_coverage` | gauge | `objective`, `reason` | `1` for the one reason that holds, `0` for the others: `priced`; `abstained` (the model's checks refused the window, as the planner would, or the current rate); `signal-missing` (an input was not read this cycle and no fit prices); `window-short` (the window does not yet hold what the model fits on); `model-limit` (the controller already runs the v2 models for 16 models, so this one waits for one of them to leave) |
 | `llmsm_slo_model_input_missing` | gauge | `objective`, `signal` | `1` for each input not read this cycle; absent for one that was |
 | `llmsm_slo_predicted_ttft_seconds` | gauge | `variant_name`, `statistic` (`mean`, `p90`, `p95`, and the objective's percentile), `learner` | the TTFT at the prefill variant's current rate. `learner="slo"`: the analyzer's own model. `learner="ttft-mixture"`: the v2 rank mixture, at the serving prefill pods |
 | `llmsm_slo_predicted_tpot_seconds` | gauge | `variant_name`, `statistic` (`mean`, `p90`, `p95`), `learner` | the per-request TPOT of a decode variant (the serving variant on a fleet with no decode role) at its current load. `learner="slo"`: the mean is the analyzer's ITL line at the variant's current KV fill, and p90 and p95 are that mean times R_q, the planner's ratio read from the router's TPOT histograms over the window. `learner="tpot-distribution"`: p90 and p95 of the v2 distribution, placed around the same mean, which it does not publish again |

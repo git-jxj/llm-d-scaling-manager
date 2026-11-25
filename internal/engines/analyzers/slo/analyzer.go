@@ -266,6 +266,9 @@ type Analyzer struct {
 	modelRefitEvery      time.Duration
 	modelRefitBackground bool
 	modelRefitting       bool
+	// modelMaxWindows is the most models whose v2 windows are kept at
+	// once: ModelMaxWindows from the constructor.
+	modelMaxWindows int
 }
 
 // The batch cap's readers in this analyzer (issue ev-shindin/llm-scaling-manager#420). Each took the cap
@@ -363,6 +366,7 @@ func New(router RouterLatencySource, store *capacity.Store) *Analyzer {
 		models:               make(map[string]*modelWindow),
 		modelRefitEvery:      ModelRefitEvery,
 		modelRefitBackground: true,
+		modelMaxWindows:      ModelMaxWindows,
 
 		ttftImbalanceAcrossCounts: whatif.DefaultImbalanceAcrossCounts,
 	}

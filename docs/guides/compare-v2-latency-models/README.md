@@ -66,6 +66,8 @@ q "llmsm_slo_model_input_missing{exported_namespace=\"${NAMESPACE}\", model_name
   capacity planner gives on a recording of it), for instance prompts of one
   length, or a prefill engine whose `--max-num-seqs` the controller cannot
   read.
+- `model-limit`: the controller already runs the v2 models for 16 models,
+  the most it holds at once. This one starts when one of them leaves.
 
 ### 3. Compare the TTFT
 
