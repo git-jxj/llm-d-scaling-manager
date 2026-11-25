@@ -251,9 +251,21 @@ The `kvPerRequest` term says where its figure came from:
 A source that did not see enough load cannot learn every term, and the page
 then shows refusals instead of numbers. Open **Assume a term the source did
 not learn**, above the tabs, and type a value: the prefill rate V_P, the fixed latency a, the
-prompt cv, the router hop, or decode's ITL B. The learned value, or the reason
-it is missing, is shown under each box. A typed value flags every figure that
-rests on it. [Each reason and its fix](troubleshooting.md#refused-figures).
+prompt cv, the router hop, or decode's ITL B. A refused term's box is empty,
+with the reason under it. A typed value flags every figure that rests on it.
+[Each reason and its fix](troubleshooting.md#refused-figures).
+
+A box whose value the source learned shows that value, muted and tagged
+**learned**: the boxes above, the output length (the observed one) and R_q
+(the one the plan priced, at a percentile TPOT). A learned value is not an
+assumption: the page does not send it, the server uses its own, and no figure
+is flagged for it. Edit the box and the value is yours: tagged **assumed**,
+sent, and flagged, as before; **Use learned** beside it puts the learned value
+back. Emptying the box, or typing the learned value, does the same. A V_P
+learned from the served peak is tagged **lower bound**: the note says the real
+speed is likely higher, and prefill is not sized until you type a V_P (that
+value too, typed, is yours). A link or a saved scenario that carries a value keeps
+it as an assumption.
 
 The box opens by itself when a term is refused, and when V_P is only a lower
 bound: the prefill pods never queued, so the source saw their load, not their

@@ -116,6 +116,16 @@ input[type=number] { width: 80px; font-variant-numeric: tabular-nums; }
 .row { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; margin: 8px 0; }
 .assume { grid-column: 1 / -1; margin-top: 0; }
 .assume summary { font-size: 13px; }
+/* A box holding the value the source learned: muted, tagged "learned"
+   (or "lower bound"), and not sent; typed, it is tagged "assumed". */
+.boxrow { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+input.learned { color: var(--muted); font-style: italic; }
+.tag { font-size: 11px; color: var(--text-secondary); border: 1px solid var(--control-border); border-radius: 6px; padding: 0 5px; }
+.tag:empty { display: none; }
+.tag.assumed { color: var(--text-primary); font-weight: 600; }
+.tag.lowerBound { color: var(--text-warning); }
+/* 24 px high: a target a thumb can hit (WCAG 2.2 target size). */
+.reset { font-size: 11px; padding: 1px 6px; min-height: 24px; }
 
 .tabs { display: flex; gap: 4px; }
 .tab { font-size: 14px; padding: 7px 16px; border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0;
