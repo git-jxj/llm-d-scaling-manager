@@ -832,6 +832,7 @@ cache
 cacheKey.name
 cacheKey.namespace
 cached
+calibrated
 called
 callers
 calm
@@ -2252,6 +2253,7 @@ nodes
 nominal
 nominal-lent-out
 non-nil
+non-queue
 none
 noneArrivedSince
 none|
@@ -2639,6 +2641,7 @@ ran
 range
 rank
 rank-mixture
+rank-mixture-nl-line
 ranks
 rate
 rate-at-tpot
@@ -3039,6 +3042,7 @@ side
 sidecar
 sight
 sightings
+sigma
 sigmaOK
 signal
 silent
