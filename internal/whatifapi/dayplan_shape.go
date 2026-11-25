@@ -165,6 +165,11 @@ type bucketHists struct {
 	mixture                       whatif.MixtureStep
 	mixtureOK                     bool
 	prompt, computed, computedP90 float64
+	// lengths is the window's mean prompt and output length as its cycles
+	// read them (bucketShape), lengthsOK where they read any: the
+	// planner's own terms at the bucket's shape over the same window.
+	lengths   [2]float64
+	lengthsOK bool
 }
 
 // bucketShapeWindow is the buckets [from, to] around bucket i whose
@@ -198,8 +203,13 @@ func (q *dayQuestion) bucketHistsOf(bs []dayBucket, req []float64, from, to int,
 	e := q.e
 	lo, hi := bs[from].start, bs[to].start.Add(step)
 	h := &bucketHists{shape: DayModelShape{From: lo, To: hi}}
+	var samples []SeriesSample
 	for i := from; i <= to; i++ {
 		h.shape.Requests += req[i]
+		samples = append(samples, bs[i].samples...)
+	}
+	if p, o, _, ok := bucketShape(samples); ok {
+		h.lengths, h.lengthsOK = [2]float64{p, o}, true
 	}
 	// The cycles are in [lo, hi): mixtureWindow reads (from, to].
 	a, b := lo.Add(-time.Nanosecond), hi.Add(-time.Nanosecond)
@@ -256,6 +266,7 @@ func (m *experimentalModels) atBucket(h *bucketHists) *experimentalModels {
 	if m.ttft.priced() && h != nil && h.mixtureOK {
 		c := *m.ttft
 		c.pooled, c.bucket = h.mixture, true
+		c.prices, c.atTarget = map[mixturePriceKey]mixturePrice{}, map[mixturePriceKey]mixturePrice{}
 		out.ttft = &c
 	}
 	if m.tpot.priced() {
@@ -300,7 +311,7 @@ func (q *dayQuestion) modelShapeOf(bs []dayBucket, req []float64, i int) (*bucke
 func modelShapeNote(shapes map[string]int) string {
 	return fmt.Sprintf("With the experimental models, a bucket is priced at its own rate and its own request shape: the TTFT model draws "+
 		"from the prompt and computed-token histograms (the prefix hit) of a window around the bucket of at least %.0f requests and %.0f "+
-		"minutes (at most %.0f), as a backtest prices each step, and buckets whose shape so read agrees on the 5%% grid share the first one's "+
+		"minutes (at most %.0f), as a backtest prices each step, and the planner's terms take the lengths over the same window; buckets whose shape so read agrees on the 5%% grid share the first one's "+
 		"priced fleets; the TPOT model keeps its ratio at the window's output lengths. %d buckets were priced at their own shape; %d at the "+
 		"window's (WindowShape, %s), their shape outside the range the TTFT model's fit steps served (their mean prompt and computed tokens' "+
 		"rate-weighted 5th to 95th percentile, widened by %g each way, and their largest computed-token p90; shape.model.outsideFit says "+
@@ -309,14 +320,15 @@ func modelShapeNote(shapes map[string]int) string {
 		MeanRangeMargin, shapes[FlagShapeFewRequests], FlagShapeFewRequests)
 }
 
-// key is h on the 5% shape grid (shapeKnob): its mean prompt and computed
-// tokens and computed-token p90, zero for h nil or not read. Buckets of one
-// key are priced at the first one's histograms.
-func (h *bucketHists) key() [3]float64 {
+// key is h on the 5% shape grid (shapeKnob): its mean computed tokens and
+// computed-token p90, zero for h nil or not read (its prompt is the
+// planner's, on the group's own key). Buckets of one key are priced at the
+// first one's histograms.
+func (h *bucketHists) key() [2]float64 {
 	if h == nil || !h.mixtureOK {
-		return [3]float64{}
+		return [2]float64{}
 	}
-	return [3]float64{shapeKnob(h.prompt), shapeKnob(h.computed), shapeKnob(h.computedP90)}
+	return [2]float64{shapeKnob(h.computed), shapeKnob(h.computedP90)}
 }
 
 // rangeTolerance is the relative rounding a shape figure may sit outside

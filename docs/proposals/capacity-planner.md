@@ -1195,8 +1195,8 @@ prompt length, and the window's shape under-prices its prefill. So the
 plan prices each bucket as a backtest prices a test step, from its own
 measured histograms: the TTFT model draws from the bucket's prompt and
 computed-token histograms (its own prefix hit; with `PrefillHitAtCount`,
-that hit moved to each count). The planner's own terms keep the bucket's
-observed shape on the 5% grid, as a plan without the models. The TPOT
+that hit moved to each count). The planner's own terms take the bucket's
+observed prompt and output lengths over the same window, on the 5% grid. The TPOT
 model keeps its ratio at the window's output lengths and decode spread,
 around the planner's mean TPOT at the bucket's own output length: on the
 held-out steps of a time-split backtest, its ratio at each step's own
@@ -1227,10 +1227,14 @@ what lies outside and the range. The fallback is a pricing choice, not a
 refusal: the models' `notPricedAt` gains no reason.
 
 A bucket priced at its own histograms needs its own sizer, since its
-neighbour's histograms differ even at the same mean. To bound the
-searches, buckets whose shape so read (mean prompt and computed tokens,
-computed-token p90) agrees on the 5% grid share the first one's sizer, as
-buckets of nearly one observed shape share the planner's.
+neighbour's histograms differ even at the same mean, and the model's
+prefill limit is a bisection of some forty priced rates a fleet. To bound
+the searches, buckets whose shape so read (the planner's prompt and output
+lengths, the mean computed tokens and computed-token p90) agrees on the 5%
+grid share the first one's sizer, as buckets of nearly one observed shape
+share the planner's; and a bucket's model keeps every TTFT it priced, by
+prefill count and rate, since its sizer prices the same rates at many
+decode counts.
 
 ## Decisions
 

@@ -1562,10 +1562,10 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 	// their planner's fleets; zero where the window's shape is priced.
 	type groupKey struct {
 		shape [2]float64
-		model [3]float64
+		model [2]float64
 	}
 	groups := map[groupKey]*dayGroup{}
-	groupFor := func(k Knobs, models *experimentalModels, model [3]float64) (*dayGroup, error) {
+	groupFor := func(k Knobs, models *experimentalModels, model [2]float64) (*dayGroup, error) {
 		key := groupKey{[2]float64{k.PromptTokens, k.OutputTokens}, model}
 		if g := groups[key]; g != nil {
 			return g, nil
@@ -1616,7 +1616,7 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 			db.Flags = append(db.Flags, FlagOtherVariantsServed)
 		}
 		k := q.k
-		models, model := q.models, [3]float64{}
+		models, model := q.models, [2]float64{}
 		if p, o, h, ok := bucketShape(b.samples); ok {
 			for i, v := range []float64{p, o} {
 				if lo[i] == 0 || v < lo[i] {
@@ -1637,6 +1637,11 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 						db.Flags = append(db.Flags, FlagWindowShape, flag)
 						break
 					}
+				}
+				if hs != nil && hs.lengthsOK {
+					// The planner's terms at the shape the model reads: over
+					// the same window.
+					p, o = hs.lengths[0], hs.lengths[1]
 				}
 				k.PromptTokens, k.OutputTokens = shapeKnob(p), shapeKnob(o)
 				db.Shape.Source = "bucket"
