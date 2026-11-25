@@ -332,8 +332,10 @@ func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
 			moved = true
 		}
 		if moved {
-			if !slices.Contains(sh.Flags, string(whatif.TPOTDistribution)) {
-				sh.Flags = append(sh.Flags, string(whatif.TPOTDistribution))
+			for _, fl := range flagStrings(mt.tq.report.flags()) {
+				if !slices.Contains(sh.Flags, fl) {
+					sh.Flags = append(sh.Flags, fl)
+				}
 			}
 			line := TPOTModelLabel + " (" + whatif.TPOTRenewalLognormal + ") prices the table's TPOT percentile around its mean"
 			if mt.info.Evidence != "" {

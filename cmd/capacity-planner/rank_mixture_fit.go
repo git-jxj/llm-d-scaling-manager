@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"io"
 	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -65,6 +67,17 @@ func (r rankMixtureFit) check(v2, nlLine bool) error {
 			rankMixtureMinFitWindowFlag)
 	}
 	return nil
+}
+
+// warnKVHoldAlone warns where the KV hold is asked without the
+// remainder's spread, on every command that takes the modes: alone it
+// prices low past the hold.
+func warnKVHoldAlone(warn io.Writer, kvHold, remainderSpread bool) {
+	if kvHold && !remainderSpread {
+		fmt.Fprintln(warn, "capacity-planner: warning: --rank-mixture-kv-hold without --rank-mixture-remainder-spread: "+
+			"held alone it lowers every step priced past the hold, and on a production recording it read one more mean "+
+			"under measured; the two together did not, so give both")
+	}
 }
 
 // window is the shortest fit window asked, 0 at the default.

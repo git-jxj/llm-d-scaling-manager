@@ -5,6 +5,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,4 +75,26 @@ func TestServeV2NLLine_BacktestAndMainView(t *testing.T) {
 func TestV2NLLine_RefusedOffAtReplicas(t *testing.T) {
 	out, code := runCmd(t, "slo-to-rate", "--recording", q32Recording, "--"+experimentalTTFTFlag+"="+experimentalTTFTV2NLLine)
 	assert.Equal(t, 2, code, out)
+}
+
+// serve, like backtest, warns where the KV hold is turned on without the
+// remainder's spread, and is silent with both.
+func TestServeV2NLLine_WarnsOnHoldAlone(t *testing.T) {
+	for name, c := range map[string]struct {
+		spread, warns bool
+	}{"hold alone": {false, true}, "both": {true, false}} {
+		t.Run(name, func(t *testing.T) {
+			f := serveFlags{recordings: q32Dir, listen: "127.0.0.1:0", auth: whatifapi.AuthNone, noSelfCheck: true,
+				rankMixtureTTFT: true, rankMixtureNLLine: true,
+				rankMixtureFit: rankMixtureFit{kvHold: true, remainderSpread: c.spread, minFitWindow: whatif.MinSpreadFitWindow}}
+			var warn strings.Builder
+			_, err := f.handler(newFlags("serve", io.Discard), &warn)
+			require.NoError(t, err)
+			if c.warns {
+				assert.Contains(t, warn.String(), "--rank-mixture-kv-hold without --rank-mixture-remainder-spread")
+			} else {
+				assert.NotContains(t, warn.String(), "--rank-mixture-kv-hold")
+			}
+		})
+	}
 }

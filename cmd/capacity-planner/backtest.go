@@ -180,11 +180,7 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	if err := f.tpotFit.check(tpotV2); err != nil {
 		return err
 	}
-	if f.rankMixtureKVHold && !f.rankMixtureRemainderSpread {
-		fmt.Fprintln(warn, "capacity-planner: warning: --rank-mixture-kv-hold without --rank-mixture-remainder-spread: "+
-			"held alone it lowers every step priced past the hold, and on a production recording it read one more mean "+
-			"under measured; the two together did not, so give both")
-	}
+	warnKVHoldAlone(warn, f.rankMixtureKVHold, f.rankMixtureRemainderSpread)
 	ctrllog.SetLogger(logr.Discard())
 	req, err := f.request()
 	if err != nil {

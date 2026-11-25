@@ -295,6 +295,7 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	if err := f.tpotFit.check(tpotV2); err != nil {
 		return nil, err
 	}
+	warnKVHoldAlone(warn, f.rankMixtureFit.kvHold, f.rankMixtureFit.remainderSpread)
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed, experimentalTTFT: f.experimentalTTFT,
 		rankMixture: f.rankMixtureTTFT, tpotDistribution: tpotV2, replay: f.replay}
 	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlannerVersion: plannerVersion(), SelfCheck: defaultSelfCheck && !f.noSelfCheck, PlanBudget: f.planBudget,

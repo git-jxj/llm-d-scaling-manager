@@ -369,8 +369,8 @@ only):
   read within with both off. Use the two together.
 
 The hold given without the remainder spread is not refused, so each can
-still be compared alone, but `backtest` prints a warning and the assumed
-line says so.
+still be compared alone, but `backtest`, `serve`, `at-replicas` and
+`day-plan` print a warning and the backtest's assumed line says so.
 
 The 12-hour minimum, for v2 and the variant alike, is a default:
 `--rank-mixture-min-fit-window` (`rankMixtureMinFitWindow`) lowers it, on

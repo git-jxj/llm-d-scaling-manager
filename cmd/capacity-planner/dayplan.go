@@ -130,6 +130,7 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	if err := f.tpotFit.check(f.tpotDistribution); err != nil {
 		return err
 	}
+	warnKVHoldAlone(warn, f.rankMixtureFit.kvHold, f.rankMixtureFit.remainderSpread)
 	if (f.rankMixtureTTFT || f.tpotDistribution) && f.recording == "" {
 		return usagef("--%s=v2 and --%s=v2 fit their model on a --recording", experimentalTTFTFlag, experimentalTPOTFlag)
 	}

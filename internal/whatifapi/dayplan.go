@@ -895,8 +895,9 @@ func dayQuestionOf(e *inputsEntry, req DayPlanRequest) (*dayQuestion, error) {
 	q.e = e
 	if req.ExperimentalModels {
 		if q.models = e.models(); q.models == nil {
-			return nil, InputErrorf("experimentalModels: the inputs were resolved with no experimental model; resolve them with ttftModel %q "+
-				"or tpotModel %q (or start the server with --experimental-ttft=v2 or --experimental-tpot=v2)", whatif.QueueRankMixture, whatif.TPOTRenewalLognormal)
+			return nil, InputErrorf("experimentalModels: the inputs were resolved with no experimental model; resolve them with ttftModel %q or %q "+
+				"or tpotModel %q (or start the server with --experimental-ttft=v2 or =v2nl-line, or --experimental-tpot=v2)",
+				whatif.QueueRankMixture, whatif.QueueRankMixtureNLLine, whatif.TPOTRenewalLognormal)
 		}
 	}
 	q.lead = DayLeads{Prefill: leadOf(q.lead.Prefill, e.doc.Fleet.Prefill), Decode: leadOf(q.lead.Decode, &e.doc.Fleet.Decode)}

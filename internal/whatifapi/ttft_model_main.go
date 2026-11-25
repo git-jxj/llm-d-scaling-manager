@@ -430,6 +430,9 @@ func (f *mixtureFleet) flags() []whatif.Flag {
 // RankMixtureTTFT, and RankMixtureShortFitWindow where it was fitted on a
 // window under the default (RankMixtureReport.ShortFitWindow).
 func (mm *mainMixture) modelFlags() []whatif.Flag {
+	if mm == nil || mm.rq == nil {
+		return []whatif.Flag{whatif.RankMixtureTTFT}
+	}
 	return append([]whatif.Flag{whatif.RankMixtureTTFT}, mm.rq.report.shortFlags()...)
 }
 
@@ -576,8 +579,12 @@ func (mm *mainMixture) applyToReport(out *ReportResponse, q ReportQuery) {
 			}
 		}
 		if moved {
-			if !slices.Contains(sh.Flags, string(whatif.RankMixtureTTFT)) {
-				sh.Flags = append(sh.Flags, string(whatif.RankMixtureTTFT))
+			// The shape's flags are every flag its figures carry: the
+			// short fit window's and the prefix hit's as well.
+			for _, fl := range flags {
+				if !slices.Contains(sh.Flags, fl) {
+					sh.Flags = append(sh.Flags, fl)
+				}
 			}
 			line := TTFTModelLabel + " (" + mm.info.Model + ") prices the table's TTFT up to the lower knee"
 			if mm.info.Evidence != "" {
@@ -710,8 +717,10 @@ func (f *mixtureFleet) fleetLimit(headroom float64, decode, prefill whatif.Resul
 			}
 		}
 	}
-	if !slices.Contains(a.Flags, whatif.RankMixtureTTFT) {
-		a.Flags = append(a.Flags, whatif.RankMixtureTTFT)
+	for _, fl := range f.mm.modelFlags() {
+		if !slices.Contains(a.Flags, fl) {
+			a.Flags = append(a.Flags, fl)
+		}
 	}
 	return a
 }
