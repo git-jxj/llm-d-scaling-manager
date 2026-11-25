@@ -384,6 +384,14 @@ function dayHoursTable(plan) {
   return s + "</table>";
 }
 
+// dayModelsText is the experimental models a day plan was asked to price
+// with, in words: abstained, or what the dagger marks; "" with none.
+function dayModelsText(plan) {
+  return [plan.ttftModel, plan.tpotModel].filter(Boolean).map(m => m.abstained ?
+    `${m.label}: abstained (${m.abstained}); the planner's own prices every bucket.` :
+    `${m.label}: a bucket it priced is marked ${DAGGER} (not validated: outside the validated region).`).join(" ");
+}
+
 // dayBucketsTable is every bucket, the table view of the charts: what the
 // tooltip shows, keyboard and screen reader alike.
 function dayBucketsTable(plan) {
@@ -395,7 +403,8 @@ function dayBucketsTable(plan) {
     s += `<tr><td>${esc(b.start.slice(0, 16).replace("T", " "))}</td><td>${esc(DAY_STATUS[b.status] || b.status)}</td>` +
       `<td>${b.rate ? dayFmt(b.rate.mean) : "-"}</td><td>${b.rate ? dayFmt(b.rate.p95) : "-"}</td>` +
       `<td>${b.sizedRate != null ? dayFmt(b.sizedRate) + " (" + esc(b.sizedFor) + ")" : "-"}</td>` +
-      `<td>${n(b.needed && b.needed.prefill)}</td><td>${n(b.needed && b.needed.decode)}</td><td>${n(b.actual && b.actual.prefill)}</td><td>${n(b.actual && b.actual.decode)}</td>` +
+      `<td>${n(b.needed && b.needed.prefill)}${b.needed ? dagger(b.limit) : ""}</td><td>${n(b.needed && b.needed.decode)}${b.needed ? dagger(b.limit) : ""}</td>` +
+      `<td>${n(b.actual && b.actual.prefill)}</td><td>${n(b.actual && b.actual.decode)}</td>` +
       `<td>${esc(dayVerdict(b) + (b.trust ? "; " + b.trust.split(":")[0] : ""))}</td><td>${esc(why)}</td><td>${esc((b.flags || []).join(", "))}</td></tr>`;
   }
   return s + "</table>";

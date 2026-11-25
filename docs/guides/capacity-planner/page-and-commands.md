@@ -409,8 +409,11 @@ In a cluster, add both to the StatefulSet's `args`
   them (a prefill that never queued). See
   [The v2 TTFT curve](#the-v2-ttft-curve). Sizes follow, from the model's
   prefill limit. With `--experimental-tpot=v2` the main view's TPOT p90
-  and p95 too: see [The v2 TPOT curve](#the-v2-tpot-curve). Day plans and
-  predictions are the default's. `=v2` does not turn
+  and p95 too: see [The v2 TPOT curve](#the-v2-tpot-curve). A day plan
+  prices with them too when asked: the page asks whenever the loaded inputs
+  carry a model, so the day plan matches the Answer view (see
+  [Plan replicas over a day](#plan-replicas-over-a-day)). Predictions are
+  the default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
@@ -476,8 +479,8 @@ In a cluster, add both to the StatefulSet's `args`
   or p95 target: the rate whose mean meets the target over that ratio. A
   size at such a target sizes decode on it. The report's measured-shape
   table prices its TPOT percentile the same way. The report's verdict,
-  capacity and summary cells stay the planner's own. Day plans do not use
-  it.
+  capacity and summary cells stay the planner's own. A day plan asked for
+  the experimental models sizes decode on it.
 - **Solid, then dashed.** As the TTFT curve: solid up to the highest load
   the source served, per decode replica, and dashed beyond it. Each figure
   past that load carries `extrapolated` true, a size's steps among them.
@@ -906,6 +909,21 @@ bucket the fleet had fewer replicas than it needed is washed red; a bucket no
 fleet within the bound serves is hatched, in the panel of the role short.
 Hover a bucket for every value at that time; the table views list every hour
 and every bucket, with why a bucket was not sized.
+
+**With the experimental models.** On inputs loaded with the experimental
+TTFT or TPOT model (a server started with `--experimental-ttft=v2` or
+`--experimental-tpot=v2`), the page plans the day with them, as the Answer
+view prices with them; from the command line, `day-plan
+--experimental-ttft=v2 --experimental-tpot=v2` fits them on the
+`--recording`. Where the TTFT model prices a TTFT the planner refuses (a
+prefill that never queued), prefill is sized on it. A bucket a model sized
+carries its flag (`RankMixtureTTFT`, `TPOTDistribution`) on its limit, its
+needed replicas are marked † on the page and in the command's hours table,
+and the plan names each model, with how many buckets it priced. A model
+prices the source's own traffic: a bucket at a request shape of its own, or
+a stated term, stays the planner's own. On a window under 12 hours a model
+abstains, the plan says so, and every figure is the planner's own. Not
+validated: every figure a model sets reads OUTSIDE VALIDATED REGION.
 
 From the command line, on the sample recording (about an hour, so two hours
 in the table):

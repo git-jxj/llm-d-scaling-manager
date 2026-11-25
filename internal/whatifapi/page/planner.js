@@ -2913,6 +2913,10 @@ function dayRequest() {
   }
   req.step = el("daystep").value;
   if (el("daysize").value) req.sizeFor = el("daysize").value;
+  // Inputs resolved with an experimental model are priced with it, as the
+  // Answer view prices them: the day plan matches it.
+  const m = state.inputs;
+  if ((m.ttftModel && m.ttftModel.model) || (m.tpotModel && m.tpotModel.model)) req.experimentalModels = true;
   return req;
 }
 
@@ -2954,6 +2958,7 @@ function renderDay() {
   el("daybuckets").innerHTML = dayBucketsTable(d);
   el("daynotes").innerHTML = d.notes.map(n => `<li>${esc(n)}</li>`).join("") + `<li>${esc(d.banner)}</li>`;
   el("dayhead").textContent = dayHeadline(d);
+  el("daymodels").textContent = dayModelsText(d);
   exportsRow(el("dayexports"), "dayplan", [["CSV", "text/csv", () => dayHoursCSV(d)], ["JSON", "application/json", () => JSON.stringify(d, null, 2) + "\n"]]);
   dayHover(svg, g);
 }
