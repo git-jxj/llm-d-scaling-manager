@@ -142,6 +142,11 @@ showed, and V_P is read from that counter. Details:
 - A hit the question states (`--prefix-hit`, an `IL/OL/hit` shape) still
   governs. One the load's cycles filled in (`whatifapi.Knobs.PrefixHitRead`)
   does not.
+- The load's shape (`--shape load`, the report's default) is netted this way
+  with the switch off too (`pricedFleet.loadShapeRead`): its hit is the
+  decode variant's, which on a P/D fleet is not the prefill pods'. Its prompt
+  is then in computed tokens, so it keeps the served-work floor
+  (`pricedFleet.servedComputed`).
 - It applies only where the computed-token hit or the hit it replaces is
   above `MaterialPrefixHitMove`. No committed recording has a hit, so it
   moves no golden.

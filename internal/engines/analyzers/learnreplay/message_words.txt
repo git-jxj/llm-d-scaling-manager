@@ -466,6 +466,7 @@ SetUsed
 Settings
 SingularFit
 Skipping
+SlopeUncertain
 SpreadBeyondProcessorSharing
 StartOptimizeLoop
 Starting
@@ -1269,6 +1270,7 @@ external
 externalClusterQuotas
 externalNamespaceQuotas
 external_unspecified
+extrapolated
 f
 fAtPods
 fPods
@@ -1978,6 +1980,7 @@ lowerBound
 lowerBounds
 lowered
 lowering
+lowers
 m
 m-prefill
 m_d
@@ -2384,6 +2387,7 @@ p1
 p10-p90
 p2p
 p90
+p95
 p_d
 packing
 page_size
@@ -2527,6 +2531,7 @@ prefill-vp-lone-rate
 prefill-vp-occupancy-plateau
 prefill-vp-prompt-coverage
 prefill-vp-served-unqueued
+prefill-vp-service-line
 prefill-vp-window-best
 prefillBoundHeld
 prefillBounds
@@ -2758,6 +2763,7 @@ reports
 republishing
 request
 request-arrival
+request-processing
 requestCount
 requestRate
 requestedBucketRetention
@@ -2982,6 +2988,7 @@ servedBound
 server
 serves
 service
+service-line
 serviceable
 serving
 servingSet
@@ -3608,6 +3615,11 @@ volume
 vp
 vpAboveSlopeBound
 vpFlooredAtServed
+vpLine
+vpLineMinutes
+vpLineRefused
+vpLineS0
+vpLineSlope
 vpLone
 vpLoneIsVP
 vpLoneMinutes

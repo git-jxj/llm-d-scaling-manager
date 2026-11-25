@@ -243,8 +243,11 @@ const SwitchTTFTPrefixAttention = "slo-ttft-prefix-attention"
 // offload tier or a KV connector reads as computed there, and the prefill
 // work as more than the engines' own computed-token counter shows; V_P is
 // read from that counter. A hit stated by the question still governs. Off,
-// as before. Planner-only: off from the constructor; the analyzer prices no
-// stated prompt.
+// as before, but for the load's shape (--shape load, the report's default):
+// its hit is read, not stated, and on a P/D fleet it is the decode
+// variant's, so the planner nets it by the computed-token hit either way.
+// Planner-only: off from the constructor; the analyzer prices no stated
+// prompt.
 const SwitchTTFTComputedHit = "slo-ttft-computed-hit"
 
 // SwitchTTFTTierLoad is the replay switch for a cached prompt token from a

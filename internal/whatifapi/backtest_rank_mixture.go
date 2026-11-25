@@ -109,6 +109,9 @@ type RankMixtureKV struct {
 	M1    float64 `json:"m1"`
 	RhoLo float64 `json:"rhoLo"`
 	RhoHi float64 `json:"rhoHi"`
+	// RhoHold is the utilization the lines are held at past it
+	// (BacktestRequest.RankMixtureKVHold); absent, not held.
+	RhoHold float64 `json:"rhoHold,omitempty"`
 }
 
 // RankMixtureCheck is what one step's data says of the model's assumptions
@@ -142,6 +145,22 @@ type RankMixtureCheck struct {
 type rankMixtureQ struct {
 	m      whatif.RankMixture
 	report RankMixtureReport
+	// fitPrefill is the prefill pods the fit window served (the median of
+	// its cycles), the count the ranks' shares were read at; 0 unknown.
+	fitPrefill int
+}
+
+// rateScale is what a test step's fleet rate is multiplied by before the
+// fitted shares split it: the fit's prefill pods over the step's, so each
+// fitted rank takes the rate one of the step's ranks takes, as the answer
+// path prices another count (mixtureFleet.scale). The shares hold one entry
+// per fitted rank, so a step on twice the pods split over them priced each
+// rank at twice its rate. 1 where either count is unknown.
+func (rq *rankMixtureQ) rateScale(testPrefill int) float64 {
+	if rq.fitPrefill <= 0 || testPrefill <= 0 {
+		return 1
+	}
+	return float64(rq.fitPrefill) / float64(testPrefill)
 }
 
 // mixtureWindow is the cycles of e at idx whose time is in (from, to].
@@ -219,6 +238,10 @@ type rankMixtureSwitches struct {
 	// nlLine fits the variant whatif.QueueRankMixtureNLLine in place of v2
 	// (BacktestRequest.TTFTModel); it fits with both switches above on.
 	nlLine bool
+	// kvHold and remainderSpread are the variant's modes
+	// (whatif.RankMixtureOptions KVHold and RemainderSpread):
+	// BacktestRequest RankMixtureKVHold and RankMixtureRemainderSpread.
+	kvHold, remainderSpread bool
 }
 
 // rankMixtureSwitchesOf is the switches req turns on. The server has set
@@ -226,8 +249,10 @@ type rankMixtureSwitches struct {
 // always sets it.
 func rankMixtureSwitchesOf(req BacktestRequest) rankMixtureSwitches {
 	return rankMixtureSwitches{fitSteps: req.RankMixtureFitSteps,
-		stratified: stratifiedOf(req.RankMixtureStratified, whatif.DefaultRankMixtureStratified),
-		nlLine:     req.TTFTModel == string(whatif.QueueRankMixtureNLLine)}
+		stratified:      stratifiedOf(req.RankMixtureStratified, whatif.DefaultRankMixtureStratified),
+		nlLine:          req.TTFTModel == string(whatif.QueueRankMixtureNLLine),
+		kvHold:          req.RankMixtureKVHold,
+		remainderSpread: req.RankMixtureRemainderSpread}
 }
 
 // model is the model sw fits.
@@ -304,7 +329,7 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 	}
 	o := whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
 		SpreadFloor: whatif.MinSpread, CleanFitSteps: sw.fitSteps, SharesAtLoad: sw.fitSteps,
-		StratifiedMoments: sw.stratified}
+		StratifiedMoments: sw.stratified, KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread}
 	fitter := whatif.FitRankMixture
 	if sw.nlLine {
 		fitter = whatif.FitRankMixtureNL
@@ -325,14 +350,16 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 		r.FoldSpread = []float64{}
 	}
 	if m.KV.Known {
-		r.KV = &RankMixtureKV{P0: m.KV.P0, P1: m.KV.P1, M0: m.KV.M0, M1: m.KV.M1, RhoLo: m.KV.RhoLo, RhoHi: m.KV.RhoHi}
+		r.KV = &RankMixtureKV{P0: m.KV.P0, P1: m.KV.P1, M0: m.KV.M0, M1: m.KV.M1, RhoLo: m.KV.RhoLo, RhoHi: m.KV.RhoHi,
+			RhoHold: m.KV.RhoHold}
 	}
 	if p := m.Parts; p != nil {
 		r.FitMean = diag.FitMean
 		r.ZParts = &RankMixtureZParts{OverheadA: p.Overhead.A, OverheadB: p.Overhead.B, DecodeA: p.Decode.A, DecodeB: p.Decode.B,
 			RemainderA: p.Remainder.A, RemainderB: p.Remainder.B, OverheadSigma: p.Overhead.Sigma, DecodeSigma: p.Decode.Sigma}
+		r.ZParts.remainderShape(p.Remainder)
 	}
-	return &rankMixtureQ{m: m, report: r}, steps, nil
+	return &rankMixtureQ{m: m, report: r, fitPrefill: actualOf(seriesAt(fit.series, idx)).Prefill}, steps, nil
 }
 
 // abstainedMixture is the model abstaining for why.
@@ -425,11 +452,11 @@ func (rq *rankMixtureQ) assumedLines() []string {
 }
 
 // price prices one test step's TTFT at each of backtestStats from the
-// cycles of its window, over a step of stepSeconds. ok is false where the
-// model refused.
-func (rq *rankMixtureQ) price(cycles []whatif.MixtureCycle, at time.Time, stepSeconds float64) ([]Figure, RankMixtureCheck, bool) {
+// cycles of its window, over a step of stepSeconds, on testPrefill prefill
+// pods (rateScale). ok is false where the model refused.
+func (rq *rankMixtureQ) price(cycles []whatif.MixtureCycle, at time.Time, stepSeconds float64, testPrefill int) ([]Figure, RankMixtureCheck, bool) {
 	st := whatif.MixtureStepOf(cycles, at)
-	d, u := rq.m.Draws(st.Rate, st.Computed, st.Prompt, whatif.DefaultMixtureDraws)
+	d, u := rq.m.Draws(st.Rate*rq.rateScale(testPrefill), st.Computed, st.Prompt, whatif.DefaultMixtureDraws)
 	if u != nil {
 		return nil, RankMixtureCheck{Refused: u.Error()}, false
 	}
@@ -484,7 +511,8 @@ func (q *backtestQuestion) priceMixture(pred *prediction, out *BacktestStep, st 
 	if why := backlogged(q.test, st.window, st.windowStart, at); why != "" {
 		chk.Refused = why
 	} else {
-		figs, chk, ok = q.mixture.price(mixtureWindow(q.test, st.window, st.windowStart, at), at, st.windowSeconds)
+		testPrefill := actualOf(seriesAt(q.test.series, st.window)).Prefill
+		figs, chk, ok = q.mixture.price(mixtureWindow(q.test, st.window, st.windowStart, at), at, st.windowSeconds, testPrefill)
 	}
 	out.RankMixture = &chk
 	if !ok {

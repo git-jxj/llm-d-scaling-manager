@@ -294,8 +294,8 @@ type sizer struct {
 	// low sizes on the low end of each limit's span over V_P and f.
 	low bool
 	// models is the experimental models (TTFT and TPOT) the search prices
-	// with: the inputs' for a size, nil for a day plan, which is the
-	// default's.
+	// with: the inputs' for a size, and for a day plan asked for them
+	// (DayPlanRequest.ExperimentalModels); nil for the planner's own.
 	models *experimentalModels
 	// seen is every fleet priced, by its counts; plain, with low, every
 	// fleet priced for decode's own limit alone, without the span.
