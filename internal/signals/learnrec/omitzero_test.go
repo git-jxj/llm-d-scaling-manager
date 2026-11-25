@@ -63,7 +63,8 @@ func TestCodec_R1FieldsAreLeftOutWhileZero(t *testing.T) {
 			"AvgKVTransferTimeKnown", "TPOTBuckets", "QueueMin", "QueueMinKnown", "GroupEngines",
 			"ExternalPrefixCacheHitTokenRate", "ExternalPrefixCacheHitTokenRateKnown", "ExternalPrefixCacheQueryTokenRate",
 			"ExternalPrefixCacheQueryTokenRateKnown", "CachedTokenRateBySource", "KVTransferRates"},
-		reflect.TypeFor[domain.RouterLatency](): {"TTFTSumRate", "TTFTCountRate", "TPOTBuckets", "FlowControlWaitBuckets"},
+		reflect.TypeFor[domain.RouterLatency](): {"TTFTSumRate", "TTFTCountRate", "TPOTBuckets", "FlowControlWaitBuckets",
+			"ProcessingBuckets", "ProcessingSumRate", "ProcessingCountRate"},
 		reflect.TypeFor[Input]():                {"RouterLatency", "FlowControlPools"},
 	}
 	for typ, added := range r1 {
@@ -104,12 +105,14 @@ func TestCodec_R1FieldsAreLeftOutWhileZero(t *testing.T) {
 	in.ReplicaMetrics[0].AvgTTFTKnown = true
 	in.ReplicaMetrics[0].TTFTBuckets = []domain.LatencyBucket{{UpperBound: math.Inf(1), Rate: 1}}
 	in.RouterLatency = &domain.RouterLatency{WindowSeconds: 300,
-		TPOTBuckets: []domain.LatencyBucket{{UpperBound: 0.05, Rate: 0.5}}}
+		TPOTBuckets:       []domain.LatencyBucket{{UpperBound: 0.05, Rate: 0.5}},
+		ProcessingBuckets: []domain.LatencyBucket{{UpperBound: 0.01, Rate: 2}}, ProcessingSumRate: 0.04, ProcessingCountRate: 2}
 	in.FlowControlPools = []domain.FlowControlPool{{WindowSeconds: 300, DecodeSaturation: 0.9, DecodeSaturationKnown: true}}
 	b, err = Marshal(in)
 	require.NoError(t, err)
 	for _, want := range []string{`"AvgTTFTKnown":true`, `"TTFTBuckets":[{"UpperBound":"+Inf","Rate":1}]`,
-		`"TPOTBuckets":[{"UpperBound":0.05,"Rate":0.5}]`, `"FlowControlPools":[{"WindowSeconds":300,"DecodeSaturation":0.9,"DecodeSaturationKnown":true}]`} {
+		`"TPOTBuckets":[{"UpperBound":0.05,"Rate":0.5}]`, `"ProcessingBuckets":[{"UpperBound":0.01,"Rate":2}]`,
+		`"ProcessingSumRate":0.04,"ProcessingCountRate":2`, `"FlowControlPools":[{"WindowSeconds":300,"DecodeSaturation":0.9,"DecodeSaturationKnown":true}]`} {
 		assert.True(t, strings.Contains(string(b), want), "missing %s in %s", want, b)
 	}
 	out = Input{}

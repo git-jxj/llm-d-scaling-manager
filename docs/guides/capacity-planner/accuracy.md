@@ -310,6 +310,34 @@ abstains where:
 
 On the public recordings it abstains, mostly on the fit window's length.
 
+Two modes of the variant, each off by default and refused without
+`--experimental-ttft=v2nl-line`. Neither moves `fitMean` or `fitP90`, so
+neither changes whether the variant abstains.
+
+- **KV-deferral hold** (`--rank-mixture-kv-hold`, `rankMixtureKVHold`). The
+  KV-deferral lines are fitted over the fit window's loads. Priced past them,
+  the lines are extrapolated, and on a production P/D recording that read
+  the busier half's queue well over what was measured. With the mode, the
+  lines are read no further than the 0.95 quantile of the rank utilizations
+  the fit window prices (`rankMixture.kv.rhoHold`); past it the wait is held.
+  A figure past the fitted range is still flagged `KVDeferralOutside`.
+- **Router remainder spread** (`--rank-mixture-remainder-spread`,
+  `rankMixtureRemainderSpread`). The router's remainder is drawn from the
+  router's measured request-processing time
+  (`llm_d_epp_request_processing_duration_seconds`): its line less that
+  time's mean, plus a draw of that time's measured law, so a mostly flat
+  line gets the router's own tail. `rankMixture.zParts` gives the mean and
+  the 0.95 quantile over the mean. It needs a recording that holds the
+  series, on at least 4 fit steps. Recordings made before it was recorded,
+  and every public recording here, hold none: the remainder is then its
+  line, as with the mode off, and the assumed line says so.
+
+On the public recordings the hold leaves every figure where it was: their
+test loads stay inside the fit window's. On a production P/D recording,
+the two together cut the load split's over-reads and brought the time
+split's p95 closer to measured. Alone, the hold cut the over-reads without
+a new under-read.
+
 ## Experimental: the per-request TPOT distribution
 
 `capacity-planner backtest --experimental-tpot=v2` prices the TPOT percentiles

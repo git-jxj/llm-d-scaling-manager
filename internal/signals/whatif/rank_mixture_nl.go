@@ -62,11 +62,16 @@ const (
 // seconds a prompt token, both non-negative. Identified is false where the
 // prompts did not spread (B is then 0 and A the part's median). Sigma is
 // the part's spread: each request's part is lognormal about the line's mean
-// with this sigma (mean-preserving); 0 is the line itself.
+// with this sigma (mean-preserving); 0 is the line itself. Shape, where set,
+// draws the part from a measured law in place of Sigma's lognormal
+// (remainder spread, rank_mixture_modes.go): Shape is that law's quantiles
+// over its mean on shapeGrid's mid-points, and ShapeMean its mean, seconds.
 type ZPart struct {
 	A, B       float64
 	Identified bool
 	Sigma      float64
+	Shape      []float64
+	ShapeMean  float64
 }
 
 // ZParts is Z measured part by part.
@@ -160,23 +165,34 @@ const z90 = 1.2815515655446004
 const zSeed = 0x5eed + 99
 
 // draws is each request's Z at its prompt l: every part lognormal about its
-// line; nil where p is nil or no part has a sigma (Z is then the lines' sum,
-// priced as a0 + beta L).
+// line, or drawn from its shape; nil where p is nil or no part is spread (Z
+// is then the lines' sum, priced as a0 + beta L).
 func (p *ZParts) draws(l []float64) []float64 {
-	if p == nil || !(p.Overhead.Sigma > 0 || p.Decode.Sigma > 0 || p.Remainder.Sigma > 0) {
+	if p == nil || !(p.Overhead.spread() || p.Decode.spread() || p.Remainder.spread()) {
 		return nil
 	}
 	return drawParts(l, []ZPart{p.Overhead, p.Decode, p.Remainder})
 }
 
-// drawParts is each request's sum of parts at its prompt l.
+// spread says the part is drawn, not read as its line.
+func (z ZPart) spread() bool {
+	return z.Sigma > 0 || z.Shape != nil
+}
+
+// drawParts is each request's sum of parts at its prompt l. A part with a
+// shape is its line less the shape's mean, held at 0, plus a draw of the
+// shape; its mean is the line's wherever the line is at or above the
+// shape's mean.
 func drawParts(l []float64, parts []ZPart) []float64 {
 	rng := rand.New(rand.NewPCG(zSeed, uint64(len(l))))
 	out := make([]float64, len(l))
 	for i, li := range l {
 		for _, z := range parts {
 			mu := max(z.A+z.B*li, 0)
-			if z.Sigma > 0 {
+			switch {
+			case z.Shape != nil:
+				mu = max(mu-z.ShapeMean, 0) + z.ShapeMean*shapeAt(z.Shape, rng.Float64())
+			case z.Sigma > 0:
 				mu *= math.Exp(z.Sigma*rng.NormFloat64() - z.Sigma*z.Sigma/2)
 			}
 			out[i] += mu
@@ -355,6 +371,15 @@ func FitRankMixtureNL(steps []MixtureStep, o RankMixtureOptions) (RankMixture, R
 	}
 	diag.FitMean = medianOf(means)
 	diag.FitP90, _ = medianP90(all, m.A0, 1)
+	// The modes are set on the fitted model: the fit window's checks above
+	// read it without them, so a mode never moves whether the model prices.
+	m.KVHold, m.RemainderSpread = o.KVHold, o.RemainderSpread
+	if o.KVHold && m.KV.Known {
+		m.KV.RhoHold = kvHoldOf(all)
+	}
+	if o.RemainderSpread && !noPrompt {
+		parts.Remainder.Shape, parts.Remainder.ShapeMean = remainderShape(steps)
+	}
 	return m, diag, nil
 }
 
@@ -376,7 +401,7 @@ func (m RankMixture) assumedNL() string {
 	p := m.Parts
 	return fmt.Sprintf("experimental TTFT model %s (OUTSIDE VALIDATED REGION): %s per rank on %d ranks "+
 		"(busiest share %.3g of the mean), S(x) = %.3g s + x / %.4g tok/s; %s; Z measured by part, not calibrated: "+
-		"overhead %.3g s + %.3g us x L (sigma %.3g), decode %.3g s + %.3g us x L (sigma %.3g), router remainder %.3g s + %.3g us x L%s",
+		"overhead %.3g s + %.3g us x L (sigma %.3g), decode %.3g s + %.3g us x L (sigma %.3g), router remainder %.3g s + %.3g us x L%s%s",
 		QueueRankMixtureNLLine, queue, len(m.Shares), busiest, m.S0, m.V, kv, p.Overhead.A, p.Overhead.B*1e6, p.Overhead.Sigma,
-		p.Decode.A, p.Decode.B*1e6, p.Decode.Sigma, p.Remainder.A, p.Remainder.B*1e6, m.fitStepsAssumed())
+		p.Decode.A, p.Decode.B*1e6, p.Decode.Sigma, p.Remainder.A, p.Remainder.B*1e6, m.modesAssumed(), m.fitStepsAssumed())
 }

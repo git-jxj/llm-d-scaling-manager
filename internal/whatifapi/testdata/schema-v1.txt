@@ -128,6 +128,7 @@ backtest.rankMixture.kv.m1 number
 backtest.rankMixture.kv.p0 number
 backtest.rankMixture.kv.p1 number
 backtest.rankMixture.kv.rhoHi number
+backtest.rankMixture.kv.rhoHold number
 backtest.rankMixture.kv.rhoLo number
 backtest.rankMixture.model string
 backtest.rankMixture.queue string
@@ -151,6 +152,8 @@ backtest.rankMixture.zParts.overheadB number
 backtest.rankMixture.zParts.overheadSigma number
 backtest.rankMixture.zParts.remainderA number
 backtest.rankMixture.zParts.remainderB number
+backtest.rankMixture.zParts.remainderShapeMean number
+backtest.rankMixture.zParts.remainderShapeP95 number
 backtest.schemaVersion number
 backtest.settle number
 backtest.split string
@@ -465,6 +468,8 @@ backtestRequest.inputsId string
 backtestRequest.measured string
 backtestRequest.prefillSlots number
 backtestRequest.rankMixtureFitSteps boolean
+backtestRequest.rankMixtureKVHold boolean
+backtestRequest.rankMixtureRemainderSpread boolean
 backtestRequest.rankMixtureStratified boolean
 backtestRequest.settle string
 backtestRequest.specTokens number
@@ -763,6 +768,7 @@ inputs.ttftModel.fit.kv.m1 number
 inputs.ttftModel.fit.kv.p0 number
 inputs.ttftModel.fit.kv.p1 number
 inputs.ttftModel.fit.kv.rhoHi number
+inputs.ttftModel.fit.kv.rhoHold number
 inputs.ttftModel.fit.kv.rhoLo number
 inputs.ttftModel.fit.model string
 inputs.ttftModel.fit.queue string
@@ -786,6 +792,8 @@ inputs.ttftModel.fit.zParts.overheadB number
 inputs.ttftModel.fit.zParts.overheadSigma number
 inputs.ttftModel.fit.zParts.remainderA number
 inputs.ttftModel.fit.zParts.remainderB number
+inputs.ttftModel.fit.zParts.remainderShapeMean number
+inputs.ttftModel.fit.zParts.remainderShapeP95 number
 inputs.ttftModel.heldOut object
 inputs.ttftModel.heldOut.decode number
 inputs.ttftModel.heldOut.low number
@@ -1615,6 +1623,7 @@ report.ttftModel.fit.kv.m1 number
 report.ttftModel.fit.kv.p0 number
 report.ttftModel.fit.kv.p1 number
 report.ttftModel.fit.kv.rhoHi number
+report.ttftModel.fit.kv.rhoHold number
 report.ttftModel.fit.kv.rhoLo number
 report.ttftModel.fit.model string
 report.ttftModel.fit.queue string
@@ -1638,6 +1647,8 @@ report.ttftModel.fit.zParts.overheadB number
 report.ttftModel.fit.zParts.overheadSigma number
 report.ttftModel.fit.zParts.remainderA number
 report.ttftModel.fit.zParts.remainderB number
+report.ttftModel.fit.zParts.remainderShapeMean number
+report.ttftModel.fit.zParts.remainderShapeP95 number
 report.ttftModel.heldOut object
 report.ttftModel.heldOut.decode number
 report.ttftModel.heldOut.low number
