@@ -46,9 +46,13 @@ type FitCycle struct {
 
 // FitCycleOf is one cycle of in, read at at, with the router's reading
 // router: the prefill ranks of prefillVariant and the decode rows of
-// decodeVariant, each every variant of its role where empty.
+// decodeVariant, each every variant of its role where empty. The mixture
+// cycle reads the router's processing histogram from router, not from
+// in.RouterLatency, which the controller does not set on the input it hands
+// the v2 models.
 func FitCycleOf(in domain.AnalyzerInput, router *domain.RouterLatency, at time.Time, prefillVariant, decodeVariant string) FitCycle {
 	rate, known, engine := ArrivalOf(in)
+	in.RouterLatency = router
 	return FitCycle{At: at, Rate: rate, RateKnown: known, EngineRate: engine, Latency: true, Router: router,
 		Mixture: MixtureCycleOf(in, at, prefillVariant, decodeVariant), Decode: DecodeCycleOf(in, at, decodeVariant)}
 }

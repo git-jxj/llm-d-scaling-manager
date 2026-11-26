@@ -1,7 +1,9 @@
 package slo
 
 import (
+	"maps"
 	"math"
+	"slices"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
@@ -103,8 +105,10 @@ func (a *Analyzer) modelPredictions(input domain.AnalyzerInput, lines map[string
 	a.mu.Unlock()
 
 	var out []metrics.SLOPrediction
-	for _, s := range constants.SLOPredictedStatistics {
-		if v, ok := ttft[s]; ok && whatif.Finite(v) {
+	// The mean, p90, p95 and the objective's percentile where it is another
+	// (priceModel), in a fixed order.
+	for _, s := range slices.Sorted(maps.Keys(ttft)) {
+		if v := ttft[s]; whatif.Finite(v) {
 			out = append(out, metrics.SLOPrediction{Objective: constants.SLOObjectiveTTFT, Variant: prefillVariant, Statistic: s,
 				Learner: learn.TTFTMixture, Seconds: v})
 		}

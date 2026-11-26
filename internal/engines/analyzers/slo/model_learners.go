@@ -6,6 +6,8 @@ import (
 	"runtime/debug"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -22,7 +24,8 @@ import (
 // capacity planner's rank-mixture TTFT model and renewal-lognormal TPOT
 // distribution, fitted on the controller's own cycles by the planner's own
 // fit cores (whatif.FitMixtureWindow, whatif.FitTPOTWindow), so that the two
-// give the same figures on the same cycles (the parity test in learnreplay).
+// give the same figures on the same cycles (the parity test,
+// cmd/capacity-planner/v2_parity_test.go).
 // They follow the shared learner rules (docs/proposals/analyzer-learner.md):
 //
 //   - observe and admit: each cycle the engine hands over (ObserveModelInputs)
@@ -68,18 +71,33 @@ const (
 	// spread is calibrated only on a window of whatif.MinSpreadFitWindow,
 	// and an hour more keeps one there through a step's trim.
 	ModelWindow = whatif.MinSpreadFitWindow + time.Hour
-	// modelMaxCycles bounds a window's cycles, whatever the interval: the
-	// window at a 5 s cycle.
-	modelMaxCycles = int(ModelWindow / (5 * time.Second))
+	// ModelCycleSpacing is the least time between two cycles a window keeps:
+	// a cycle closer to the last one kept is priced and not kept, so a
+	// window holds as much at a 5 s cycle as at the default 15 s one. The
+	// fits pool cycles over the router's window and cut them into
+	// ModelStep steps, so a cycle in three changes no step's mix; 13 s, not
+	// 15, keeps every cycle of a 15 s interval through its jitter.
+	ModelCycleSpacing = 13 * time.Second
+	// modelMaxCycles bounds a window's cycles: ModelWindow at
+	// ModelCycleSpacing.
+	modelMaxCycles = int(ModelWindow/ModelCycleSpacing) + 1
 	// ModelMaxWindows is the most models whose v2 windows the analyzer keeps
-	// at once. A window of a large P/D model at the default 15 s cycle holds
-	// about 13 MiB (model_cost_test.go), and the v2 models run for every
+	// at once. A window of a large P/D model at a cycle every
+	// ModelCycleSpacing holds about 15 MiB (model_cost_test.go measures 13
+	// MiB at 15 s), and the v2 models run for every
 	// passive model and, with the utilization share in shadow, for every
 	// model, so without a bound a large fleet would hold more than the
 	// controller's memory limit (512 MiB in config/base/manager). A model
 	// over the bound reads coverage model-limit until a window is freed:
-	// its model leaves (evictStale) or is forgotten.
+	// its model goes unobserved for ModelReleaseAfter, leaves (evictStale)
+	// or is forgotten.
 	ModelMaxWindows = 16
+	// ModelReleaseAfter is how long a window not observed keeps its place
+	// while another model waits for one (ModelMaxWindows): a model that
+	// turned active, left the share's shadow or dropped the slo analyzer
+	// is no longer observed, and its window is released to the model
+	// waiting, not held to the state timeout.
+	ModelReleaseAfter = time.Hour
 	// ModelHoldFor is how long a fit that passed is held while the refits
 	// after it do not.
 	ModelHoldFor = time.Hour
@@ -281,7 +299,18 @@ func (a *Analyzer) observeModelLocked(in domain.AnalyzerInput, router *domain.Ro
 	pArgs, dArgs := a.engineParams(in.Namespace, in.ModelID, pv).ArgsTag(), a.engineParams(in.Namespace, in.ModelID, dv).ArgsTag()
 	w := a.models[key]
 	if w == nil && len(a.models) >= a.modelMaxWindows {
+		a.releaseUnobservedModelsLocked(now)
+	}
+	if w == nil && len(a.models) >= a.modelMaxWindows {
 		return nil, whatif.FitCycle{}, false
+	}
+	if w != nil && unreadPair(w, pv, dv, pArgs, dArgs) {
+		// The variant pair or an engine argument tag did not read this
+		// cycle (variant states missing, a capacity record not there yet):
+		// the window stands, and the cycle is neither kept nor priced.
+		w.seen, w.observed, w.counts = now, a.cycle, map[learn.Reason]int64{modelIdle: 1}
+		w.now = modelFigures{ttftReason: constants.SLOModelSignalMissing, tpotReason: constants.SLOModelSignalMissing}
+		return w, whatif.FitCycle{}, false
 	}
 	if w == nil || w.prefill != pv || w.decode != dv || w.prefillArgs != pArgs || w.decodeArgs != dArgs {
 		if w != nil && len(w.cycles) > 0 {
@@ -296,7 +325,9 @@ func (a *Analyzer) observeModelLocked(in domain.AnalyzerInput, router *domain.Ro
 		w.counts[modelIdle]++
 	} else {
 		w.counts[modelAdmitted]++
-		w.cycles = append(w.cycles, c)
+		if n := len(w.cycles); n == 0 || c.At.Sub(w.cycles[n-1].At) >= ModelCycleSpacing {
+			w.cycles = append(w.cycles, c)
+		}
 	}
 	cut := 0
 	for cut < len(w.cycles) && !w.cycles[cut].At.After(now.Add(-ModelWindow)) {
@@ -309,6 +340,31 @@ func (a *Analyzer) observeModelLocked(in domain.AnalyzerInput, router *domain.Ro
 	a.priceModelLocked(w, in, &c, now)
 	due := !w.fitting && !now.Before(w.refitAt) && len(w.cycles) > 0
 	return w, c, due
+}
+
+// unreadPair says the cycle's variant pair or engine argument tags are
+// unread where the window's were read: a role whose variant is "" this
+// cycle (none, or several during a migration), or an argument tag "" (the
+// capacity record not read). A change between two read values starts the
+// window again; a value going unread for a cycle does not.
+func unreadPair(w *modelWindow, pv, dv, pArgs, dArgs string) bool {
+	return (pv == "" && w.prefill != "") || (dv == "" && w.decode != "") ||
+		(pArgs == "" && w.prefillArgs != "") || (dArgs == "" && w.decodeArgs != "")
+}
+
+// releaseUnobservedModelsLocked deletes the window of every model not
+// observed for ModelReleaseAfter, filed as evicted: another model waits for
+// its place. Callers hold a.mu.
+func (a *Analyzer) releaseUnobservedModelsLocked(now time.Time) {
+	for key, w := range a.models {
+		if now.Sub(w.seen) <= ModelReleaseAfter {
+			continue
+		}
+		if ns, model, ok := strings.Cut(key, "|"); ok {
+			a.noteModelForgottenLocked(ns, model, w, learn.ByEvicted)
+		}
+		delete(a.models, key)
+	}
 }
 
 // ownedRouter is a copy of r the window can keep: the caller's reading, and
@@ -478,6 +534,12 @@ func (w *modelWindow) span() time.Duration {
 	return w.cycles[len(w.cycles)-1].At.Sub(w.cycles[0].At)
 }
 
+// percentileStatistic is the statistic label of the percentile q, a share:
+// "p" and its percent, as the objective's own reading names it.
+func percentileStatistic(q float64) string {
+	return "p" + strconv.Itoa(int(q*100+0.5))
+}
+
 // ttftObjective is the TTFT target, seconds, and its percentile as a share,
 // of the model's policy; 0 and 0 with none.
 func ttftObjective(c domain.AnalyzerConfig) (target, q float64) {
@@ -504,6 +566,11 @@ func (a *Analyzer) priceModel(tt *ttftLearner, rate float64, pods int, q, target
 	p.ok = true
 	p.ttft = map[string]float64{constants.SLOStatisticMean: mean, constants.SLOStatisticP90: quant[0],
 		constants.SLOStatisticP95: quant[1]}
+	if q > 0 {
+		// The objective's percentile, named as the default model's figure
+		// at it is.
+		p.ttft[percentileStatistic(q)] = quant[2]
+	}
 	if q > 0 && target > 0 {
 		p.ask, p.askOK = a.modelPrefillAsk(tt, rate, pods, q, target, quant[2])
 	}

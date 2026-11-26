@@ -41,7 +41,6 @@ func TestModelLearners_WindowsAreBounded(t *testing.T) {
 	// The first model leaves; the second takes its room.
 	clk.SetTime(t0.Add(2 * time.Hour))
 	a.beginCycle()
-	a.ObserveModelInputs(second, router)
 	assert.Equal(t, 1, a.evictStale(clk.Now()).Models)
 	got = a.ObserveModelInputs(second, router)
 	assert.NotEqual(t, constants.SLOModelModelLimit, got[whatif.ObjectiveTTFT].Reason)

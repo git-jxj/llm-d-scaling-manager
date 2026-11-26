@@ -1618,11 +1618,17 @@ keeps the previous one for an hour. The window is forgotten when the
 model's prefill or decode variant or its engine arguments change, on the
 `llm-d.ai/forget-learned-state` annotation, and after the state timeout
 without a cycle. It is not kept across a controller restart: after one, the
-window fills again. The controller keeps the windows of at most 16 models at
-once, about 13 MiB each for a large P/D model, so that a fleet of passive
-models stays inside the controller's 512 MiB memory limit. A model past that
-reads coverage `model-limit` and publishes no v2 figures until a window is
-freed: a model leaves, or is forgotten.
+window fills again. A window keeps at most one cycle every 13 seconds, so
+it holds as much at a 5 s cycle as at the default 15 s one. The controller
+keeps the windows of at most 16 models at once, about 15 MiB each for a
+large P/D model, so that a fleet of passive models stays inside the
+controller's 512 MiB memory limit. A model past that reads coverage
+`model-limit` and publishes no v2 figures until a window is freed: a model
+leaves or is forgotten, or a model the v2 models no longer run for (it
+turned active, or its policy dropped the `slo` analyzer) has gone an hour
+without a cycle. A cycle whose variant pair or engine arguments do not
+read (variant states missing, several variants of a role during a
+migration) keeps the window and reads coverage `signal-missing`.
 
 Labels are `namespace` (the model's, scraped as `exported_namespace`) and
 `model_name`, plus `controller_instance` when `CONTROLLER_INSTANCE` is set.

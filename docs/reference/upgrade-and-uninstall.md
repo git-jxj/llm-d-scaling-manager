@@ -134,6 +134,25 @@ changed, and there is no compatibility path. Reinstall.
 3. Install from this tree and re-create what you need. Learned state, tuned
    policy, labels on namespaces and ScaledObject addresses are not carried over.
 
+### Upgrading from v0.13.0 to v0.13.1
+
+[Upgrade](#upgrade) as for any release. Scaling is unchanged.
+
+- **Two series gain a `learner` label.** For passive models, and for every
+  model while the utilization share plans in shadow, the slo analyzer now
+  also prices TTFT and TPOT with the capacity planner's v2 models
+  ([SLO analyzer v2 latency models](prometheus.md#slo-analyzer-v2-latency-models)).
+  `llmsm_slo_predicted_ttft_seconds` carries `learner="slo"` on the figure
+  v0.13.0 published and `learner="ttft-mixture"` on the v2 model's.
+  `llmsm_replicas_suggested` carries an empty `learner` on the analyzers'
+  own ask and `learner="ttft-mixture"` on the v2 model's would-be prefill
+  ask. A query that sums or joins either series without the label now
+  matches both: `sum by (variant_name) (llmsm_replicas_suggested)` counts a
+  passive model's prefill twice. Filter on `learner="slo"` and `learner=""`
+  for the v0.13.0 figures.
+- **The controller keeps up to 16 v2 windows**, about 15 MiB each for a large
+  P/D model, inside its 512 MiB memory limit.
+
 ### Upgrading from v0.12.4 to v0.13.0
 
 [Upgrade](#upgrade) as for any release. An existing install is unchanged: `smt`,
