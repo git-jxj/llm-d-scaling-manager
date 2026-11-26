@@ -994,10 +994,17 @@ minutes as V_P, as a lower bound, and nothing more (the assumed line says
 
 - The prefill knee is at least the rate that V_P gives. It is also at least
   the rate the fleet's prefill Pods kept up: the computed-token work they
-  sustained over 2 minutes, at the Pod count priced, in the last 6 hours,
-  over the prompt they computed (flag `KneeAtServedWork`). A Pod computes no
-  faster than it can, so work it kept up is work it can do. Both figures come
-  from the engines' computed-token counter.
+  sustained over 5 minutes with their prefill backlog not growing, at the Pod
+  count priced, in the last 6 hours, over the prompt they computed (flag
+  `KneeAtServedWork`). A Pod computes no faster than it can, so work it kept
+  up is work it can do. Both figures come from the engines' computed-token
+  counter. The figure is the mean over those 5 minutes, not the peak minute.
+  A burst carried with a queue building is not a rate the Pods hold: where
+  the Pods served at the count priced only with their backlog growing, the
+  knee is not raised and carries `ServedWorkUnsteady`. A recording that does
+  not read every prefill Pod's waiting queue cannot show the backlog steady,
+  so its knee is not raised either. It carries no flag, as nothing says the
+  backlog grew.
 - No TTFT is priced from such a V_P: every TTFT, and every rate asked at a
   TTFT target, reads "no prefill speed learned" (`NoPrefillCapacity`), as
   before. The true V_P may be far higher, so a TTFT priced from it would be
