@@ -33,6 +33,17 @@ func CumulativeMean(b map[float64]float64) (float64, bool) {
 	return mean, true
 }
 
+// CumulativeQuantile is the length at share q in (0, 1) of a cumulative
+// histogram as the rank mixture draws from it (CumulativeMean). ok is false
+// where it holds nothing or q is not in (0, 1).
+func CumulativeQuantile(b map[float64]float64, q float64) (float64, bool) {
+	h, ok := newCumHist(b)
+	if !ok || !(q > 0 && q < 1) {
+		return 0, false
+	}
+	return h.ppf(q), true
+}
+
 // ComputedAtScale is computed, a cumulative computed-token histogram, with
 // every bound scaled by scale, and capped at the prompt draw: at each bound
 // its cumulative share is at least prompt's, so no quantile of it is above
@@ -199,9 +210,11 @@ func reuseBuckets(m map[float64]float64) []prefill.ReuseBucket {
 // GPU prefix cache's share of it from the cached tokens by tier where they
 // were read (TierLoad), else all of it, and its KV residency histograms
 // summed over its cycles. The tiers' sizes are not recorded: a tier that
-// served hits keeps the total at its read. Duplication is not read at one
-// count and is taken as none (k = 1), which prices fewer hits at one pod
-// than a router that duplicates prefixes gives; a = 1, gaps that move with
+// served hits keeps the total at its read. The duplication K is read from
+// the affinity the router gave up over the window on fitCount pods
+// (AffinityLoss, prefill.DuplicationOfAffinityLoss); with no router prefix
+// series it is taken as none (k = 1), which prices fewer hits at one pod
+// than a router that duplicates prefixes gives. a = 1, gaps that move with
 // the rate: the planner prices the hit at the traffic read. nil where the
 // window holds no histograms or they do not close the fit.
 func (w *PromptWindow) HitModel(fitCount int) *prefill.HitModel {
@@ -226,8 +239,12 @@ func (w *PromptWindow) HitModel(fitCount int) *prefill.HitModel {
 	if tl, ok := w.TierLoad(); ok {
 		gpu = min(tl.Shares[SourceDevice], total)
 	}
+	k := 1.0
+	if loss, ok := w.AffinityLoss(); ok {
+		k = prefill.DuplicationOfAffinityLoss(loss, fitCount)
+	}
 	m, ok := prefill.FitHitModel(prefill.HitModelInputs{TotalHit: total, GPUHit: gpu, FitCount: fitCount, Reuse: reuse,
-		K: 1, A: 1})
+		K: k, A: 1})
 	if !ok {
 		return nil
 	}

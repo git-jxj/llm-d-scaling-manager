@@ -204,7 +204,7 @@ func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.Rep
 		req.TTFTModel = rankMixtureModel(f.rankMixtureNLLine)
 	}
 	if f.tpotDistribution {
-		req.TPOTModel = whatif.TPOTRenewalLognormal
+		req.TPOTModel = f.tpotModel
 	}
 	src := &servedSources{warn: f.warn, recordings: filepath.Dir(f.recording)}
 	res, err := src.Resolve(ctx, req)

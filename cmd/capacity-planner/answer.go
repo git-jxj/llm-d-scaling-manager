@@ -177,9 +177,11 @@ type answerFlags struct {
 	// experimentalTPOT is --experimental-tpot (=v2): at-replicas prices its
 	// tables' TPOT p90 and p95 with the experimental per-request TPOT
 	// distribution, fitted on the recording (experimental_tpot.go); refused
-	// elsewhere. tpotDistribution is it read.
+	// elsewhere. tpotDistribution is it read, and tpotModel the distribution
+	// it names (experimentalTPOTOf).
 	experimentalTPOT string
 	tpotDistribution bool
+	tpotModel        string
 	// fixedImbalance, above zero, is f at every prefill count above one,
 	// assumed: the report's sensitivity to f (fSensitivity). No flag sets
 	// it.
@@ -271,11 +273,11 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 	if err := f.checkTTFT(); err != nil {
 		return err
 	}
-	on, err := experimentalTPOTOf(f.experimentalTPOT)
+	model, err := experimentalTPOTOf(f.experimentalTPOT)
 	if err != nil {
 		return err
 	}
-	f.tpotDistribution = on
+	f.tpotDistribution, f.tpotModel = model != "", model
 	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
 		return err
 	}

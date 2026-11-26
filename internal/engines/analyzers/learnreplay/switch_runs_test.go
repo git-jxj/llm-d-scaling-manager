@@ -150,6 +150,13 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// committed recording's cycle reaches a priced fleet. Its unit tests hold
 	// it (heldBy).
 	slo.SwitchTTFTRouterWait: nil,
+	// The router's wait taken as inside the prefill price, the planner's
+	// default --router-wait-in-prefill, off from the constructor (issue
+	// #367). It moves no golden, for the gate stage's reason: it moves a
+	// flag and a verdict only above the prefill onset with flow control on,
+	// and no committed recording's cycle reaches a priced fleet. Its unit
+	// tests hold it (heldBy).
+	slo.SwitchTTFTRouterWaitInPrefill: nil,
 	// The prefill onset on the processor-sharing stage, and the decode gate's
 	// closed share charged to the published rate, both off in production
 	// (whatif.DefaultPSOnsets, whatif.DefaultChargeDecodeGate). They move no
@@ -1283,6 +1290,7 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	saturation.SwitchPrefillAEngineTiming:   nil,
 	saturation.SwitchPrefillQueueByCapacity: nil,
 	saturation.SwitchPrefillFBusyMinutes:    nil,
+	saturation.SwitchPrefillFPooledMinutes:  nil,
 	saturation.SwitchPrefillALowLoadByRate:  nil,
 	saturation.SwitchPrefillAMedianOverhead: nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
@@ -1767,6 +1775,14 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestImbalance_BusyIsComputedTokensNotRequests"},
 		{"../saturation", "TestPrefillFBusyMinutes_LightMinutesThroughAnalyze"},
 	},
+	saturation.SwitchPrefillFPooledMinutes: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestImbalance_PooledMinutesLearnFUnderTheThreshold"},
+		{"../../../signals/prefill", "TestImbalance_AMinuteAtTheThresholdIsReadAlone"},
+		{"../../../signals/prefill", "TestImbalance_AMinuteAtTheThresholdAfterLightOnesIsReadAlone"},
+		{"../../../signals/prefill", "TestImbalance_APoolEndsAtABreak"},
+		{"../saturation", "TestPrefillFPooledMinutes_LongPromptsThroughAnalyze"},
+	},
 	saturation.SwitchPrefillVPFloorServed: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestCapacity_ALowerBoundIsFlooredAtTheServedPeak"},
@@ -2123,6 +2139,14 @@ var heldBy = map[string][]heldTest{
 	// switch on and off through priceTTFT and asserts both flags and verdicts.
 	slo.SwitchTTFTRouterWait: {
 		{"../slo", "TestTTFT_TheRouterWaitSwitch"},
+	},
+	// The router's wait inside the prefill price (issue #367): the first runs
+	// the switch off from the constructor and on through Analyze to the
+	// priced fleet; the second prices one fleet with it on and off and holds
+	// it on to the planner's price at its defaults.
+	slo.SwitchTTFTRouterWaitInPrefill: {
+		{"../slo", "TestTTFT_TheRouterWaitInPrefillSwitchReachesTheFleet"},
+		{"../slo", "TestTTFT_TheRouterWaitInPrefillSwitchIsThePlannersPrice"},
 	},
 	// The onset switches: it prices one fleet with both on and off through
 	// priceTTFT, and asserts the onsets, the shared rate and the verdicts.

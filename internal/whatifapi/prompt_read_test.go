@@ -85,3 +85,24 @@ func TestBacktest_AStepsPromptIsRead(t *testing.T) {
 	assert.Positive(t, read, "the steps' own prompts were priced")
 	assert.Zero(t, stated, "a step's own prompt is read, not stated")
 }
+
+// A bucket the experimental models price at its own shape reads its prompt
+// as a bucket without the models does (readShape): the planner's terms at
+// that shape are read, not stated, so the prefill pods' hit nets them.
+func TestDayPlan_AnOwnShapeBucketsPromptIsRead(t *testing.T) {
+	s, e := shapeEntry(t, func(int) bool { return false }, 1, true)
+	r, ok := s.resolver.(*stubResolver)
+	require.True(t, ok)
+	seen := knobsSeen(r)
+	out := shapePlan(t, s, e, shapeTarget(t, e, 2.5), false)
+	own := 0
+	for _, b := range out.Buckets {
+		if b.Needed != nil && b.Shape.Source == shapeOwn && b.Shape.Model != nil {
+			own++
+		}
+	}
+	require.Positive(t, own, "buckets priced at their own shape")
+	read, stated := promptsPriced(seen())
+	assert.Positive(t, read, "the own-shape buckets' prompts were priced")
+	assert.Zero(t, stated, "an own-shape bucket's prompt is read, not stated")
+}

@@ -106,6 +106,14 @@ func hoursWords(d time.Duration) string {
 // the prompt priced.
 const kneeAtServedWork whatif.Flag = "KneeAtServedWork"
 
+// servedWorkUnsteady is a prefill knee priced from a lower bound of V_P that
+// no served work floors: at the pod count priced the prefill pods served a
+// stretch of learnreplay.ServedWorkWindow, and the backlog grew in every one
+// (learnreplay.PrefillState.ServedUnsteady). A burst carried with a queue
+// building is not a rate the pods hold (#477), so the knee stays at its
+// lower bound.
+const servedWorkUnsteady whatif.Flag = "ServedWorkUnsteady"
+
 // vpAtServedWork is a V_P raised for the TTFT with a knee floored at the
 // served work (atServedWork, saturation.SwitchPrefillVPAtServedWork): the
 // TTFT is priced from the V_P that knee implies, still a lower bound.
@@ -403,6 +411,10 @@ type pricedFleet struct {
 	// computed-token hit): the floor under a lower-bound knee
 	// (servedKneeFloor).
 	servedComputed map[int]float64
+	// servedUnsteady is, by pod count, served work that was not sustained
+	// (learnreplay.PrefillState.ServedUnsteady), read with servedComputed:
+	// the knee is flagged servedWorkUnsteady instead of floored.
+	servedUnsteady map[int]bool
 	// cachedTokenCost is slo.SwitchTTFTCachedTokenCost, as the replay read
 	// it (PrefillState.CachedTokenCost): priceCachedLoad.
 	cachedTokenCost bool
@@ -934,13 +946,13 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 				// The load's prompt is then in the tokens the prefill pods
 				// computed, read off the counter their served work is, so
 				// the knee keeps its floor at that work, as measured.
-				pf.servedComputed = ps.ServedComputed
+				pf.servedComputed, pf.servedUnsteady = ps.ServedComputed, ps.ServedUnsteady
 			}
 		}
 		pf.stepComputedPrompt(f.inputTokens, f.prefillComputed)
 	case ps.PromptTokens > 0:
 		p.PromptTokens, pf.in.PromptSource = ps.PromptTokens, shapeMeasured
-		pf.servedComputed = ps.ServedComputed
+		pf.servedComputed, pf.servedUnsteady = ps.ServedComputed, ps.ServedUnsteady
 		pf.in.PromptFromCycle, pf.in.PromptToCycle = ps.PromptFromCycle, ps.PromptToCycle
 		if hit, ok := pf.prefillHit(); ok {
 			p.WholePromptTokens, p.PromptHitRate = pf.prefillServed.InputTokens, hit
@@ -1635,7 +1647,9 @@ func (pf *pricedFleet) knee() whatif.Result {
 // r rests on a lower bound of V_P (whatif.VPLowerBound) and that is higher:
 // work / E[I_eff] at the pod count priced, flagged kneeAtServedWork. A pod
 // computes no faster than its capacity, so the work the pods kept up over
-// learnreplay.ServedWorkWindow is work they can do, and the knee is at least
+// learnreplay.ServedWorkWindow with no backlog growing is work they can do,
+// and where they served only with a backlog growing the knee is left as
+// priced, flagged servedWorkUnsteady. The knee is at least
 // the rate it serves; both sides are read off the engines' computed-token
 // counter, so no model of the prompt stands between them. A knee priced from
 // a V_P that is no lower bound is left as priced: a window that served past
@@ -1649,6 +1663,10 @@ func (pf *pricedFleet) servedKneeFloor(r whatif.Result) whatif.Result {
 		return r
 	}
 	work := pf.servedComputed[p.Replicas]
+	if !(work > 0) && pf.servedUnsteady[p.Replicas] {
+		a.Flags = append(slices.Clone(a.Flags), servedWorkUnsteady)
+		return a
+	}
 	floor := work / p.PromptTokens
 	if !whatif.Finite(floor) || !(floor > a.Value) {
 		return r

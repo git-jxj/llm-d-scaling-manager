@@ -105,6 +105,18 @@ const SwitchPrefillQueueByCapacity = "prefill-queue-by-capacity"
 // SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillFBusyMinutes = "prefill-f-busy-minutes"
 
+// SwitchPrefillFPooledMinutes is the replay switch for f on a fleet whose
+// minutes carry fewer than prefill.MinRequestsPerPodMinute requests a pod
+// (prefill.Cycle.FPooledMinutes). On, consecutive minutes on the same pods
+// are pooled until they carry that many, at most prefill.MaxPooledMinutes,
+// and the pool gives one f, de-biased at its pooled count. A fleet of long
+// prompts serves under the threshold at its knee: the Qwen3-32B lab fleet
+// served about 78 requests a pod a minute, learned no f, and was priced at
+// whatif.ImbalanceFloor at every count above one. Off, such minutes give no
+// f, as before this switch. Planner-only, as SwitchPrefillALowLoadPerRank
+// is.
+const SwitchPrefillFPooledMinutes = "prefill-f-pooled-minutes"
+
 // SwitchPrefillVPFloorServed is the replay switch for the floor under a
 // lower-bound V_P (prefill.Cycle.VPFloorServed). On, a V_P that is a lower
 // bound (the peak under a queue, the back-pressure bound, busy minutes of a
@@ -451,6 +463,7 @@ func (c *cycle) observePrefill() {
 			Bound: bounds[variant], Settle: view, ALineOnly: !a.prefillAQuadratic,
 			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming,
 			QueueByCapacity: a.prefillQueueByCapacity, FBusyMinutes: a.prefillFBusyMinutes, FLoadCurve: a.prefillFLoadCurve,
+			FPooledMinutes: a.prefillFPooledMinutes,
 			VPFloorServed: a.prefillVPFloorServed, VPServedUnqueued: a.prefillVPServedUnqueued, VPWindowBest: a.prefillVPWindowBest,
 			VPOccupancyPlateau: a.prefillVPOccupancyPlateau, VPPromptCoverage: a.prefillVPPromptCoverage, VPLoneRate: a.prefillVPLoneRate,
 			VPServiceLine: a.prefillVPServiceLine, ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,

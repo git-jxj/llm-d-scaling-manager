@@ -97,6 +97,10 @@ type promptSample struct {
 	// reuseGap and idle are the counted rows' KV residency histograms
 	// summed, upper bound to rate, nil with none read (HitModel).
 	reuseGap, idle map[float64]float64
+	// routerPredicted and routerBest are the router prefix producer's
+	// predicted and best-available cached tokens a second this cycle
+	// (NoteRouterPrefix), 0 with none read (HitModel's K).
+	routerPredicted, routerBest float64
 }
 
 // PromptWindow is a prefill variant's latest PromptWindowCycles cycles with
@@ -142,6 +146,42 @@ func (w *PromptWindow) Note(rows []domain.ReplicaMetrics, cycle int, at time.Tim
 	if len(w.samples) > PromptWindowCycles {
 		w.samples = w.samples[len(w.samples)-PromptWindowCycles:]
 	}
+}
+
+// NoteRouterPrefix adds the router prefix producer's predicted and
+// best-available cached tokens a second, read at cycle, to that cycle's
+// sample (HitModel's duplication K). A cycle Note did not keep, nil router
+// figures or a pair that is not one reading (best under predicted, or none
+// predicted) leave the window as it is.
+func (w *PromptWindow) NoteRouterPrefix(cycle int, r *domain.RouterLatency) {
+	if w == nil || len(w.samples) == 0 || r == nil {
+		return
+	}
+	pr, ba := r.PrefixPredictedTokenRate, r.PrefixBestAvailableTokenRate
+	s := &w.samples[len(w.samples)-1]
+	if s.cycle != cycle || !Finite(pr) || !Finite(ba) || !(pr > 0) || !(ba >= pr) {
+		return
+	}
+	s.routerPredicted, s.routerBest = pr, ba
+}
+
+// AffinityLoss is the share of the cached tokens the router could have hit
+// on the best endpoint that it sent elsewhere, 1 - predicted / best
+// available, summed over the window's cycles that read both
+// (NoteRouterPrefix); false with none.
+func (w *PromptWindow) AffinityLoss() (float64, bool) {
+	if w == nil {
+		return 0, false
+	}
+	var pr, ba float64
+	for _, s := range w.samples {
+		pr += s.routerPredicted
+		ba += s.routerBest
+	}
+	if !(ba > 0) {
+		return 0, false
+	}
+	return max(1-pr/ba, 0), true
 }
 
 // addLatencyBuckets adds b's rates to m by bound, m made on the first

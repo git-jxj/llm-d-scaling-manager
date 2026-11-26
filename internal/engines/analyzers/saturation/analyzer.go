@@ -548,6 +548,9 @@ type SaturationAnalyzer struct {
 	// itlHoldSteadySlope SwitchITLHoldSteadySlope: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillFBusyMinutes, itlHoldSteadySlope bool
+	// prefillFPooledMinutes is SwitchPrefillFPooledMinutes: off from the
+	// constructor, planner-only (learnreplay.PlannerSwitches).
+	prefillFPooledMinutes bool
 	// moeBusiestRank is SwitchMoEBusiestRank (moe_busiest_rank.go): off
 	// from the constructor, planner-only.
 	moeBusiestRank bool

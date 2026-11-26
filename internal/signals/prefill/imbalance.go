@@ -73,6 +73,9 @@ func NormalMaxMean(n int) float64 {
 
 // share is one replica's work this cycle.
 type share struct {
+	// pod is the replica's pod name: a pool of minutes (Cycle.FPooledMinutes)
+	// sums each pod's work across them.
+	pod        string
 	rate       float64
 	rateOK     bool
 	requests   float64
@@ -109,7 +112,13 @@ func minuteImbalance(shares []share) (f, load float64, ok bool) {
 
 // noteImbalance folds the cycle's imbalance into the key's minutes, when
 // every serving replica was admitted.
-func (ks *keyState) noteImbalance(shares []share, allAdmitted bool, now time.Time) {
+// With pooled (Cycle.FPooledMinutes), minutes under MinRequestsPerPodMinute
+// are pooled with the ones after them (notePooledImbalance).
+func (ks *keyState) noteImbalance(shares []share, allAdmitted, pooled bool, now time.Time) {
+	if pooled {
+		ks.notePooledImbalance(shares, allAdmitted, now)
+		return
+	}
 	if !allAdmitted {
 		return
 	}
@@ -117,11 +126,18 @@ func (ks *keyState) noteImbalance(shares []share, allAdmitted bool, now time.Tim
 	if !ok {
 		return
 	}
+	ks.putF(fSample{at: now, f: f, pods: len(shares), load: load, multiRank: multiRank(shares)}, now)
+}
+
+// putF keeps s as the key's latest minute: it rewrites the last one when
+// that is under SampleSpacing old as of now, keeping its time, and is added
+// after it otherwise.
+func (ks *keyState) putF(s fSample, now time.Time) {
 	if n := len(ks.f); n > 0 && now.Sub(ks.f[n-1].at) < SampleSpacing {
-		ks.f[n-1].f, ks.f[n-1].pods, ks.f[n-1].load, ks.f[n-1].multiRank = f, len(shares), load, multiRank(shares)
+		ks.f[n-1].f, ks.f[n-1].pods, ks.f[n-1].load, ks.f[n-1].multiRank = s.f, s.pods, s.load, s.multiRank
 		return
 	}
-	ks.f = append(ks.f, fSample{at: now, f: f, pods: len(shares), load: load, multiRank: multiRank(shares)})
+	ks.f = append(ks.f, s)
 	if len(ks.f) > maxSamples {
 		ks.f = ks.f[len(ks.f)-maxSamples:]
 	}

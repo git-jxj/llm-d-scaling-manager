@@ -279,9 +279,10 @@ func TestAtReplicas_Q32HotCyclesOfAnotherShapeDoNotContradict(t *testing.T) {
 	v := rep.Shapes[0].Verdict
 	assert.NotContains(t, v.Summary, contradictsWords)
 	assert.Equal(t, whatifapi.VerdictNotJudged, v.Verdict, v.Summary)
-	// 4.2, not the 4.04 V_P gives: the knee is raised to the work the
-	// prefill pods sustained (KneeAtServedWork).
-	assert.Contains(t, v.Summary, "2.9x a prefill knee of at least 4.2 r/s: "+lowerBoundKneeWords)
+	// 4.1, not the 4.04 V_P gives: the knee is raised to the work the
+	// prefill pods sustained over five minutes with their backlog steady
+	// (KneeAtServedWork); a two-minute peak read 4.2 (#477).
+	assert.Contains(t, v.Summary, "2.9x a prefill knee of at least 4.1 r/s: "+lowerBoundKneeWords)
 }
 
 // On the ols-sweep the load's cycles ran at about 1000/500 while the shape

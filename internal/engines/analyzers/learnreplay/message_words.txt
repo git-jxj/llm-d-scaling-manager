@@ -2531,6 +2531,7 @@ prefill-catchup
 prefill-demand-held
 prefill-f-busy-minutes
 prefill-f-load-curve
+prefill-f-pooled-minutes
 prefill-hit-at-count
 prefill-knee
 prefill-latency
@@ -2753,6 +2754,7 @@ removing
 rename
 renewal
 renewal-lognormal
+renewal-lognormal-per-length
 repeated
 replaced
 replacement
@@ -3137,6 +3139,7 @@ slo-ttft-ps-onsets
 slo-ttft-pull-work
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
+slo-ttft-router-wait-in-prefill
 slo-ttft-sizes-prefill
 slo-ttft-tier-kv-wait
 slo-ttft-tier-load
