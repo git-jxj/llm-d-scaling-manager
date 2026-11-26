@@ -348,7 +348,28 @@ split the shared prefixes, so each pod's cache holds more of its own and the
 prefix hit rises; fewer pods lower it. By default the planner keeps the hit
 it measured at every count, which reads the prompt tokens a pod computes too
 low when you price fewer pods. `--prefill-hit-at-count` prices the hit at
-the count you ask for:
+the count you ask for.
+
+If the recording holds vLLM's KV residency histograms (start vLLM with
+`--kv-cache-metrics`; see [the metrics](metrics.md)), the planner fits how
+long a cached block waits to be reused and prices the hit from it at fewer
+pods and at more (the reuse-gap rule), flagged `PrefixHitAtCount`. A tier
+past the GPU (CPU offload, a KV connector) keeps the total hit it served,
+and the planner prices the load of the tokens that move to it. The
+recording does not say how large that tier is, so at fewer pods the total
+does not fall: an optimistic reading if the tier is small. On a lab run
+recorded on 2 prefill pods, with the histograms rebuilt from its load
+generator (the run had no `--kv-cache-metrics`), it read 0.29 at 1 pod
+(measured 0.345) and 0.82 at 4 (measured 0.79). Those histograms follow
+the same law the planner fits, so the run checks the arithmetic, not the
+law against a real engine. At 1 pod the hit reads low because one pod
+count does not show how many pods hold a copy of a prefix; that prices
+more computed tokens, the safe side. With no tier past the GPU the most the
+hit can reach is not measured, so at more pods the planner lets the missed
+share of the prompt fall at most as fast as the pods rise, a stated limit
+rather than a measured one: it priced 0.76 at 4.
+
+Without those histograms:
 
 - fewer pods: the hit times the new count over the recorded one, a safe
   floor (each request computes more tokens, so the prefill knee falls),

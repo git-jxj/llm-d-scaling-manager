@@ -466,7 +466,7 @@ func PredictionCSV(p *Prediction) string {
 // handlePredict is POST /v1/predict.
 func (s *Server) handlePredict(w http.ResponseWriter, r *http.Request) {
 	var req PredictRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	fit, ok := s.inputs.get(req.InputsID)
@@ -505,7 +505,7 @@ func (s *Server) handlePredict(w http.ResponseWriter, r *http.Request) {
 // handleCompare is POST /v1/compare.
 func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 	var req CompareRequest
-	if !readJSONUpTo(w, r, &req, maxCompareBody) {
+	if !s.readLongJSON(w, r, &req, maxCompareBody) {
 		return
 	}
 	p, err := ReadPrediction(req.Prediction)

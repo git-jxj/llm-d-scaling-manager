@@ -143,14 +143,16 @@ var OptionalSeriesList = []OptionalSeries{
 	{Name: "vllm:kv_offload_tiering_lookup_async_delay_seconds_count", Source: SourceVLLM, Tier: TierDiagnostic},
 	{Name: "vllm:kv_offload_load_size_bucket", Source: SourceVLLM, Tier: TierDiagnostic},
 	// vLLM: how long a cached prefix lives in the GPU cache
-	// (--kv-cache-metrics).
+	// (--kv-cache-metrics). The reuse-gap and idle-before-evict buckets are
+	// also recorded: the capacity planner prices the prefix hit at another
+	// prefill count from them (prefill.FitHitModel).
 	{Name: "vllm:kv_block_lifetime_seconds_bucket", Source: SourceVLLM, Tier: TierDiagnostic},
 	{Name: "vllm:kv_block_lifetime_seconds_sum", Source: SourceVLLM, Tier: TierDiagnostic},
 	{Name: "vllm:kv_block_lifetime_seconds_count", Source: SourceVLLM, Tier: TierDiagnostic},
-	{Name: "vllm:kv_block_idle_before_evict_seconds_bucket", Source: SourceVLLM, Tier: TierDiagnostic},
+	{Name: "vllm:kv_block_idle_before_evict_seconds_bucket", Source: SourceVLLM, Tier: TierCachedFleet},
 	{Name: "vllm:kv_block_idle_before_evict_seconds_sum", Source: SourceVLLM, Tier: TierDiagnostic},
 	{Name: "vllm:kv_block_idle_before_evict_seconds_count", Source: SourceVLLM, Tier: TierDiagnostic},
-	{Name: "vllm:kv_block_reuse_gap_seconds_bucket", Source: SourceVLLM, Tier: TierDiagnostic},
+	{Name: "vllm:kv_block_reuse_gap_seconds_bucket", Source: SourceVLLM, Tier: TierCachedFleet},
 	{Name: "vllm:kv_block_reuse_gap_seconds_sum", Source: SourceVLLM, Tier: TierDiagnostic},
 	{Name: "vllm:kv_block_reuse_gap_seconds_count", Source: SourceVLLM, Tier: TierDiagnostic},
 	// vLLM: the decode host cache, every series of the family, whose names

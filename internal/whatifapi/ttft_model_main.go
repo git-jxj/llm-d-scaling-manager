@@ -113,8 +113,10 @@ type mainMixture struct {
 	info    TTFTModelInfo
 	// hitAtCount is InputsRequest.PrefillHitAtCount, as the source was
 	// read: the computed-token histogram is priced at each prefill count's
-	// prefix hit (computedAt).
+	// prefix hit (computedAt), with hitModel where the source gave one
+	// (InputsResponse.PrefillHitModel).
 	hitAtCount bool
+	hitModel   *prefill.HitModel
 	// fit is the shape the fit steps served: what a day-plan bucket's own
 	// shape is checked against before the model prices it (outsideFit).
 	fit mixtureRange
@@ -149,21 +151,15 @@ type mixturePrice struct {
 // computedAt is the computed-token histogram the model draws from at n
 // prefill replicas, the flag its figures carry and the note that says so.
 // With PrefillHitAtCount on and n not the recorded count, the pooled
-// window's hit h, 1 - E[computed] / E[prompt], is priced at n
-// (prefill.HitAtCountOf) and the histogram's bounds scaled by (1 - h')/(1 - h),
-// capped at the prompt draw (whatif.ComputedAtScale); otherwise the pooled
+// window's hit h, 1 - E[computed] / E[prompt], is priced at n and the
+// histogram moved to it (whatif.ComputedAtCount); otherwise the pooled
 // histogram as it is.
 func (mm *mainMixture) computedAt(n int) (map[float64]float64, whatif.Flag, string) {
 	computed := mm.pooled.Computed
 	if !mm.hitAtCount || n == mm.prefill {
 		return computed, "", ""
 	}
-	ec, okc := whatif.CumulativeMean(computed)
-	el, okl := whatif.CumulativeMean(mm.pooled.Prompt)
-	if !okc || !okl || !(el > 0) {
-		return computed, "", ""
-	}
-	r, ok := prefill.HitAtCountOf(max(1-ec/el, 0), ec, mm.prefill, n, nil)
+	r, moved, ok := whatif.ComputedAtCount(computed, mm.pooled.Prompt, mm.prefill, n, mm.hitModel)
 	if !ok {
 		return computed, "", ""
 	}
@@ -171,9 +167,14 @@ func (mm *mainMixture) computedAt(n int) (map[float64]float64, whatif.Flag, stri
 	if !r.Moved() {
 		return computed, flag, ""
 	}
-	note := fmt.Sprintf("experimental TTFT model's computed tokens at the prefix hit %.3g on %d prefill replicas, from %.3g on %d (%s): "+
-		"its histogram scaled by %.3g, capped at the prompt", r.Hit, n, r.FitHit, mm.prefill, r.Rule, r.ComputedScale)
-	return whatif.ComputedAtScale(computed, mm.pooled.Prompt, r.ComputedScale), flag, note
+	how := fmt.Sprintf("its histogram scaled by %.3g, capped at the prompt", r.ComputedScale)
+	if r.Hit < r.FitHit {
+		how = fmt.Sprintf("a miss mixture: a share of the requests computing their whole prompt, %.3g times the computed tokens",
+			r.ComputedScale)
+	}
+	note := fmt.Sprintf("experimental TTFT model's computed tokens at the prefix hit %.3g on %d prefill replicas, from %.3g on %d (%s): %s",
+		r.Hit, n, r.FitHit, mm.prefill, r.Rule, how)
+	return moved, flag, note
 }
 
 // TTFTModelNLLineLabel names the variant whatif.QueueRankMixtureNLLine on
@@ -244,7 +245,7 @@ func fitMainMixture(e *inputsEntry, sw rankMixtureSwitches) *mainMixture {
 	if p := e.doc.Fleet.Prefill; p != nil {
 		mm.prefill = p.Replicas
 	}
-	mm.hitAtCount = e.doc.PrefillHitAtCount
+	mm.hitAtCount, mm.hitModel = e.doc.PrefillHitAtCount, e.doc.PrefillHitModel
 	abstain := func(why string) *mainMixture {
 		mm.rq = abstainedMixture(why)
 		mm.info.Abstained = why

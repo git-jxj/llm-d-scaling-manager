@@ -558,7 +558,7 @@ type DayCounts struct {
 // handleDayPlan is POST /v1/dayplan.
 func (s *Server) handleDayPlan(w http.ResponseWriter, r *http.Request) {
 	var req DayPlanRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	body, err := s.dayPlan(r.Context(), req)

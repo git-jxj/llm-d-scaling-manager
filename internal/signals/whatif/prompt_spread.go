@@ -94,6 +94,9 @@ type promptSample struct {
 	// tiers is the cached tokens by tier and the KV transfers of the
 	// counted rows that read them, for TierLoad (tier_load.go).
 	tiers tierSample
+	// reuseGap and idle are the counted rows' KV residency histograms
+	// summed, upper bound to rate, nil with none read (HitModel).
+	reuseGap, idle map[float64]float64
 }
 
 // PromptWindow is a prefill variant's latest PromptWindowCycles cycles with
@@ -124,6 +127,8 @@ func (w *PromptWindow) Note(rows []domain.ReplicaMetrics, cycle int, at time.Tim
 				s.whole += r * il
 			}
 			s.tiers.noteTiers(rm, r)
+			s.reuseGap = addLatencyBuckets(s.reuseGap, rm.KVReuseGapBuckets)
+			s.idle = addLatencyBuckets(s.idle, rm.KVIdleBeforeEvictBuckets)
 		}
 	}
 	if !(s.computed > 0) {
@@ -137,6 +142,21 @@ func (w *PromptWindow) Note(rows []domain.ReplicaMetrics, cycle int, at time.Tim
 	if len(w.samples) > PromptWindowCycles {
 		w.samples = w.samples[len(w.samples)-PromptWindowCycles:]
 	}
+}
+
+// addLatencyBuckets adds b's rates to m by bound, m made on the first
+// bucket read; a bucket that is no reading adds nothing.
+func addLatencyBuckets(m map[float64]float64, b []domain.LatencyBucket) map[float64]float64 {
+	for _, x := range b {
+		if math.IsNaN(x.UpperBound) || !Finite(x.Rate) || x.Rate < 0 {
+			continue
+		}
+		if m == nil {
+			m = map[float64]float64{}
+		}
+		m[x.UpperBound] += x.Rate
+	}
+	return m
 }
 
 // Clone is a copy that a later Note does not reach. Nil stays nil.

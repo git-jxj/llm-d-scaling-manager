@@ -68,8 +68,11 @@ reports, backtests and day plans on it never mix with the default's
 for, not the one measured (the CLI's `--prefill-hit-at-count`; off by
 default). At fewer prefill replicas than the source's the hit is the floor
 hit x N'/N and each request computes more prompt tokens, flagged
-`PrefixHitAtCount`; at more it is kept, flagged `PrefixHitHeld`. The answer
-carries `prefillHitAtCount: true` and its own `inputsId`.
+`PrefixHitAtCount`; at more it is kept, flagged `PrefixHitHeld`. Where the
+source holds vLLM's KV residency histograms, the hit at both fewer and more
+replicas is the reuse-gap rule's, and the answer carries the fitted law as
+`prefillHitModel`. The answer carries `prefillHitAtCount: true` and its own
+`inputsId`.
 
 `prefillVPServiceLine: true` reads V_P from the prefill service line
 where the prefill pods never queued, or V_P is only a lower bound under the
@@ -614,8 +617,13 @@ act on also has a `reason`:
 | 503 with `reason: PlanBudgetExceeded` | The plan ran past `--plan-budget`. See below. |
 | 503, no reason | The request ended (its client went away) before it was priced. |
 
-Reading a request may take 30 s, an idle connection is closed after 2 minutes,
-and a response may take 10 minutes (a cold plan, or a capture).
+Reading a request may take 30 s, and an idle connection is closed after 2
+minutes. Once its body has arrived, a request that computes (`POST /v1/inputs`,
+`/v1/plan`, `/v1/size`, `/v1/report`, `/v1/dayplan`, `/v1/backtest`,
+`/v1/predict`, `/v1/compare`) may run for 30 minutes: loading a day-long
+recording takes minutes. Any other response may take 10 minutes, and an upload
+has its own 15. A proxy in front of the planner must wait as long
+([OpenShift](in-cluster.md#long-recordings-load-slowly)).
 [Fixes for each](troubleshooting.md#api-errors).
 
 ### The plan budget
@@ -634,9 +642,10 @@ stops at its next figure and is a 503, with no `Retry-After`:
 - A size's search is not under the budget; only the plan it answers with is.
 - A request for a plan already being priced waits for it and shares its clock,
   so it can be refused sooner than its own budget.
-- The most is 9 minutes, a minute under the 10-minute response limit, so the
-  refusal is written before the connection closes. A negative value or one
-  above 9m stops the server from starting.
+- The most is 9 minutes, well inside the 30 minutes a plan's request may run,
+  so the refusal is written before the connection closes, even for a backtest
+  that first loads a recording. A negative value or one above 9m stops the
+  server from starting.
 
 A cold plan of the worked recording takes under 20 s.
 
