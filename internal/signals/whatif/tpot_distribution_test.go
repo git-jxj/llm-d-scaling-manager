@@ -126,15 +126,15 @@ func TestFitTPOTDist_AtTheBound(t *testing.T) {
 }
 
 // At the histogram's resolution the distribution scores 0 against its own
-// histogram, its p90 in the measured p90's bucket; one placed at twice the
-// mean misses by the share between.
+// histogram, its p90 and p95 in the measured ones' joint brackets; one
+// placed at twice the mean misses by the share between.
 func TestTPOTDist_BucketScore(t *testing.T) {
 	edges := []float64{0.005, 0.01, 0.02, 0.04, math.Inf(1)}
 	st := tdStep(3, 0.012, 0.02, edges, 10000)
 	d := TPOTDist{C: 3}
 	ks, in := d.BucketScore(st, 0.012, 0.9, 0.95)
 	assert.InDelta(t, 0, ks, 1e-9)
-	assert.Equal(t, []bool{true, true}, in)
+	assert.Equal(t, []BracketSide{BracketInside, BracketInside}, in)
 	ks, _ = d.BucketScore(st, 0.024, 0.9)
 	assert.Greater(t, ks, 0.3)
 }

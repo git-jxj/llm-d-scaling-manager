@@ -209,6 +209,10 @@ type Analyzer struct {
 	// ttftRouterWait is SwitchTTFTRouterWait (ttft.go): off from the
 	// constructor, at whatif.DefaultPriceRouterWait; a replay turns it on.
 	ttftRouterWait bool
+	// ttftRouterWaitInPrefill is SwitchTTFTRouterWaitInPrefill (ttft.go):
+	// off from the constructor, unlike the planner's default
+	// (whatif.DefaultRouterWaitInPrefill); a replay turns it on.
+	ttftRouterWaitInPrefill bool
 	// ttftPSOnsets is SwitchTTFTPSOnsets and ttftDecodeGateCharge
 	// SwitchTTFTDecodeGateCharge (ttft.go): off from the constructor, at
 	// whatif.DefaultPSOnsets and whatif.DefaultChargeDecodeGate; a replay
