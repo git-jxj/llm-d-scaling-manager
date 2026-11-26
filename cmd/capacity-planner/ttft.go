@@ -349,6 +349,10 @@ type pricedFleet struct {
 	assumedVP bool
 	// statedCV is a cv --assume-prompt-cv supplied, in in.PromptCV.
 	statedCV bool
+	// contextTokens is the prefill engines' context window (contextOf),
+	// which holds the prompt spread's mass past the histogram's last bound;
+	// 0 where the recorded arguments do not say it.
+	contextTokens float64
 	// prefixAttention is slo.SwitchTTFTPrefixAttention, as the replay read
 	// it (PrefillState.PrefixAttention), and prefillServed the prefill
 	// variant's measured shape: its hit rate is what the prefill pods skip.
@@ -593,6 +597,11 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	// whatif.DefaultChargeDecodeGate).
 	pf.fleet.PSOnsets, pf.fleet.ChargeDecodeGate = f.psOnsets, f.chargeDecodeGate
 	pf.fleet.Prefill.RunningCap = f.prefillRunningCap
+	// The prefill engines' context window bounds the prompt spread's top
+	// bucket (whatif.ReadPromptSpreadWithin); unknown, it is left open.
+	if c := contextOf(st.Variants, ps.Variant); c.Value != nil {
+		pf.contextTokens = *c.Value
+	}
 	f.prefillShape(pf, ps)
 	if ps.PSByEngine {
 		pf.psByEngine(st, ps)
@@ -943,7 +952,7 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 	// The window's, whatever the prompt asked: a cv is a figure of the traffic
 	// the histogram counted. --assume-prompt-cv overrides it, as every
 	// --assume-* flag overrides the recording, with the read figure beside it.
-	spread := ps.PromptWindow.Spread()
+	spread := ps.PromptWindow.SpreadWithin(pf.contextTokens)
 	p.PromptCV, p.PromptCVAssumed = spread.CV, spread.Assumed
 	switch {
 	case !ps.PromptSupport:
@@ -974,6 +983,9 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 	case spread.Clamped:
 		pf.in.PromptCVSource = shapeClamped
 		pf.assume("prompt cv %s (the histogram reads past its last bound, or above it)", num(spread.CV))
+	case spread.ClosedAt > 0:
+		pf.assume("prompt cv %s, an upper bound: the histogram's mass past its last bound held under the context window, %s tokens",
+			num(spread.CV), num(spread.ClosedAt))
 	}
 
 	if pv != nil && pv.state.DecodeTTFT.TransferSeconds > 0 && ps.PromptTokens > 0 {
