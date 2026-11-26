@@ -683,7 +683,7 @@ const (
 // handleBacktest is POST /v1/backtest.
 func (s *Server) handleBacktest(w http.ResponseWriter, r *http.Request) {
 	var req BacktestRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	out, err := s.backtest(r.Context(), req)
