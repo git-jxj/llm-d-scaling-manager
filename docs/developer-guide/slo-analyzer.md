@@ -111,6 +111,13 @@ it. On:
 - The planner nets an assumed prompt by a stated hit rate (`--prefix-hit`),
   else the prefill variant's, not the decode variant's
   (`pricedFleet.effectivePrompt`).
+- A backtest's step is priced at the prompt its own prefill pods computed,
+  their computed tokens over their requests
+  (`whatifapi.Knobs.PrefillComputedTokens`, `pricedFleet.stepComputedPrompt`),
+  and `h` is its whole prompt less that. Off, the step's whole prompt is
+  netted by the fit's hit, so a step that hit, tested against a fit that did
+  not, is priced as if it computed the whole prompt. A step's hit at or under
+  `MaterialPrefixHitMove` moves nothing.
 - The KV transfer scales with the tokens it moves, the whole prompt less the
   decode variant's hits (`pricedFleet.transferPerToken`).
 

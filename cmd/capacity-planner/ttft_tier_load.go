@@ -157,6 +157,8 @@ func (pf *pricedFleet) cachedContext() {
 	}
 	var h float64
 	switch {
+	case pf.stepComputed:
+		h = max(p.WholePromptTokens-p.PromptTokens, 0)
 	case pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead && p.WholePromptTokens > 0:
 		h = max(p.WholePromptTokens-p.PromptTokens, 0)
 	case pf.in.PromptSource != shapeMeasured:

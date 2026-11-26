@@ -55,6 +55,9 @@ type servedSources struct {
 	// and --experimental-tpot=v2: every source also gives the cycles the
 	// experimental backtest models read (experimentalSeries).
 	rankMixture, tpotDistribution bool
+	// replay is serve's opt-in replay switches, each on for every source
+	// (serve_replay.go).
+	replay replayDefaults
 	// onPass, when set, is called as each pass over a recording file opens,
 	// with the pass's count (recordingSource.onPass): a test's hook.
 	onPass func(pass int)
@@ -82,6 +85,8 @@ func (s *servedSources) Resolve(ctx context.Context, req whatifapi.InputsRequest
 		vpServiceLine:    req.PrefillVPServiceLine,
 		experimentalTTFT: req.ExperimentalTTFT || s.experimentalTTFT, set: map[string]bool{}, warn: s.warn, priceRouterWait: whatif.DefaultPriceRouterWait,
 		routerWaitInPrefill: whatif.DefaultRouterWaitInPrefill, psOnsets: whatif.DefaultPSOnsets, chargeDecodeGate: whatif.DefaultChargeDecodeGate, imbalanceAcrossCounts: whatif.DefaultPlannerImbalanceAcrossCounts, loadAwareRouter: whatif.DefaultPlannerLoadAwareRouter}
+
+	s.replay.apply(&f)
 	src := whatifapi.SourceRequest{Kind: whatifapi.SourcePrometheus}
 	if req.Source != nil {
 		src = *req.Source
@@ -499,6 +504,7 @@ func (s *servedState) fleetAtImbalance(k whatifapi.Knobs, fixedF float64) (*serv
 		set("assume-input-tokens")
 	}
 	f.prefixHit, f.prefixHitRead = k.PrefixHit, k.PrefixHitRead
+	f.prefillComputed = k.PrefillComputedTokens
 	if s.cachedCost != nil {
 		f.cachedCost, f.cachedPhi = s.cachedCost, s.cachedCost.Phi
 	}
@@ -630,7 +636,7 @@ type servedFleet struct {
 // bucket.
 func (sf *servedFleet) WithTPOTRatio(r whatifapi.ModelRatio) whatifapi.Fleet {
 	c := *sf
-	c.ratio = resolvedRatio{ratio: whatif.TPOTRatio{Value: r.Value}, flags: []whatif.Flag{r.Flag}}
+	c.ratio = resolvedRatio{ratio: whatif.TPOTRatio{Value: r.Value}, flags: append([]whatif.Flag{r.Flag}, r.More...)}
 	c.model = &r
 	c.assumed = append(slices.Clone(sf.assumed), r.Assumed)
 	return &c

@@ -27,7 +27,7 @@ func mainEntry(t *testing.T, model bool) (*Server, *inputsEntry) {
 	e.engine.PrefillSlots = 4
 	e.id = "sha256:main-ttft"
 	if model {
-		e.ttftModel = fitMainMixture(e, whatif.DefaultRankMixtureStratified)
+		e.ttftModel = fitMainMixture(e, rankMixtureSwitches{stratified: whatif.DefaultRankMixtureStratified})
 		info := e.ttftModel.info
 		e.doc.TTFTModel = &info
 		e.id += "-v2"
