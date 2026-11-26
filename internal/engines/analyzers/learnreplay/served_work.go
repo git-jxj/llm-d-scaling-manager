@@ -40,9 +40,6 @@ type servedWork struct {
 	// best is, by pod count, the highest stretch read from samples since
 	// forgotten (windowPeaks): a recording is read as a whole.
 	best map[int]float64
-	// unsteady is, by pod count, whether a stretch of ServedWorkWindow was
-	// seen whose backlog grew (servedWork.stretches), forgotten or not.
-	unsteady map[int]bool
 }
 
 // note keeps one cycle and forgets what is older than prefill.Retention.
@@ -57,7 +54,8 @@ func (w *servedWork) note(s servedWorkSample) {
 		if w.best == nil {
 			w.best = map[int]float64{}
 		}
-		for pods, v := range w.stretches(0, i) {
+		read, _ := w.stretches(0, i)
+		for pods, v := range read {
 			w.best[pods] = max(w.best[pods], v)
 		}
 	}
@@ -75,7 +73,8 @@ func (w *servedWork) note(s servedWorkSample) {
 // they ran: the floor under a prefill knee priced from a lower bound (the
 // planner's servedKneeFloor).
 func (w *servedWork) peaks() map[int]float64 {
-	return w.stretches(0, len(w.samples))
+	read, _ := w.stretches(0, len(w.samples))
+	return read
 }
 
 // windowPeaks is peaks over the whole window replayed: the stretches the
@@ -91,33 +90,37 @@ func (w *servedWork) windowPeaks() map[int]float64 {
 	return out
 }
 
-// unsteadyCounts is the pod counts at which a stretch of ServedWorkWindow
-// was seen, forgotten or not, and read gives none: served work was there,
-// and not sustained.
-func (w *servedWork) unsteadyCounts(read map[int]float64) map[int]bool {
+// peaksUnsteady is peaks, and the pod counts at which a stretch of
+// ServedWorkWindow kept since prefill.Retention had its backlog read on
+// every cycle and growing, and peaks reads none: served work was there, and
+// not sustained. A stretch whose backlog was not read is no evidence either
+// way, and a count with only such stretches is not in it.
+func (w *servedWork) peaksUnsteady() (map[int]float64, map[int]bool) {
+	read, grew := w.stretches(0, len(w.samples))
 	var out map[int]bool
-	for pods, seen := range w.unsteady {
-		if _, ok := read[pods]; seen && !ok {
+	for pods := range grew {
+		if _, ok := read[pods]; !ok {
 			if out == nil {
 				out = map[int]bool{}
 			}
 			out[pods] = true
 		}
 	}
-	return out
+	return read, out
 }
 
-// stretches is peaks over the stretches that start at samples lo to hi-1.
-// A stretch of the full window whose backlog grew is recorded in unsteady.
-func (w *servedWork) stretches(lo, hi int) map[int]float64 {
-	out := map[int]float64{}
+// stretches is peaks over the stretches that start at samples lo to hi-1,
+// and the pod counts with a stretch of the full window whose backlog was
+// read on every cycle and grew.
+func (w *servedWork) stretches(lo, hi int) (map[int]float64, map[int]bool) {
+	out, grew := map[int]float64{}, map[int]bool{}
 	n := len(w.samples)
 	for i := lo; i < hi; i++ {
 		first := w.samples[i]
 		if !first.ok || first.pods < 1 {
 			continue
 		}
-		steady := w.enteredSteady(i)
+		steady, read := w.enteredSteady(i), first.queueOK
 		sum := 0.0
 		for j := i; j < n; j++ {
 			s := w.samples[j]
@@ -125,13 +128,13 @@ func (w *servedWork) stretches(lo, hi int) map[int]float64 {
 				break
 			}
 			steady = steady && s.queueOK && s.queue <= first.queue+first.pods
+			read = read && s.queueOK
 			sum += s.sum
 			if s.at.Sub(first.at) >= ServedWorkWindow {
 				if !steady {
-					if w.unsteady == nil {
-						w.unsteady = map[int]bool{}
+					if read {
+						grew[first.pods] = true
 					}
-					w.unsteady[first.pods] = true
 				} else if mean := sum / float64(j-i+1); mean > out[first.pods] {
 					out[first.pods] = mean
 				}
@@ -139,7 +142,7 @@ func (w *servedWork) stretches(lo, hi int) map[int]float64 {
 			}
 		}
 	}
-	return out
+	return out, grew
 }
 
 // enteredSteady says a stretch starting at sample i is not entered while the

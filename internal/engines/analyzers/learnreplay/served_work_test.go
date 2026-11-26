@@ -84,10 +84,10 @@ func TestServedWork_ABurstWithABacklogGrowingFloorsAtTheSteadyLoad(t *testing.T)
 	at := queuedAt(&w, t0, 100, make([]int, 40)...)
 	at = queuedAt(&w, at, 200, 4, 8, 12, 16, 20, 24, 28, 32)
 	queuedAt(&w, at, 100, append([]int{24, 16, 8}, make([]int, 37)...)...)
-	got := w.peaks()
+	got, unsteady := w.peaksUnsteady()
 	assert.InDelta(t, 100.0, got[2], 1.0, "the steady load, within 1%")
 	assert.InDelta(t, 100.0, w.windowPeaks()[2], 1.0)
-	assert.Empty(t, w.unsteadyCounts(got))
+	assert.Empty(t, unsteady)
 }
 
 // A backlog that stands, neither growing nor draining, is pods computing at
@@ -105,7 +105,9 @@ func TestServedWork_AStandingBacklogIsSteady(t *testing.T) {
 }
 
 // Served work read only with the backlog growing, or with it unread, floors
-// nothing; where a full stretch grew, the count is reported unsteady.
+// nothing; where a full stretch grew, the count is reported unsteady. A
+// backlog not read is not reported as growing, and a growing stretch
+// forgotten past prefill.Retention is reported no longer.
 func TestServedWork_AGrowingBacklogIsNoReadingAndIsFlagged(t *testing.T) {
 	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	var w servedWork
@@ -114,9 +116,13 @@ func TestServedWork_AGrowingBacklogIsNoReadingAndIsFlagged(t *testing.T) {
 		queues[i] = 3 * i
 	}
 	queuedAt(&w, t0, 150, queues...)
-	got := w.peaks()
+	got, unsteady := w.peaksUnsteady()
 	assert.Empty(t, got)
-	assert.Equal(t, map[int]bool{2: true}, w.unsteadyCounts(got))
+	assert.Equal(t, map[int]bool{2: true}, unsteady)
+	servedAt(&w, t0.Add(prefill.Retention+time.Hour), 3, cycles(21, 90)...)
+	got, unsteady = w.peaksUnsteady()
+	assert.Equal(t, map[int]float64{3: 90}, got)
+	assert.Empty(t, unsteady, "the growing stretch at 2 pods is forgotten")
 
 	var unread servedWork
 	at := t0
@@ -124,7 +130,9 @@ func TestServedWork_AGrowingBacklogIsNoReadingAndIsFlagged(t *testing.T) {
 		unread.note(servedWorkSample{at: at, pods: 2, sum: 150, ok: true})
 		at = at.Add(15 * time.Second)
 	}
-	assert.Empty(t, unread.peaks(), "a backlog unread is no evidence it was steady")
+	got, unsteady = unread.peaksUnsteady()
+	assert.Empty(t, got, "a backlog unread is no evidence it was steady")
+	assert.Empty(t, unsteady, "nor that it grew")
 }
 
 // Work older than prefill.Retention is forgotten, as V_P's samples are.

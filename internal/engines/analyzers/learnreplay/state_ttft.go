@@ -101,9 +101,10 @@ type PrefillState struct {
 	// read with VPAtServedWork alone (servedWork.windowPeaks); nil otherwise.
 	ServedComputedWindow map[int]float64
 	// ServedUnsteady is, by pod count, whether the prefill pods served a
-	// stretch of ServedWorkWindow there whose backlog grew and ServedComputed
-	// holds none that did not (servedWork.unsteadyCounts): served work not
-	// sustained, which floors no knee. Read with ServedComputed.
+	// stretch of ServedWorkWindow there, since prefill.Retention, whose
+	// backlog was read and grew, and ServedComputed holds none that did not
+	// (servedWork.peaksUnsteady): served work not sustained, which floors no
+	// knee. A backlog not read gives no entry. Read with ServedComputed.
 	ServedUnsteady map[int]bool
 	// WindowFrom and At are the replay's first cycle and the cycle read, for
 	// the age of a V_P read before the samples kept
@@ -243,8 +244,8 @@ func (t *ttftSamples) servedWorkOf(v string) (peaks, window map[int]float64, uns
 	if t.vpAtServed {
 		window = w.windowPeaks()
 	}
-	peaks = w.peaks()
-	return peaks, window, w.unsteadyCounts(peaks)
+	peaks, unsteady = w.peaksUnsteady()
+	return peaks, window, unsteady
 }
 
 // newTTFTSamples returns empty windows; hopUnqueued is
