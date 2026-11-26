@@ -319,6 +319,10 @@ type DayShape struct {
 	OutputTokens  *float64 `json:"outputTokens,omitempty"`
 	PrefixHitRate *float64 `json:"prefixHitRate,omitempty"`
 	Source        string   `json:"source"`
+	// Model is the shape the experimental models read for the bucket, over
+	// a window around it, where the plan is asked for them and a model
+	// prices a target it asks (dayplan_shape.go); absent otherwise.
+	Model *DayModelShape `json:"model,omitempty"`
 }
 
 // neededWhat names what a size's needed fleet is the fewest of: GPUs where
@@ -617,12 +621,14 @@ func DayPlan(ctx context.Context, res *Resolved, req DayPlanRequest, whatifSchem
 	e := &inputsEntry{id: doc.InputsID, doc: doc, pricer: res.Pricer, series: res.Series, latency: res.Latency}
 	if req.ExperimentalModels {
 		// The models are fitted on the source as POST /v1/inputs fits them:
-		// each one the source was resolved for (Resolved.Mixture, Decode).
+		// each one the source was resolved for (Resolved.Mixture, Decode),
+		// and read each bucket's own shape from the same series.
 		o := res.TTFTModel
 		if o.Model == "" {
 			o = TTFTModelOptions{Model: string(whatif.QueueRankMixture), Stratified: whatif.DefaultRankMixtureStratified}
 		}
 		withModels(e, res, o)
+		e.mixture, e.decode, e.engine = res.Mixture, res.Decode, res.Engine
 	}
 	req.InputsID = e.id
 	q, err := dayQuestionOf(e, req)
@@ -685,7 +691,7 @@ func (q *dayQuestion) modelNotes(out *DayPlanResponse, sized map[int]sizedBucket
 			if q.noTTFT {
 				return "the plan prices no TTFT target"
 			}
-			return m.ttft.notPricedAt(probeKnobs(g))
+			return g.z.models.ttft.notPricedAt(probeKnobs(g))
 		}))
 	}
 	if m.tpot != nil {
@@ -695,7 +701,7 @@ func (q *dayQuestion) modelNotes(out *DayPlanResponse, sized map[int]sizedBucket
 			if g.z.sc.TPOT == nil {
 				return "the plan prices no TPOT target"
 			}
-			return m.tpot.notPricedAt(probeKnobs(g))
+			return g.z.models.tpot.notPricedAt(probeKnobs(g))
 		}))
 	}
 	return notes
@@ -1210,15 +1216,16 @@ func refusalHint(term string, reason whatif.Reason) string {
 // sizing: a TPOT term that refuses is dropped, a TTFT term that refuses
 // leaves decode sized alone, and a decode knee that refuses sizes nothing,
 // since then no rule bounds decode. Each refusal is added to refused once.
-func (q *dayQuestion) group(ctx context.Context, k Knobs, refused *[]DayRefusal) (*dayGroup, error) {
+func (q *dayQuestion) group(ctx context.Context, k Knobs, models *experimentalModels, refused *[]DayRefusal) (*dayGroup, error) {
 	add := func(r DayRefusal) { addRefusal(refused, r) }
 	sc := q.sc
 	g := &dayGroup{limits: map[int]whatif.Result{}}
 	// The sizer prices with the experimental models the plan was asked to
-	// (q.models), as a size on the same inputs does; nil is the planner's
-	// own, as decode's own limits are then too (decodeLimit).
+	// (q.models, or those at a bucket's own shape), as a size on the same
+	// inputs does; nil is the planner's own, as decode's own limits are
+	// then too (decodeLimit).
 	newSizer := func() *sizer {
-		return &sizer{e: q.e, sc: sc, k: k, bound: q.bound, models: q.models, seen: map[FleetCounts]sizeEval{}, plain: map[FleetCounts]sizeEval{}}
+		return &sizer{e: q.e, sc: sc, k: k, bound: q.bound, models: models, seen: map[FleetCounts]sizeEval{}, plain: map[FleetCounts]sizeEval{}}
 	}
 	g.z = newSizer()
 	if q.noTTFT {
@@ -1332,7 +1339,7 @@ func (q *dayQuestion) decodeLimit(ctx context.Context, g *dayGroup, d int) (what
 	if err != nil {
 		return nil, err
 	}
-	fl = q.models.fleet(fl, k)
+	fl = g.z.models.fleet(fl, k)
 	var r whatif.Result
 	if g.z.sc.TPOT != nil {
 		r, _, _ = fl.PlainLimits(g.z.sc.TTFT.Target, g.z.sc.TPOT.Target, g.z.sc.Headroom)
@@ -1375,12 +1382,12 @@ func (q *dayQuestion) sizeBucket(ctx context.Context, g *dayGroup, db *DayBucket
 			return nil
 		}
 		lim := figureOf(g.limits[d], unitRate, false)
-		if q.models != nil {
+		if m := g.z.models; m != nil {
 			// A decode limit the TPOT model set past the highest load served
 			// says so, as a fleet's limit does (sizeBucket below).
 			k := g.z.k
 			k.Prefill, k.Decode = 1, d
-			lim = q.models.tpot.mark(k, 0, lim)
+			lim = m.tpot.mark(k, 0, lim)
 		}
 		db.Status, db.Needed, db.Limit = BucketSized, &DayNeeded{Decode: d, AtLeast: true}, &lim
 		db.Flags = appendNew(db.Flags, lim.Flags...)
@@ -1544,29 +1551,49 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		out.TTFT = &t
 	}
 	stated := !q.sc.Mix.Observed
-	// atWindow prices each bucket at the window's shape, the one the
-	// experimental models were fitted at, so a model can price it; a
-	// bucket's own shape is then not modelled. Only where a model prices
-	// a target the plan asks: else the window's shape buys nothing.
-	atWindow := !stated && q.models.pricesAt(q.k, !q.noTTFT, q.sc.TPOT != nil)
-	if atWindow {
-		out.Notes = append(out.Notes, "With the experimental models, each bucket is priced at its own rate but at the window's request shape "+
-			"(WindowShape), the shape the models were fitted at; per-bucket shape changes are not modelled.")
+	// withModels prices each bucket with the experimental models, where a
+	// model prices a target the plan asks: at the bucket's own shape, where
+	// the TTFT model prices inside what its fit served (dayplan_shape.go),
+	// else at the window's, the one it was fitted at (WindowShape).
+	byTTFT, byTPOT := q.models.pricing(q.k, !q.noTTFT, q.sc.TPOT != nil)
+	withModels := !stated && (byTTFT || byTPOT)
+	// req is each bucket's requests, which a bucket's shape window is
+	// grown to hold.
+	var req []float64
+	if withModels && byTTFT {
+		req = make([]float64, len(buckets))
+		for i, b := range buckets {
+			if len(b.samples) > 0 {
+				req[i] = rateOf(b.samples).Mean * cycle * float64(len(b.samples))
+			}
+		}
 	}
 	var lo, hi [2]float64
-	groups := map[[2]float64]*dayGroup{}
-	groupFor := func(k Knobs) (*dayGroup, error) {
-		key := [2]float64{k.PromptTokens, k.OutputTokens}
+	// A group is one shape's sizing, shared by the buckets at it. A bucket
+	// the models price at its own shape is grouped by that shape too
+	// (model, bucketHists.key): buckets whose histograms agree on the 5% grid
+	// share the first one's, as buckets of nearly one observed shape share
+	// their planner's fleets; zero where the window's shape is priced.
+	type groupKey struct {
+		shape [2]float64
+		model [2]float64
+	}
+	groups := map[groupKey]*dayGroup{}
+	groupFor := func(k Knobs, models *experimentalModels, model [2]float64) (*dayGroup, error) {
+		key := groupKey{[2]float64{k.PromptTokens, k.OutputTokens}, model}
 		if g := groups[key]; g != nil {
 			return g, nil
 		}
-		g, err := q.group(ctx, k, &out.Refused)
+		g, err := q.group(ctx, k, models, &out.Refused)
 		if err != nil {
 			return nil, err
 		}
 		groups[key] = g
 		return g, nil
 	}
+	// shapes counts the buckets with the models by where their shape came
+	// from: their own, or the window's for a flag.
+	shapes := map[string]int{}
 	// sized is each sized bucket's group and rate, by its index: what the
 	// fleet that holds an hour is priced again at.
 	sized := map[int]sizedBucket{}
@@ -1581,7 +1608,7 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 			lat[x.At] = q.e.latency[i]
 		}
 	}
-	for _, b := range buckets {
+	for bi, b := range buckets {
 		db := DayBucket{Start: b.start, Samples: len(b.samples), Shape: DayShape{Source: "window"}}
 		if len(b.samples) == 0 {
 			db.Status = BucketNoData
@@ -1603,6 +1630,7 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 			db.Flags = append(db.Flags, FlagOtherVariantsServed)
 		}
 		k := q.k
+		models, model := q.models, [2]float64{}
 		if p, o, h, ok := bucketShape(b.samples); ok {
 			for i, v := range []float64{p, o} {
 				if lo[i] == 0 || v < lo[i] {
@@ -1611,9 +1639,31 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 				hi[i] = max(hi[i], v)
 			}
 			db.Shape.PrefixHitRate = ptr(h)
-			if atWindow {
+			switch {
+			case withModels && db.Requests >= q.minRequests && r.Mean > 0:
+				var hs *bucketHists
+				if byTTFT {
+					var flag string
+					hs, flag = q.modelShapeOf(buckets, req, bi)
+					db.Shape.Model = &hs.shape
+					shapes[flag]++
+					if flag != "" {
+						db.Flags = append(db.Flags, FlagWindowShape, flag)
+						break
+					}
+				}
+				if hs != nil && hs.lengthsOK {
+					// The planner's terms at the shape the model reads: over
+					// the same window.
+					p, o = hs.lengths[0], hs.lengths[1]
+				}
+				k = readShape(k, p, o)
+				db.Shape.Source = "bucket"
+				db.Shape.PromptTokens, db.Shape.OutputTokens = ptr(p), ptr(o)
+				models, model = q.models.atBucket(hs), hs.key()
+			case withModels:
 				db.Flags = append(db.Flags, FlagWindowShape)
-			} else if !stated {
+			case !stated:
 				k = readShape(k, p, o)
 				db.Shape.Source = "bucket"
 				db.Shape.PromptTokens, db.Shape.OutputTokens = ptr(p), ptr(o)
@@ -1641,7 +1691,7 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 		}
 		db.SizedFor, db.SizedRate = stat, ptr(rate)
 		db.MeasuredTTFT = q.measuredTTFT(b.samples[len(b.samples)-1].At, lat)
-		g, err := groupFor(k)
+		g, err := groupFor(k, models, model)
 		if err != nil {
 			return nil, err
 		}
@@ -1652,6 +1702,13 @@ func (q *dayQuestion) plan(ctx context.Context) (*DayPlanResponse, error) {
 			sized[len(out.Buckets)] = sizedBucket{g: g, rate: rate}
 		}
 		out.Buckets = append(out.Buckets, db)
+	}
+	switch {
+	case withModels && byTTFT:
+		out.Notes = append(out.Notes, modelShapeNote(shapes))
+	case withModels:
+		out.Notes = append(out.Notes, "With the experimental TPOT model, a bucket is priced at its own rate and its own request shape, the "+
+			"model's ratio at the window's output lengths around the planner's mean TPOT at the bucket's own.")
 	}
 	times := make([]time.Time, len(series))
 	for i, x := range series {

@@ -1048,11 +1048,16 @@ view prices with them; from the command line, `day-plan
 prefill that never queued), prefill is sized on it. A bucket a model sized
 carries its flag (`RankMixtureTTFT`, `TPOTDistribution`) on its limit, its
 needed replicas are marked † on the page and in the command's hours table,
-and the plan names each model, with how many buckets it priced. The models
-are fitted at the window's request shape, so where one prices a target the
-plan asks, each bucket is priced at its own rate but at the window's shape, flagged `WindowShape`, and a note
-says that per-bucket shape changes are not modelled: a bucket of longer or
-shorter requests than the day's is sized as if they were the day's. A stated
+and the plan names each model, with how many buckets it priced. Where one
+prices a target the plan asks, each bucket is priced at its own rate and its
+own request shape, read over at least an hour and 16000 requests around it
+(at most 2 hours): the TTFT model draws from that window's prompt and
+computed-token histograms, so an hour whose prefix hit is lower than the
+day's is priced with the longer prefills it served; the TPOT model keeps its
+ratio at the window's output lengths. A bucket whose shape lies outside what
+the TTFT model's fit served is priced at the window's shape instead, flagged `WindowShape` and
+`ShapeOutsideFit`, as is one whose window holds too few requests
+(`ShapeFewRequests`); a note counts each. A stated
 shape or term stays the planner's own. The TPOT model prices a p90 or p95
 TPOT target, not the mean. The plan's notes
 say, for each model, why each bucket it did not price is the planner's. On
@@ -1147,7 +1152,10 @@ alone. A higher `--ttft` sizes them.
   held ahead, and a note says so.
 - **Shape.** Each bucket is priced at its own observed prompt and output
   length. A bucket whose cycles read none is priced at the source's shape and
-  flagged `WindowShape`, as is every bucket where an experimental model prices a target the plan asks. `--assume-input-tokens` and `--assume-output-tokens`
+  flagged `WindowShape`. With an experimental model that prices a target
+  the plan asks, a bucket is priced at its own shape read over a window of
+  at least an hour and 16000 requests around it, or at the window's shape,
+  flagged `WindowShape` with `ShapeOutsideFit` or `ShapeFewRequests`. `--assume-input-tokens` and `--assume-output-tokens`
   price every bucket at one stated length, flagged `EXTRAPOLATED` when it lies
   outside what the buckets observed.
 - **No TTFT target.** With no `--ttft` and none in the policy, prefill is

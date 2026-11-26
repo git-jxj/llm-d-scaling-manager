@@ -103,6 +103,11 @@ type mainTPOT struct {
 	top    float64
 	decode int
 	info   TPOTModelInfo
+	// bucket says the model prices a day-plan bucket at its own shape
+	// (experimentalModels.atBucket): the bucket's output length on the
+	// fleet's knobs is then its own, not a stated one, and the ratio stays
+	// the window's.
+	bucket bool
 }
 
 // tpotModelOf is the TPOT model a source is resolved with: the request's,
@@ -213,7 +218,7 @@ func (mt *mainTPOT) notPricedAt(k Knobs) string {
 		return "the model prices p90 and p95, not " + statisticName(k.TPOTPercentile)
 	case k.Decode <= 0:
 		return "the fleet has no decode replica"
-	case k.OutputTokens != 0:
+	case k.OutputTokens != 0 && !mt.bucket:
 		return "the model prices the source's own output lengths, not a stated one"
 	case k.Assume.TPOTRatio != nil:
 		return "the ratio stated (assume.tpotRatio) prices the percentile"
@@ -384,18 +389,6 @@ func (e *inputsEntry) models() *experimentalModels {
 		return nil
 	}
 	return &experimentalModels{ttft: e.ttftModel, tpot: e.tpotModel}
-}
-
-// pricesAt says at least one of the models prices a fleet at k, one
-// replica a role, for a target the plan asks: the TTFT model where ttft,
-// the TPOT model where tpot (a TPOT model at a mean target prices
-// nothing). False where m is nil.
-func (m *experimentalModels) pricesAt(k Knobs, ttft, tpot bool) bool {
-	if m == nil {
-		return false
-	}
-	k.Prefill, k.Decode = 1, 1
-	return (ttft && m.ttft != nil && m.ttft.notPricedAt(k) == "") || (tpot && m.tpot != nil && m.tpot.notPricedAt(k) == "")
 }
 
 // fleet is fl with the models: the TPOT model's ratio first, since it

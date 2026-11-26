@@ -33,6 +33,17 @@ func CumulativeMean(b map[float64]float64) (float64, bool) {
 	return mean, true
 }
 
+// CumulativeQuantile is the length at share q in (0, 1) of a cumulative
+// histogram as the rank mixture draws from it (CumulativeMean). ok is false
+// where it holds nothing or q is not in (0, 1).
+func CumulativeQuantile(b map[float64]float64, q float64) (float64, bool) {
+	h, ok := newCumHist(b)
+	if !ok || !(q > 0 && q < 1) {
+		return 0, false
+	}
+	return h.ppf(q), true
+}
+
 // ComputedAtScale is computed, a cumulative computed-token histogram, with
 // every bound scaled by scale, and capped at the prompt draw: at each bound
 // its cumulative share is at least prompt's, so no quantile of it is above
