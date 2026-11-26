@@ -2507,9 +2507,12 @@ router; it does not add any. So past the onset the processor-sharing figure
 stands. A new opt-in switch, `TTFTFleet.RouterWaitInPrefill`
 (`--router-wait-in-prefill`), says so. It was off by default until #287's
 router v1.0.0 staircase, backtested, turned it on in the CLI and the planner
-API (docs/developer-guide/testing.md, "Router v1.0.0, backtested"); the SLO
-analyzer has no switch for it yet. The gate stage above stays the switch for
-v0.11.0, where this one must be set off.
+API (docs/developer-guide/testing.md, "Router v1.0.0, backtested"). The SLO
+analyzer's switch for it, `slo-ttft-router-wait-in-prefill` (issue #367), is
+off from the constructor: on, the analyzer prices the planner's fleet as the
+planner does by default, and turning it on by default waits for a live check
+with the controller. The gate stage above stays the switch for v0.11.0, where
+this one must be set off.
 
 ### What was measured
 

@@ -117,6 +117,35 @@ type mainMixture struct {
 	// (InputsResponse.PrefillHitModel).
 	hitAtCount bool
 	hitModel   *prefill.HitModel
+	// fit is the shape the fit steps served: what a day-plan bucket's own
+	// shape is checked against before the model prices it (outsideFit).
+	fit mixtureRange
+	// bucket says pooled is a day-plan bucket's own histograms
+	// (experimentalModels.atBucket), not the window's: the bucket's lengths
+	// on the fleet's knobs are then its own, not stated ones.
+	bucket bool
+	// prices is every TTFT priced so far on a day-plan bucket's copy
+	// (atBucket), by prefill count, rate and statistic, and atTarget every
+	// highest rate at a target searched (sharedRate): its sizer prices the
+	// same rates at many decode counts, and one plan prices on one
+	// goroutine. Both nil on the window's model, which a server shares
+	// between requests.
+	prices   map[mixturePriceKey]mixturePrice
+	atTarget map[mixturePriceKey]mixturePrice
+}
+
+// mixturePriceKey is one TTFT the model priced: at the computed-token
+// histogram of n prefill replicas (mixtureFleet.histogramCount), the rate
+// one recorded replica's worth of ranks takes, and the statistic.
+type mixturePriceKey struct {
+	n    int
+	x, q float64
+}
+
+// mixturePrice is a TTFT the model priced, ok false where it refused.
+type mixturePrice struct {
+	v  float64
+	ok bool
 }
 
 // computedAt is the computed-token histogram the model draws from at n
@@ -256,6 +285,7 @@ func fitMainMixture(e *inputsEntry, sw rankMixtureSwitches) *mainMixture {
 	for _, st := range steps {
 		mm.top = max(mm.top, st.Rate)
 	}
+	mm.fit = mixtureRangeOf(steps)
 	if mm.top > 0 {
 		mm.info.MeasuredUpTo = ptr(mm.top)
 	}
@@ -294,7 +324,7 @@ func (mm *mainMixture) notPricedAt(k Knobs) string {
 		return "the model abstained: " + mm.info.Abstained
 	case mm.prefill <= 0 || k.Prefill <= 0:
 		return "the fleet has no prefill replica"
-	case k.PromptTokens != 0 || k.OutputTokens != 0 || (k.PrefixHit != nil && !k.PrefixHitRead) || k.CachedTokenCost != nil:
+	case (!mm.bucket && (k.PromptTokens != 0 || k.OutputTokens != 0)) || (k.PrefixHit != nil && !k.PrefixHitRead) || k.CachedTokenCost != nil:
 		return "the model prices the source's own request shape, not a stated one"
 	case statesTTFTTerm(k.Assume) || k.ArrivalCV2 != nil:
 		return "the model prices the source's own terms and random arrivals, not stated ones"
@@ -317,8 +347,9 @@ type mixtureFleet struct {
 	mm *mainMixture
 	// q is the TTFT statistic, 0 the mean; scale is the recorded prefill
 	// replicas over the fleet's: the rate one recorded prefill replica's
-	// worth of ranks takes.
+	// worth of ranks takes; n the fleet's prefill replicas.
 	q, scale float64
+	n        int
 	// knee is the highest rate priced (curveCap), kneeOK false with no
 	// knee answered; lowerBound says the prefill knee is a lower bound or
 	// refused.
@@ -343,7 +374,7 @@ func (mm *mainMixture) fleet(inner Fleet, k Knobs) Fleet {
 	if mm == nil || mm.notPricedAt(k) != "" {
 		return inner
 	}
-	f := &mixtureFleet{Fleet: inner, mm: mm, q: k.TTFTPercentile, scale: float64(mm.prefill) / float64(k.Prefill)}
+	f := &mixtureFleet{Fleet: inner, mm: mm, q: k.TTFTPercentile, scale: float64(mm.prefill) / float64(k.Prefill), n: k.Prefill}
 	f.computed, f.hitFlag, f.hitNote = mm.computedAt(k.Prefill)
 	pk, dk := inner.PrefillKnee(), inner.DecodeKnee()
 	f.lowerBound = isRefusal(pk) || slices.Contains(figureOf(pk, unitRate, false).Flags, string(whatif.VPLowerBound))
@@ -361,11 +392,19 @@ func (mm *mainMixture) fleet(inner Fleet, k Knobs) Fleet {
 
 // price is the model's TTFT at the fleet's rate; ok false where it refused.
 func (f *mixtureFleet) price(rate float64) (float64, bool) {
-	v, _, u := f.mm.rq.m.Price(rate*f.scale, f.computed, f.mm.pooled.Prompt, f.q)
-	if u != nil || !whatif.Finite(v) || math.IsNaN(v) {
-		return 0, false
+	key := mixturePriceKey{n: f.histogramCount(), x: rate * f.scale, q: f.q}
+	if p, ok := f.mm.prices[key]; ok {
+		return p.v, p.ok
 	}
-	return v, true
+	v, _, u := f.mm.rq.m.Price(key.x, f.computed, f.mm.pooled.Prompt, f.q)
+	p := mixturePrice{v: v, ok: u == nil && whatif.Finite(v) && !math.IsNaN(v)}
+	if !p.ok {
+		p.v = 0
+	}
+	if f.mm.prices != nil {
+		f.mm.prices[key] = p
+	}
+	return p.v, p.ok
 }
 
 // curveCap is the highest rate the model prices: the lower of the
@@ -456,7 +495,11 @@ func (f *mixtureFleet) TTFTPoint(rate float64) (whatif.Result, []string) {
 // Assumed is the planner's assumed inputs and the model's.
 func (f *mixtureFleet) Assumed() []string {
 	out := slices.Clone(f.Fleet.Assumed())
-	out = append(out, f.mm.rq.report.Assumed+"; TTFT priced at the source window's pooled prompt mix, up to the planner's own lower knee")
+	mix := "the source window's pooled prompt mix"
+	if f.mm.bucket {
+		mix = "the bucket's own prompt and computed-token histograms"
+	}
+	out = append(out, f.mm.rq.report.Assumed+"; TTFT priced at "+mix+", up to the planner's own lower knee")
 	if f.scale != 1 {
 		out = append(out, fmt.Sprintf("experimental TTFT model at %d prefill replicas, %d recorded: each replica's ranks take the recorded "+
 			"share profile, at the rate per replica", int(math.Round(float64(f.mm.prefill)/f.scale)), f.mm.prefill))
@@ -632,6 +675,9 @@ func (f *mixtureFleet) rateAtTarget(target float64) (rate float64, atEnd, ok boo
 	if !f.kneeOK || !(target > 0) {
 		return 0, false, false
 	}
+	if f.mm.atTarget != nil {
+		return f.rateAtTargetShared(target)
+	}
 	meets := func(r float64) bool {
 		v, ok := f.price(r)
 		return ok && v <= target
@@ -654,6 +700,72 @@ func (f *mixtureFleet) rateAtTarget(target float64) (rate float64, atEnd, ok boo
 		}
 	}
 	return lo, false, true
+}
+
+// histogramCount is the prefill count f's computed-token histogram is
+// priced at (mainMixture.computedAt): the fleet's with PrefillHitAtCount,
+// else 0, since every count then draws from the same histogram, and a
+// rate one recorded replica's worth of ranks takes prices the same TTFT at
+// any count.
+func (f *mixtureFleet) histogramCount() int {
+	if f.mm.hitAtCount {
+		return f.n
+	}
+	return 0
+}
+
+// rateAtTargetShared is rateAtTarget on a day-plan bucket's model
+// (mainMixture.atTarget), whose sizer asks it at many fleets of one prefill
+// count: the fleet's rate is read off one search a computed-token
+// histogram (sharedRate), capped at its curve's end, and refused where the model's
+// TTFT with no queue (the floor) is over target. The TTFT is taken to rise
+// with the rate, as rateAtTarget takes it.
+func (f *mixtureFleet) rateAtTargetShared(target float64) (rate float64, atEnd, ok bool) {
+	if v, priced := f.price(1e-6); !priced || v > target {
+		return 0, false, false
+	}
+	x := f.sharedRate(target)
+	if !(x > 0) {
+		return 0, false, false
+	}
+	if x >= f.knee*f.scale {
+		return f.knee, true, true
+	}
+	return x / f.scale, false, true
+}
+
+// sharedRate is the highest rate, as one recorded prefill replica's worth
+// of ranks takes it, whose TTFT the model prices at or under target at the
+// fleet's computed-token histogram: searched once a histogram
+// (histogramCount), statistic and target (mainMixture.atTarget). It doubles from the highest step rate
+// served until the target is missed, then bisects to a millionth of the
+// rate: a replica count is decided far coarser.
+func (f *mixtureFleet) sharedRate(target float64) float64 {
+	key := mixturePriceKey{n: f.histogramCount(), x: target, q: f.q}
+	if p, ok := f.mm.atTarget[key]; ok {
+		return p.v
+	}
+	meets := func(x float64) bool {
+		v, ok := f.price(x / f.scale)
+		return ok && v <= target
+	}
+	lo, hi := 0.0, max(f.mm.top, 1e-9)
+	for range 64 {
+		if !meets(hi) {
+			break
+		}
+		lo, hi = hi, 2*hi
+	}
+	for hi-lo > 1e-6*hi {
+		mid := (lo + hi) / 2
+		if meets(mid) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	f.mm.atTarget[key] = mixturePrice{v: lo, ok: true}
+	return lo
 }
 
 // prefillLimit is the prefill role's limit at target, as an answer, or a

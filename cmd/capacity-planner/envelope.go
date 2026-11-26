@@ -52,7 +52,8 @@ var (
 		// On by default (whatif.DefaultRouterWaitInPrefill), it states
 		// nothing either way: where it takes, the figure carries
 		// FlowControlWaitPriced, which is outside on its own, and off is how
-		// the run was priced (the SLO analyzer has no switch for it).
+		// the run was priced (the SLO analyzer's switch for it,
+		// slo-ttft-router-wait-in-prefill, is off by default).
 		"router-wait-in-prefill",
 		// Set, it states nothing until the replay reads V_P from the plateau:
 		// each figure priced from it is then flagged VPFromPlateau, which

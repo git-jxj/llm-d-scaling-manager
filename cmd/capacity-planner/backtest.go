@@ -181,11 +181,11 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	if err := f.fitWindow.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
 		return err
 	}
-	tpotV2, err := experimentalTPOTOf(f.experimentalTPOT)
+	tpotModel, err := experimentalTPOTOf(f.experimentalTPOT)
 	if err != nil {
 		return err
 	}
-	if err := f.tpotFit.check(tpotV2); err != nil {
+	if err := f.tpotFit.check(tpotModel != ""); err != nil {
 		return err
 	}
 	warnKVHoldAlone(warn, f.rankMixtureKVHold, f.rankMixtureRemainderSpread)

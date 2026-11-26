@@ -91,7 +91,7 @@ func (f *answerFlags) checkRecording(ctx context.Context, st *learnreplay.State,
 			return
 		}
 		res.Engine.DecodeSlots, res.Engine.SpecTokens = decodeEngineOf(res)
-		ci.TPOTModel = whatif.TPOTRenewalLognormal
+		ci.TPOTModel = f.tpotModel
 	}
 	f.checked = whatifapi.SelfCheckOf(ctx, res, ci)
 	f.checked.Seconds = time.Since(t0).Seconds()
