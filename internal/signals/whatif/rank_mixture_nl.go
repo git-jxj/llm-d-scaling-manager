@@ -392,7 +392,9 @@ func FitRankMixtureNL(steps []MixtureStep, o RankMixtureOptions) (RankMixture, R
 	if o.RemainderSpread && !noPrompt {
 		parts.Remainder.Shape, parts.Remainder.ShapeMean = remainderShape(steps)
 	}
-	if o.RemainderServer && o.RemainderSpread && !noPrompt {
+	if o.RemainderServer && o.RemainderSpread {
+		// Asked for, it is named whether or not it applies: with no prompt
+		// recorded there is no spread, and the assumed line says so.
 		m.RemainderServer = true
 		if parts.Remainder.Shape == nil {
 			m.RemainderServerOff = "no remainder spread to draw it on"
