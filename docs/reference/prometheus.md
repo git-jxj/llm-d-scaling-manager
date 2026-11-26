@@ -1628,7 +1628,8 @@ leaves or is forgotten, or a model the v2 models no longer run for (it
 turned active, or its policy dropped the `slo` analyzer) has gone an hour
 without a cycle. A cycle whose variant pair or engine arguments do not
 read (variant states missing, several variants of a role during a
-migration) keeps the window and reads coverage `signal-missing`.
+migration) keeps the window and reads coverage `signal-missing`, for an
+hour; unread longer, the window starts again.
 
 Labels are `namespace` (the model's, scraped as `exported_namespace`) and
 `model_name`, plus `controller_instance` when `CONTROLLER_INSTANCE` is set.
