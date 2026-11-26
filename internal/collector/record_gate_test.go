@@ -199,7 +199,7 @@ func TestCollectRouterLatency_RefreshErrorCountedPerIssuedQuery(t *testing.T) {
 	// The TPOT and flow-control wait histograms, the router's request
 	// processing with its _sum and _count, its render _sum and _count, and
 	// the prefix producer's two token rates.
-	assert.Equal(t, 7.0, errorsOfType(t, registry, constants.QueryTypeLearnerRecording))
+	assert.Equal(t, 9.0, errorsOfType(t, registry, constants.QueryTypeLearnerRecording))
 }
 
 // The router TTFT histogram is sorted by bound, so two identical cycles
