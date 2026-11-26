@@ -50,6 +50,13 @@ func inputsDoc(f *answerFlags, st *learnreplay.State, pv *pricedVariant, ps *lea
 	doc.Observed = observedOf(pv, pf)
 	doc.Policy = policyOf(f, st, pf)
 	doc.Terms = termsOf(f, st, pv, pf)
+	if ps != nil && ps.HitAtCount {
+		// The law the prefix hit at another count is priced with, fitted on
+		// the prompt window as priceHitAtCount fits it, whether or not this
+		// fleet's TTFT was priced: the main view's model and a backtest's
+		// count cells read it from here.
+		doc.PrefillHitModel = ps.PromptWindow.HitModel(max(ps.Pods, ps.PromptWindow.MaxPods()))
+	}
 	return doc
 }
 

@@ -136,6 +136,10 @@ type podMetricData struct {
 	externalQueryRate      float64
 	externalQueryRateKnown bool
 	cachedBySource         map[string]float64
+	// The KV residency histograms (cache_tiers.go) by bucket bound, nil
+	// when no bucket was read.
+	kvReuseGapBuckets        map[float64]float64
+	kvIdleBeforeEvictBuckets map[float64]float64
 	// kvTransfers is the KV transfers by kind (kv_transfers.go), nil when
 	// none was read.
 	kvTransfers map[string]*kvTransferReading

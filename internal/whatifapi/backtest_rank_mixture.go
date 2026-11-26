@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -18,7 +19,10 @@ import (
 // computed-token and prompt-length histograms. Nothing else in the answer
 // moves: TPOT, the exclusions and the scoring are the planner's. Every TTFT
 // it prices is flagged whatif.RankMixtureTTFT, and reads OUTSIDE VALIDATED
-// REGION.
+// REGION. With the prefix hit at count on (InputsRequest.PrefillHitAtCount),
+// a test step on another prefill count than the fit's draws the fit
+// window's computed-token histogram at that count's hit instead of its own
+// (rankMixtureQ.computedAt).
 
 // RankMixtureReport is the experimental model's fit, as a backtest's answer
 // carries it (BacktestResponse.RankMixture).
@@ -176,6 +180,50 @@ type rankMixtureQ struct {
 	// fitPrefill is the prefill pods the fit window served (the median of
 	// its cycles), the count the ranks' shares were read at; 0 unknown.
 	fitPrefill int
+	// hitAtCount is the fit source's PrefillHitAtCount: a test step on
+	// another prefill count than fitPrefill draws the fit window's
+	// computed-token histogram, fitPooled, moved to that count's prefix hit
+	// (computedAt), with hitModel where the fit source gave one.
+	hitAtCount bool
+	hitModel   *prefill.HitModel
+	fitPooled  whatif.MixtureStep
+}
+
+// withHitAtCount turns the prefix hit at the test step's count on, from the
+// fit window of fit at fitIdx, where fit was read with PrefillHitAtCount.
+func (rq *rankMixtureQ) withHitAtCount(fit *inputsEntry, fitIdx []int) *rankMixtureQ {
+	if !fit.doc.PrefillHitAtCount || len(fitIdx) == 0 || len(fit.mixture) != len(fit.series) {
+		return rq
+	}
+	first, last := fit.series[fitIdx[0]].At, fit.series[fitIdx[len(fitIdx)-1]].At
+	rq.hitAtCount, rq.hitModel = true, fit.doc.PrefillHitModel
+	rq.fitPooled = whatif.MixtureStepOf(mixtureWindow(fit, fitIdx, first.Add(-time.Nanosecond), last), last)
+	return rq
+}
+
+// computedAt is the computed-token histogram a test step on testPrefill
+// pods draws from: its own, unless the switch is on and the step is on
+// another count than the fit's, where it is the fit window's at the step's
+// prefix hit (whatif.ComputedAtCount), as the planner prices E[I_eff] and
+// the main view its model there, its bounds then scaled by the step's mean
+// prompt over the fit window's: the step's prompt is its load's, an input
+// the step states, and the hit is the share of it the cache serves. The
+// step's own histogram holds the hit it was measured at, which a count
+// transfer is to predict.
+func (rq *rankMixtureQ) computedAt(st whatif.MixtureStep, testPrefill int) map[float64]float64 {
+	if !rq.hitAtCount || rq.fitPrefill <= 0 || testPrefill <= 0 || testPrefill == rq.fitPrefill {
+		return st.Computed
+	}
+	_, moved, ok := whatif.ComputedAtCount(rq.fitPooled.Computed, rq.fitPooled.Prompt, rq.fitPrefill, testPrefill, rq.hitModel)
+	if !ok {
+		return st.Computed
+	}
+	if ep, okp := whatif.CumulativeMean(st.Prompt); okp {
+		if fp, okf := whatif.CumulativeMean(rq.fitPooled.Prompt); okf && fp > 0 {
+			moved = whatif.ComputedAtScale(moved, st.Prompt, ep/fp)
+		}
+	}
+	return moved
 }
 
 // rateScale is what a test step's fleet rate is multiplied by before the
@@ -513,7 +561,7 @@ func (rq *rankMixtureQ) assumedLines() []string {
 // pods (rateScale). ok is false where the model refused.
 func (rq *rankMixtureQ) price(cycles []whatif.MixtureCycle, at time.Time, stepSeconds float64, testPrefill int) ([]Figure, RankMixtureCheck, bool) {
 	st := whatif.MixtureStepOf(cycles, at)
-	d, u := rq.m.Draws(st.Rate*rq.rateScale(testPrefill), st.Computed, st.Prompt, whatif.DefaultMixtureDraws)
+	d, u := rq.m.Draws(st.Rate*rq.rateScale(testPrefill), rq.computedAt(st, testPrefill), st.Prompt, whatif.DefaultMixtureDraws)
 	if u != nil {
 		return nil, RankMixtureCheck{Refused: u.Error()}, false
 	}

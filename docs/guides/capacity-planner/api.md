@@ -68,8 +68,11 @@ reports, backtests and day plans on it never mix with the default's
 for, not the one measured (the CLI's `--prefill-hit-at-count`; off by
 default). At fewer prefill replicas than the source's the hit is the floor
 hit x N'/N and each request computes more prompt tokens, flagged
-`PrefixHitAtCount`; at more it is kept, flagged `PrefixHitHeld`. The answer
-carries `prefillHitAtCount: true` and its own `inputsId`.
+`PrefixHitAtCount`; at more it is kept, flagged `PrefixHitHeld`. Where the
+source holds vLLM's KV residency histograms, the hit at both fewer and more
+replicas is the reuse-gap rule's, and the answer carries the fitted law as
+`prefillHitModel`. The answer carries `prefillHitAtCount: true` and its own
+`inputsId`.
 
 `prefillVPServiceLine: true` reads V_P from the prefill service line
 where the prefill pods never queued, or V_P is only a lower bound under the
