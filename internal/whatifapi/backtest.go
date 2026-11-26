@@ -2926,7 +2926,7 @@ func upperBoundWords(name string, scores []BacktestScore, more string) string {
 // and the page shows the verdict as it is, so the CLI and the page say it
 // in the same words.
 const TPOTBucketHint = "To measure it, give the histogram finer edges: the router's metrics.requestTPOTBuckets in the " +
-	"EndpointPickerConfig (an llm-d-router build after v1.0.0), or vLLM's --custom-histogram-buckets (v0.33.0 and later). " +
+	"EndpointPickerConfig (an llm-d-router build after v1.0.0), or vLLM's --custom-histogram-buckets (v0.32.0 and later). " +
 	"Edges about 15% apart place p90 and p95 within 20%."
 
 // percentileWords is the p90 beside the figure a verdict quotes: within 20%
