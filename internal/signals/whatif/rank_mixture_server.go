@@ -30,9 +30,9 @@ import (
 //	     over its mean, so O + Ren is drawn on the router's measured
 //	     processing law, scaled to its predicted mean
 //
-// The pods read are the ranks the model prices (prefill, or aggregated where
-// it reads those); a decode pod's API server is never one of them, and is
-// in N. Each part is a delay: no part moves with the rate. On a production
+// The pods read are the ranks the model prices: the prefill pods
+// (MixtureCycleOf reads no aggregated row). A decode pod's API server is
+// never one of them, and is in N. Each part is a delay: no part moves with the rate. On a production
 // P/D recording, and on a second, aggregated one, a queue term on the pods'
 // API-server load added nothing, so there is none.
 //
@@ -161,13 +161,22 @@ func FitZServer(steps []MixtureStep, stepSeconds float64) (z *ZServer, off strin
 	if z.HasFrontend {
 		z.F0, z.F1 = robustLine(rows, func(r serverRow) (float64, bool) { return r.f, r.hasFrontend })
 	}
-	// The router's own work outside the render call.
+	// The router's own work outside the render call. A step whose router
+	// render was not read takes the pods' render line in its place: its
+	// whole processing would count the render twice, once here and once in
+	// the render line.
 	if z.HasRender {
 		o := make([]float64, len(sts))
 		for i, s := range sts {
-			o[i] = s.proc - s.rend
+			rend := s.rend
+			if !(rend > 0) || !Finite(rend) {
+				rend = z.render(s.l)
+			}
+			o[i] = s.proc - rend
 		}
-		z.Other = medianOf(o)
+		if z.Other = medianOf(o); !(z.Other > 0) {
+			z.Other = 0
+		}
 	} else {
 		x, y := make([]float64, len(sts)), make([]float64, len(sts))
 		for i, s := range sts {

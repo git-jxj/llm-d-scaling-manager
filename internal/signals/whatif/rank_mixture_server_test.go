@@ -160,6 +160,28 @@ func TestFitZServer_NoRender(t *testing.T) {
 	assert.InDelta(t, 0.01, z.F0, 1e-6)
 }
 
+// With the pods' render handler recorded but the router's render series
+// not (a failed query, or a router that does not export it), the router's
+// work outside render still leaves the render out: the pods' render line
+// stands in for the router's render, so the render is not counted twice
+// and the remainder's mean is the one measured.
+func TestFitZServer_RouterRenderAbsent(t *testing.T) {
+	for _, missing := range []int{24, 16} {
+		steps := serverSteps(serverTruth, 24)
+		for i := range missing {
+			steps[i].RouterRenderMean = 0
+		}
+		z, off := FitZServer(steps, 300)
+		require.Empty(t, off)
+		assert.True(t, z.HasRender)
+		assert.InDelta(t, 0.07, z.Other, 0.01, "%d steps without the router's render", missing)
+		for _, st := range steps {
+			assert.InDelta(t, st.RouterMean-st.PrefillTTFT-st.DecodeTTFT, z.Mean(st.PromptMean), 0.01,
+				"%d steps without the router's render", missing)
+		}
+	}
+}
+
 // The rest the model cannot see: its share of the fit window's remainder is
 // reported and named in the assumed line, and where it is over
 // MaxRemainderRestShare a figure priced past the fit window's top rate is
@@ -301,6 +323,17 @@ func TestFitRankMixtureNL_RemainderServer(t *testing.T) {
 	assert.False(t, alone.RemainderServer)
 	assert.Nil(t, alone.Parts.Remainder.Server)
 	assert.NotContains(t, alone.Assumed(), "remainder server")
+
+	// Asked with the spread on a fit with no prompt recorded: no spread to
+	// draw on, and the assumed line says the server was not applied rather
+	// than saying nothing.
+	o.RemainderSpread, o.NoPrompt = true, true
+	blind, _, err := FitRankMixtureNL(steps, o)
+	require.NoError(t, err)
+	assert.True(t, blind.RemainderServer)
+	assert.Nil(t, blind.Parts.Remainder.Server)
+	assert.Equal(t, "no remainder spread to draw it on", blind.RemainderServerOff)
+	assert.Contains(t, blind.Assumed(), "router remainder server not applied")
 }
 
 // The step pools each rank's API-server figures: the frontend weighted by
