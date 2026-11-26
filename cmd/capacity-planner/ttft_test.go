@@ -255,6 +255,46 @@ func TestTTFT_TheSpreadOrder(t *testing.T) {
 	}
 }
 
+// A histogram with requests past its last bound is held under the prefill
+// engines' context window where their recorded arguments say it: the cv is
+// the bound there (whatif.ReadPromptSpreadWithin), named as such, not the
+// stop. Another variant's window, or an argument the parser could not read,
+// leaves it at the stop.
+func TestTTFT_ThePromptSpreadIsHeldUnderTheContextWindow(t *testing.T) {
+	inf := math.Inf(1)
+	past := []domain.LengthBucket{{UpperBound: 1000, Rate: 1}, {UpperBound: inf, Rate: 2}}
+	withWindow := func(vs ...learnreplay.VariantState) *learnreplay.State {
+		st := learnedState()
+		w := &whatif.PromptWindow{}
+		for i := range whatif.PromptWindowMinCycles {
+			w.Note([]domain.ReplicaMetrics{{Ready: true, PrefillComputedTokenRate: 2000, PrefillComputedTokenRateKnown: true,
+				RequestRate: 1, RequestRateKnown: true, ComputedTokensBuckets: past}}, i, time.Unix(int64(60*i), 0))
+		}
+		st.Prefill[0].PromptWindow = w
+		st.Variants = vs
+		return st
+	}
+	want := whatif.ReadPromptSpreadWithin(map[float64]float64{1000: 1, inf: 2}, 2000, 8192)
+	require.False(t, want.Clamped)
+	require.Less(t, want.CV, whatif.PromptCVStop)
+
+	pf := fleetOf(t, withWindow(learnreplay.VariantState{Variant: "pre", MaxModelLen: 8192}), answerFlags{})
+	require.Nil(t, pf.refused)
+	assert.Equal(t, want.CV, pf.fleet.Prefill.PromptCV)
+	assert.Equal(t, shapeMeasured, pf.in.PromptCVSource)
+	assert.Contains(t, strings.Join(pf.in.Assumed, " "), "held under the context window, 8192 tokens")
+
+	for name, st := range map[string]*learnreplay.State{
+		"no window":          withWindow(),
+		"another variant's":  withWindow(learnreplay.VariantState{Variant: "other", MaxModelLen: 8192}),
+		"an unread argument": withWindow(learnreplay.VariantState{Variant: "pre", MaxModelLen: 8192, MaxModelLenUnresolved: true}),
+	} {
+		pf = fleetOf(t, st, answerFlags{})
+		assert.Equal(t, whatif.PromptCVStop, pf.fleet.Prefill.PromptCV, name)
+		assert.Equal(t, shapeClamped, pf.in.PromptCVSource, name)
+	}
+}
+
 // The asked-for TTFT is priced from the same fleet the page's worked example
 // computes by hand. The page assumes cv 1, and a of 12.6 ms; the planner's is 13.24 ms
 // (the median overhead, issue llm-d-incubation/llm-d-scaling-manager#306), so

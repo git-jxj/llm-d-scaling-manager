@@ -54,6 +54,13 @@ type TPOTDistReport struct {
 	// steps.
 	FoldC    []float64 `json:"foldC"`
 	FitSteps int       `json:"fitSteps"`
+	// MinFitSteps is the fewest fit steps the distribution was allowed to
+	// fit on, where the request set one other than MinTPOTDistFitSteps
+	// (BacktestRequest.TPOTDistMinFitSteps). ShortFit says it was fitted
+	// on fewer than MinTPOTDistFitSteps all the same: every percentile it
+	// prices is flagged whatif.TPOTDistributionShortFit.
+	MinFitSteps int  `json:"minFitSteps,omitempty"`
+	ShortFit    bool `json:"shortFit,omitempty"`
 	// SpecTokens is the decode engine's num_speculative_tokens (0 none or
 	// not read), Accepted the drafts a step accepted over the fit window,
 	// DecodeSlots its max-num-seqs, and SlotWait the Erlang C share of a
@@ -194,9 +201,14 @@ func withEngineTPOT(st whatif.TPOTDistStep, bs []domain.LatencyBucket) whatif.TP
 // into steps of step, each anchored at its last cycle; slots is the decode
 // engine's max-num-seqs and spec its num_speculative_tokens. model is the
 // distribution (whatif.TPOTRenewalLognormal, or whatif.TPOTPerLengthMixture).
-func fitTPOTDist(fit *inputsEntry, fitIdx []int, step time.Duration, slots, spec int, model string) *tpotDistQ {
+// minSteps is the fewest steps it fits on, 0 MinTPOTDistFitSteps.
+func fitTPOTDist(fit *inputsEntry, fitIdx []int, step time.Duration, slots, spec int, model string, minSteps int) *tpotDistQ {
 	q := &tpotDistQ{report: TPOTDistReport{Model: model, Experimental: true, FoldC: []float64{},
 		Fold: []TPOTDistScore{}, SpecTokens: spec, DecodeSlots: slots}, perLength: model == whatif.TPOTPerLengthMixture}
+	least := MinTPOTDistFitSteps
+	if minSteps > 0 && minSteps != MinTPOTDistFitSteps {
+		least, q.report.MinFitSteps = minSteps, minSteps
+	}
 	if len(fit.decode) != len(fit.series) {
 		q.report.Abstained = "the fit source did not give the decode series"
 		return q
@@ -254,9 +266,9 @@ func fitTPOTDist(fit *inputsEntry, fitIdx []int, step time.Duration, slots, spec
 	}
 	var why []string
 	switch {
-	case len(steps) < MinTPOTDistFitSteps:
+	case len(steps) < least:
 		why = append(why, fmt.Sprintf("%d fit steps read the router's TPOT histogram and the decode pods' output lengths, under %d",
-			len(steps), MinTPOTDistFitSteps))
+			len(steps), least))
 	case slots <= 0:
 		why = append(why, "the decode engine's max-num-seqs not read: whether sequences wait for a slot is not known")
 	case q.report.SlotWait > whatif.MaxSlotWait:
@@ -305,6 +317,11 @@ func fitTPOTDist(fit *inputsEntry, fitIdx []int, step time.Duration, slots, spec
 		"steps), C %.3g fitted by interval-censored likelihood on every bucket of the fit window's router TPOT histogram "+
 		"(floor %.3g; self-check folds %s); no slot queue (Erlang C %.2g%% at %d slots)",
 		model, shape, spec, c, q.report.Renewal, joinFloats(q.report.FoldC), 100*q.report.SlotWait, slots)
+	if len(steps) < MinTPOTDistFitSteps {
+		q.report.ShortFit = true
+		q.report.Assumed += fmt.Sprintf("; fitted on %d steps, under the default %d, down to the %d asked: every percentile it prices "+
+			"is also flagged %s", len(steps), MinTPOTDistFitSteps, least, whatif.TPOTDistributionShortFit)
+	}
 	return q
 }
 
@@ -317,6 +334,16 @@ func (tq *tpotDistQ) distAt(g2, c float64, law []whatif.LengthGroup) whatif.TPOT
 		d.PerLength = law
 	}
 	return d
+}
+
+// flags is the flags every percentile the distribution prices carries:
+// TPOTDistribution, and TPOTDistributionShortFit where it was fitted on
+// fewer steps than the default (TPOTDistReport.ShortFit).
+func (r TPOTDistReport) flags() []whatif.Flag {
+	if r.ShortFit {
+		return []whatif.Flag{whatif.TPOTDistribution, whatif.TPOTDistributionShortFit}
+	}
+	return []whatif.Flag{whatif.TPOTDistribution}
 }
 
 // joinFloats is xs in three significant digits, comma separated.
@@ -381,7 +408,7 @@ func (q *backtestQuestion) priceTPOTDist(pred *prediction, out *BacktestStep, st
 		if s == 0.9 || s == 0.95 {
 			out.TPOTDist.planner = append(out.TPOTDist.planner, pred.tpot[i].Value)
 		}
-		pred.tpot[i] = validate(figureOf(whatif.Answer{Value: d.Quantile(*mean, inv, s), Flags: []whatif.Flag{whatif.TPOTDistribution}},
+		pred.tpot[i] = validate(figureOf(whatif.Answer{Value: d.Quantile(*mean, inv, s), Flags: q.tpotDist.report.flags()},
 			unitSeconds, true), whatif.FigurePercentileTPOT, s, whatif.FigureClass{}, 0)
 		pred.tpotBound[i] = nil
 	}

@@ -687,8 +687,12 @@ func (p *planner) outputTokens(k Knobs) float64 {
 
 // contextWindow is the engines' context window in tokens, from the inputs'
 // TermMaxModelLen, and whether they know it.
-func (p *planner) contextWindow() (float64, bool) {
-	for _, t := range p.e.doc.Terms {
+func (p *planner) contextWindow() (float64, bool) { return contextWindowOf(&p.e.doc) }
+
+// contextWindowOf is the engines' context window in tokens from doc's
+// TermMaxModelLen, and whether doc knows it.
+func contextWindowOf(doc *InputsResponse) (float64, bool) {
+	for _, t := range doc.Terms {
 		if t.Name == TermMaxModelLen && t.Refused == nil && t.Value != nil && *t.Value > 0 {
 			return *t.Value, true
 		}

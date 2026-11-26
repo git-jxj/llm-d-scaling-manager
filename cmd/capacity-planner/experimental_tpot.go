@@ -49,6 +49,7 @@ func (f *backtestFlags) tpotDistribution(req *whatifapi.BacktestRequest, testPat
 	}
 	req.TPOTModel = model
 	req.DecodeSlots, req.SpecTokens = decodeEngineOf(fit)
+	req.TPOTDistMinFitSteps = f.tpotFit.steps()
 	if err := withDecodeSeries(testPath, test, nil); err != nil {
 		return err
 	}

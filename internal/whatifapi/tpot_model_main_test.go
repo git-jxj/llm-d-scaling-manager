@@ -31,7 +31,7 @@ func tpotEntry(t *testing.T, model bool, slots int) (*Server, *inputsEntry) {
 	e.engine = EngineSlots{DecodeSlots: slots, SpecTokens: 3}
 	e.id = "sha256:main-tpot"
 	if model {
-		e.tpotModel = fitMainTPOT(e, "")
+		e.tpotModel = fitMainTPOT(e, "", 0)
 		info := e.tpotModel.info
 		e.doc.TPOTModel = &info
 		e.id += "-v2"
@@ -154,7 +154,7 @@ func TestMainViewTPOT_PerLengthMixture(t *testing.T) {
 	e, _ := tdEntries(t, 960)
 	e.doc.Fleet.Decode.Replicas = 2
 	e.engine = EngineSlots{DecodeSlots: 64, SpecTokens: 3}
-	one, mix := fitMainTPOT(e, ""), fitMainTPOT(e, whatif.TPOTPerLengthMixture)
+	one, mix := fitMainTPOT(e, "", 0), fitMainTPOT(e, whatif.TPOTPerLengthMixture, 0)
 	require.Empty(t, one.info.Abstained)
 	require.Empty(t, mix.info.Abstained)
 	assert.Equal(t, whatif.TPOTRenewalLognormal, one.info.Model)
@@ -244,10 +244,10 @@ func TestMainViewTPOT_DefaultStandsWhereTheModelDoesNotPrice(t *testing.T) {
 	}
 	short, _ := tdEntries(t, 200)
 	short.engine = EngineSlots{DecodeSlots: 64, SpecTokens: 3}
-	assert.Contains(t, fitMainTPOT(short, "").info.Abstained, "fit steps")
+	assert.Contains(t, fitMainTPOT(short, "", 0).info.Abstained, "fit steps")
 	nodecode, _ := tdEntries(t, 960)
 	nodecode.decode = nil
-	assert.Contains(t, fitMainTPOT(nodecode, "").info.Abstained, "decode series")
+	assert.Contains(t, fitMainTPOT(nodecode, "", 0).info.Abstained, "decode series")
 }
 
 // An inputs request names the model, and gets an entry of its own; on the
@@ -523,7 +523,7 @@ func TestDayPlan_ExperimentalTPOTModelLeavesTheDayPlanToTheDefault(t *testing.T)
 		tdRouter(e.latency, e.decode, len(e.series)*3/4)
 		e.engine.DecodeSlots, e.engine.SpecTokens = 64, 3
 		if model {
-			e.tpotModel = fitMainTPOT(e, "")
+			e.tpotModel = fitMainTPOT(e, "", 0)
 			require.True(t, e.tpotModel.priced(), e.tpotModel.info.Abstained)
 			require.NotNil(t, e.ttftModel)
 		}

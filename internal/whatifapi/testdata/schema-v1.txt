@@ -134,6 +134,7 @@ backtest.rankMixture.kv.p1 number
 backtest.rankMixture.kv.rhoHi number
 backtest.rankMixture.kv.rhoHold number
 backtest.rankMixture.kv.rhoLo number
+backtest.rankMixture.minFitWindow string
 backtest.rankMixture.model string
 backtest.rankMixture.queue string
 backtest.rankMixture.s0 number
@@ -141,6 +142,7 @@ backtest.rankMixture.serviceProportional boolean
 backtest.rankMixture.shareCv number
 backtest.rankMixture.shares array
 backtest.rankMixture.shares[] number
+backtest.rankMixture.shortFitWindow boolean
 backtest.rankMixture.slots number
 backtest.rankMixture.spread number
 backtest.rankMixture.spreadAtBound boolean
@@ -440,8 +442,10 @@ backtest.tpotDistribution.fold[].p95Inside number
 backtest.tpotDistribution.fold[].shapeKsMedian number
 backtest.tpotDistribution.fold[].shapeKsP90 number
 backtest.tpotDistribution.fold[].steps number
+backtest.tpotDistribution.minFitSteps number
 backtest.tpotDistribution.model string
 backtest.tpotDistribution.renewal number
+backtest.tpotDistribution.shortFit boolean
 backtest.tpotDistribution.slotWait number
 backtest.tpotDistribution.specTokens number
 backtest.tpotDistribution.test object
@@ -491,6 +495,7 @@ backtestRequest.measured string
 backtestRequest.prefillSlots number
 backtestRequest.rankMixtureFitSteps boolean
 backtestRequest.rankMixtureKVHold boolean
+backtestRequest.rankMixtureMinFitWindow string
 backtestRequest.rankMixtureRemainderSpread boolean
 backtestRequest.rankMixtureStratified boolean
 backtestRequest.settle string
@@ -499,6 +504,7 @@ backtestRequest.split string
 backtestRequest.step string
 backtestRequest.testAbove string
 backtestRequest.testInputsId string
+backtestRequest.tpotDistMinFitSteps number
 backtestRequest.tpotModel string
 backtestRequest.ttft object
 backtestRequest.ttft.bucketTargets object
@@ -745,8 +751,10 @@ inputs.tpotModel.fit.fold[].p95Inside number
 inputs.tpotModel.fit.fold[].shapeKsMedian number
 inputs.tpotModel.fit.fold[].shapeKsP90 number
 inputs.tpotModel.fit.fold[].steps number
+inputs.tpotModel.fit.minFitSteps number
 inputs.tpotModel.fit.model string
 inputs.tpotModel.fit.renewal number
+inputs.tpotModel.fit.shortFit boolean
 inputs.tpotModel.fit.slotWait number
 inputs.tpotModel.fit.specTokens number
 inputs.tpotModel.fit.test object
@@ -805,6 +813,7 @@ inputs.ttftModel.fit.kv.p1 number
 inputs.ttftModel.fit.kv.rhoHi number
 inputs.ttftModel.fit.kv.rhoHold number
 inputs.ttftModel.fit.kv.rhoLo number
+inputs.ttftModel.fit.minFitWindow string
 inputs.ttftModel.fit.model string
 inputs.ttftModel.fit.queue string
 inputs.ttftModel.fit.s0 number
@@ -812,6 +821,7 @@ inputs.ttftModel.fit.serviceProportional boolean
 inputs.ttftModel.fit.shareCv number
 inputs.ttftModel.fit.shares array
 inputs.ttftModel.fit.shares[] number
+inputs.ttftModel.fit.shortFitWindow boolean
 inputs.ttftModel.fit.slots number
 inputs.ttftModel.fit.spread number
 inputs.ttftModel.fit.spreadAtBound boolean
@@ -852,6 +862,9 @@ inputsRequest.prefillHitAtCount boolean
 inputsRequest.prefillVPPlateau boolean
 inputsRequest.prefillVPServiceLine boolean
 inputsRequest.prefillVariant string
+inputsRequest.rankMixtureKVHold boolean
+inputsRequest.rankMixtureMinFitWindow string
+inputsRequest.rankMixtureRemainderSpread boolean
 inputsRequest.rankMixtureStratified boolean
 inputsRequest.selfCheck boolean
 inputsRequest.source object
@@ -861,6 +874,7 @@ inputsRequest.source.kind string
 inputsRequest.source.name string
 inputsRequest.source.namespace string
 inputsRequest.source.to string
+inputsRequest.tpotDistMinFitSteps number
 inputsRequest.tpotModel string
 inputsRequest.ttftModel string
 plan object
@@ -1622,8 +1636,10 @@ report.tpotModel.fit.fold[].p95Inside number
 report.tpotModel.fit.fold[].shapeKsMedian number
 report.tpotModel.fit.fold[].shapeKsP90 number
 report.tpotModel.fit.fold[].steps number
+report.tpotModel.fit.minFitSteps number
 report.tpotModel.fit.model string
 report.tpotModel.fit.renewal number
+report.tpotModel.fit.shortFit boolean
 report.tpotModel.fit.slotWait number
 report.tpotModel.fit.specTokens number
 report.tpotModel.fit.test object
@@ -1682,6 +1698,7 @@ report.ttftModel.fit.kv.p1 number
 report.ttftModel.fit.kv.rhoHi number
 report.ttftModel.fit.kv.rhoHold number
 report.ttftModel.fit.kv.rhoLo number
+report.ttftModel.fit.minFitWindow string
 report.ttftModel.fit.model string
 report.ttftModel.fit.queue string
 report.ttftModel.fit.s0 number
@@ -1689,6 +1706,7 @@ report.ttftModel.fit.serviceProportional boolean
 report.ttftModel.fit.shareCv number
 report.ttftModel.fit.shares array
 report.ttftModel.fit.shares[] number
+report.ttftModel.fit.shortFitWindow boolean
 report.ttftModel.fit.slots number
 report.ttftModel.fit.spread number
 report.ttftModel.fit.spreadAtBound boolean

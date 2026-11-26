@@ -20,10 +20,6 @@
           "lo": 800,
           "hi": 1250
         },
-        "arrivalCV2": {
-          "lo": 0.8,
-          "hi": 1.25
-        },
         "flowControl": [
           "off"
         ],

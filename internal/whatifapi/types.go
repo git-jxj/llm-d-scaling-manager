@@ -50,16 +50,32 @@ type InputsRequest struct {
 	// ExperimentalTTFT.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
 	// TTFTModel prices the main view's TTFT with an experimental model:
-	// "" is the server's default (serve --experimental-ttft=v2), and
-	// whatif.QueueRankMixture the only other. The model is fitted on the
-	// source's window and abstains where it is not identified; the
-	// planner's TTFT then stands.
+	// "" is the server's default (serve --experimental-ttft=v2 or
+	// =v2nl-line), whatif.QueueRankMixture or its variant
+	// whatif.QueueRankMixtureNLLine. The model is fitted on the source's
+	// window as a backtest fits it, and abstains where it is not
+	// identified; the planner's TTFT then stands.
 	TTFTModel string `json:"ttftModel,omitempty"`
 	// RankMixtureStratified is BacktestRequest.RankMixtureStratified for
 	// the main view's model: absent, the server's default (on, unless the
 	// server was started with --rank-mixture-stratified=false). Read only
 	// with TTFTModel rank-mixture; false changes the inputsId.
 	RankMixtureStratified *bool `json:"rankMixtureStratified,omitempty"`
+	// RankMixtureKVHold, RankMixtureRemainderSpread and
+	// RankMixtureMinFitWindow are BacktestRequest's for the main view's
+	// model: each, where the request does not set it, the server's default
+	// (serve --rank-mixture-kv-hold, --rank-mixture-remainder-spread,
+	// --rank-mixture-min-fit-window). The two modes are the variant's
+	// (TTFTModel rank-mixture-nl-line) only; the window is either model's.
+	// Each changes the inputsId.
+	RankMixtureKVHold          bool   `json:"rankMixtureKVHold,omitempty"`
+	RankMixtureRemainderSpread bool   `json:"rankMixtureRemainderSpread,omitempty"`
+	RankMixtureMinFitWindow    string `json:"rankMixtureMinFitWindow,omitempty"`
+	// TPOTDistMinFitSteps is BacktestRequest's for the main view's TPOT
+	// distribution: absent, the server's default (serve
+	// --tpot-dist-min-fit-steps), else 24. Only with a TPOTModel; another
+	// count changes the inputsId.
+	TPOTDistMinFitSteps int `json:"tpotDistMinFitSteps,omitempty"`
 	// TPOTModel prices the main view's TPOT p90 and p95 with an
 	// experimental per-request TPOT distribution: "" is the server's
 	// default (serve --experimental-tpot=v2), and

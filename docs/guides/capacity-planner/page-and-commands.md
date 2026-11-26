@@ -468,6 +468,40 @@ In a cluster, add both to the StatefulSet's `args`
   [Plan replicas over a day](#plan-replicas-over-a-day)). Predictions are
   the default's. `=v2` does not turn
   on the seven switches above; plain `--experimental-ttft` does.
+- **The v2nl-line variant.** `--experimental-ttft=v2nl-line` in place of
+  `=v2` does all of the above with the variant
+  ([how it reads](accuracy.md#the-measured-non-queue-variant---experimental-ttftv2nl-line)):
+  every check, the main view, sizes and `at-replicas` are fitted and priced
+  as `backtest --experimental-ttft=v2nl-line` fits and prices them. The
+  TTFT caption and the inputs name it "Experimental TTFT model v2nl-line"
+  (`ttftModel.model` `rank-mixture-nl-line`), and its held-out score comes
+  from folds fitted the variant's way. It abstains more often than v2,
+  wherever its fit window does not price its own mean and p90, and says
+  why, as v2 does.
+- **The variant's modes.** `--rank-mixture-kv-hold` and
+  `--rank-mixture-remainder-spread`, with `=v2nl-line`, turn the variant's
+  two modes on for every check and source, as on `backtest`. Give them
+  together ([accuracy](accuracy.md)).
+- **Shorter recordings.** Both TTFT models abstain on a fit window under
+  12 hours, which every lab recording is. `--rank-mixture-min-fit-window 2h`
+  lowers that minimum for every check and source; each TTFT a model prices
+  from a window under 12 hours is flagged `RankMixtureShortFitWindow`.
+  `backtest`, `at-replicas` and `day-plan` take the same flag.
+- **All of them at once.** On a production recording of 12 hours or more:
+
+  ```bash
+  bin/capacity-planner serve --recordings ./recordings --experimental-ttft=v2nl-line \
+    --rank-mixture-kv-hold --rank-mixture-remainder-spread --experimental-tpot=v2
+  ```
+
+  On a lab recording, add `--rank-mixture-min-fit-window 2h` (no longer than
+  the recording) and `--tpot-dist-min-fit-steps 8`: the TPOT distribution
+  otherwise needs 24 five-minute fit steps. Each percentile it prices from
+  fewer than 24 is flagged `TPOTDistributionShortFit`.
+- **The planner's opt-in switches.** `serve --prefill-vp-plateau` and
+  `serve --prefill-hit-at-count` read every source as if its request had
+  asked for the switch ([flags](api.md#flags)); the figures they move
+  carry their flags and read outside the validated region.
 - **What the page shows.** The summary says, for each model, that it is
   experimental and reads outside the validated region, with its fit; or
   that it abstained and why, and every figure is then the planner's own.

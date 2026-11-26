@@ -415,6 +415,7 @@ REST_CLIENT_TIMEOUT
 ROLE
 R_q
 RankMixtureAbstained
+RankMixtureShortFitWindow
 RankMixtureTTFT
 Ready
 RecordedValue
@@ -485,6 +486,7 @@ TPOT
 TPOTBucketTooWide
 TPOTDistribution
 TPOTDistributionAbstained
+TPOTDistributionShortFit
 TPOTQuantileUnbounded
 TTFT
 TYPE

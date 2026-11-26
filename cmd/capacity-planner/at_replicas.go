@@ -77,6 +77,7 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	if err := f.check(fs); err != nil {
 		return err
 	}
+	warnKVHoldAlone(warn, f.rankMixtureFit.kvHold, f.rankMixtureFit.remainderSpread)
 	q, err := f.reportQuery(rf)
 	if err != nil {
 		return err
