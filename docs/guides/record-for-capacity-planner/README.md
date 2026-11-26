@@ -59,8 +59,12 @@ For an operator collecting a window for someone else to plan from.
   unscored. Set `metrics.requestTPOTBuckets` in the router's
   EndpointPickerConfig (an llm-d-router build after v1.0.0,
   [llm-d-router#3539](https://github.com/llm-d/llm-d-router/pull/3539)), or
-  vLLM's `--custom-histogram-buckets` (v0.33.0 and later), before the window
-  you record ([why](../capacity-planner/check.md#read-the-answer)).
+  vLLM's `--custom-histogram-buckets` (v0.32.0 and later), before the window
+  you record ([why](../capacity-planner/check.md#read-the-answer)). For
+  vLLM the family is `inter_token_latency`: it sets the per-request TPOT
+  histogram too. For example:
+  `--custom-histogram-buckets '{"inter_token_latency":[0.005,0.00575,0.0066,0.0076,0.0087,0.01,0.0115,0.0132,0.0152,0.0175,0.02,0.023,0.0265,0.0305,0.035,0.04,0.046,0.053,0.075,0.1,0.25,1.0]}'`
+  ([what it sets](../capacity-planner/check.md#vllms-tpot-buckets)).
 - [ ] `kubectl` access to Prometheus' namespace (a port-forward), or its URL.
 - [ ] For Path 1: the `capacity-planner` binary of the release you run
   ([Get the planner](../capacity-planner/README.md#get-the-planner)), or a
@@ -253,7 +257,8 @@ vllm:kv_block_reuse_gap_seconds_bucket vllm:kv_block_idle_before_evict_seconds_b
 vllm:nixl_xfer_time_seconds_sum vllm:nixl_xfer_time_seconds_count vllm:nixl_bytes_transferred_sum
 vllm:kv_offload_load_bytes_total vllm:kv_offload_load_time_total vllm:kv_offload_tiering_read_bytes_total
 vllm:kv_offload_tiering_read_time_total vllm:num_preemptions_total
-vllm:spec_decode_num_accepted_tokens_total
+vllm:spec_decode_num_accepted_tokens_total vllm:e2e_request_latency_seconds_sum
+vllm:e2e_request_latency_seconds_count http_request_duration_seconds_sum http_request_duration_seconds_count
 sglang:token_usage sglang:max_total_num_tokens sglang:inter_token_latency_seconds_sum
 sglang:inter_token_latency_seconds_count sglang:generation_tokens_total sglang:num_running_reqs
 sglang:num_queue_reqs sglang:prompt_tokens_histogram_sum sglang:prompt_tokens_histogram_count
@@ -274,6 +279,7 @@ llm_d_epp_scheduler_attempts_total inference_extension_scheduler_attempts_total
 llm_d_epp_flow_control_request_queue_duration_seconds_bucket llm_d_epp_flow_control_pool_saturation
 llm_d_epp_flow_control_requests_total llm_d_epp_request_processing_duration_seconds_bucket
 llm_d_epp_request_processing_duration_seconds_sum llm_d_epp_request_processing_duration_seconds_count
+llm_d_epp_token_producer_render_duration_seconds_sum llm_d_epp_token_producer_render_duration_seconds_count
 llm_d_epp_prefix_predicted_cached_tokens_sum llm_d_epp_prefix_best_available_cached_tokens_sum
 kube_pod_info kube_pod_owner kube_replicaset_owner kube_pod_labels kube_pod_status_phase
 kube_pod_status_ready kube_pod_status_ready_time kube_pod_created kube_pod_start_time

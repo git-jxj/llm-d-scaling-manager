@@ -212,6 +212,17 @@ const SwitchPrefillVPLoneRate = "prefill-vp-lone-rate"
 // Planner-only, as SwitchPrefillALowLoadPerRank is.
 const SwitchPrefillVPServiceLine = "prefill-vp-service-line"
 
+// SwitchPrefillFLoadCurve is the replay switch for f against the load per
+// pod (prefill.Cycle.FLoadCurve, prefill.FLoadCurve). On, each pod count's
+// minutes give f(u) = f_inf + delta/u, u the computed tokens a second a pod,
+// fitted by least squares on 1/u (prefill.Estimate.FCurveByPods); the
+// planner prices f at a rate as the higher of its f and the curve's
+// (whatif.Prefill.ImbalanceCurveFloor). Off, no curve is fitted, as before
+// this switch (issue llm-d-incubation/llm-d-scaling-manager#482).
+// Planner-only and not in learnreplay.PlannerSwitches: the capacity
+// planner's --prefill-f-load-curve turns it on.
+const SwitchPrefillFLoadCurve = "prefill-f-load-curve"
+
 // SwitchPrefillHitAtCount is the replay switch for the prefix hit at a
 // prefill count other than the one the hit was read on
 // (prefill.HitAtCountOf; issue llm-d-incubation/llm-d-scaling-manager#384).
@@ -382,6 +393,7 @@ func (a *SaturationAnalyzer) PrefillEstimate(namespace, modelID, variant string)
 	est.FByPods = maps.Clone(est.FByPods)
 	est.FSamplesByPods = maps.Clone(est.FSamplesByPods)
 	est.FLoadByPods = maps.Clone(est.FLoadByPods)
+	est.FCurveByPods = maps.Clone(est.FCurveByPods)
 	return est, se.at, true
 }
 
@@ -450,8 +462,8 @@ func (c *cycle) observePrefill() {
 			QueueMin: queueMin, KVFull: kvFullPods, DownstreamSaturated: c.decodeSaturated,
 			Bound: bounds[variant], Settle: view, ALineOnly: !a.prefillAQuadratic,
 			ALowLoadPerRank: a.prefillALowLoadPerRank, AFromTiming: a.prefillAEngineTiming,
-			QueueByCapacity: a.prefillQueueByCapacity, FBusyMinutes: a.prefillFBusyMinutes, FPooledMinutes: a.prefillFPooledMinutes,
-			VPFloorServed: a.prefillVPFloorServed, VPServedUnqueued: a.prefillVPServedUnqueued, VPWindowBest: a.prefillVPWindowBest,
+			QueueByCapacity: a.prefillQueueByCapacity, FBusyMinutes: a.prefillFBusyMinutes, FLoadCurve: a.prefillFLoadCurve,
+			FPooledMinutes: a.prefillFPooledMinutes, VPFloorServed: a.prefillVPFloorServed, VPServedUnqueued: a.prefillVPServedUnqueued, VPWindowBest: a.prefillVPWindowBest,
 			VPOccupancyPlateau: a.prefillVPOccupancyPlateau, VPPromptCoverage: a.prefillVPPromptCoverage, VPLoneRate: a.prefillVPLoneRate,
 			VPServiceLine: a.prefillVPServiceLine, ALowLoadByRate: a.prefillALowLoadByRate, AMedianOverhead: a.prefillAMedianOverhead, Now: now,
 		})

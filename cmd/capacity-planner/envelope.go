@@ -75,7 +75,7 @@ var (
 		// The same: read only with --experimental-ttft=v2 or =v2nl-line
 		// (refused without), whose every TTFT is flagged RankMixtureTTFT; a
 		// window under 12h adds RankMixtureShortFitWindow.
-		"rank-mixture-kv-hold", "rank-mixture-remainder-spread", rankMixtureMinFitWindowFlag,
+		"rank-mixture-kv-hold", "rank-mixture-remainder-spread", rankMixtureRemainderServerFlag, rankMixtureMinFitWindowFlag,
 		// Read only with --experimental-tpot=v2 (refused without), whose
 		// every percentile is flagged TPOTDistribution; under 24 steps it
 		// adds TPOTDistributionShortFit.
@@ -89,13 +89,18 @@ var (
 		"load-aware-router",
 		// V_P from the prefill service line failed the public cross-validation
 		// (vp_service_line.go), and its figures carry no flag of their own.
-		vpServiceLineFlag}
+		vpServiceLineFlag,
+		// f against the load passed one offline test on the lab's own
+		// recordings (f_load_curve.go), and its figures carry no flag of
+		// their own.
+		fLoadCurveFlag}
 )
 
 // statedOutside is the flags in flagsOutside that were set, as --name;
 // --imbalance-across-counts and --load-aware-router only away from the
-// planner's defaults, and --prefill-vp-service-line by its field, whether
-// the flag or the server's request set it. With --prometheus, capture's
+// planner's defaults, and --prefill-vp-service-line and
+// --prefill-f-load-curve by their fields, whether the flag or the server's
+// request set them. With --prometheus, capture's
 // flags state nothing: the window's flags (windowFlags) and --batch-cap, the
 // engine's cap the window is captured with (pricedBatchCap), say how the
 // window is captured, as capture's own do for a recording, and the answer
@@ -122,6 +127,12 @@ func (f *answerFlags) statedOutside() []string {
 		// Read from the field, which the server sets from its request too.
 		if name == vpServiceLineFlag {
 			if f.vpServiceLine {
+				out = append(out, "--"+name)
+			}
+			continue
+		}
+		if name == fLoadCurveFlag {
+			if f.fLoadCurve {
 				out = append(out, "--"+name)
 			}
 			continue

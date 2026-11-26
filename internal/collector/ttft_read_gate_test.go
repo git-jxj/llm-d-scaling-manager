@@ -92,9 +92,9 @@ func TestTTFTReadQueries_TheBudget(t *testing.T) {
 		ttft    int
 		record  int
 	}{
-		{"vLLM", vllm, 27, 30, 47},
-		{"SGLang", sglang, 27, 30, 47},
-		{"mixed", mixed, 46, 50, 71},
+		{"vLLM", vllm, 27, 30, 51},
+		{"SGLang", sglang, 27, 30, 51},
+		{"mixed", mixed, 46, 50, 75},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.scaling, count(tc.engines, false, false), "scaling")

@@ -77,6 +77,15 @@ type Prefill struct {
 	// V_P is (prefillPlan.rhoM). 0 is not known, and f is then held. Read
 	// only with LoadAwareRouter.
 	ImbalanceUtilization float64
+	// ImbalanceCurveFloor and ImbalanceCurveExcess are f against the load
+	// per pod, f(u) = floor + excess/u, u = rate * E[I_eff] / N_p the
+	// computed tokens a second a pod (prefill.FLoadCurve, learned at this
+	// count). Set, f at a rate is the higher of the plan's f, as it would
+	// price it, and the curve's, at most N_p (fAt), and the knee is where
+	// f(u) * rho reaches 1 - VPMargin. Both 0 is none; set, both are above
+	// 0. The planner sets them with --prefill-f-load-curve; the SLO analyzer
+	// never does.
+	ImbalanceCurveFloor, ImbalanceCurveExcess float64
 	// Replicas is N_p.
 	Replicas int
 	// PromptTokens is E[I_eff], the mean prompt a pod computes (prefix
@@ -873,6 +882,9 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 		u = refuse(NoImbalance, fmt.Sprintf("no f for %d prefill pods, learned or assumed", p.Replicas))
 	case p.Imbalance != 0 && !(p.Imbalance >= 1 && p.Imbalance <= float64(p.Replicas)):
 		u = refuse(InvalidInput, fmt.Sprintf("f %g, want 1 <= f <= %d (the pods)", p.Imbalance, p.Replicas))
+	case (p.ImbalanceCurveFloor != 0 || p.ImbalanceCurveExcess != 0) &&
+		!(Finite(p.ImbalanceCurveFloor) && p.ImbalanceCurveFloor > 0 && Finite(p.ImbalanceCurveExcess) && p.ImbalanceCurveExcess > 0):
+		u = refuse(InvalidInput, fmt.Sprintf("f against the load %g + %g/u, want both above 0", p.ImbalanceCurveFloor, p.ImbalanceCurveExcess))
 	case !Finite(p.PromptTokens) || !(p.PromptTokens > 0):
 		u = refuse(NoTraffic, fmt.Sprintf("prompt %g tokens", p.PromptTokens))
 	case !(p.PromptCV >= 0 && p.PromptCV <= maxPromptCV):
@@ -955,7 +967,19 @@ func (p Prefill) check() (prefillPlan, *Unanswerable) {
 // = 0, k = (f - 1)/(1 - rho_m), at its smaller root. With no margin that
 // root is 1, the pooled knee, unless f - 1 > 1 - rho_m: a pod that hot
 // saturates before the router has the idle pods to steer its excess to.
+//
+// With f against the load (ImbalanceCurveFloor) it is the lower of that
+// knee and the curve's (curveKnee).
 func (pl prefillPlan) knee() float64 {
+	k := pl.flatKnee()
+	if pl.loadCurve() {
+		k = min(k, pl.curveKnee())
+	}
+	return k
+}
+
+// flatKnee is knee without the load curve (ImbalanceCurveFloor).
+func (pl prefillPlan) flatKnee() float64 {
 	f := pl.baseF()
 	pooled := float64(pl.p.Replicas) * pl.vp / pl.p.PromptTokens
 	held := (1 - pl.margin) / f
@@ -969,6 +993,25 @@ func (pl prefillPlan) knee() float64 {
 	disc := (1-k)*(1-k) + 4*k*pl.margin
 	// The smaller root in the form that keeps its digits as k goes to 0.
 	return pooled * 2 * (1 - pl.margin) / ((1 + k) + math.Sqrt(disc))
+}
+
+// loadCurve is whether f against the load is priced (ImbalanceCurveFloor):
+// set, on more than one pod.
+func (pl prefillPlan) loadCurve() bool {
+	return pl.p.Replicas > 1 && pl.p.ImbalanceCurveFloor > 0 && pl.p.ImbalanceCurveExcess > 0
+}
+
+// curveKnee is the rate at which the curve's f(u) * rho reaches
+// 1 - VPMargin, rho = u/V_P the mean pod utilization at the unmargined V_P.
+// f(u) * rho is (floor * u + excess)/V_P, held to N_p * rho, so the root is
+// rho = (1 - VPMargin - excess/V_P)/floor, and at least (1 - VPMargin)/N_p
+// where the cap holds there. fAt is the higher of the flat f and the curve's,
+// each f(rho) * rho rising with the rate, so the knee is the lower of the
+// two roots.
+func (pl prefillPlan) curveKnee() float64 {
+	n := float64(pl.p.Replicas)
+	rho := max((1-pl.margin-pl.p.ImbalanceCurveExcess/pl.vp)/pl.p.ImbalanceCurveFloor, (1-pl.margin)/n)
+	return n * pl.vp * rho / pl.p.PromptTokens
 }
 
 // baseF is the f the plan was given: Prefill.Imbalance, at least 1.
@@ -1009,7 +1052,10 @@ func PrefillLoadAt(p Prefill, rate float64) (f, pooled float64, ok bool) {
 	return pl.fAt(rate), rate * p.PromptTokens / (float64(p.Replicas) * pl.vp * (1 - pl.margin)), true
 }
 
-// fAt is f at rate. Off LoadAwareRouter it is the plan's f at every rate.
+// fAt is f at rate: flatFAt, or with a load curve (ImbalanceCurveFloor) the
+// higher of it and the curve's f at the rate's load.
+//
+// flatFAt off LoadAwareRouter is the plan's f at every rate.
 // On, it is f up to rho_m (ImbalanceUtilization), the mean pod utilization
 // it was read at, and past it the excess falls in proportion to the pods'
 // idle capacity:
@@ -1028,6 +1074,23 @@ func PrefillLoadAt(p Prefill, rate float64) (f, pooled float64, ok bool) {
 // minutes it was read from say it held, and the shares near the knee are
 // not read until a run sits there.
 func (pl prefillPlan) fAt(rate float64) float64 {
+	f := pl.flatFAt(rate)
+	if !pl.loadCurve() {
+		return f
+	}
+	// f against the load (ImbalanceCurveFloor): the higher of the two, at
+	// most the pods, where the whole load is on one.
+	n := float64(pl.p.Replicas)
+	u := rate * pl.p.PromptTokens / n
+	c := n
+	if u > 0 {
+		c = min(n, pl.p.ImbalanceCurveFloor+pl.p.ImbalanceCurveExcess/u)
+	}
+	return max(f, c)
+}
+
+// flatFAt is fAt without the load curve (ImbalanceCurveFloor).
+func (pl prefillPlan) flatFAt(rate float64) float64 {
 	f := pl.baseF()
 	if !pl.loadAware() {
 		return f
@@ -1842,7 +1905,13 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		if fill < d.Band.Lo {
 			out.Flags = addFlags(out.Flags, BelowFittedBand)
 		}
-		lowest := d.lowestFill()
+		// The floor is the one at the request's own count (lowestFillAt),
+		// as its TPOT reads it (issue
+		// llm-d-incubation/llm-d-scaling-manager#485).
+		lowest, _ := d.lowestFillAt(fill)
+		if _, extrapolated := d.readFill(fill); extrapolated {
+			out.Flags = addFlags(out.Flags, ExtrapolatedBelowFloor)
+		}
 		k = max(fill, lowest)
 		first, floorStep = d.itlAt(k), d.itlAt(lowest)
 		oldFirst, oldFloorStep = first, floorStep

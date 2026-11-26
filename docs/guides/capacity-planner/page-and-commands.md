@@ -400,6 +400,16 @@ it read some TTFT figures under what was measured. Set, every figure reads
 OUTSIDE VALIDATED REGION. The same commands take it, and `POST /v1/inputs`
 takes `prefillVPServiceLine` ([API](api.md)).
 
+**f against the load (`--prefill-f-load-curve`, lab-validated only).** The
+busiest prefill pod's extra share is largest at a light load. This flag fits
+f, the imbalance, against the tokens a pod computes a second at each prefill
+count, `f(u) = f_inf + delta/u`, and prices the higher of that and the usual
+f at each rate, so a light load reads the higher f it showed. A count with
+fewer than 8 minutes, or whose f does not fall with the load, keeps its f,
+and the answer says so. Set, every figure reads OUTSIDE VALIDATED REGION. The
+same commands take it, and `POST /v1/inputs` takes `prefillFLoadCurve`
+([API](api.md)).
+
 **An experimental TTFT model (`--experimental-ttft`, for demonstration).**
 The TTFT model has seven switches that are off by default, because none of
 them has passed the release's validation. `--experimental-ttft` turns all
@@ -502,7 +512,9 @@ In a cluster, add both to the StatefulSet's `args`
 - **The variant's modes.** `--rank-mixture-kv-hold` and
   `--rank-mixture-remainder-spread`, with `=v2nl-line`, turn the variant's
   two modes on for every check and source, as on `backtest`. Give them
-  together ([accuracy](accuracy.md)).
+  together ([accuracy](accuracy.md)). `--rank-mixture-remainder-server`,
+  with both of them, adds the third: the remainder drawn from the prefill
+  pods' API servers, where the recording holds their series.
 - **Shorter recordings.** Both TTFT models abstain on a fit window under
   12 hours, which every lab recording is. `--rank-mixture-min-fit-window 2h`
   lowers that minimum for every check and source; each TTFT a model prices

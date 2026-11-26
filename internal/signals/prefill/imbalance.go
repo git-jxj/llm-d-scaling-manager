@@ -192,6 +192,82 @@ func imbalanceByPods(fs []fSample, busy bool) (map[int]float64, map[int]int, map
 	return f, samples, load
 }
 
+// MinFLoadCurveMinutes is the fewest minutes at a pod count f against the
+// load is fitted from (fLoadCurves).
+const MinFLoadCurveMinutes = 8
+
+// FLoadCurve is f against the load at one pod count (Cycle.FLoadCurve):
+//
+//	f(u) = Floor + Excess/u,
+//
+// u the computed tokens a second a pod. The busiest pod carries a roughly
+// fixed amount of prefill work over the mean (a prefix group or a long
+// prompt the router keeps on one pod) and the router spreads the rest, so
+// the excess share falls as the inverse of the load and f falls to a floor.
+// It is fitted by least squares of each minute's de-biased f on 1/u, over
+// every minute kept at the count (not only the busiest): the light minutes
+// are what the curve is for. Nothing else is fitted, and no minute is
+// weighted or dropped.
+//
+// Measured on the Qwen3-32B lab fleet of long prompts (2 prefill pods,
+// minutes pooled, issue llm-d-incubation/llm-d-scaling-manager#482): Floor
+// 0.96 and Excess 591 tok/s a pod, from 23 pools at 850 to 13,200 tok/s a
+// pod that read f 1.5 to 1.7 under 1,000 and about 1.0 above 9,000. On a
+// later run at the same count, held out, it read the pools' f with a mean
+// absolute error of 0.029, against 0.048 for one f at every load. That run
+// had no pool under 3,000 tok/s a pod: below it the curve rests on the
+// fit window alone, whose light minutes were its first twelve (a cold
+// prefix cache is not ruled out for them).
+type FLoadCurve struct {
+	// Floor is f_inf, f at an unbounded load; Excess is delta, in computed
+	// tokens a second a pod.
+	Floor, Excess float64
+	// Minutes is how many minutes the fit read.
+	Minutes int
+}
+
+// Identified reports whether the curve may be priced: at least
+// MinFLoadCurveMinutes minutes, an excess above 0 (f falls with the load),
+// and a floor above 0, so the busiest pod's utilization, f(u) times the
+// mean, rises with the load.
+func (c FLoadCurve) Identified() bool {
+	return c.Minutes >= MinFLoadCurveMinutes && c.Excess > 0 && c.Floor > 0 && isFinite(c.Excess) && isFinite(c.Floor)
+}
+
+// At is f at u computed tokens a second a pod: Floor + Excess/u, at least
+// 1; +Inf at no load.
+func (c FLoadCurve) At(u float64) float64 {
+	if !(u > 0) {
+		return math.Inf(1)
+	}
+	return math.Max(1, c.Floor+c.Excess/u)
+}
+
+// fLoadCurves is the f-against-load fit (FLoadCurve) at each pod count of
+// fs; nil when fs is empty.
+func fLoadCurves(fs []fSample) map[int]FLoadCurve {
+	if len(fs) == 0 {
+		return nil
+	}
+	inv, f := map[int][]float64{}, map[int][]float64{}
+	for _, s := range fs {
+		if !(s.load > 0) || !isFinite(s.load) {
+			continue
+		}
+		inv[s.pods] = append(inv[s.pods], 1/s.load)
+		f[s.pods] = append(f[s.pods], s.f)
+	}
+	out := make(map[int]FLoadCurve, len(inv))
+	for pods, xs := range inv {
+		c := FLoadCurve{Minutes: len(xs)}
+		if len(xs) >= MinFLoadCurveMinutes {
+			c.Floor, c.Excess = ols(xs, f[pods])
+		}
+		out[pods] = c
+	}
+	return out
+}
+
 // minuteLoads is the load of each minute minuteFs reads.
 func minuteLoads(fs []fSample, busy bool) []float64 {
 	if busy {

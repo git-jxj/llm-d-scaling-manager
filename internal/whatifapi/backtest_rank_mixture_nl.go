@@ -15,3 +15,7 @@ import (
 // RankMixtureZParts is Z measured part by part, seconds and seconds a
 // prompt token, and the parts' spreads (whatif.RankMixtureZParts).
 type RankMixtureZParts = whatif.RankMixtureZParts
+
+// RankMixtureServer is the remainder server's fit, seconds and seconds a
+// prompt token (whatif.RankMixtureServer).
+type RankMixtureServer = whatif.RankMixtureServer

@@ -67,7 +67,7 @@ mean TPOT: within 20% of measured in 15 of the 15 five-minute steps scored (a fi
 no overall lean (median ratio 0.98). p90 TPOT not scored in 10: the measured p90 fell in a histogram bucket wider
 than 20% of its lower edge, too wide to place it, with the prediction inside it. To measure it, give the
 histogram finer edges: the router's metrics.requestTPOTBuckets in the EndpointPickerConfig (an llm-d-router build
-after v1.0.0), or vLLM's --custom-histogram-buckets (v0.33.0 and later). Edges about 15% apart place p90 and p95
+after v1.0.0), or vLLM's --custom-histogram-buckets (v0.32.0 and later). Edges about 15% apart place p90 and p95
 within 20%.
 None of these figures falls within the conditions our own accuracy benchmarks cover
 (docs/guides/capacity-planner/accuracy.md): this check is the evidence for this fleet.
@@ -104,7 +104,8 @@ How to read it:
     the EndpointPickerConfig. It needs an llm-d-router build after v1.0.0
     ([llm-d-router#3539](https://github.com/llm-d/llm-d-router/pull/3539)),
     which also makes the default edges 5 ms apart from 5 to 50 ms.
-  - vLLM: `--custom-histogram-buckets`, in vLLM v0.33.0 and later.
+  - vLLM: `--custom-histogram-buckets`, in vLLM v0.32.0 and later. See
+    [vLLM's TPOT buckets](#vllms-tpot-buckets) below for the value.
 - **Median ratio**: the planner's figure over the measured one, at the
   middle step. Above 1 it leans high at the middle; below 1 it leans low. A
   median near 1 can still hide steps it read low, so check that count too.
@@ -174,6 +175,32 @@ window, five minutes on a default router); the inputs are read over the
 same window. Without
 router histograms it uses the engines' own, and leaves out what they cannot
 compare: on a P/D fleet the engines' TTFT covers prefill alone.
+
+### vLLM's TPOT buckets
+
+To let the check score TPOT p90 and p95 from vLLM's own histograms, start
+each model server with this flag (vLLM v0.32.0 and later):
+
+```bash
+--custom-histogram-buckets '{"inter_token_latency":[0.005,0.00575,0.0066,0.0076,0.0087,0.01,0.0115,0.0132,0.0152,0.0175,0.02,0.023,0.0265,0.0305,0.035,0.04,0.046,0.053,0.075,0.1,0.25,1.0]}'
+```
+
+- The flag takes JSON keyed by bucket family. The family is
+  `inter_token_latency`. It sets the edges of two histograms:
+  `vllm:inter_token_latency_seconds` and the per-request TPOT,
+  `vllm:request_time_per_output_token_seconds`. There is no TPOT family of
+  its own.
+- The edges are 15% apart from 5 ms to 53 ms. Each bucket in that range is
+  narrow enough to place a percentile within 20%. Above 53 ms the buckets
+  are wide again. If your TPOT runs higher, carry the same 15% steps further
+  up.
+- Families you do not list keep vLLM's defaults. A family name vLLM does
+  not know is an error at startup, so check the spelling.
+- Finer edges add series: this list has 22 edges where the default has 19,
+  so each of the two histograms adds 3 series per model server.
+- The edges must be positive and strictly increasing.
+- It changes only the histograms. Restart the servers before the window you
+  record.
 
 ## The self-check beside every answer
 

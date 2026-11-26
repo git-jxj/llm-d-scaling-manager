@@ -199,6 +199,10 @@ type rankMixtureSwitches struct {
 	// (whatif.RankMixtureOptions KVHold and RemainderSpread):
 	// BacktestRequest RankMixtureKVHold and RankMixtureRemainderSpread.
 	kvHold, remainderSpread bool
+	// remainderServer is the variant's remainder server mode
+	// (whatif.RankMixtureOptions.RemainderServer):
+	// BacktestRequest.RankMixtureRemainderServer.
+	remainderServer bool
 	// minFitWindow is the shortest fit window the model prices from
 	// (BacktestRequest.RankMixtureMinFitWindow): 0 is
 	// whatif.MinSpreadFitWindow, the default. A model priced from a window
@@ -215,6 +219,7 @@ func rankMixtureSwitchesOf(req BacktestRequest) rankMixtureSwitches {
 		nlLine:          req.TTFTModel == string(whatif.QueueRankMixtureNLLine),
 		kvHold:          req.RankMixtureKVHold,
 		remainderSpread: req.RankMixtureRemainderSpread,
+		remainderServer: req.RankMixtureRemainderServer,
 		minFitWindow:    minFitWindowOf(req.RankMixtureMinFitWindow)}
 }
 
@@ -237,7 +242,7 @@ func (sw rankMixtureSwitches) options(slots int) whatif.RankMixtureOptions {
 // slo analyzer's v2 TTFT learner fits with the same switches.
 func (sw rankMixtureSwitches) shared() whatif.RankMixtureSwitches {
 	return whatif.RankMixtureSwitches{FitSteps: sw.fitSteps, Stratified: sw.stratified, NLLine: sw.nlLine,
-		KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread, MinFitWindow: sw.minFitWindow}
+		KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread, RemainderServer: sw.remainderServer, MinFitWindow: sw.minFitWindow}
 }
 
 // stratifiedOf is a request's rankMixtureStratified: the value where it

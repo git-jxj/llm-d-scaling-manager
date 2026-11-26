@@ -72,6 +72,8 @@ func TestSLORouterQueries(t *testing.T) {
 		QuerySLORouterProcessingBuckets: "llm_d_epp_request_processing_duration_seconds_bucket",
 		QuerySLORouterProcessingSum:     "llm_d_epp_request_processing_duration_seconds_sum",
 		QuerySLORouterProcessingCount:   "llm_d_epp_request_processing_duration_seconds_count",
+		QuerySLORouterRenderSum:         "llm_d_epp_token_producer_render_duration_seconds_sum",
+		QuerySLORouterRenderCount:       "llm_d_epp_token_producer_render_duration_seconds_count",
 	} {
 		q := build(name)
 		// The series carries no model: summed over the namespace, rate

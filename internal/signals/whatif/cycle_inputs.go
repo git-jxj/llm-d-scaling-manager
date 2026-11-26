@@ -79,9 +79,12 @@ func MixtureCycleOf(in domain.AnalyzerInput, at time.Time, prefillVariant, decod
 		c.PrefillTTFTHist = addBuckets(c.PrefillTTFTHist, rm.TTFTBuckets)
 		if engines := rm.GroupEngines; len(engines) > 0 && engineRatesRead(engines) {
 			for _, e := range engines {
-				c.Ranks = append(c.Ranks, MixtureRankReading{Key: e.PodName, MixtureRank: rankOf(e.RequestRate,
+				r := rankOf(e.RequestRate,
 					e.AvgPrefillTime, e.AvgPrefillTimeKnown, e.AvgQueueTime, e.AvgQueueTimeKnown, e.AvgTTFT, e.AvgTTFTKnown,
-					e.PrefillComputedTokenRate, e.PrefillComputedTokenRateKnown, e.AvgInputTokens)})
+					e.PrefillComputedTokenRate, e.PrefillComputedTokenRateKnown, e.AvgInputTokens)
+				r.setFrontend(apiServerReading{e.AvgFrontendTime, e.AvgFrontendTimeKnown, e.AvgRenderTime, e.AvgRenderTimeKnown,
+					e.RenderRate, e.RenderRateKnown}, 1)
+				c.Ranks = append(c.Ranks, MixtureRankReading{Key: e.PodName, MixtureRank: r})
 			}
 			continue
 		}
@@ -89,9 +92,12 @@ func MixtureCycleOf(in domain.AnalyzerInput, at time.Time, prefillVariant, decod
 		if n > 1 {
 			c.EvenWithinRows += n
 		}
+		api := apiServerReading{rm.AvgFrontendTime, rm.AvgFrontendTimeKnown, rm.AvgRenderTime, rm.AvgRenderTimeKnown,
+			rm.RenderRate, rm.RenderRateKnown}
 		for i := range n {
 			r := rankOf(rate/float64(n), rm.AvgPrefillTime, rm.AvgPrefillTimeKnown, rm.AvgQueueTime, rm.AvgQueueTimeKnown,
 				rm.AvgTTFT, rm.AvgTTFTKnown, rm.PrefillComputedTokenRate/float64(n), rm.PrefillComputedTokenRateKnown, rm.AvgInputTokens)
+			r.setFrontend(api, n)
 			c.Ranks = append(c.Ranks, MixtureRankReading{Key: rm.PodName + "#" + strconv.Itoa(i), MixtureRank: r})
 		}
 	}
@@ -106,8 +112,34 @@ func MixtureCycleOf(in domain.AnalyzerInput, at time.Time, prefillVariant, decod
 		if rl.ProcessingCountRate > 0 && Finite(rl.ProcessingSumRate) && Finite(rl.ProcessingCountRate) {
 			c.RouterProcessingMean = rl.ProcessingSumRate / rl.ProcessingCountRate
 		}
+		if rl.RenderCountRate > 0 && Finite(rl.RenderSumRate) && Finite(rl.RenderCountRate) {
+			c.RouterRenderMean = rl.RenderSumRate / rl.RenderCountRate
+		}
 	}
 	return c
+}
+
+// apiServerReading is a row's or an engine's API-server figures with their
+// bits (domain.ReplicaMetrics AvgFrontendTime, AvgRenderTime, RenderRate).
+type apiServerReading struct {
+	frontend      float64
+	frontendKnown bool
+	render        float64
+	renderKnown   bool
+	renderRate    float64
+	rateKnown     bool
+}
+
+// setFrontend sets the rank's API-server figures from its row's, the row's
+// render rate split evenly over its n ranks; a figure not known, or not
+// finite, reads 0.
+func (r *MixtureRank) setFrontend(a apiServerReading, n int) {
+	if a.frontendKnown && Finite(a.frontend) {
+		r.Frontend = a.frontend
+	}
+	if a.renderKnown && Finite(a.render) && a.render > 0 && a.rateKnown && Finite(a.renderRate) && a.renderRate > 0 {
+		r.Render, r.RenderRate = a.render, a.renderRate/float64(max(n, 1))
+	}
 }
 
 // DecodeCycleOf is one cycle of in, read at at, as the TPOT distribution

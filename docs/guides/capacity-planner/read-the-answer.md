@@ -119,7 +119,7 @@ wide (10 ms to 20 ms is 2x wide), the measured p90 is somewhere in it, and
 the check cannot score a prediction against it. The Check tab draws that
 bucket as one band and says so under the charts. Finer edges measure it:
 the router's `metrics.requestTPOTBuckets` in the EndpointPickerConfig, or
-vLLM's `--custom-histogram-buckets`. Edges about 15% apart place p90 and p95
+vLLM's `--custom-histogram-buckets` ([the value](check.md#vllms-tpot-buckets)). Edges about 15% apart place p90 and p95
 within 20%.
 
 ## The answer, from the CLI

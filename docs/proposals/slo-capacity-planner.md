@@ -2162,6 +2162,9 @@ roles[].ttft.hitAtCount.lo number
 roles[].ttft.hitAtCount.promptTokens number
 roles[].ttft.hitAtCount.rule string
 roles[].ttft.imbalance number
+roles[].ttft.imbalanceCurveExcess number
+roles[].ttft.imbalanceCurveFloor number
+roles[].ttft.imbalanceCurveMinutes number
 roles[].ttft.imbalanceSource string
 roles[].ttft.percentile number
 roles[].ttft.prefillEngine object

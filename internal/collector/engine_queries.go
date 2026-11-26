@@ -105,6 +105,14 @@ var agnosticReplicaQueries = []string{
 	registration.QueryKVTierReadSecondsRate,
 	registration.QueryNIXLByteRate,
 	registration.QueryNIXLSecondsRate,
+	// The API server's own time outside the engine, recorded only
+	// (registration/frontend.go). The HTTP series carry no model_name, so
+	// they are not cut down to the model: they are attached by instance, as
+	// cache_config_info is. vLLM's end-to-end latency carries it.
+	registration.QueryAvgHTTPGenerationTime,
+	registration.QueryAvgHTTPRenderTime,
+	registration.QueryHTTPRenderRate,
+	registration.QueryAvgE2ELatency,
 }
 
 // ttftAgnosticQueries are the agnostic queries above that carry model_name
@@ -126,6 +134,7 @@ var ttftAgnosticQueries = []string{
 	registration.QueryKVTierReadSecondsRate,
 	registration.QueryNIXLByteRate,
 	registration.QueryNIXLSecondsRate,
+	registration.QueryAvgE2ELatency,
 }
 
 // recordOnlyReplicaQueries are the replica queries above issued only while a
@@ -154,6 +163,12 @@ var recordOnlyReplicaQueries = map[string]bool{
 	registration.QueryKVTierReadSecondsRate:    true,
 	registration.QueryNIXLByteRate:             true,
 	registration.QueryNIXLSecondsRate:          true,
+	// The API server's own time: read by the capacity planner only, from
+	// the recording (whatif.RankMixtureOptions.RemainderServer).
+	registration.QueryAvgHTTPGenerationTime: true,
+	registration.QueryAvgHTTPRenderTime:     true,
+	registration.QueryHTTPRenderRate:        true,
+	registration.QueryAvgE2ELatency:         true,
 }
 
 // ttftReadReplicaQueries are the replica queries above that the TTFT pricing

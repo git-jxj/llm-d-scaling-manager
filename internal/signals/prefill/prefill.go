@@ -213,6 +213,10 @@ type Cycle struct {
 	// minutes only (busiestMinutes), not from every minute
 	// (saturation.SwitchPrefillFBusyMinutes).
 	FBusyMinutes bool
+	// FLoadCurve fits f against the load at each pod count
+	// (Estimate.FCurveByPods, fLoadCurves;
+	// saturation.SwitchPrefillFLoadCurve).
+	FLoadCurve bool
 	// FPooledMinutes pools consecutive minutes under MinRequestsPerPodMinute
 	// requests a pod until they carry it, so a fleet of long prompts learns f
 	// (imbalance_pool.go; saturation.SwitchPrefillFPooledMinutes).
@@ -461,6 +465,12 @@ type Estimate struct {
 	// no entry, where no f is given.
 	FLoad       float64
 	FLoadByPods map[int]float64
+	// FCurveByPods is f against the load at each pod count, fitted over
+	// every minute kept at that count (fLoadCurves), with
+	// Cycle.FLoadCurve; nil without it. A count with too few minutes, or
+	// whose fit is not identified, has an entry all the same: a reader asks
+	// FLoadCurve.Identified.
+	FCurveByPods map[int]FLoadCurve
 	// FMultiRank is a kept minute with a row of more than one engine rank: a
 	// data-parallel pod, or an LWS group whose every Pod runs an engine,
 	// collapsed to one row. f is then the spread across rows; the spread
@@ -721,6 +731,9 @@ func (o *Observer) Observe(c Cycle) Estimate {
 	}
 	est.curveBound()
 	est.imbalance(ks, shares, serving, c.FBusyMinutes)
+	if c.FLoadCurve {
+		est.FCurveByPods = fLoadCurves(ks.f)
+	}
 	if !c.VPPromptCoverage || est.VPRefused != "" {
 		est.VPPromptLow, est.VPPromptHigh = 0, 0
 	}

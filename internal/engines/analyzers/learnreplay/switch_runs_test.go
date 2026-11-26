@@ -1353,6 +1353,11 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// replay runs it off and off alone from all on moves nothing. Its unit
 	// tests hold it (heldBy).
 	saturation.SwitchPrefillHitAtCount: nil,
+	// llm-d-incubation/llm-d-scaling-manager#482: f against the load per
+	// pod. Planner-only, off from the constructor, so every golden replay
+	// runs it off and off alone from all on moves nothing. Its unit tests
+	// hold it (heldBy).
+	saturation.SwitchPrefillFLoadCurve: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1866,6 +1871,14 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestServiceLine_BusyMinutesWin"},
 		{"../../../signals/prefill", "TestServiceLine_ALowerBoundStandsOnlyAboveTheLine"},
 		{"../saturation", "TestPrefillVPServiceLine_ThroughAnalyze"},
+	},
+	saturation.SwitchPrefillFLoadCurve: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestFLoadCurve_FitsTheInverseOfTheLoad"},
+		{"../../../signals/prefill", "TestFLoadCurve_NotIdentified"},
+		{"../../../signals/prefill", "TestFLoadCurve_OnlyWithTheSwitch"},
+		{"../../../signals/whatif", "TestFLoadCurve_TheKneeIsTheLowerRoot"},
+		{"../saturation", "TestPrefillFLoadCurve_ThroughAnalyze"},
 	},
 	saturation.SwitchPrefillVPLoneRate: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
