@@ -394,10 +394,9 @@ func FitRankMixtureNL(steps []MixtureStep, o RankMixtureOptions) (RankMixture, R
 	}
 	if o.RemainderServer && o.RemainderSpread && !noPrompt {
 		m.RemainderServer = true
-		switch {
-		case parts.Remainder.Shape == nil:
+		if parts.Remainder.Shape == nil {
 			m.RemainderServerOff = "no remainder spread to draw it on"
-		default:
+		} else {
 			parts.Remainder.Server, m.RemainderServerOff = FitZServer(steps, stepLength(steps).Seconds(), o.RemainderServerQueue)
 		}
 	}

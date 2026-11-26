@@ -193,7 +193,7 @@ func FitZServer(steps []MixtureStep, stepSeconds float64, kFree bool) (z *ZServe
 	// The rest: what the parts leave of each step's remainder.
 	x, y := make([]float64, len(sts)), make([]float64, len(sts))
 	for i, s := range sts {
-		mean, _, _ := z.meanParts(s.l, s.rate)
+		mean, _ := z.meanParts(s.l, s.rate)
 		x[i], y[i] = s.l, s.r-mean
 	}
 	z.N0, z.N1 = nnLine(x, y, nil)
@@ -205,7 +205,7 @@ func FitZServer(steps []MixtureStep, stepSeconds float64, kFree bool) (z *ZServe
 // stretch 1/(1 - rho) read from the lines of the round before; with kFree,
 // the K of least loss over a grid in [0, 1].
 func (z *ZServer) fitLines(rows []serverRow, kFree bool) {
-	var fs, hs []float64
+	fs, hs := make([]float64, 0, len(rows)), make([]float64, 0, len(rows))
 	for _, r := range rows {
 		fs = append(fs, r.f)
 		if r.render {
@@ -331,20 +331,21 @@ func (z *ZServer) other(l float64) float64 {
 }
 
 // meanParts is the server's mean at prompt l and priced rate, N left
-// out: its total, the router's part (O and the render) and the frontend.
-func (z *ZServer) meanParts(l, rate float64) (total, router, frontend float64) {
+// out: its total, and the router's part (O and the render).
+func (z *ZServer) meanParts(l, rate float64) (total, router float64) {
 	ren, fp, _ := z.pods(l, rate)
 	router = z.other(l)
+	var frontend float64
 	for j, sh := range z.Shares {
 		router += sh * ren[j]
 		frontend += sh * fp[j]
 	}
-	return router + frontend, router, frontend
+	return router + frontend, router
 }
 
 // Mean is the server's mean remainder at prompt l and priced rate, seconds.
 func (z *ZServer) Mean(l, rate float64) float64 {
-	total, _, _ := z.meanParts(l, rate)
+	total, _ := z.meanParts(l, rate)
 	return total + z.N0 + z.N1*l
 }
 

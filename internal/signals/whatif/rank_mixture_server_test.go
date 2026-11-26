@@ -180,7 +180,7 @@ func TestZServer_DrawsKeepTheMean(t *testing.T) {
 	mean /= float64(len(d))
 	assert.InDelta(t, z.Mean(lb, 4), mean, 0.01*z.Mean(lb, 4))
 	p95 := sampleQuantile(d, 0.95)
-	_, router, _ := z.meanParts(lb, 4)
+	_, router := z.meanParts(lb, 4)
 	assert.Greater(t, p95, z.Mean(lb, 4)+router, "the router part is drawn on the shape's tail")
 	assert.Equal(t, d, z.draws(l, 4, shape))
 }
