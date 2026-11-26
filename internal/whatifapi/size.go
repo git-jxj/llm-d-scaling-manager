@@ -59,7 +59,7 @@ var errNotMonotone = errors.New("the size's search does not hold on this fleet")
 // within the bound does.
 func (s *Server) handleSize(w http.ResponseWriter, r *http.Request) {
 	var req SizeRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	body, err := s.size(r.Context(), req)
