@@ -32,6 +32,12 @@ func TestRankMixtureFit_Flags(t *testing.T) {
 	assert.Error(t, rankMixtureFit{minFitWindow: time.Hour}.check(false, false), "the window is the model's")
 	assert.NoError(t, rankMixtureFit{minFitWindow: time.Hour}.check(true, false), "v2 takes the window")
 	assert.Error(t, rankMixtureFit{minFitWindow: -time.Hour}.check(true, true))
+
+	require.NoError(t, fs.Parse([]string{"--" + rankMixtureRemainderServerFlag}))
+	assert.True(t, r.options("m", true).RemainderServer)
+	require.NoError(t, r.check(true, true))
+	assert.Error(t, rankMixtureFit{remainderServer: true}.check(true, true), "the server draws on the spread")
+	assert.Error(t, rankMixtureFit{remainderServer: true, remainderSpread: true}.check(true, false), "the variant's")
 }
 
 // Each command that fits the model takes the flags, and refuses them
@@ -42,6 +48,9 @@ func TestRankMixtureFit_RefusedWithoutTheModel(t *testing.T) {
 		{"at-replicas", "--recording", q32Recording, "--experimental-ttft=v2", "--rank-mixture-remainder-spread"},
 		{"at-replicas", "--recording", q32Recording, "--" + rankMixtureMinFitWindowFlag, "2h"},
 		{"day-plan", "--recording", q32Recording, "--rank-mixture-kv-hold"},
+		{"day-plan", "--recording", q32Recording, "--experimental-ttft=v2nl-line", "--" + rankMixtureRemainderServerFlag},
+		{"at-replicas", "--recording", q32Recording, "--experimental-ttft=v2nl-line", "--" + rankMixtureRemainderServerFlag},
+		{"serve", "--recordings", t.TempDir(), "--experimental-ttft=v2nl-line", "--" + rankMixtureRemainderServerFlag},
 		{"backtest", "--recording", q32Recording, "--" + rankMixtureMinFitWindowFlag, "2h"},
 		{"serve", "--recordings", t.TempDir(), "--rank-mixture-kv-hold"},
 		{"serve", "--recordings", t.TempDir(), "--" + rankMixtureMinFitWindowFlag, "2h"},

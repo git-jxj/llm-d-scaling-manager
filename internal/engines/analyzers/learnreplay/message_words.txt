@@ -94,6 +94,8 @@ A
 A-Za-z0-9_.-
 A100
 AMD
+API
+API-server
 AUncertain
 AboveDecodeOnset
 AboveFlowControlOnset
@@ -424,6 +426,7 @@ RegisterAnalyzer
 RelaxationLong
 Released
 Releasing
+RemainderRestPastFit
 Remove
 Removed
 Replica
@@ -1157,6 +1160,7 @@ drainRegion
 drainReplicas
 drainSeconds
 drains
+draw
 drawn
 drift
 dropped
@@ -2202,6 +2206,7 @@ neighbour
 neither
 nest
 net
+network
 never
 new
 newEntries
@@ -2750,6 +2755,7 @@ removedNamespaces
 removes
 removing
 rename
+render
 renewal
 renewal-lognormal
 renewal-lognormal-per-length
@@ -3011,6 +3017,7 @@ served-peak
 served-siblings
 servedBound
 server
+servers
 serves
 service
 service-line
@@ -3480,6 +3487,7 @@ unless
 unlikely
 unlimited
 unmark
+unmeasured
 unmet
 unparseable
 unread

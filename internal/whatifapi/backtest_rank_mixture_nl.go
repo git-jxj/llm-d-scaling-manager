@@ -34,6 +34,36 @@ type RankMixtureZParts struct {
 	// remainder is its line.
 	RemainderShapeMean float64 `json:"remainderShapeMean,omitempty"`
 	RemainderShapeP95  float64 `json:"remainderShapeP95,omitempty"`
+	// RemainderServer is the remainder drawn from the prefill pods' API
+	// servers (BacktestRequest.RankMixtureRemainderServer), absent where it
+	// was not asked or not applied; RemainderServerOff is why it was asked
+	// and not applied.
+	RemainderServer    *RankMixtureServer `json:"remainderServer,omitempty"`
+	RemainderServerOff string             `json:"remainderServerOff,omitempty"`
+}
+
+// RankMixtureServer is the remainder server's fit (whatif.ZServer), seconds
+// and seconds a prompt token: the render handler's line, the generation
+// frontend's (absent where the pods did not record it), the router's work
+// outside its render call, the unmeasured rest's line and its share of the
+// fit window's remainder, the fit window's top rate past which a figure is
+// flagged where that share is over whatif.MaxRemainderRestShare, and what it
+// was read on.
+type RankMixtureServer struct {
+	RenderA      float64 `json:"renderA"`
+	RenderB      float64 `json:"renderB"`
+	HasRender    bool    `json:"hasRender"`
+	FrontendA    float64 `json:"frontendA"`
+	FrontendB    float64 `json:"frontendB"`
+	HasFrontend  bool    `json:"hasFrontend"`
+	RouterOther  float64 `json:"routerOther"`
+	RouterOtherB float64 `json:"routerOtherB,omitempty"`
+	RestA        float64 `json:"restA"`
+	RestB        float64 `json:"restB"`
+	RestShare    float64 `json:"restShare"`
+	TopRate      float64 `json:"topRate"`
+	FitSteps     int     `json:"fitSteps"`
+	PodSteps     int     `json:"podSteps"`
 }
 
 // remainderShape sets the remainder's measured law, where it has one.
@@ -42,6 +72,22 @@ func (z *RankMixtureZParts) remainderShape(r whatif.ZPart) {
 		return
 	}
 	z.RemainderShapeMean, z.RemainderShapeP95 = r.ShapeMean, r.ShapeQuantile(0.95)
+}
+
+// remainderServer sets the remainder server's fit, or why it was not
+// applied, where m was asked for it.
+func (z *RankMixtureZParts) remainderServer(m whatif.RankMixture) {
+	if !m.RemainderServer || m.Parts == nil {
+		return
+	}
+	s := m.Parts.Remainder.Server
+	if s == nil {
+		z.RemainderServerOff = m.RemainderServerOff
+		return
+	}
+	z.RemainderServer = &RankMixtureServer{RenderA: s.R0, RenderB: s.R1, HasRender: s.HasRender, FrontendA: s.F0, FrontendB: s.F1,
+		HasFrontend: s.HasFrontend, RouterOther: s.Other, RouterOtherB: s.Other1, RestA: s.N0, RestB: s.N1, RestShare: s.RestShare,
+		TopRate: s.TopRate, FitSteps: s.Steps, PodSteps: s.PodSteps}
 }
 
 // identifiedNL is identified for the variant. Its Z is measured, not

@@ -73,6 +73,17 @@ type RouterLatency struct {
 	ProcessingSumRate   float64         `learnrec:"omitzero"`
 	ProcessingCountRate float64         `learnrec:"omitzero"`
 
+	// RenderSumRate and RenderCountRate are the rates of the router's
+	// token-producer render histogram's _sum and _count over the same
+	// window: the router's call to a prefill pod's /render handler, inside
+	// its request processing above, which the capacity planner's remainder
+	// server mode (whatif.RankMixtureOptions.RemainderServer) takes out of
+	// the processing as the prefill pods' API-server time. Joined to a
+	// model as the processing series are; zero with no such series, a
+	// failed query or no join. Collected only while a learner recording is
+	// on, and left out of a recording while zero.
+	RenderSumRate   float64 `learnrec:"omitzero"`
+	RenderCountRate float64 `learnrec:"omitzero"`
 	// PrefixPredictedTokenRate and PrefixBestAvailableTokenRate are the
 	// router prefix producer's cached tokens a second over the same window:
 	// predicted on the endpoint each request was sent to, and available on

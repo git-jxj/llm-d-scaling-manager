@@ -31,6 +31,10 @@ type MixtureCycle struct {
 	// (RankMixtureOptions.RemainderSpread).
 	RouterProcessingHist map[float64]float64
 	RouterProcessingMean float64
+	// RouterRenderMean is the router's mean render call over the same
+	// window, seconds; 0 with none recorded. Only the remainder server mode
+	// reads it (RankMixtureOptions.RemainderServer).
+	RouterRenderMean float64
 	// EvenWithinRows counts the ranks whose own rate was not recorded: a
 	// row of several ranks split evenly between them (its share profile is
 	// flatter than the fleet's).
@@ -61,11 +65,14 @@ func MixtureStepOf(cycles []MixtureCycle, at time.Time) MixtureStep {
 	type acc struct {
 		rate, pf, q, ttft, x, l float64
 		wpf, wq, wttft, wx, wl  float64
+		// The API server's: the frontend weighted by rate, the render mean
+		// by the render rate, and the render rate summed.
+		fe, wfe, ren, rr float64
 	}
 	byKey := map[string]*acc{}
 	var keys []string
 	out.Computed, out.Prompt, out.Queue = map[float64]float64{}, map[float64]float64{}, map[float64]float64{}
-	var pTTFT, dTTFT, np, nd, rProc, nr float64
+	var pTTFT, dTTFT, np, nd, rProc, nr, rRend, nrr float64
 	for _, c := range cycles {
 		for _, r := range c.Ranks {
 			a, ok := byKey[r.Key]
@@ -75,9 +82,17 @@ func MixtureStepOf(cycles []MixtureCycle, at time.Time) MixtureStep {
 				keys = append(keys, r.Key)
 			}
 			a.rate += r.Rate
+			if r.RenderRate > 0 && r.Render > 0 {
+				a.ren += r.RenderRate * r.Render
+				a.rr += r.RenderRate
+			}
 			w := r.Rate
 			if !(w > 0) {
 				continue
+			}
+			if r.Frontend != 0 && Finite(r.Frontend) {
+				a.fe += w * r.Frontend
+				a.wfe += w
 			}
 			if r.PrefillTime > 0 {
 				a.pf += w * r.PrefillTime
@@ -116,6 +131,10 @@ func MixtureStepOf(cycles []MixtureCycle, at time.Time) MixtureStep {
 			rProc += c.RouterProcessingMean
 			nr++
 		}
+		if c.RouterRenderMean > 0 {
+			rRend += c.RouterRenderMean
+			nrr++
+		}
 		if c.PrefillTTFT > 0 {
 			pTTFT += c.PrefillTTFT
 			np++
@@ -140,7 +159,8 @@ func MixtureStepOf(cycles []MixtureCycle, at time.Time) MixtureStep {
 			q = -1
 		}
 		r := MixtureRank{Rate: a.rate / n, PrefillTime: div(a.pf, a.wpf), QueueTime: q, TTFT: div(a.ttft, a.wttft),
-			Computed: div(a.x, a.wx), Prompt: div(a.l, a.wl)}
+			Computed: div(a.x, a.wx), Prompt: div(a.l, a.wl), Frontend: div(a.fe, a.wfe), Render: div(a.ren, a.rr),
+			RenderRate: a.rr / n}
 		out.Ranks = append(out.Ranks, r)
 		out.Rate += r.Rate
 		if r.Prompt > 0 {
@@ -151,5 +171,6 @@ func MixtureStepOf(cycles []MixtureCycle, at time.Time) MixtureStep {
 	out.PromptMean = div(out.PromptMean, lw)
 	out.PrefillTTFT, out.DecodeTTFT = div(pTTFT, np), div(dTTFT, nd)
 	out.RouterProcessingMean = div(rProc, nr)
+	out.RouterRenderMean = div(rRend, nrr)
 	return out
 }

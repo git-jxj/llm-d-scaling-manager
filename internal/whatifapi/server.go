@@ -109,6 +109,10 @@ type Config struct {
 	// --rank-mixture-min-fit-window.
 	RankMixtureKVHold, RankMixtureRemainderSpread bool
 	RankMixtureMinFitWindow                       time.Duration
+	// RankMixtureRemainderServer turns the variant's remainder server on
+	// where the request does not, for a request whose remainder spread is
+	// on. The CLI's serve sets it with --rank-mixture-remainder-server.
+	RankMixtureRemainderServer bool
 	// TPOTDistMinFitSteps is the fewest fit steps the TPOT distribution
 	// fits on where a backtest or a source's request names none: 0 is
 	// MinTPOTDistFitSteps. The CLI's serve sets it with
@@ -210,6 +214,8 @@ type Server struct {
 	// RankMixtureMinFitWindow.
 	kvHold, remainderSpread bool
 	minFitWindow            time.Duration
+	// remainderServer is Config.RankMixtureRemainderServer.
+	remainderServer bool
 	// tpotMinFitSteps is Config.TPOTDistMinFitSteps.
 	tpotMinFitSteps int
 }
@@ -276,6 +282,7 @@ func New(c Config) *Server {
 		uploader: c.Uploader, uploadMax: uploadMax, uploadSlots: make(chan struct{}, 1), uploadIdle: uploadIdle, uploadDeadline: uploadDeadline,
 		longDeadline: LongRequestDeadline, ttftModel: c.TTFTModel, tpotModel: c.TPOTModel, noStratified: c.NoRankMixtureStratified,
 		kvHold: c.RankMixtureKVHold, remainderSpread: c.RankMixtureRemainderSpread, minFitWindow: c.RankMixtureMinFitWindow,
+		remainderServer: c.RankMixtureRemainderServer,
 		tpotMinFitSteps: c.TPOTDistMinFitSteps}
 }
 
@@ -445,6 +452,14 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 			KVHold, RemainderSpread bool
 			MinFitWindow            time.Duration
 		}{doc.InputsID, opts.KVHold, opts.RemainderSpread, opts.MinFitWindow})
+	}
+	if model != "" && opts.RemainderServer {
+		// And so is the remainder drawn from the pods' API servers, hashed
+		// apart so every inputsId without it stays as it was.
+		doc.InputsID = contentID("inputs", struct {
+			ID              string
+			RemainderServer bool
+		}{doc.InputsID, true})
 	}
 	if check && (doc.Source.Kind == SourceRecording || doc.Source.Kind == SourcePrometheus) {
 		// The self-check is bounded as a plan is; out of time it is not run,

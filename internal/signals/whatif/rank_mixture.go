@@ -210,6 +210,12 @@ type RankMixture struct {
 	// QueueRankMixtureNLLine (RankMixtureOptions, rank_mixture_modes.go);
 	// KV.RhoHold and Parts.Remainder.Shape say whether each applies.
 	KVHold, RemainderSpread bool
+	// RemainderServer says the fit was asked for the remainder server
+	// (RankMixtureOptions.RemainderServer, rank_mixture_server.go):
+	// Parts.Remainder.Server says whether it applies, and
+	// RemainderServerOff why not, "" where it does.
+	RemainderServer    bool
+	RemainderServerOff string
 }
 
 // MaxRelaxationShare is the largest relaxation time, as a share of the step
@@ -239,6 +245,10 @@ type RankMixtureChecks struct {
 	// KVOutside says the ranks' mean utilization is outside the range the
 	// KV-deferral lines were fitted over.
 	KVOutside bool
+	// RemainderRestPastFit says the rate is past the fit window's top with
+	// the remainder server's unmeasured rest over MaxRemainderRestShare
+	// (rank_mixture_server.go).
+	RemainderRestPastFit bool
 }
 
 // Flags is the checks as figure flags, for a step of stepSeconds (0 skips
@@ -253,6 +263,9 @@ func (c RankMixtureChecks) Flags(stepSeconds float64) []Flag {
 	}
 	if c.KVOutside {
 		out = append(out, KVDeferralOutside)
+	}
+	if c.RemainderRestPastFit {
+		out = append(out, RemainderRestPastFit)
 	}
 	return out
 }
@@ -473,6 +486,9 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 		}
 	}
 	out.Z = m.Parts.draws(out.L)
+	if m.Parts != nil && m.Parts.Remainder.Server.restPastFit(rate) {
+		out.Checks.RemainderRestPastFit = true
+	}
 	if m.KV.Known {
 		mean := rhoSum / float64(len(shares))
 		out.Checks.KVOutside = mean < m.KV.RhoLo || mean > m.KV.RhoHi
