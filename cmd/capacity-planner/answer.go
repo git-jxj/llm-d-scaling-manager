@@ -150,6 +150,10 @@ type answerFlags struct {
 	// vpServiceLine is --prefill-vp-service-line: the replay turns
 	// saturation.SwitchPrefillVPServiceLine on (replayOptions); off by default.
 	vpServiceLine bool
+	// fLoadCurve is --prefill-f-load-curve: the replay turns
+	// saturation.SwitchPrefillFLoadCurve on (replayOptions), and f is priced
+	// against the load (f_load_curve.go); off by default.
+	fLoadCurve bool
 	// experimentalTTFT is --experimental-ttft: the replay turns the TTFT
 	// model's off-by-default switches on (replayOptions); off by default.
 	experimentalTTFT bool
@@ -240,6 +244,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.BoolVar(&f.vpServiceLine, vpServiceLineFlag, false, vpServiceLineUsage)
+	fs.BoolVar(&f.fLoadCurve, fLoadCurveFlag, false, fLoadCurveUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag,
 		experimentalTTFTUsage+". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on "+
 			"the --recording, and "+experimentalTTFTNLLineUsage)

@@ -138,12 +138,18 @@ type wireTTFT struct {
 	FixedLatencyLearned *float64 `json:"fixedLatencyLearned,omitempty"`
 	Imbalance           float64  `json:"imbalance,omitempty"`
 	ImbalanceSource     string   `json:"imbalanceSource,omitempty"`
-	PromptTokens        float64  `json:"promptTokens,omitempty"`
-	PromptSource        string   `json:"promptSource,omitempty"`
-	PromptFromCycle     int      `json:"promptFromCycle,omitempty"`
-	PromptToCycle       int      `json:"promptToCycle,omitempty"`
-	PromptCV            float64  `json:"promptCV,omitempty"`
-	PromptCVSource      string   `json:"promptCVSource,omitempty"`
+	// ImbalanceCurveFloor and ImbalanceCurveExcess are f against the load
+	// priced (--prefill-f-load-curve, whatif.Prefill.ImbalanceCurveFloor),
+	// fitted over ImbalanceCurveMinutes minutes; absent where none is.
+	ImbalanceCurveFloor   float64 `json:"imbalanceCurveFloor,omitempty"`
+	ImbalanceCurveExcess  float64 `json:"imbalanceCurveExcess,omitempty"`
+	ImbalanceCurveMinutes int     `json:"imbalanceCurveMinutes,omitempty"`
+	PromptTokens          float64 `json:"promptTokens,omitempty"`
+	PromptSource          string  `json:"promptSource,omitempty"`
+	PromptFromCycle       int     `json:"promptFromCycle,omitempty"`
+	PromptToCycle         int     `json:"promptToCycle,omitempty"`
+	PromptCV              float64 `json:"promptCV,omitempty"`
+	PromptCVSource        string  `json:"promptCVSource,omitempty"`
 	// PromptCVRead is the histogram's figure an --assume-prompt-cv stands in
 	// place of, and ArrivalCV2 Ca^2 from --arrival-cv2: absent with neither.
 	PromptCVRead   *float64 `json:"promptCVRead,omitempty"`

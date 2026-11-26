@@ -108,7 +108,7 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	}
 	s := &servedState{st: st, decodeVariant: variants[0].state.Variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
 		imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter, cachedCost: f.cachedCost,
-		experimentalTTFT: f.experimentalTTFT, vpServiceLine: f.vpServiceLine}
+		experimentalTTFT: f.experimentalTTFT, vpServiceLine: f.vpServiceLine, fLoadCurve: f.fLoadCurve}
 	rep, err := buildReport(ctx, st, s, q)
 	if err != nil {
 		if whatifapi.IsInputError(err) {

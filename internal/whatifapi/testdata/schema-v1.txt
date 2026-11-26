@@ -638,6 +638,7 @@ inputs.policy.tpot.statistic string
 inputs.policy.ttft object
 inputs.policy.ttft.seconds number
 inputs.policy.ttft.statistic string
+inputs.prefillFLoadCurve boolean
 inputs.prefillHitAtCount boolean
 inputs.prefillHitModel object
 inputs.prefillHitModel.a number
@@ -908,6 +909,7 @@ inputsRequest object
 inputsRequest.decodeVariant string
 inputsRequest.experimentalTTFT boolean
 inputsRequest.model string
+inputsRequest.prefillFLoadCurve boolean
 inputsRequest.prefillHitAtCount boolean
 inputsRequest.prefillVPPlateau boolean
 inputsRequest.prefillVPServiceLine boolean

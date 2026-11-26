@@ -46,6 +46,11 @@ type InputsRequest struct {
 	// --prefill-vp-service-line): opt-in, off by default, and not validated,
 	// so every figure reads outside the validated region.
 	PrefillVPServiceLine bool `json:"prefillVPServiceLine,omitempty"`
+	// PrefillFLoadCurve prices f, the prefill imbalance, against the load
+	// per pod at each prefill count whose fit is identified (the CLI's
+	// --prefill-f-load-curve): opt-in, off by default, validated on lab
+	// recordings only, so every figure reads outside the validated region.
+	PrefillFLoadCurve bool `json:"prefillFLoadCurve,omitempty"`
 	// ExperimentalTTFT prices TTFT with the TTFT model's switches that are
 	// off by default (the CLI's --experimental-ttft): for demonstration,
 	// not validated. Every prefill and TTFT figure is flagged
@@ -154,6 +159,9 @@ type InputsResponse struct {
 	// prefill service line (InputsRequest.PrefillVPServiceLine); absent
 	// otherwise.
 	PrefillVPServiceLine bool `json:"prefillVPServiceLine,omitempty"`
+	// PrefillFLoadCurve says the source was read with f against the load
+	// (InputsRequest.PrefillFLoadCurve); absent otherwise.
+	PrefillFLoadCurve bool `json:"prefillFLoadCurve,omitempty"`
 	// ExperimentalTTFT says the source was read with the experimental TTFT
 	// model (InputsRequest.ExperimentalTTFT); absent otherwise.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
