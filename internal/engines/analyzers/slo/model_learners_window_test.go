@@ -34,8 +34,9 @@ func TestModelLearners_WindowKeepsOneCycleEverySpacing(t *testing.T) {
 		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		var out []time.Duration
-		for _, c := range a.models[reportModel("ns", "m")].cycles {
+		cycles := a.models[reportModel("ns", "m")].cycles
+		out := make([]time.Duration, 0, len(cycles))
+		for _, c := range cycles {
 			out = append(out, c.At.Sub(t0))
 		}
 		return out
@@ -105,6 +106,20 @@ func TestModelLearners_UnreadPairKeepsTheWindow(t *testing.T) {
 	assert.Empty(t, forgottenBy(a.TakeLearnerReports()), "nothing forgotten")
 	a.mu.Lock()
 	assert.Len(t, a.models[reportModel("ns", "m")].cycles, 2)
+	a.mu.Unlock()
+
+	// Unread for longer than ModelReleaseAfter (the model moved to several
+	// variants of a role): the window starts again, forgotten.
+	start := t0.Add(3 * time.Minute)
+	for _, o := range []time.Duration{0, ModelReleaseAfter, ModelReleaseAfter + time.Minute} {
+		clk.SetTime(start.Add(o))
+		a.beginCycle()
+		a.ObserveModelInputs(unread, router)
+	}
+	assert.Equal(t, map[string]learn.By{learn.TTFTMixture: learn.ByArguments, learn.TPOTDistribution: learn.ByArguments},
+		forgottenBy(a.TakeLearnerReports()))
+	a.mu.Lock()
+	assert.Empty(t, a.models[reportModel("ns", "m")].prefill, "the window reads the pair as it now is")
 	a.mu.Unlock()
 }
 

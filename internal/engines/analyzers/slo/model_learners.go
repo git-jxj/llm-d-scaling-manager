@@ -155,6 +155,9 @@ type modelWindow struct {
 	// the last pricing, held for ModelPriceEvery.
 	now             modelFigures
 	lastPrefillPods int
+	// unreadSince is the first cycle of a run whose variant pair or
+	// argument tags did not read (unreadPair), zero while they read.
+	unreadSince time.Time
 	priced          modelPricing
 }
 
@@ -305,9 +308,18 @@ func (a *Analyzer) observeModelLocked(in domain.AnalyzerInput, router *domain.Ro
 		return nil, whatif.FitCycle{}, false
 	}
 	if w != nil && unreadPair(w, pv, dv, pArgs, dArgs) {
+		if w.unreadSince.IsZero() {
+			w.unreadSince = now
+		}
+	} else if w != nil {
+		w.unreadSince = time.Time{}
+	}
+	if w != nil && !w.unreadSince.IsZero() && now.Sub(w.unreadSince) <= ModelReleaseAfter {
 		// The variant pair or an engine argument tag did not read this
 		// cycle (variant states missing, a capacity record not there yet):
 		// the window stands, and the cycle is neither kept nor priced.
+		// Unread past ModelReleaseAfter (the model moved to several
+		// variants of a role), the window starts again below.
 		w.seen, w.observed, w.counts = now, a.cycle, map[learn.Reason]int64{modelIdle: 1}
 		w.now = modelFigures{ttftReason: constants.SLOModelSignalMissing, tpotReason: constants.SLOModelSignalMissing}
 		return w, whatif.FitCycle{}, false
@@ -324,8 +336,10 @@ func (a *Analyzer) observeModelLocked(in domain.AnalyzerInput, router *domain.Ro
 	if len(c.Mixture.Ranks) == 0 && len(c.Decode.Groups) == 0 && len(c.Decode.Output) == 0 {
 		w.counts[modelIdle]++
 	} else {
-		w.counts[modelAdmitted]++
+		// Admitted is a cycle kept: one closer than ModelCycleSpacing to
+		// the last one kept is priced only.
 		if n := len(w.cycles); n == 0 || c.At.Sub(w.cycles[n-1].At) >= ModelCycleSpacing {
+			w.counts[modelAdmitted]++
 			w.cycles = append(w.cycles, c)
 		}
 	}
