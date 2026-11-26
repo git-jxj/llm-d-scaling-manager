@@ -92,6 +92,10 @@ var agnosticReplicaQueries = []string{
 	registration.QueryExternalPrefixCacheHitTokenRate,
 	registration.QueryExternalPrefixCacheQueryTokenRate,
 	registration.QueryCachedTokenRateBySource,
+	// vLLM's KV residency histograms (--kv-cache-metrics), recorded only
+	// (registration/cache_tiers.go).
+	registration.QueryKVReuseGapBuckets,
+	registration.QueryKVIdleBeforeEvictBuckets,
 	// What loading those cached tokens cost: the KV moved into the GPU, read
 	// from a secondary tier, and moved by NIXL, in bytes and seconds,
 	// recorded only (registration/kv_transfers.go).
@@ -114,6 +118,8 @@ var ttftAgnosticQueries = []string{
 	registration.QueryExternalPrefixCacheHitTokenRate,
 	registration.QueryExternalPrefixCacheQueryTokenRate,
 	registration.QueryCachedTokenRateBySource,
+	registration.QueryKVReuseGapBuckets,
+	registration.QueryKVIdleBeforeEvictBuckets,
 	registration.QueryKVOffloadLoadByteRate,
 	registration.QueryKVOffloadLoadSecondsRate,
 	registration.QueryKVTierReadByteRate,
@@ -136,6 +142,10 @@ var recordOnlyReplicaQueries = map[string]bool{
 	registration.QueryExternalPrefixCacheHitTokenRate:   true,
 	registration.QueryExternalPrefixCacheQueryTokenRate: true,
 	registration.QueryCachedTokenRateBySource:           true,
+	// The KV residency histograms: read by the capacity planner only, from
+	// the recording (saturation.SwitchPrefillHitAtCount's reuse-gap rule).
+	registration.QueryKVReuseGapBuckets:        true,
+	registration.QueryKVIdleBeforeEvictBuckets: true,
 	// What loading them cost: read by the capacity planner only, from the
 	// recording (slo.SwitchTTFTTierLoad).
 	registration.QueryKVOffloadLoadByteRate:    true,

@@ -22,6 +22,8 @@ var ttftInputHistograms = []struct {
 	{registration.QueryTTFTBuckets, func(d *podMetricData) *map[float64]float64 { return &d.ttftBuckets }},
 	{registration.QueryQueueTimeBuckets, func(d *podMetricData) *map[float64]float64 { return &d.queueTimeBuckets }},
 	{registration.QueryTPOTBuckets, func(d *podMetricData) *map[float64]float64 { return &d.tpotBuckets }},
+	{registration.QueryKVReuseGapBuckets, func(d *podMetricData) *map[float64]float64 { return &d.kvReuseGapBuckets }},
+	{registration.QueryKVIdleBeforeEvictBuckets, func(d *podMetricData) *map[float64]float64 { return &d.kvIdleBeforeEvictBuckets }},
 }
 
 // ttftInputFigures are the TTFT model's per-pod figures read under
