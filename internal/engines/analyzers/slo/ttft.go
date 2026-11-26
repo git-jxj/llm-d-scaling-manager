@@ -14,6 +14,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/logging"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -204,7 +205,11 @@ const SwitchTTFTPromptSupport = "slo-ttft-prompt-support"
 // .CachedContextRead), every tier's hits counted, and the prefix-cache hit
 // rate only where they do not: that rate counts the GPU's hits alone, and a
 // token served from a host, disk or peer tier is attended over all the same
-// (issue llm-d-incubation/llm-d-scaling-manager#383). Off, as before. Planner-only: off from the constructor, and
+// (issue llm-d-incubation/llm-d-scaling-manager#383). A backtest's step
+// states the prompt its prefill pods computed beside its whole prompt
+// (whatifapi.Knobs.PrefillComputedTokens): on, the step is priced at that
+// computed prompt with the rest as its cached context, not at its whole
+// prompt netted by the fit's hit. Off, as before. Planner-only: off from the constructor, and
 // not in learnreplay.PlannerSwitches, so it is off in the planner too until
 // a backtest turns it on. The analyzer itself reads no whole prompt and
 // prices nothing with it; the planner reads it through the replay
@@ -663,7 +668,8 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 		prompt, _ := prefill.MeanEffectivePrompt(rows, a.sglang(input, []string{v}))
 		in := ttftInputs{
 			est: est, estimateAt: estimateAt, pods: pods, otherPods: readyPrefill - pods, percent: cfg.SLO.TTFTPercentile(),
-			prompt: prompt, spread: a.promptSpread(ttftWindowKey(input.Namespace, input.ModelID, v), rows, now),
+			prompt: prompt, spread: a.promptSpread(ttftWindowKey(input.Namespace, input.ModelID, v), rows, now,
+				contextTokens(a.engineParams(input.Namespace, input.ModelID, v))),
 			shares:   a.noteShare(ttftWindowKey(input.Namespace, input.ModelID, v), pods, share, shareOK, now),
 			transfer: a.transferPerToken(transfer, decodeRows, prompt), decode: decode, decodeVariant: decodeVariant,
 			transferHeld: a.ttftMeasuredTransfer && a.ttftQuietTransfer && transfer.Held,
@@ -712,7 +718,9 @@ type promptSpreadWindow struct {
 // reads its spread, the what-if CLI's reading of the same traffic; assumed
 // with SwitchTTFTMeasuredSpread off. The cycle's mean is not what cv is read
 // at: the window's is, so the mean and the histogram cover the same cycles.
-func (a *Analyzer) promptSpread(key string, rows []domain.ReplicaMetrics, now time.Time) whatif.PromptSpread {
+// window is the engines' context window, which holds the mass past the
+// histogram's last bound (whatif.PromptWindow.SpreadWithin); 0 where unknown.
+func (a *Analyzer) promptSpread(key string, rows []domain.ReplicaMetrics, now time.Time, window float64) whatif.PromptSpread {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	w := a.prompts[key]
@@ -728,11 +736,22 @@ func (a *Analyzer) promptSpread(key string, rows []domain.ReplicaMetrics, now ti
 	if !a.ttftMeasuredSpread {
 		return whatif.ReadPromptSpread(nil, 0)
 	}
-	s := w.window.Spread()
+	s := w.window.SpreadWithin(window)
 	if !a.ttftPromptSupport {
 		s.MaxRatio = 0
 	}
 	return s
+}
+
+// contextTokens is the engines' context window, tokens, from their
+// arguments (--max-model-len): 0 with none read, or one the parser could
+// not read, as the planner's contextOf reads it.
+func contextTokens(params *capacity.EngineParams) float64 {
+	if params == nil || params.MaxModelLen <= 0 || slices.Contains(params.Unresolved, "max_model_len") ||
+		slices.Contains(params.Unresolved, "context_length") {
+		return 0
+	}
+	return float64(params.MaxModelLen)
 }
 
 // transferPerToken is the transfer the pricing reads: 0 with

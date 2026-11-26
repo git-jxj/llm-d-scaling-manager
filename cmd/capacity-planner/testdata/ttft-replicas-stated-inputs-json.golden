@@ -117,8 +117,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (arrivals Ca^2 1.5, measured 0.8 to 1.25)",
-              "outside": "arrivals Ca^2 1.5, measured 0.8 to 1.25"
+              "label": "OUTSIDE VALIDATED REGION (--assume-vp stated, which the run did not price)",
+              "outside": "--assume-vp stated, which the run did not price"
             }
           }
         },

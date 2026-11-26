@@ -86,7 +86,11 @@ region, or at 99.1% outside it, beside the point answer
 fleet needed never cuts decode below that count, whatever the verdict:
 decode has a replica to spare only where one fewer still meets it. The
 label's `n=` gives the independent load levels first, then the raw
-readings.
+readings. The region does not bound the arrivals' Ca^2: a knee is a
+throughput, and how bursty the arrivals are does not move it, so a decode
+knee at the run's fleet and shape reads validated at any Ca^2, though the
+run sent Ca^2 1 (the row's shape). The label is all that moves; the knee
+does not.
 
 This table is generated from the rows the planner ships:
 
