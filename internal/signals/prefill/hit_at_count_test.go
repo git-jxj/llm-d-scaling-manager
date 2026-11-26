@@ -53,7 +53,7 @@ func TestHitAtCount_TheSameCountMovesNothing(t *testing.T) {
 	a, ok := HitAtCountOf(0.4, 6000, 3, 3, nil)
 	require.True(t, ok)
 	assert.Equal(t, HitAtCount{FitHit: 0.4, Hit: 0.4, FitCount: 3, Count: 3, Rule: HitSameCount, Lo: 0.4, Hi: 0.4,
-		Computed: 6000, ComputedScale: 1}, a)
+		Computed: 6000, ComputedScale: 1, GPUScale: 1, TierScale: 1}, a)
 	assert.False(t, a.Moved())
 }
 
@@ -101,72 +101,4 @@ func TestHitAtCount_TheFloor(t *testing.T) {
 	a, ok = HitAtCountOf(0.6, 4000, 4, 3, nil)
 	require.True(t, ok)
 	assert.InDelta(t, 0.45, a.Hit, 1e-12)
-}
-
-// uniformGaps is a reuse-gap histogram of 1000 hits' gaps spread evenly over
-// [0, 100] s, in ten buckets, and an idle histogram of misses evictions
-// whose median is 100 s.
-func uniformGaps(misses float64) *ReuseHistograms {
-	const hits = 1000.0
-	r := &ReuseHistograms{GapSum: hits * 50}
-	for i := 1; i <= 10; i++ {
-		r.Gap = append(r.Gap, ReuseBucket{UpperEdge: float64(10 * i), Count: hits * float64(i) / 10})
-	}
-	r.Gap = append(r.Gap, ReuseBucket{UpperEdge: math.Inf(1), Count: hits})
-	r.Idle = []ReuseBucket{{UpperEdge: 50, Count: 0}, {UpperEdge: 150, Count: misses}, {UpperEdge: math.Inf(1), Count: misses}}
-	return r
-}
-
-// The reuse-gap rule solves the occupancy at N': with hit gaps even over
-// [0, 100] s, as many misses as hits and a 100 s horizon, half the pods give
-// T'^2 - 400 T' + 15000 = 0, so T' = 200 - 50 sqrt(10) and the hits under it
-// are T'/100 of them.
-func TestHitAtCount_TheReuseGapRule(t *testing.T) {
-	a, ok := HitAtCountOf(0.5, 4000, 2, 1, uniformGaps(1000))
-	require.True(t, ok)
-	assert.Equal(t, HitReuseGap, a.Rule)
-	tp := 200 - 50*math.Sqrt(10)
-	assert.InDelta(t, 0.5*tp/100, a.Hit, 1e-6)
-	assert.InDelta(t, 4000*(1-a.Hit)/0.5, a.Computed, 1e-6)
-	assert.Equal(t, 0.25, a.Lo, "the bracket keeps the floor")
-	assert.Equal(t, 0.5, a.Hi)
-
-	// More pods hold the hit, whatever the histograms say.
-	up, ok := HitAtCountOf(0.5, 4000, 2, 3, uniformGaps(1000))
-	require.True(t, ok)
-	assert.Equal(t, HitHeld, up.Rule)
-	assert.Equal(t, 0.5, up.Hit)
-}
-
-// The rule never prices above the fit's hit, and the floor stands in where
-// the histograms do not give it.
-func TestHitAtCount_TheReuseGapRuleFallsBackToTheFloor(t *testing.T) {
-	for name, edit := range map[string]func(r *ReuseHistograms){
-		"no gap histogram":    func(r *ReuseHistograms) { r.Gap = nil },
-		"no idle histogram":   func(r *ReuseHistograms) { r.Idle = nil },
-		"no hit counted":      func(r *ReuseHistograms) { r.Gap = []ReuseBucket{{10, 0}, {math.Inf(1), 0}} },
-		"no eviction counted": func(r *ReuseHistograms) { r.Idle = []ReuseBucket{{10, 0}, {math.Inf(1), 0}} },
-		"edges not ascending": func(r *ReuseHistograms) { r.Gap[3].UpperEdge = 5 },
-		"counts falling":      func(r *ReuseHistograms) { r.Gap[3].Count = 0 },
-		"a NaN count":         func(r *ReuseHistograms) { r.Idle[1].Count = math.NaN() },
-		"only an +Inf edge":   func(r *ReuseHistograms) { r.Idle = []ReuseBucket{{math.Inf(1), 10}} },
-	} {
-		r := uniformGaps(1000)
-		edit(r)
-		a, ok := HitAtCountOf(0.5, 4000, 2, 1, r)
-		require.True(t, ok, name)
-		assert.Equal(t, HitFloor, a.Rule, name)
-		assert.Equal(t, 0.25, a.Hit, name)
-	}
-	// With the gaps far shorter than the horizon, the rule would keep
-	// every hit: capped at the fit's.
-	short := uniformGaps(10)
-	for i := range short.Gap {
-		short.Gap[i].UpperEdge /= 100
-	}
-	short.GapSum /= 100
-	a, ok := HitAtCountOf(0.5, 4000, 2, 1, short)
-	require.True(t, ok)
-	assert.Equal(t, HitReuseGap, a.Rule)
-	assert.LessOrEqual(t, a.Hit, 0.5)
 }

@@ -108,6 +108,12 @@ readings, in a window whose replicas also ran below the band: a borrowed or
 default line, or one with no readings below the band, is read at the band's
 bottom by both. A figure read below the band carries `BelowFittedBand`.
 
+The planner never reads the line under the lowest ITL its replicas showed below
+the band, the floor. That floor stands for the number of requests a replica ran
+when it was read, and for more. A figure the floor would hold up, at fewer
+requests a replica than any of those readings, is held instead to the floor
+extended down to its own count, and carries `ExtrapolatedBelowFloor`.
+
 ## API errors
 
 | You see | Fix |
@@ -123,6 +129,7 @@ bottom by both. A figure read below the band carries `BelowFittedBand`.
 | `503` with `PlanBudgetExceeded` | The plan took longer than `--plan-budget` (default 5m) and was stopped. Untick "Show if all traffic were bucket b", use fewer bucket edges, or restart the server with a larger `--plan-budget` (at most 9m). [Details](api.md#the-plan-budget). |
 | `503` "the request ended before it was priced" | The client went away or timed out. Ask again. |
 | `500` | A server error; the message, or with `--auth=kubernetes` the server's stderr, says what. |
+| `504`, or the connection closes with no answer, while a long recording loads | A proxy in front of the planner gave up first: an OpenShift Route and oauth-proxy wait 30 s by default. Raise both to 31m ([Long recordings load slowly](in-cluster.md#long-recordings-load-slowly)). The planner itself lets a request run 30 minutes. |
 
 ## A recording is refused: engine rows do not stand for the fleet
 

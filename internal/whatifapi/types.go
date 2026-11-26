@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 )
 
 // SchemaVersion is the API's own schema version. Removing, renaming or
@@ -39,22 +41,43 @@ type InputsRequest struct {
 	// fewer pods the hit is the floor hit x N'/N, flagged PrefixHitAtCount;
 	// at more it is held, flagged PrefixHitHeld.
 	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
+	// PrefillVPServiceLine reads V_P from the prefill service line where no
+	// prefill pod queued, or V_P is a lower bound under the line (the CLI's
+	// --prefill-vp-service-line): opt-in, off by default, and not validated,
+	// so every figure reads outside the validated region.
+	PrefillVPServiceLine bool `json:"prefillVPServiceLine,omitempty"`
 	// ExperimentalTTFT prices TTFT with the TTFT model's switches that are
 	// off by default (the CLI's --experimental-ttft): for demonstration,
 	// not validated. Every prefill and TTFT figure is flagged
 	// ExperimentalTTFT.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
 	// TTFTModel prices the main view's TTFT with an experimental model:
-	// "" is the server's default (serve --experimental-ttft=v2), and
-	// whatif.QueueRankMixture the only other. The model is fitted on the
-	// source's window and abstains where it is not identified; the
-	// planner's TTFT then stands.
+	// "" is the server's default (serve --experimental-ttft=v2 or
+	// =v2nl-line), whatif.QueueRankMixture or its variant
+	// whatif.QueueRankMixtureNLLine. The model is fitted on the source's
+	// window as a backtest fits it, and abstains where it is not
+	// identified; the planner's TTFT then stands.
 	TTFTModel string `json:"ttftModel,omitempty"`
 	// RankMixtureStratified is BacktestRequest.RankMixtureStratified for
 	// the main view's model: absent, the server's default (on, unless the
 	// server was started with --rank-mixture-stratified=false). Read only
 	// with TTFTModel rank-mixture; false changes the inputsId.
 	RankMixtureStratified *bool `json:"rankMixtureStratified,omitempty"`
+	// RankMixtureKVHold, RankMixtureRemainderSpread and
+	// RankMixtureMinFitWindow are BacktestRequest's for the main view's
+	// model: each, where the request does not set it, the server's default
+	// (serve --rank-mixture-kv-hold, --rank-mixture-remainder-spread,
+	// --rank-mixture-min-fit-window). The two modes are the variant's
+	// (TTFTModel rank-mixture-nl-line) only; the window is either model's.
+	// Each changes the inputsId.
+	RankMixtureKVHold          bool   `json:"rankMixtureKVHold,omitempty"`
+	RankMixtureRemainderSpread bool   `json:"rankMixtureRemainderSpread,omitempty"`
+	RankMixtureMinFitWindow    string `json:"rankMixtureMinFitWindow,omitempty"`
+	// TPOTDistMinFitSteps is BacktestRequest's for the main view's TPOT
+	// distribution: absent, the server's default (serve
+	// --tpot-dist-min-fit-steps), else 24. Only with a TPOTModel; another
+	// count changes the inputsId.
+	TPOTDistMinFitSteps int `json:"tpotDistMinFitSteps,omitempty"`
 	// TPOTModel prices the main view's TPOT p90 and p95 with an
 	// experimental per-request TPOT distribution: "" is the server's
 	// default (serve --experimental-tpot=v2), and
@@ -117,6 +140,15 @@ type InputsResponse struct {
 	// at each prefill count (InputsRequest.PrefillHitAtCount); absent
 	// otherwise.
 	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
+	// PrefillHitModel is the reuse-gap law the prefix hit at another
+	// prefill count is priced with, fitted on the source's KV residency
+	// histograms (prefill.FitHitModel); absent with PrefillHitAtCount off
+	// or no histograms recorded.
+	PrefillHitModel *prefill.HitModel `json:"prefillHitModel,omitempty"`
+	// PrefillVPServiceLine says the source was read with V_P from the
+	// prefill service line (InputsRequest.PrefillVPServiceLine); absent
+	// otherwise.
+	PrefillVPServiceLine bool `json:"prefillVPServiceLine,omitempty"`
 	// ExperimentalTTFT says the source was read with the experimental TTFT
 	// model (InputsRequest.ExperimentalTTFT); absent otherwise.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`

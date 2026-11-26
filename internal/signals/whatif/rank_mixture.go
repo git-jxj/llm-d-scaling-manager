@@ -262,6 +262,12 @@ const (
 	// RankMixtureTTFT is on every TTFT priced by the experimental model
 	// (QueueRankMixture): OUTSIDE VALIDATED REGION.
 	RankMixtureTTFT Flag = "RankMixtureTTFT"
+	// RankMixtureShortFitWindow is on every TTFT priced by the experimental
+	// model, or its variant, fitted on a window shorter than
+	// MinSpreadFitWindow because the caller lowered the minimum: the
+	// window's own checks read fewer loads and hours than the default
+	// asks.
+	RankMixtureShortFitWindow Flag = "RankMixtureShortFitWindow"
 	// RankMixtureAbstained is a TTFT the planner priced itself where the
 	// experimental model was asked for and abstained: an identifiability
 	// check failed, and the model prices nothing it cannot identify.

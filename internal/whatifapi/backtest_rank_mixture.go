@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -17,7 +18,10 @@ import (
 // computed-token and prompt-length histograms. Nothing else in the answer
 // moves: TPOT, the exclusions and the scoring are the planner's. Every TTFT
 // it prices is flagged whatif.RankMixtureTTFT, and reads OUTSIDE VALIDATED
-// REGION.
+// REGION. With the prefix hit at count on (InputsRequest.PrefillHitAtCount),
+// a test step on another prefill count than the fit's draws the fit
+// window's computed-token histogram at that count's hit instead of its own
+// (rankMixtureQ.computedAt).
 
 // RankMixtureReport is the experimental model's fit, as a backtest's answer
 // carries it (BacktestResponse.RankMixture): whatif.RankMixtureReport, the
@@ -54,6 +58,72 @@ type RankMixtureCheck struct {
 	Abstained bool   `json:"abstained,omitempty"`
 }
 
+// rankMixtureQ is a backtest's fitted rank mixture.
+type rankMixtureQ struct {
+	m      whatif.RankMixture
+	report RankMixtureReport
+	// fitPrefill is the prefill pods the fit window served (the median of
+	// its cycles), the count the ranks' shares were read at; 0 unknown.
+	fitPrefill int
+	// hitAtCount is the fit source's PrefillHitAtCount: a test step on
+	// another prefill count than fitPrefill draws the fit window's
+	// computed-token histogram, fitPooled, moved to that count's prefix hit
+	// (computedAt), with hitModel where the fit source gave one.
+	hitAtCount bool
+	hitModel   *prefill.HitModel
+	fitPooled  whatif.MixtureStep
+}
+
+// withHitAtCount turns the prefix hit at the test step's count on, from the
+// fit window of fit at fitIdx, where fit was read with PrefillHitAtCount.
+func (rq *rankMixtureQ) withHitAtCount(fit *inputsEntry, fitIdx []int) *rankMixtureQ {
+	if !fit.doc.PrefillHitAtCount || len(fitIdx) == 0 || len(fit.mixture) != len(fit.series) {
+		return rq
+	}
+	first, last := fit.series[fitIdx[0]].At, fit.series[fitIdx[len(fitIdx)-1]].At
+	rq.hitAtCount, rq.hitModel = true, fit.doc.PrefillHitModel
+	rq.fitPooled = whatif.MixtureStepOf(mixtureWindow(fit, fitIdx, first.Add(-time.Nanosecond), last), last)
+	return rq
+}
+
+// computedAt is the computed-token histogram a test step on testPrefill
+// pods draws from: its own, unless the switch is on and the step is on
+// another count than the fit's, where it is the fit window's at the step's
+// prefix hit (whatif.ComputedAtCount), as the planner prices E[I_eff] and
+// the main view its model there, its bounds then scaled by the step's mean
+// prompt over the fit window's: the step's prompt is its load's, an input
+// the step states, and the hit is the share of it the cache serves. The
+// step's own histogram holds the hit it was measured at, which a count
+// transfer is to predict.
+func (rq *rankMixtureQ) computedAt(st whatif.MixtureStep, testPrefill int) map[float64]float64 {
+	if !rq.hitAtCount || rq.fitPrefill <= 0 || testPrefill <= 0 || testPrefill == rq.fitPrefill {
+		return st.Computed
+	}
+	_, moved, ok := whatif.ComputedAtCount(rq.fitPooled.Computed, rq.fitPooled.Prompt, rq.fitPrefill, testPrefill, rq.hitModel)
+	if !ok {
+		return st.Computed
+	}
+	if ep, okp := whatif.CumulativeMean(st.Prompt); okp {
+		if fp, okf := whatif.CumulativeMean(rq.fitPooled.Prompt); okf && fp > 0 {
+			moved = whatif.ComputedAtScale(moved, st.Prompt, ep/fp)
+		}
+	}
+	return moved
+}
+
+// rateScale is what a test step's fleet rate is multiplied by before the
+// fitted shares split it: the fit's prefill pods over the step's, so each
+// fitted rank takes the rate one of the step's ranks takes, as the answer
+// path prices another count (mixtureFleet.scale). The shares hold one entry
+// per fitted rank, so a step on twice the pods split over them priced each
+// rank at twice its rate. 1 where either count is unknown.
+func (rq *rankMixtureQ) rateScale(testPrefill int) float64 {
+	if rq.fitPrefill <= 0 || testPrefill <= 0 {
+		return 1
+	}
+	return float64(rq.fitPrefill) / float64(testPrefill)
+}
+
 // mixtureWindow is the cycles of e at idx whose time is in (from, to].
 func mixtureWindow(e *inputsEntry, idx []int, from, to time.Time) []whatif.MixtureCycle {
 	var out []whatif.MixtureCycle
@@ -74,14 +144,17 @@ func fitCycles(e *inputsEntry, idx []int) []whatif.FitCycle {
 	for j, i := range idx {
 		s := e.series[i]
 		c := whatif.FitCycle{At: s.At, Rate: s.Rate, RateKnown: s.RateKnown, EngineRate: s.EngineRate}
-		if i < len(e.latency) {
-			c.Latency, c.Router = true, e.latency[i].Router
-		}
 		if len(e.mixture) == len(e.series) {
 			c.Mixture = e.mixture[i]
 		}
 		if len(e.decode) == len(e.series) {
 			c.Decode = e.decode[i]
+		}
+		if i < len(e.latency) {
+			// The engines' TPOT histogram is the source's reading of the
+			// cycle, however the source summed it.
+			c.Latency, c.Router = true, e.latency[i].Router
+			c.Decode.EngineTPOT = e.latency[i].EngineTPOT
 		}
 		out[j] = c
 	}
@@ -126,6 +199,11 @@ type rankMixtureSwitches struct {
 	// (whatif.RankMixtureOptions KVHold and RemainderSpread):
 	// BacktestRequest RankMixtureKVHold and RankMixtureRemainderSpread.
 	kvHold, remainderSpread bool
+	// minFitWindow is the shortest fit window the model prices from
+	// (BacktestRequest.RankMixtureMinFitWindow): 0 is
+	// whatif.MinSpreadFitWindow, the default. A model priced from a window
+	// under the default is flagged whatif.RankMixtureShortFitWindow.
+	minFitWindow time.Duration
 }
 
 // rankMixtureSwitchesOf is the switches req turns on. The server has set
@@ -136,7 +214,8 @@ func rankMixtureSwitchesOf(req BacktestRequest) rankMixtureSwitches {
 		stratified:      stratifiedOf(req.RankMixtureStratified, whatif.DefaultRankMixtureStratified),
 		nlLine:          req.TTFTModel == string(whatif.QueueRankMixtureNLLine),
 		kvHold:          req.RankMixtureKVHold,
-		remainderSpread: req.RankMixtureRemainderSpread}
+		remainderSpread: req.RankMixtureRemainderSpread,
+		minFitWindow:    minFitWindowOf(req.RankMixtureMinFitWindow)}
 }
 
 // model is the model sw fits.
@@ -145,6 +224,20 @@ func (sw rankMixtureSwitches) model() whatif.QueueModel {
 		return whatif.QueueRankMixtureNLLine
 	}
 	return whatif.QueueRankMixture
+}
+
+// options is the fit's options sw turns on, with slots the prefill
+// engine's max-num-seqs: the backtest's fit and the main view's
+// (fitMainMixture) read the same.
+func (sw rankMixtureSwitches) options(slots int) whatif.RankMixtureOptions {
+	return sw.shared().Options(slots)
+}
+
+// shared is sw as the shared fit reads it (whatif.RankMixtureSwitches): the
+// slo analyzer's v2 TTFT learner fits with the same switches.
+func (sw rankMixtureSwitches) shared() whatif.RankMixtureSwitches {
+	return whatif.RankMixtureSwitches{FitSteps: sw.fitSteps, Stratified: sw.stratified, NLLine: sw.nlLine,
+		KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread, MinFitWindow: sw.minFitWindow}
 }
 
 // stratifiedOf is a request's rankMixtureStratified: the value where it
@@ -163,19 +256,11 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 		return nil, nil, InputErrorf("the experimental TTFT model %s needs the recording's per-rank series, which this source did not give",
 			sw.model())
 	}
-	f, steps, err := whatif.FitRankMixtureCycles(fitCycles(fit, fitIdx), step, slots,
-		whatif.RankMixtureSwitches{FitSteps: sw.fitSteps, Stratified: sw.stratified, NLLine: sw.nlLine,
-			KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread})
+	f, steps, err := whatif.FitRankMixtureCycles(fitCycles(fit, fitIdx), step, slots, sw.shared())
 	if err != nil {
 		return nil, nil, InputError{Err: err}
 	}
-	return &rankMixtureQ{m: f.M, report: f.Report}, steps, nil
-}
-
-// rankMixtureQ is a backtest's fitted rank mixture (whatif.RankMixtureFitted).
-type rankMixtureQ struct {
-	m      whatif.RankMixture
-	report RankMixtureReport
+	return &rankMixtureQ{m: f.M, report: f.Report, fitPrefill: actualOf(seriesAt(fit.series, fitIdx)).Prefill}, steps, nil
 }
 
 // abstainedMixture is the model abstaining for why.
@@ -218,7 +303,11 @@ func (rq *rankMixtureQ) assumedLines() []string {
 			"read at the prompts it was measured at")
 	}
 	if rq.report.SpreadDefaulted {
-		out = append(out, fmt.Sprintf("the fit window is shorter than %s: the prompt term's spread is 1, not calibrated", whatif.MinSpreadFitWindow))
+		out = append(out, fmt.Sprintf("the fit window is shorter than %s: the prompt term's spread is 1, not calibrated", rq.report.Window()))
+	}
+	if rq.report.ShortFitWindow {
+		out = append(out, fmt.Sprintf("the fit window is shorter than %s, priced all the same down to the %s asked: every TTFT the "+
+			"model prices is also flagged %s", whatif.MinSpreadFitWindow, rq.report.Window(), whatif.RankMixtureShortFitWindow))
 	}
 	if rq.report.SpreadFloored {
 		out = append(out, fmt.Sprintf("the folds fitted the prompt term's spread under %g: it is priced at %g", whatif.MinSpread, whatif.MinSpread))
@@ -231,11 +320,11 @@ func (rq *rankMixtureQ) assumedLines() []string {
 }
 
 // price prices one test step's TTFT at each of backtestStats from the
-// cycles of its window, over a step of stepSeconds. ok is false where the
-// model refused.
-func (rq *rankMixtureQ) price(cycles []whatif.MixtureCycle, at time.Time, stepSeconds float64) ([]Figure, RankMixtureCheck, bool) {
+// cycles of its window, over a step of stepSeconds, on testPrefill prefill
+// pods (rateScale). ok is false where the model refused.
+func (rq *rankMixtureQ) price(cycles []whatif.MixtureCycle, at time.Time, stepSeconds float64, testPrefill int) ([]Figure, RankMixtureCheck, bool) {
 	st := whatif.MixtureStepOf(cycles, at)
-	d, u := rq.m.Draws(st.Rate, st.Computed, st.Prompt, whatif.DefaultMixtureDraws)
+	d, u := rq.m.Draws(st.Rate*rq.rateScale(testPrefill), rq.computedAt(st, testPrefill), st.Prompt, whatif.DefaultMixtureDraws)
 	if u != nil {
 		return nil, RankMixtureCheck{Refused: u.Error()}, false
 	}
@@ -246,7 +335,7 @@ func (rq *rankMixtureQ) price(cycles []whatif.MixtureCycle, at time.Time, stepSe
 	if len(c.Rho) > 0 {
 		chk.BusiestRho = slices.Max(c.Rho)
 	}
-	flags := append([]whatif.Flag{whatif.RankMixtureTTFT}, c.Flags(stepSeconds)...)
+	flags := append(append([]whatif.Flag{whatif.RankMixtureTTFT}, rq.report.ShortFlags()...), c.Flags(stepSeconds)...)
 	qs := []float64{}
 	for _, q := range backtestStats {
 		if q != 0 {
@@ -290,7 +379,8 @@ func (q *backtestQuestion) priceMixture(pred *prediction, out *BacktestStep, st 
 	if why := backlogged(q.test, st.window, st.windowStart, at); why != "" {
 		chk.Refused = why
 	} else {
-		figs, chk, ok = q.mixture.price(mixtureWindow(q.test, st.window, st.windowStart, at), at, st.windowSeconds)
+		testPrefill := actualOf(seriesAt(q.test.series, st.window)).Prefill
+		figs, chk, ok = q.mixture.price(mixtureWindow(q.test, st.window, st.windowStart, at), at, st.windowSeconds, testPrefill)
 	}
 	out.RankMixture = &chk
 	if !ok {

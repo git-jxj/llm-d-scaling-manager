@@ -378,6 +378,12 @@ func (a *Analyzer) refitModel(namespace, modelID string, w *modelWindow, now tim
 // test replaces it to fail a refit.
 var fitMixtureWindow = whatif.FitMixtureWindow
 
+// modelMixtureSwitches is the TTFT learner's fit switches: v2 with the
+// stratified service moments, as the capacity planner fits it by default.
+// The planner's other switches (the variant QueueRankMixtureNLLine, its
+// modes, a shorter fit window) have no slo switch yet.
+var modelMixtureSwitches = whatif.RankMixtureSwitches{Stratified: whatif.DefaultRankMixtureStratified}
+
 // fitModel fits a model's two learners on cycles, the window of the prefill
 // variant pv and the decode variant dv, and reads the default model's R_q
 // from the same window. A panic in a fit core fails the refit, not the
@@ -397,13 +403,13 @@ func (a *Analyzer) fitModel(namespace, modelID, pv, dv string, cycles []whatif.F
 	}()
 	if pv != "" {
 		tt = fitMixtureWindow(cycles, ModelStep, a.engineParams(namespace, modelID, pv).PrefillSlots(), modelHeldOutTolerance,
-			whatif.DefaultRankMixtureStratified)
+			modelMixtureSwitches)
 	} else {
 		tt = whatif.MixtureWindowFit{Fitted: whatif.AbstainedRankMixture("the model has not one prefill variant")}
 	}
 	if dv != "" {
 		slots, spec := a.engineParams(namespace, modelID, dv).DecodeSlots()
-		tp = whatif.FitTPOTWindow(cycles, ModelStep, slots, spec)
+		tp = whatif.FitTPOTWindow(cycles, ModelStep, slots, spec, whatif.TPOTRenewalLognormal, 0)
 	} else {
 		tp = whatif.TPOTWindowFit{Abstained: "the model has not one decode variant"}
 	}

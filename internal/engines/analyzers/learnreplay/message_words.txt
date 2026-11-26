@@ -192,6 +192,7 @@ Events
 Every
 ExperimentalTTFT
 External
+ExtrapolatedBelowFloor
 ExtrapolatedFill
 FMA
 Failed
@@ -420,6 +421,7 @@ REST_CLIENT_TIMEOUT
 ROLE
 R_q
 RankMixtureAbstained
+RankMixtureShortFitWindow
 RankMixtureTTFT
 Ready
 RecordedValue
@@ -473,6 +475,7 @@ SetUsed
 Settings
 SingularFit
 Skipping
+SlopeUncertain
 SpreadBeyondProcessorSharing
 StartOptimizeLoop
 Starting
@@ -489,6 +492,7 @@ TPOT
 TPOTBucketTooWide
 TPOTDistribution
 TPOTDistributionAbstained
+TPOTDistributionShortFit
 TPOTQuantileUnbounded
 TTFT
 TYPE
@@ -2565,6 +2569,7 @@ prefill-vp-lone-rate
 prefill-vp-occupancy-plateau
 prefill-vp-prompt-coverage
 prefill-vp-served-unqueued
+prefill-vp-service-line
 prefill-vp-window-best
 prefillBoundHeld
 prefillBounds
@@ -2771,6 +2776,7 @@ removing
 rename
 renewal
 renewal-lognormal
+renewal-lognormal-per-length
 repeated
 replaced
 replacement
@@ -3031,6 +3037,7 @@ servedBound
 server
 serves
 service
+service-line
 serviceable
 serving
 servingSet
@@ -3154,6 +3161,7 @@ slo-ttft-ps-onsets
 slo-ttft-pull-work
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
+slo-ttft-router-wait-in-prefill
 slo-ttft-sizes-prefill
 slo-ttft-tier-kv-wait
 slo-ttft-tier-load
@@ -3662,6 +3670,11 @@ volume
 vp
 vpAboveSlopeBound
 vpFlooredAtServed
+vpLine
+vpLineMinutes
+vpLineRefused
+vpLineS0
+vpLineSlope
 vpLone
 vpLoneIsVP
 vpLoneMinutes

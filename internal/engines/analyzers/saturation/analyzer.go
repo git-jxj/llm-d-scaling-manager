@@ -598,6 +598,10 @@ type SaturationAnalyzer struct {
 	// prefillVPLoneRate is SwitchPrefillVPLoneRate: off from the
 	// constructor, planner-only (learnreplay.PlannerSwitches).
 	prefillVPLoneRate bool
+	// prefillVPServiceLine is SwitchPrefillVPServiceLine: off from the
+	// constructor, so the controller and its slo analyzer never read it;
+	// planner-only (learnreplay.PlannerSwitches).
+	prefillVPServiceLine bool
 	// prefillHitAtCount is SwitchPrefillHitAtCount: off from the
 	// constructor, planner-only; the analyzer holds it for the name.
 	prefillHitAtCount bool

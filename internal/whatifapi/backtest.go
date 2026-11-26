@@ -351,6 +351,12 @@ type BacktestRequest struct {
 	// the remainder is its line, as off, and the assumed line says so. Off
 	// by default; only with TTFTModel rank-mixture-nl-line.
 	RankMixtureRemainderSpread bool `json:"rankMixtureRemainderSpread,omitempty"`
+	// RankMixtureMinFitWindow is the shortest fit window the model, v2 or
+	// its variant, prices from, a duration ("4h"): absent, the server's
+	// default, else whatif.MinSpreadFitWindow (12h). A model fitted on a
+	// window under 12h is flagged RankMixtureShortFitWindow. Only with a
+	// TTFTModel.
+	RankMixtureMinFitWindow string `json:"rankMixtureMinFitWindow,omitempty"`
 	// PrefillSlots is the prefill engine's max-num-seqs, read by
 	// TTFTModel's limited-PS check; 0 not known.
 	PrefillSlots int `json:"prefillSlots,omitempty"`
@@ -365,6 +371,12 @@ type BacktestRequest struct {
 	// SpecTokens, no speculative decoding).
 	DecodeSlots int `json:"decodeSlots,omitempty"`
 	SpecTokens  int `json:"specTokens,omitempty"`
+	// TPOTDistMinFitSteps is the fewest fit steps the TPOT distribution
+	// fits on: absent, the server's default, else MinTPOTDistFitSteps (24,
+	// two hours of 5-minute steps). A distribution fitted on fewer than 24
+	// is flagged TPOTDistributionShortFit. At least MinTPOTDistFitStepsFloor;
+	// only with a TPOTModel.
+	TPOTDistMinFitSteps int `json:"tpotDistMinFitSteps,omitempty"`
 }
 
 // BacktestResponse is POST /v1/backtest's answer, and capacity-planner
@@ -525,7 +537,10 @@ type BacktestPoint struct {
 	// in, where it is too wide to place the percentile (MeasuredBucketWidth):
 	// the truth is somewhere in it. With the prediction inside it the pair
 	// is not scored (unresolvable); with the prediction outside it,
-	// OutsideBucket says which side.
+	// OutsideBucket says which side. For the router's TPOT p90 and p95 it is
+	// the joint bracket (whatif.JointBracket: the router's TPOT histogram and,
+	// above their first edge, the decode engines', at their sampling noise),
+	// and Measured its point.
 	MeasuredBucket *Band `json:"measuredBucket,omitempty"`
 	// OutsideBucket is "under" or "over" where the prediction fell so far
 	// below or above MeasuredBucket that even its nearer edge is more than
@@ -670,7 +685,7 @@ const (
 // handleBacktest is POST /v1/backtest.
 func (s *Server) handleBacktest(w http.ResponseWriter, r *http.Request) {
 	var req BacktestRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	out, err := s.backtest(r.Context(), req)
@@ -701,6 +716,7 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 		on := s.stratified()
 		req.RankMixtureStratified = &on
 	}
+	s.rankMixtureDefaults(&req)
 	test, ok := s.inputs.get(req.InputsID)
 	if !ok {
 		return nil, errUnknownInputs
@@ -900,7 +916,7 @@ func splitOf(e *inputsEntry, split, fitUntil string) (int, time.Time, string, er
 func refitRequest(e *inputsEntry, cycle int, cutoff time.Time) (InputsRequest, error) {
 	d := e.doc
 	in := InputsRequest{Model: d.Model, DecodeVariant: d.Fleet.Decode.Variant, PrefillVPPlateau: d.PrefillVPPlateau, PrefillHitAtCount: d.PrefillHitAtCount,
-		ExperimentalTTFT: d.ExperimentalTTFT}
+		PrefillVPServiceLine: d.PrefillVPServiceLine, ExperimentalTTFT: d.ExperimentalTTFT}
 	if d.Fleet.Prefill != nil {
 		in.PrefillVariant = d.Fleet.Prefill.Variant
 	}
@@ -932,10 +948,13 @@ type backtestQuestion struct {
 	promptCV  *float64
 	// promptMaxRatio is promptCV's bound (stepInputs.promptMaxRatio).
 	promptMaxRatio float64
-	config         BacktestConfig
-	assumed        []string
-	testIndices    []int
-	assume         Assume
+	// contextTokens is the test's engines' context window (contextWindowOf),
+	// which holds each step's prompt spread; 0 where unknown.
+	contextTokens float64
+	config        BacktestConfig
+	assumed       []string
+	testIndices   []int
+	assume        Assume
 	// targetAsked is the target as the answer names it.
 	targetAsked *Objective
 	// source is the latency scored against; measureWindow, when above 0,
@@ -1080,7 +1099,8 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	}
 	// The test's prompt spread is an input, its lengths, never its latency:
 	// pooled over the test's cycles, for a step whose own reads none.
-	if whole := stepInputsOf(seriesAt(test.series, q.testIndices)); whole.promptCV != nil {
+	q.contextTokens, _ = contextWindowOf(&test.doc)
+	if whole := stepInputsOf(seriesAt(test.series, q.testIndices), q.contextTokens); whole.promptCV != nil {
 		q.promptCV, q.promptMaxRatio = whole.promptCV, whole.promptMaxRatio
 	}
 	if a := req.Assume; a != nil {
@@ -1097,6 +1117,12 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	if q.cv2 == nil {
 		q.assumed = append(q.assumed, "random (Poisson) arrivals: the recording does not measure how bursty arrivals are; "+
 			"state it with --arrival-cv2 (arrivalCV2) when known")
+	}
+	if err := checkMinFitWindow(req.RankMixtureMinFitWindow, req.TTFTModel); err != nil {
+		return nil, err
+	}
+	if err := checkTPOTMinFitSteps(req.TPOTDistMinFitSteps, req.TPOTModel); err != nil {
+		return nil, err
 	}
 	if (req.RankMixtureKVHold || req.RankMixtureRemainderSpread) && req.TTFTModel != string(whatif.QueueRankMixtureNLLine) {
 		return nil, InputErrorf("rankMixtureKVHold and rankMixtureRemainderSpread are modes of ttftModel %q: give them with that model",
@@ -1119,7 +1145,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 			if ferr != nil {
 				q.mixture = abstainedMixture(ferr.Error())
 			} else {
-				q.mixture = fitted.identified()
+				q.mixture = fitted.identified().withHitAtCount(fit, fitIdx)
 			}
 		}
 		q.mixture.report.Model = string(sw.model())
@@ -1129,18 +1155,18 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	}
 	switch req.TPOTModel {
 	case "":
-	case whatif.TPOTRenewalLognormal:
+	case whatif.TPOTRenewalLognormal, whatif.TPOTPerLengthMixture:
 		// The distribution prices only where its checks pass; otherwise it
 		// abstains, and every TPOT percentile is the planner's own.
 		if len(test.decode) != len(test.series) {
-			q.tpotDist = &tpotDistQ{report: TPOTDistReport{Model: whatif.TPOTRenewalLognormal, Experimental: true, FoldC: []float64{},
+			q.tpotDist = &tpotDistQ{report: TPOTDistReport{Model: req.TPOTModel, Experimental: true, FoldC: []float64{},
 				Fold: []TPOTDistScore{}, Abstained: "the test source did not give the decode series"}}
 		} else {
-			q.tpotDist = fitTPOTDist(fit, fitIdx, q.step, req.DecodeSlots, req.SpecTokens)
+			q.tpotDist = fitTPOTDist(fit, fitIdx, q.step, req.DecodeSlots, req.SpecTokens, req.TPOTModel, req.TPOTDistMinFitSteps)
 		}
 		q.assumed = append(q.assumed, q.tpotDist.assumedLines()...)
 	default:
-		return nil, InputErrorf("tpotModel %q, want %q or none", req.TPOTModel, whatif.TPOTRenewalLognormal)
+		return nil, InputErrorf("tpotModel %q, want %q, %q or none", req.TPOTModel, whatif.TPOTRenewalLognormal, whatif.TPOTPerLengthMixture)
 	}
 	return q, nil
 }
@@ -1560,7 +1586,7 @@ func (q *backtestQuestion) stepOf(p *predictor, st stepOf, changes []time.Time, 
 		out.Excluded, out.Detail = ExcludedNoMeasurement, "no cycle in the step"
 		return out
 	}
-	in := stepInputsOf(seriesAt(q.test.series, st.window))
+	in := stepInputsOf(seriesAt(q.test.series, st.window), q.contextTokens)
 	out.Rate, out.Prefill, out.Decode = in.rate, in.prefill, in.decode
 	if in.hasShape {
 		out.PromptTokens, out.OutputTokens = ptr(in.prompt), ptr(in.output)
@@ -1712,11 +1738,14 @@ func scoreStep(out *BacktestStep, m measured, target *ReportTarget) {
 	}
 	for i := range out.TTFT {
 		why := m.ttftWhy[i]
-		if why == "" && out.Unsettled {
+		// A refused figure counts by its refusal, not twice: a step
+		// that does not settle or is a burst unscores only a figure
+		// priced.
+		priced := out.TTFT[i].Predicted.Value != nil
+		if why == "" && out.Unsettled && priced {
 			why = UnscoredUnsettled
 		}
-		if why == "" && out.TTFTBurst && out.TTFT[i].Predicted.Value != nil {
-			// A refused figure counts by its refusal, not twice.
+		if why == "" && out.TTFTBurst && priced {
 			why = UnscoredBurst
 		}
 		out.TTFT[i] = scoredPoint(out.TTFT[i], m.ttft[i], m.requests, m.ttftTop, why, m.ttftBucket[i])
@@ -1735,6 +1764,9 @@ type stepInputs struct {
 	prefill, decode int
 	prompt, output  float64
 	hasShape        bool
+	// computed is the prompt the step's prefill pods computed a request,
+	// their computed tokens over their requests; 0 where they read none.
+	computed float64
 	// promptCV is the step's own prompt spread, read from its prefill
 	// pods' computed-token histograms; nil where they read none.
 	promptCV *float64
@@ -1751,8 +1783,10 @@ type stepInputs struct {
 }
 
 // stepInputsOf is the step's inputs: its mean rate, the median serving pods
-// of each role, and its lengths weighted by rate.
-func stepInputsOf(samples []SeriesSample) stepInputs {
+// of each role, and its lengths weighted by rate. contextTokens is the
+// engines' context window, which holds the prompt spread's mass past the
+// histogram's last bound (whatif.ReadPromptSpreadWithin); 0 where unknown.
+func stepInputsOf(samples []SeriesSample, contextTokens float64) stepInputs {
 	in := stepInputs{rate: rateOf(samples).Mean}
 	a := actualOf(samples)
 	in.prefill, in.decode = a.Prefill, a.Decode
@@ -1760,9 +1794,14 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 	in.otherPods = slices.ContainsFunc(samples, func(x SeriesSample) bool { return x.OtherPods > 0 })
 	in.outputDispersion = outputDispersionOf(samples)
 	pooled := map[float64]float64{}
-	var computed, requests float64
+	var computed, requests, computedAll, requestsAll float64
 	for _, x := range samples {
-		if x.PromptBuckets == nil || !(x.PromptRequestRate > 0) {
+		if !(x.PromptRequestRate > 0) {
+			continue
+		}
+		computedAll += x.PromptComputedRate
+		requestsAll += x.PromptRequestRate
+		if x.PromptBuckets == nil {
 			continue
 		}
 		computed += x.PromptComputedRate
@@ -1771,8 +1810,11 @@ func stepInputsOf(samples []SeriesSample) stepInputs {
 			pooled[b] += r
 		}
 	}
+	if requestsAll > 0 {
+		in.computed = computedAll / requestsAll
+	}
 	if requests > 0 {
-		if sp := whatif.ReadPromptSpread(pooled, computed/requests); !sp.Assumed {
+		if sp := whatif.ReadPromptSpreadWithin(pooled, computed/requests, contextTokens); !sp.Assumed {
 			in.promptCV = ptr(math.Round(sp.CV/promptCVGrid) / (1 / promptCVGrid))
 			in.promptMaxRatio = maxRatioOnGrid(sp.MaxRatio)
 		}
@@ -1834,6 +1876,7 @@ func maxRatioOnGrid(r float64) float64 {
 type predictKey struct {
 	np, nd           int
 	prompt, output   float64
+	computed         float64
 	promptCV         float64
 	promptMaxRatio   float64
 	outputDispersion float64
@@ -1887,6 +1930,11 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		k := predictKey{np: in.prefill, nd: in.decode, q: q, promptCV: -1, outputDispersion: in.outputDispersion}
 		if in.hasShape {
 			k.prompt, k.output = shapeKnob(in.prompt), shapeKnob(in.output)
+			// The computed prompt on the same grid, never above the whole
+			// one: it is read only with slo.SwitchTTFTPrefixAttention on.
+			if in.computed > 0 {
+				k.computed = min(shapeKnob(in.computed), k.prompt)
+			}
 		}
 		// A spread read from a histogram carries the bound that histogram
 		// sets on the prompt; a typed one (assume.promptCV) carries none.
@@ -1905,13 +1953,16 @@ func (p *predictor) predict(in stepInputs) (prediction, error) {
 		}
 		fl, ok := p.fleets[k]
 		if !ok {
-			kn := Knobs{Prefill: k.np, Decode: k.nd, PromptTokens: k.prompt, OutputTokens: k.output, TTFTPercentile: q, TPOTPercentile: q,
+			// The step's prompt is read from its cycles, not stated
+			// (Knobs.PromptTokensRead).
+			kn := Knobs{Prefill: k.np, Decode: k.nd, PromptTokens: k.prompt, PromptTokensRead: k.prompt > 0, OutputTokens: k.output, TTFTPercentile: q, TPOTPercentile: q,
 				ArrivalCV2: p.cv2, Headroom: p.headroom}
 			kn.Assume = p.assume
 			kn.Assume.PromptCV = cv
 			kn.PromptMaxRatio = k.promptMaxRatio
 			kn.OutputDispersion = k.outputDispersion
 			kn.CachedTokenCost = p.cachedCost
+			kn.PrefillComputedTokens = k.computed
 			var err error
 			if fl, err = p.pricer.Fleet(kn); err != nil {
 				return out, err
@@ -2099,10 +2150,54 @@ func measuredOf(l LatencySample, source string, windowSeconds float64, pd bool) 
 			}
 			if pok {
 				m.tpot[i], m.tpotBucket[i] = ptr(ph.Quantile(q)), ph.coarseBucket(q)
+				if source == MeasuredRouter && (q == 0.9 || q == 0.95) {
+					m.tpot[i], m.tpotBucket[i] = jointTPOT(l, windowSeconds, q, m.tpot[i], m.tpotBucket[i])
+				}
 			}
 		}
 	}
 	return m
+}
+
+// jointTPOT is the router's measured TPOT q-quantile read from every
+// per-request TPOT histogram the cycle l holds at once (whatif.JointBracket:
+// the router's and, above their first edge, the decode engines', at their
+// sampling noise): the bracket's point, and the bracket where it is too wide
+// to place the quantile (MeasuredBucketWidth), the pair then unresolvable
+// with the prediction inside it. Where the bracket is open above (the
+// quantile within noise of the top edge) the router's own reading, meas and
+// bucket, stands.
+func jointTPOT(l LatencySample, windowSeconds, q float64, meas *float64, bucket *Band) (*float64, *Band) {
+	r := l.Router
+	if r == nil || len(r.TPOTBuckets) == 0 {
+		return meas, bucket
+	}
+	edges, cum := make([]float64, len(r.TPOTBuckets)), make([]float64, len(r.TPOTBuckets))
+	for i, b := range r.TPOTBuckets {
+		edges[i], cum[i] = b.UpperBound, b.Rate
+	}
+	counts := make([]float64, len(cum))
+	prev := 0.0
+	for i, c := range cum {
+		c = max(prev, c)
+		counts[i] = (c - prev) * windowSeconds
+		prev = c
+	}
+	st := withEngineTPOT(whatif.TPOTDistStep{Edges: edges, Counts: counts}, l.EngineTPOT)
+	b, ok := whatif.JointBracket(st, q)
+	if !ok || math.IsInf(b.Hi, 1) || !whatif.Finite(b.Point) {
+		return meas, bucket
+	}
+	p := ptr(b.Point)
+	if meas != nil && math.Abs(b.Point-*meas) <= 1e-9*math.Abs(*meas) {
+		// The router's own linear reading, recomputed from shares in place
+		// of rates: keep the router's figure, not its rounding.
+		p = meas
+	}
+	if b.Lo > 0 && b.Hi <= (1+MeasuredBucketWidth)*b.Lo*(1+bucketEps) {
+		return p, nil
+	}
+	return p, &Band{Lo: b.Lo, Hi: b.Hi}
 }
 
 // latencyHist is a cumulative latency histogram (whatif.LatencyHist, the
@@ -2876,7 +2971,9 @@ func backtestNotes(q *backtestQuestion) []string {
 			"measured percentiles are interpolated inside the histogram's buckets, and one whose bucket is wider than %.0f%% of its lower "+
 			"edge is too wide to place: the bucket, not the traffic, would set it. A prediction more than 20%% beyond that bucket's "+
 			"nearer edge is a certain miss, scored against that edge, which understates the miss, and never within; one nearer is "+
-			"shown and not scored (unresolvable). The verdict quotes the mean, the histogram's sum over its count.", minRequestsFor(0.5), minRequestsFor(0.9), minRequestsFor(0.95), MeasuredBucketWidth*100),
+			"shown and not scored (unresolvable). The router's TPOT p90 and p95 are read from its TPOT histogram and, above their "+
+			"first edge, the decode engines' together, each at its sampling noise: the bracket both allow is the bucket, and a reading "+
+			"inside it (log survival linear in log TPOT) the measured figure. The verdict quotes the mean, the histogram's sum over its count.", minRequestsFor(0.5), minRequestsFor(0.9), minRequestsFor(0.95), MeasuredBucketWidth*100),
 		fmt.Sprintf("Median ratio is the middle step's predicted over measured; typical and worst-10%% miss the median and p90 of the factor "+
 			"between them; under the upper bound the share measured at or under the planner's own upper estimate, where it gives one; "+
 			"within, the share inside %.0f%%. A measured figure above the histogram's top bucket, or a prediction more than 20%% "+

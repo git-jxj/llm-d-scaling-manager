@@ -1,6 +1,7 @@
 package learnreplay
 
 import (
+	"maps"
 	"math"
 	"slices"
 	"time"
@@ -36,6 +37,11 @@ type lineSamples struct {
 	// drops as idle, and the floor below the band is read from
 	// (whatif.BelowBand.LeastITL, itl.BelowBandFloor), each with its fill.
 	below map[string][]itl.Observation
+	// belowSequences is the sequences each of below's readings ran on its
+	// replica (rowSequences), index for index, 0 where that was not read: the
+	// count the floor was read at, as its fill is the fill (issue
+	// llm-d-incubation/llm-d-scaling-manager#286).
+	belowSequences map[string][]float64
 	// ratios is each variant's latest busiest/mean rank fill ratios
 	// (domain.ReplicaMetrics.BusiestRankFillRatio), at most
 	// busiestRatioRows of them, from rows whose busiest rank fills at least
@@ -89,7 +95,8 @@ func fillForITL(rm domain.ReplicaMetrics, busiest func(variant string) bool) flo
 func newLineSamples() *lineSamples {
 	return &lineSamples{steady: map[string][]whatif.LineRow{}, ramps: map[string][]whatif.LineRow{},
 		above: map[string][]whatif.LineRow{}, fills: map[string][]fillAt{}, below: map[string][]itl.Observation{},
-		ratios: map[string][]float64{}, fit: map[string][]whatif.LineRow{}, ownFitAt: map[string]time.Time{}}
+		ratios: map[string][]float64{}, fit: map[string][]whatif.LineRow{}, ownFitAt: map[string]time.Time{},
+		belowSequences: map[string][]float64{}}
 }
 
 // noteOwnFit notes that variant's line at is its own fit, not held or
@@ -146,6 +153,50 @@ func (l *lineSamples) leastBelowBand(variant string) (itlSec, fill float64) {
 	return p.ITLSec, p.K
 }
 
+// belowBand is a variant's floor below the band as a state reads it: the
+// floor and its fill (leastBelowBand), the fewest sequences its readings ran
+// and the floor kept by them (belowBandLeastSequences).
+type belowBand struct {
+	itlSec, fill, least float64
+	byCount             itl.Model
+}
+
+// belowBandLeastSequences is the fewest sequences a replica ran in the
+// readings the variant's floor below the band is read from (leastBelowBand),
+// and the floor kept by those sequences (whatif.BelowBand.ByCount): the
+// readings grouped by octave of their sequences, each group's floor read as
+// the variant's is (itl.BelowBandPoint, the sequences in place of the fill),
+// and the line through those floors (itl.Fit). A floor read at 20 sequences
+// a replica does not stand for one (issue
+// llm-d-incubation/llm-d-scaling-manager#286). least is 0 with no floor, or
+// where a reading's count was not read (rowSequences): the floor then stands
+// for every count, as before. byCount is the zero Model with fewer than two
+// groups holding a floor, or where the fit fails.
+func (l *lineSamples) belowBandLeastSequences(variant string) (least float64, byCount itl.Model) {
+	below, seqs := l.below[variant], l.belowSequences[variant]
+	if _, ok := itl.BelowBandPoint(below); !ok || len(seqs) != len(below) {
+		return 0, itl.Model{}
+	}
+	least = math.Inf(1)
+	groups := map[float64][]itl.Observation{}
+	for i, n := range seqs {
+		if !(n > 0) || math.IsInf(n, 0) {
+			return 0, itl.Model{}
+		}
+		least = min(least, n)
+		g := math.Floor(math.Log2(n))
+		groups[g] = append(groups[g], itl.Observation{K: n, ITLSec: below[i].ITLSec})
+	}
+	floors := make([]itl.Observation, 0, len(groups))
+	for _, g := range slices.Sorted(maps.Keys(groups)) {
+		if p, ok := itl.BelowBandPoint(groups[g]); ok {
+			floors = append(floors, p)
+		}
+	}
+	byCount, _ = itl.Fit(floors)
+	return least, byCount
+}
+
 // rows is the variant's rows, of all three.
 func (l *lineSamples) rows(variant string) []whatif.LineRow {
 	return slices.Concat(l.steady[variant], l.ramps[variant], l.above[variant])
@@ -185,10 +236,12 @@ func (l *lineSamples) note(in domain.AnalyzerInput, cycle int, at time.Time, bus
 		if !ramp && k > 0 && k < bottom && rm.ITLState() == domain.ITLFinite && rm.AvgITL > 0 && !math.IsInf(rm.AvgITL, 0) {
 			b := l.below[rm.VariantName]
 			b = append(b, itl.Observation{K: k, ITLSec: rm.AvgITL, Timestamp: at})
+			n := l.belowSequences[rm.VariantName]
+			n = append(n, rowSequences(rm))
 			if len(b) > itl.BelowBandWindow {
-				b = b[len(b)-itl.BelowBandWindow:]
+				b, n = b[len(b)-itl.BelowBandWindow:], n[len(n)-itl.BelowBandWindow:]
 			}
-			l.below[rm.VariantName] = b
+			l.below[rm.VariantName], l.belowSequences[rm.VariantName] = b, n
 		}
 		if !rm.GenerationTokenRateKnown || !(rm.GenerationTokenRate > 0) || !(k >= itl.DefaultGPSMinKForVerification) {
 			continue

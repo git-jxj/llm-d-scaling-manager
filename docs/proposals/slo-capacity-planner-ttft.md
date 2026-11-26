@@ -543,8 +543,8 @@ that is itself wrong (the exponential tail, Poisson arrivals, an omitted
 | `AssumedDecodeStepSlope`, `AssumedRouterHopSeconds` (no fit) | Under-promises if they stand above the fleet's true figures, which is the point. Each is flagged, and a refusal or a move of 25% that one alone decides says so. A long prompt may hop further than 20 ms |
 | `V_P` from a lower bound | Under-promises. The planner floors it at the rate the pods were seen to compute and gives no figure past a knee priced from it (`PastLowerBoundKnee`) |
 | A mix of prompt lengths priced at its mean on a convex prefill curve ([a limit of P3](#prefill-capacity)) | Over-promises: an even 8k/52k mix at a `V_P` read at 30k is priced 32% under its prefill time. The rescale ([after P2](#as-built-p3-after-p2)) moves `V_P` to the mean, not the mix, and `VPShapeMoved`, comparing means, does not flag it |
-| `V_P` rescaled on computed tokens alone at a prefix hit (`slo-ttft-prefix-attention` off) | Over-promises: the cached tokens' attention is left out, about 1.7x on `V_P` at 32k with a 75% hit against fresh 8k. Flagged `VPShapeMoved` where the hit rate moved from the one `V_P` was read at. No committed run has hits, so this is not measured |
-| `V_P` rescaled at a prefix hit (`slo-ttft-prefix-attention` on) on P1's low-load curve | Over-promises if the low-load minutes had hits: the curve is fitted on `I_eff`, so `b` absorbs about `2c·h` of the cached tokens' attention and the rescale `s(I_vp)/s(I)` flattens, reading `V_P` high. The fit assumes a hit rate near 0 at low load. No committed run has hits, so this is not measured |
+| `V_P` rescaled on computed tokens alone at a prefix hit (`slo-ttft-prefix-attention` off) | Over-promises: the cached tokens' attention is left out, about 1.7x on `V_P` at 32k with a 75% hit against fresh 8k. Flagged `VPShapeMoved` where the hit rate moved from the one `V_P` was read at. Measured on a lab Qwen3-32B P/D run (6000 computed tokens a request at hits 0, 0.5 and 0.75): priced on the computed prompt alone, the 0.75 phase read a median 0.56 of the measured mean TTFT (issue #311) |
+| `V_P` rescaled at a prefix hit (`slo-ttft-prefix-attention` on) on P1's low-load curve | Over-promises if the low-load minutes had hits: the curve is fitted on `I_eff`, so `b` absorbs about `2c·h` of the cached tokens' attention and the rescale `s(I_vp)/s(I)` flattens, reading `V_P` high. The fit assumes a hit rate near 0 at low load. On the same lab run, fitted on a staircase with no hits, it read a median 1.07 of the measured mean TTFT at the 0.75 hit, against 1.15 with no hit (issue #311) |
 | `V_P` rescaled along the curve with no fixed cost per step, `s(I_vp)/s(I)` | Under-promises for a longer prompt only if P1's low-load `b` and `c` are the busy step's per-token cost, which is not measured: on run 2 at 37k it read 1.5% above the served `V_P` (over-promises), covered by the margin only from `ρ` 0.6. No-act (`VPScaledToPrompt`) until a second point confirms it. Held (not raised) for a shorter prompt |
 | The decode engine's TTFT added at its mean to every percentile | Over-promises at the tail by `(r − 1)·D`, `r` decode's p90 over its mean, 1.1–1.8 on the P2 runs (coarse buckets): up to about 20% of the router's p90 at `r` 1.8 (37k: about 127 ms of 0.795 s, 16%; 1k: about 10 ms of 0.047 s, 21%). At each level's own measured `r` it is less: 37k `r` 1.48, about 76 ms (10%); 1k `r` 1.54, about 7 ms (14%) |
 | The decode engine's TTFT held at the rate it was measured at | Either way: `RateForTTFT` extrapolates to other rates with `D` frozen, and decode's own queue at a higher rate is not in it |
@@ -2507,9 +2507,12 @@ router; it does not add any. So past the onset the processor-sharing figure
 stands. A new opt-in switch, `TTFTFleet.RouterWaitInPrefill`
 (`--router-wait-in-prefill`), says so. It was off by default until #287's
 router v1.0.0 staircase, backtested, turned it on in the CLI and the planner
-API (docs/developer-guide/testing.md, "Router v1.0.0, backtested"); the SLO
-analyzer has no switch for it yet. The gate stage above stays the switch for
-v0.11.0, where this one must be set off.
+API (docs/developer-guide/testing.md, "Router v1.0.0, backtested"). The SLO
+analyzer's switch for it, `slo-ttft-router-wait-in-prefill` (issue #367), is
+off from the constructor: on, the analyzer prices the planner's fleet as the
+planner does by default, and turning it on by default waits for a live check
+with the controller. The gate stage above stays the switch for v0.11.0, where
+this one must be set off.
 
 ### What was measured
 

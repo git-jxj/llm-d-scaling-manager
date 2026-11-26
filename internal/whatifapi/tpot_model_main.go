@@ -61,8 +61,8 @@ type TPOTModelInfo struct {
 // TPOTHeldOut is the experimental TPOT model scored on the source's
 // self-check folds, each fold's C fitted on the steps before its cut alone
 // and placed at each later step's measured mean: of Steps steps, P90Inside
-// and P95Inside put the predicted p90 and p95 in the router histogram's
-// bucket the measured one fell in. No percentile is fitted, so both are
+// and P95Inside put the predicted p90 and p95 in the measured one's joint
+// bracket (TPOTDistScore). No percentile is fitted, so both are
 // held out. Decode is the recorded decode replicas.
 type TPOTHeldOut struct {
 	Steps     int `json:"steps"`
@@ -102,6 +102,11 @@ type mainTPOT struct {
 	top    float64
 	decode int
 	info   TPOTModelInfo
+	// bucket says the model prices a day-plan bucket at its own shape
+	// (experimentalModels.atBucket): the bucket's output length on the
+	// fleet's knobs is then its own, not a stated one, and the ratio stays
+	// the window's.
+	bucket bool
 }
 
 // tpotModelOf is the TPOT model a source is resolved with: the request's,
@@ -111,18 +116,26 @@ func tpotModelOf(req, server string) (string, error) {
 	if m == "" {
 		m = server
 	}
-	if m != "" && m != whatif.TPOTRenewalLognormal {
-		return "", InputErrorf("tpotModel %q, want %q or none", m, whatif.TPOTRenewalLognormal)
+	if m != "" && !whatif.IsTPOTDistModel(m) {
+		return "", InputErrorf("tpotModel %q, want %q, %q or none", m, whatif.TPOTRenewalLognormal, whatif.TPOTPerLengthMixture)
 	}
 	return m, nil
 }
 
 // fitMainTPOT fits the model on e's cycles up to the cycle answered, cut
 // into DefaultBacktestStep steps, with the decode engine's max-num-seqs and
-// num_speculative_tokens read from the source.
-func fitMainTPOT(e *inputsEntry) *mainTPOT {
+// num_speculative_tokens read from the source, on at least minSteps steps
+// (0 MinTPOTDistFitSteps), as a backtest fits it (fitTPOTDist). model is
+// the distribution (whatif.TPOTRenewalLognormal, or
+// whatif.TPOTPerLengthMixture; "" the former). With the per-length mixture
+// every rate is priced at the source window's pooled lengths, as the one
+// lognormal is at their pooled E[1/(L-1)].
+func fitMainTPOT(e *inputsEntry, model string, minSteps int) *mainTPOT {
+	if model == "" {
+		model = whatif.TPOTRenewalLognormal
+	}
 	mt := &mainTPOT{decode: e.doc.Fleet.Decode.Replicas,
-		info: TPOTModelInfo{Model: whatif.TPOTRenewalLognormal, Experimental: true, Label: TPOTModelLabel}}
+		info: TPOTModelInfo{Model: model, Experimental: true, Label: TPOTModelLabel}}
 	abstain := func(why string) *mainTPOT {
 		mt.info.Abstained = why
 		return mt
@@ -145,8 +158,8 @@ func fitMainTPOT(e *inputsEntry) *mainTPOT {
 	}
 	// The slo analyzer's v2 TPOT learner fits and prices its own cycles with
 	// the same call.
-	w := whatif.FitTPOTWindow(fitCycles(e, idx), DefaultBacktestStep, e.engine.DecodeSlots, e.engine.SpecTokens)
-	tq := &tpotDistQ{c: w.Fitted.C, report: w.Fitted.Report, stepRates: w.Fitted.StepRates}
+	w := whatif.FitTPOTWindow(fitCycles(e, idx), DefaultBacktestStep, e.engine.DecodeSlots, e.engine.SpecTokens, model, minSteps)
+	tq := tpotDistQOf(w.Fitted)
 	r := tq.report
 	mt.info.Fit = &r
 	if w.Abstained != "" {
@@ -174,7 +187,7 @@ func fitMainTPOT(e *inputsEntry) *mainTPOT {
 
 // tpotHeldOutWords is a held-out score in the page's words.
 func tpotHeldOutWords(h TPOTHeldOut) string {
-	return fmt.Sprintf("held-out steps, at the measured mean: p90 in the measured bucket on %d of %d, p95 on %d",
+	return fmt.Sprintf("held-out steps, at the measured mean: p90 in the measured p90's joint bracket on %d of %d, p95 on %d",
 		h.P90Inside, h.Steps, h.P95Inside)
 }
 
@@ -195,7 +208,7 @@ func (mt *mainTPOT) notPricedAt(k Knobs) string {
 		return "the model prices p90 and p95, not " + statisticName(k.TPOTPercentile)
 	case k.Decode <= 0:
 		return "the fleet has no decode replica"
-	case k.OutputTokens != 0:
+	case k.OutputTokens != 0 && !mt.bucket:
 		return "the model prices the source's own output lengths, not a stated one"
 	case k.Assume.TPOTRatio != nil:
 		return "the ratio stated (assume.tpotRatio) prices the percentile"
@@ -216,7 +229,7 @@ func (mt *mainTPOT) fleet(inner Fleet, k Knobs) Fleet {
 	if !ok {
 		return inner
 	}
-	return x.WithTPOTRatio(ModelRatio{Value: mt.ratio(k.TPOTPercentile), Flag: whatif.TPOTDistribution, Source: tpotModelSource,
+	return x.WithTPOTRatio(ModelRatio{Value: mt.ratio(k.TPOTPercentile), Flag: whatif.TPOTDistribution, More: mt.tq.report.Flags()[1:], Source: tpotModelSource,
 		Assumed: mt.assumed(k)})
 }
 
@@ -321,15 +334,17 @@ func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
 			if !whatif.Finite(v) {
 				continue
 			}
-			st.Figure = Figure{Value: ptr(v), Unit: unitSeconds, Flags: []string{string(whatif.TPOTDistribution)},
+			st.Figure = Figure{Value: ptr(v), Unit: unitSeconds, Flags: flagStrings(mt.tq.report.Flags()),
 				Extrapolated: mt.extrapolated(k, row.Rate)}
 			moved = true
 		}
 		if moved {
-			if !slices.Contains(sh.Flags, string(whatif.TPOTDistribution)) {
-				sh.Flags = append(sh.Flags, string(whatif.TPOTDistribution))
+			for _, fl := range flagStrings(mt.tq.report.Flags()) {
+				if !slices.Contains(sh.Flags, fl) {
+					sh.Flags = append(sh.Flags, fl)
+				}
 			}
-			line := TPOTModelLabel + " (" + whatif.TPOTRenewalLognormal + ") prices the table's TPOT percentile around its mean"
+			line := TPOTModelLabel + " (" + mt.info.Model + ") prices the table's TPOT percentile around its mean"
 			if mt.info.Evidence != "" {
 				line += " (" + mt.info.Evidence + ")"
 			}
@@ -340,10 +355,11 @@ func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
 
 // ApplyTPOTModel fits the experimental TPOT model on res, a source resolved
 // with InputsRequest.TPOTModel, and prices out's TPOT percentiles with it as
-// POST /v1/report does: at-replicas --experimental-tpot=v2. It returns the
-// model as fitted, abstained or not.
-func ApplyTPOTModel(res *Resolved, out *ReportResponse, q ReportQuery) *TPOTModelInfo {
-	mt := fitMainTPOT(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
+// POST /v1/report does: at-replicas --experimental-tpot=v2, on at least
+// minSteps fit steps (0 MinTPOTDistFitSteps). It returns the model as
+// fitted, abstained or not.
+func ApplyTPOTModel(res *Resolved, out *ReportResponse, q ReportQuery, minSteps int) *TPOTModelInfo {
+	mt := fitMainTPOT(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine}, res.TPOTModel, minSteps)
 	mt.applyToReport(out, q)
 	info := mt.info
 	return &info
@@ -363,18 +379,6 @@ func (e *inputsEntry) models() *experimentalModels {
 		return nil
 	}
 	return &experimentalModels{ttft: e.ttftModel, tpot: e.tpotModel}
-}
-
-// pricesAt says at least one of the models prices a fleet at k, one
-// replica a role, for a target the plan asks: the TTFT model where ttft,
-// the TPOT model where tpot (a TPOT model at a mean target prices
-// nothing). False where m is nil.
-func (m *experimentalModels) pricesAt(k Knobs, ttft, tpot bool) bool {
-	if m == nil {
-		return false
-	}
-	k.Prefill, k.Decode = 1, 1
-	return (ttft && m.ttft != nil && m.ttft.notPricedAt(k) == "") || (tpot && m.tpot != nil && m.tpot.notPricedAt(k) == "")
 }
 
 // fleet is fl with the models: the TPOT model's ratio first, since it

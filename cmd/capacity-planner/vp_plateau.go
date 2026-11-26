@@ -50,7 +50,8 @@ func plateauValidation(row *whatifapi.ReportRate, kind whatif.FigureKind, res wh
 // replayOptions is the options the answer's replay runs with: the planner's
 // switches (learnreplay.PlannerSwitches), a test's (testReplaySwitches),
 // with --prefill-vp-plateau the occupancy plateau on as well, with
-// --prefill-hit-at-count the prefix hit at the count priced, and with
+// --prefill-hit-at-count the prefix hit at the count priced, with
+// --prefill-vp-service-line V_P from the prefill service line, and with
 // --experimental-ttft every switch experimentalTTFT names. With none, they
 // are the zero options, as before the flags.
 func (f *answerFlags) replayOptions() learnreplay.Options {
@@ -63,6 +64,9 @@ func (f *answerFlags) replayOptions() learnreplay.Options {
 	}
 	if f.hitAtCount {
 		on(sw, learnreplay.PackageSaturation, saturation.SwitchPrefillHitAtCount)
+	}
+	if f.vpServiceLine {
+		on(sw, learnreplay.PackageSaturation, saturation.SwitchPrefillVPServiceLine)
 	}
 	if f.experimentalTTFT {
 		for _, s := range experimentalTTFT() {

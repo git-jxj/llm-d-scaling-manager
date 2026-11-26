@@ -55,7 +55,7 @@ func TestModelLearners_WindowsAreBounded(t *testing.T) {
 func TestModelLearners_APanickingRefitIsHeld(t *testing.T) {
 	orig := fitMixtureWindow
 	t.Cleanup(func() { fitMixtureWindow = orig })
-	fitMixtureWindow = func([]whatif.FitCycle, time.Duration, int, float64, bool) whatif.MixtureWindowFit {
+	fitMixtureWindow = func([]whatif.FitCycle, time.Duration, int, float64, whatif.RankMixtureSwitches) whatif.MixtureWindowFit {
 		panic("a fit core's bug")
 	}
 

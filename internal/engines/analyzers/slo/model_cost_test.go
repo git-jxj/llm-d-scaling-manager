@@ -106,8 +106,8 @@ func costWindow() []whatif.FitCycle { return costCycles(int(ModelWindow / costIn
 func BenchmarkModelLearners_Refit(b *testing.B) {
 	cycles := costWindow()
 	for b.Loop() {
-		whatif.FitMixtureWindow(cycles, ModelStep, 8, modelHeldOutTolerance, whatif.DefaultRankMixtureStratified)
-		whatif.FitTPOTWindow(cycles, ModelStep, 256, 0)
+		whatif.FitMixtureWindow(cycles, ModelStep, 8, modelHeldOutTolerance, modelMixtureSwitches)
+		whatif.FitTPOTWindow(cycles, ModelStep, 256, 0, whatif.TPOTRenewalLognormal, 0)
 		var windows []whatif.TPOTWindow
 		for i := range cycles {
 			if w, ok := whatif.TPOTWindowOf(cycles[i].Router); ok {

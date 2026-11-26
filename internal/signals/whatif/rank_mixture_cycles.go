@@ -93,6 +93,34 @@ type RankMixtureReport struct {
 	// (RankMixtureSwitches.Stratified; the planner's
 	// BacktestRequest.RankMixtureStratified, on by default).
 	Stratified bool `json:"stratified,omitempty"`
+	// MinFitWindow is the shortest fit window the model was allowed to
+	// price from, where the switches set one (RankMixtureSwitches
+	// MinFitWindow; the planner's BacktestRequest.RankMixtureMinFitWindow),
+	// absent at the default (MinSpreadFitWindow). ShortFitWindow says the
+	// fit window was under the default and the model was fitted on it all
+	// the same: every figure it prices is flagged RankMixtureShortFitWindow.
+	MinFitWindow   string `json:"minFitWindow,omitempty"`
+	ShortFitWindow bool   `json:"shortFitWindow,omitempty"`
+	// fitWindow is MinFitWindow as a duration, 0 the default.
+	fitWindow time.Duration
+}
+
+// Window is the shortest fit window the model was allowed to price from.
+func (r RankMixtureReport) Window() time.Duration {
+	if r.fitWindow > 0 {
+		return r.fitWindow
+	}
+	return MinSpreadFitWindow
+}
+
+// ShortFlags is the flags every figure the model prices carries for its fit
+// window: RankMixtureShortFitWindow where the window was under the default,
+// none otherwise.
+func (r RankMixtureReport) ShortFlags() []Flag {
+	if r.ShortFitWindow {
+		return []Flag{RankMixtureShortFitWindow}
+	}
+	return nil
 }
 
 // RankMixtureZParts is Z measured part by part, seconds and seconds a
@@ -154,6 +182,28 @@ type RankMixtureSwitches struct {
 	// (RankMixtureOptions KVHold and RemainderSpread); the planner's
 	// BacktestRequest RankMixtureKVHold and RankMixtureRemainderSpread.
 	KVHold, RemainderSpread bool
+	// MinFitWindow is the shortest fit window the model prices from (the
+	// planner's BacktestRequest.RankMixtureMinFitWindow): 0 is
+	// MinSpreadFitWindow, the default. A model priced from a window under
+	// the default is flagged RankMixtureShortFitWindow.
+	MinFitWindow time.Duration
+}
+
+// FitWindow is the shortest fit window sw prices from.
+func (sw RankMixtureSwitches) FitWindow() time.Duration {
+	if sw.MinFitWindow > 0 {
+		return sw.MinFitWindow
+	}
+	return MinSpreadFitWindow
+}
+
+// Options is the fit's options sw turns on, with slots the prefill engine's
+// max-num-seqs: the backtest's fit, the main view's and the slo analyzer's
+// read the same.
+func (sw RankMixtureSwitches) Options(slots int) RankMixtureOptions {
+	return RankMixtureOptions{Slots: slots, MinSpreadSpan: sw.FitWindow(),
+		SpreadFloor: MinSpread, CleanFitSteps: sw.FitSteps, SharesAtLoad: sw.FitSteps,
+		StratifiedMoments: sw.Stratified, KVHold: sw.KVHold, RemainderSpread: sw.RemainderSpread}
 }
 
 // Model is the model sw fits.
@@ -220,9 +270,7 @@ func FitRankMixtureCycles(cycles []FitCycle, step time.Duration, slots int, sw R
 	if sw.NLLine {
 		fitter = FitRankMixtureNL
 	}
-	m, diag, err := fitter(steps, RankMixtureOptions{Slots: slots, MinSpreadSpan: MinSpreadFitWindow,
-		SpreadFloor: MinSpread, CleanFitSteps: sw.FitSteps, SharesAtLoad: sw.FitSteps,
-		StratifiedMoments: sw.Stratified, KVHold: sw.KVHold, RemainderSpread: sw.RemainderSpread})
+	m, diag, err := fitter(steps, sw.Options(slots))
 	if err != nil {
 		return nil, nil, fmt.Errorf("the experimental TTFT model %s did not fit: %w", sw.Model(), err)
 	}
@@ -232,6 +280,10 @@ func FitRankMixtureCycles(cycles []FitCycle, step time.Duration, slots int, sw R
 		BetaUnidentified: m.BetaUnidentified, Spread: m.Spread, FoldSpread: diag.FoldSpread, SpreadAtBound: diag.SpreadAtBound,
 		SpreadDefaulted: diag.SpreadDefaulted, SpreadFloored: diag.SpreadFloored, FitP90: diag.FitP90, FitSteps: diag.Steps,
 		Slots: slots, FitStepsBacklogged: backlog, Queue: string(QueueLimitedProcessorSharing), Stratified: sw.Stratified}
+	if sw.MinFitWindow > 0 {
+		r.fitWindow, r.MinFitWindow = sw.MinFitWindow, sw.MinFitWindow.String()
+		r.ShortFitWindow = !diag.SpreadDefaulted && diag.Span < MinSpreadFitWindow
+	}
 	if slots <= 0 {
 		r.Queue = string(QueueProcessorSharing)
 	}
@@ -277,7 +329,7 @@ func (rq *RankMixtureFitted) Identified() *RankMixtureFitted {
 		why = append(why, "prompt slope not identified ("+strings.Join(r.BetaUnidentified, ", ")+")")
 	}
 	if r.SpreadDefaulted {
-		why = append(why, fmt.Sprintf("spread not calibrated (fit window under %s)", MinSpreadFitWindow))
+		why = append(why, fmt.Sprintf("spread not calibrated (fit window under %s)", r.Window()))
 	}
 	if r.Spread >= MaxSpread || slices.ContainsFunc(r.FoldSpread, func(s float64) bool { return s >= MaxSpread }) {
 		why = append(why, fmt.Sprintf("spread not identified (a self-check fold's p90 ratio does not reach 1 at any spread up to %g)",
@@ -322,7 +374,7 @@ func (rq *RankMixtureFitted) identifiedNL() *RankMixtureFitted {
 		why = append(why, "the prefill engine's max-num-seqs not read")
 	}
 	if r.SpreadDefaulted {
-		why = append(why, fmt.Sprintf("fit window under %s: too short for its own checks", MinSpreadFitWindow))
+		why = append(why, fmt.Sprintf("fit window under %s: too short for its own checks", r.Window()))
 	}
 	if !(r.FitMean >= MinNLFitMean && r.FitMean <= MaxNLFitMean) {
 		why = append(why, fmt.Sprintf("the fit window's own mean not priced (median ratio %.3g, outside %g-%g)",
@@ -368,13 +420,13 @@ func (w MixtureWindowFit) Abstained() string {
 	return w.Fitted.Report.Abstained
 }
 
-// FitMixtureWindow fits the model on cycles, cut into steps of step, with
-// the prefill engine's max-num-seqs slots, and scores it on its self-check
-// folds at tolerance; stratified prices it with the stratified service
-// moments (RankMixtureSwitches.Stratified). A fit that fails, or fails an
+// FitMixtureWindow fits the model sw names on cycles, cut into steps of
+// step, with the prefill engine's max-num-seqs slots, and scores it on its
+// self-check folds at tolerance (RankMixtureNLHeldOut for the variant,
+// RankMixtureHeldOut otherwise). A fit that fails, or fails an
 // identifiability check, abstains.
-func FitMixtureWindow(cycles []FitCycle, step time.Duration, slots int, tolerance float64, stratified bool) MixtureWindowFit {
-	rq, steps, err := FitRankMixtureCycles(cycles, step, slots, RankMixtureSwitches{Stratified: stratified})
+func FitMixtureWindow(cycles []FitCycle, step time.Duration, slots int, tolerance float64, sw RankMixtureSwitches) MixtureWindowFit {
+	rq, steps, err := FitRankMixtureCycles(cycles, step, slots, sw)
 	if err != nil {
 		return MixtureWindowFit{Fitted: AbstainedRankMixture(err.Error()), FitErr: err}
 	}
@@ -388,9 +440,12 @@ func FitMixtureWindow(cycles []FitCycle, step time.Duration, slots int, toleranc
 	sorted := sortedByTime(cycles)
 	first, last := sorted[0].At, sorted[len(sorted)-1].At
 	w.Pooled = MixtureStepOf(MixtureCyclesIn(cycles, first.Add(-time.Nanosecond), last), last)
-	o := RankMixtureOptions{Slots: rq.M.Slots, MinSpreadSpan: MinSpreadFitWindow, SpreadFloor: MinSpread,
-		StratifiedMoments: stratified}
-	w.HeldOut = RankMixtureHeldOut(steps, o, rq.M.Spread, tolerance)
+	o := sw.Options(rq.M.Slots)
+	if sw.NLLine {
+		w.HeldOut = RankMixtureNLHeldOut(steps, o, tolerance)
+	} else {
+		w.HeldOut = RankMixtureHeldOut(steps, o, rq.M.Spread, tolerance)
+	}
 	return w
 }
 

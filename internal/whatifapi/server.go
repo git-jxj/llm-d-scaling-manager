@@ -99,13 +99,38 @@ type Config struct {
 	// from the computed-token histogram (whatif.DefaultRankMixtureStratified).
 	// The CLI's serve sets it with --rank-mixture-stratified=false.
 	NoRankMixtureStratified bool
+	// RankMixtureKVHold and RankMixtureRemainderSpread turn the variant's
+	// modes on for every backtest and source priced with the variant
+	// (whatif.QueueRankMixtureNLLine) where the request does not, and
+	// RankMixtureMinFitWindow is the shortest fit window either model
+	// prices from where the request names none: 0 is
+	// whatif.MinSpreadFitWindow. The CLI's serve sets them with
+	// --rank-mixture-kv-hold, --rank-mixture-remainder-spread and
+	// --rank-mixture-min-fit-window.
+	RankMixtureKVHold, RankMixtureRemainderSpread bool
+	RankMixtureMinFitWindow                       time.Duration
+	// TPOTDistMinFitSteps is the fewest fit steps the TPOT distribution
+	// fits on where a backtest or a source's request names none: 0 is
+	// MinTPOTDistFitSteps. The CLI's serve sets it with
+	// --tpot-dist-min-fit-steps.
+	TPOTDistMinFitSteps int
 }
 
 // DefaultPlanBudget is the plan budget a server has when its Config names
 // none: a cold plan of the worked recording takes under 20 s, and it ends
-// well before capacity-planner serve's 10-minute write timeout (serve refuses
-// a --plan-budget past 9 minutes).
+// well before LongRequestDeadline (capacity-planner serve refuses a
+// --plan-budget past 9 minutes).
 const DefaultPlanBudget = 5 * time.Minute
+
+// LongRequestDeadline is how long a request that computes (POST /v1/inputs,
+// /v1/plan, /v1/size, /v1/report, /v1/dayplan, /v1/backtest, /v1/predict and
+// /v1/compare) may run once its body is read: the connection's write
+// deadline moves to it, past the server's own write timeout. A replay of a
+// 24 h recording with every model fitted takes over 5 minutes on an idle
+// 22-CPU node and about twice that on a busy one, and the server's 10-minute
+// write timeout cut the connection before the answer. The other routes keep
+// the server's timeouts.
+const LongRequestDeadline = 30 * time.Minute
 
 // ReasonPlanBudgetExceeded is the reason an ErrorResponse gives for a plan
 // stopped at the server's plan budget.
@@ -173,10 +198,20 @@ type Server struct {
 	// uploadDeadline how long it may take in all (uploadDeadline).
 	uploadIdle     time.Duration
 	uploadDeadline time.Duration
+	// longDeadline is how long a request that computes may run once its body
+	// is read (LongRequestDeadline).
+	longDeadline time.Duration
 	// ttftModel and tpotModel are Config's.
 	ttftModel, tpotModel string
 	// noStratified is Config.NoRankMixtureStratified.
 	noStratified bool
+	// kvHold, remainderSpread and minFitWindow are Config's
+	// RankMixtureKVHold, RankMixtureRemainderSpread and
+	// RankMixtureMinFitWindow.
+	kvHold, remainderSpread bool
+	minFitWindow            time.Duration
+	// tpotMinFitSteps is Config.TPOTDistMinFitSteps.
+	tpotMinFitSteps int
 }
 
 // inputsEntry is a source resolved: its id, the inputs a plan reads its
@@ -239,7 +274,9 @@ func New(c Config) *Server {
 		searches: newLRU[*SizeResponse](defaultSizes), curves: newLRU[*curveSet](defaultCurves), limits: newLRU[*limitEntry](defaultCurves),
 		planSlots: make(chan struct{}, plans), inputSlots: make(chan struct{}, inputs), planBudget: budget,
 		uploader: c.Uploader, uploadMax: uploadMax, uploadSlots: make(chan struct{}, 1), uploadIdle: uploadIdle, uploadDeadline: uploadDeadline,
-		ttftModel: c.TTFTModel, tpotModel: c.TPOTModel, noStratified: c.NoRankMixtureStratified}
+		longDeadline: LongRequestDeadline, ttftModel: c.TTFTModel, tpotModel: c.TPOTModel, noStratified: c.NoRankMixtureStratified,
+		kvHold: c.RankMixtureKVHold, remainderSpread: c.RankMixtureRemainderSpread, minFitWindow: c.RankMixtureMinFitWindow,
+		tpotMinFitSteps: c.TPOTDistMinFitSteps}
 }
 
 // stratified is whether the rank mixture is priced with stratified service
@@ -317,7 +354,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 // and answered with the caller's own source.
 func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 	var req InputsRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	if !acquire(s.inputSlots) {
@@ -341,6 +378,16 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.TTFTModel, req.TPOTModel = model, tpotModel
+	tpotSteps, err := s.tpotMinFitStepsOf(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	opts, err := s.mainTTFTOptions(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	res, err := s.resolver.Resolve(r.Context(), req)
 	if err != nil {
 		writeErr(w, err)
@@ -359,7 +406,9 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 			Content   any
 			TTFTModel string
 		}{res.Content, model})
-		mm = fitMainMixture(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, stratified)
+		opts.Stratified = stratified
+		mm = fitMainMixture(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine},
+			opts.switches())
 		info := mm.info
 		doc.TTFTModel = &info
 	}
@@ -370,9 +419,16 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 			Content              any
 			TTFTModel, TPOTModel string
 		}{res.Content, model, tpotModel})
-		mt = fitMainTPOT(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
+		mt = fitMainTPOT(&inputsEntry{doc: doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine}, tpotModel, tpotSteps)
 		info := mt.info
 		doc.TPOTModel = &info
+	}
+	if tpotModel != "" && tpotSteps > 0 {
+		// And so is the distribution fitted on another fewest steps.
+		doc.InputsID = contentID("inputs", struct {
+			ID                  string
+			TPOTDistMinFitSteps int
+		}{doc.InputsID, tpotSteps})
 	}
 	if model != "" && !stratified {
 		// And so is the model read from each rank's own draws.
@@ -380,6 +436,15 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 			ID           string
 			Unstratified bool
 		}{doc.InputsID, true})
+	}
+	if model != "" && opts.moved() {
+		// And so is the model fitted with the variant's modes or another
+		// shortest fit window.
+		doc.InputsID = contentID("inputs", struct {
+			ID                      string
+			KVHold, RemainderSpread bool
+			MinFitWindow            time.Duration
+		}{doc.InputsID, opts.KVHold, opts.RemainderSpread, opts.MinFitWindow})
 	}
 	if check && (doc.Source.Kind == SourceRecording || doc.Source.Kind == SourcePrometheus) {
 		// The self-check is bounded as a plan is; out of time it is not run,
@@ -404,7 +469,7 @@ func (s *Server) handleInputs(w http.ResponseWriter, r *http.Request) {
 // handlePlan is POST /v1/plan: the scenario priced, or its cached bytes.
 func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	var req PlanRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	body, err := s.plan(r.Context(), req)
@@ -513,15 +578,24 @@ func LoopbackOnly(next http.Handler) http.Handler {
 	})
 }
 
-// readJSON reads the request body into v strictly: a media type other than
-// application/json (none included, so that no form a page posts across sites
-// is read) is 415; an unknown field, a second value, or a body past maxBody
-// is a 400.
-func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	return readJSONUpTo(w, r, v, maxBody)
+// readLongJSON is readJSONUpTo for a request that computes: once the body is
+// read, within the server's read timeout, the connection's write deadline
+// moves to longDeadline from now (LongRequestDeadline). The read deadline is
+// left alone: once the body is read the server clears it, and its read of
+// the idle connection ends the request's context when the client leaves. A
+// recorder in a test has no connection to set a deadline on.
+func (s *Server) readLongJSON(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	if !readJSONUpTo(w, r, v, limit) {
+		return false
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(s.longDeadline))
+	return true
 }
 
-// readJSONUpTo is readJSON with a body of at most limit bytes.
+// readJSONUpTo reads the request body into v strictly: a media type other
+// than application/json (none included, so that no form a page posts across
+// sites is read) is 415; an unknown field, a second value, or a body past
+// limit bytes (maxBody for most routes) is a 400.
 func readJSONUpTo(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
 		writeError(w, http.StatusUnsupportedMediaType, fmt.Errorf("content type %q, want application/json", r.Header.Get("Content-Type")))

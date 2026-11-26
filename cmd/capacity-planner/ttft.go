@@ -349,11 +349,19 @@ type pricedFleet struct {
 	assumedVP bool
 	// statedCV is a cv --assume-prompt-cv supplied, in in.PromptCV.
 	statedCV bool
+	// contextTokens is the prefill engines' context window (contextOf),
+	// which holds the prompt spread's mass past the histogram's last bound;
+	// 0 where the recorded arguments do not say it.
+	contextTokens float64
 	// prefixAttention is slo.SwitchTTFTPrefixAttention, as the replay read
 	// it (PrefillState.PrefixAttention), and prefillServed the prefill
 	// variant's measured shape: its hit rate is what the prefill pods skip.
 	prefixAttention bool
 	prefillServed   learnreplay.MeasuredShape
+	// stepComputed says the prompt priced is the one a backtest step's
+	// prefill pods computed (stepComputedPrompt), the whole prompt less it
+	// their cached context.
+	stepComputed bool
 	// computedHit is slo.SwitchTTFTComputedHit, as the replay read it
 	// (PrefillState.ComputedHit), and promptWindow the prefill variant's
 	// window its hit is read from (whatif.PromptWindow.ComputedHit).
@@ -372,6 +380,10 @@ type pricedFleet struct {
 	// the fleet's prefill count (priceHitAtCount); nil where it priced none.
 	hitAtCountOn bool
 	hitAtCount   *prefill.HitAtCount
+	// hitModel is the reuse-gap law fitted on the prompt window with the
+	// switch on (whatif.PromptWindow.HitModel); nil where the recording
+	// holds no KV residency histograms.
+	hitModel *prefill.HitModel
 	// servedWork is the prefill pods' sustained computed-token work by pod
 	// count over the whole window (learnreplay.PrefillState
 	// .ServedComputedWindow) whatever the prompt
@@ -387,7 +399,9 @@ type pricedFleet struct {
 	// servedComputed is, by pod count, the computed-token work the prefill
 	// pods sustained (learnreplay.PrefillState.ServedComputed), kept only
 	// where the prompt priced is the one those pods computed, read off the
-	// same counter: the floor under a lower-bound knee (servedKneeFloor).
+	// same counter (the measured prompt, or the load's netted by their
+	// computed-token hit): the floor under a lower-bound knee
+	// (servedKneeFloor).
 	servedComputed map[int]float64
 	// cachedTokenCost is slo.SwitchTTFTCachedTokenCost, as the replay read
 	// it (PrefillState.CachedTokenCost): priceCachedLoad.
@@ -587,6 +601,11 @@ func (f *answerFlags) readFleet(st *learnreplay.State, ps *learnreplay.PrefillSt
 	// whatif.DefaultChargeDecodeGate).
 	pf.fleet.PSOnsets, pf.fleet.ChargeDecodeGate = f.psOnsets, f.chargeDecodeGate
 	pf.fleet.Prefill.RunningCap = f.prefillRunningCap
+	// The prefill engines' context window bounds the prompt spread's top
+	// bucket (whatif.ReadPromptSpreadWithin); unknown, it is left open.
+	if c := contextOf(st.Variants, ps.Variant); c.Value != nil {
+		pf.contextTokens = *c.Value
+	}
 	f.prefillShape(pf, ps)
 	if ps.PSByEngine {
 		pf.psByEngine(st, ps)
@@ -907,7 +926,14 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 		pf.assume("prompt %s tokens "+assumeInputTokensWords, num(round(p.PromptTokens)))
 		if hit, replaced, ok := pf.netByComputedHit(); ok {
 			pf.assume("prompt netted by the prefill pods' computed-token hit %.3f, not the prefix-cache hit %.3f", hit, replaced)
+			if pf.loadShapeRead() {
+				// The load's prompt is then in the tokens the prefill pods
+				// computed, read off the counter their served work is, so
+				// the knee keeps its floor at that work, as measured.
+				pf.servedComputed = ps.ServedComputed
+			}
 		}
+		pf.stepComputedPrompt(f.inputTokens, f.prefillComputed)
 	case ps.PromptTokens > 0:
 		p.PromptTokens, pf.in.PromptSource = ps.PromptTokens, shapeMeasured
 		pf.servedComputed = ps.ServedComputed
@@ -930,7 +956,7 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 	// The window's, whatever the prompt asked: a cv is a figure of the traffic
 	// the histogram counted. --assume-prompt-cv overrides it, as every
 	// --assume-* flag overrides the recording, with the read figure beside it.
-	spread := ps.PromptWindow.Spread()
+	spread := ps.PromptWindow.SpreadWithin(pf.contextTokens)
 	p.PromptCV, p.PromptCVAssumed = spread.CV, spread.Assumed
 	switch {
 	case !ps.PromptSupport:
@@ -961,6 +987,9 @@ func (f *answerFlags) prefillShape(pf *pricedFleet, ps *learnreplay.PrefillState
 	case spread.Clamped:
 		pf.in.PromptCVSource = shapeClamped
 		pf.assume("prompt cv %s (the histogram reads past its last bound, or above it)", num(spread.CV))
+	case spread.ClosedAt > 0:
+		pf.assume("prompt cv %s, an upper bound: the histogram's mass past its last bound held under the context window, %s tokens",
+			num(spread.CV), num(spread.ClosedAt))
 	}
 
 	if pv != nil && pv.state.DecodeTTFT.TransferSeconds > 0 && ps.PromptTokens > 0 {
@@ -1022,8 +1051,9 @@ func (pf *pricedFleet) transferPerToken(read, base float64) float64 {
 // was read (prefillHit): the prefill pods compute the prompt less their own
 // hits, not decode's; else the decode variant's, as off.
 //
-// With slo.SwitchTTFTComputedHit on, where netByComputedHit holds, it is il
-// less the prefill pods' computed-token hit instead, which counts the hits
+// With slo.SwitchTTFTComputedHit on, or for the load's shape, where
+// netByComputedHit holds, it is il less the prefill pods' computed-token
+// hit instead, which counts the hits
 // of every tier; the hit rate beside it stays a prefix-cache one, the
 // prefill variant's where read, so it compares with V_P's (prefixMoved).
 func (pf *pricedFleet) effectivePrompt(il float64) (float64, float64) {
@@ -1046,8 +1076,14 @@ func (pf *pricedFleet) effectivePrompt(il float64) (float64, float64) {
 // moves. A hit the question states (--prefix-hit, an IL/OL/hit shape)
 // governs; one the load's cycles filled in (--shape load) is read, not
 // stated, and does not.
+//
+// The load's shape, and a whole prompt read from the source's cycles, nets
+// by it with the switch off too (loadShapeRead): its hit is the decode
+// variant's, which on a P/D fleet is not a hit of the prefill pods at all,
+// and netting by it priced the whole prompt as computed where the measured
+// shape prices what the prefill pods computed.
 func (pf *pricedFleet) netByComputedHit() (computed, replaced float64, ok bool) {
-	if !pf.computedHit {
+	if !pf.computedHit && !pf.loadShapeRead() {
 		return 0, 0, false
 	}
 	if pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead {
@@ -1062,6 +1098,21 @@ func (pf *pricedFleet) netByComputedHit() (computed, replaced float64, ok bool) 
 		return 0, 0, false
 	}
 	return computed, replaced, true
+}
+
+// loadShapeRead says the prompt priced is the source's own, its hit read
+// from the source, not stated: the load's cycles' (--shape load, the
+// report's default shape), or a whole prompt read from them with no hit
+// stated (whatifapi.Knobs.PromptTokensRead: a day plan's bucket, a
+// backtest's step). A stated hit governs either way.
+func (pf *pricedFleet) loadShapeRead() bool {
+	switch {
+	case pf.pv == nil:
+		return false
+	case pf.pv.assumedHit:
+		return pf.pv.hitRead
+	}
+	return pf.pv.assumedIL && pf.pv.ilRead
 }
 
 // prefixCachePrompt is effectivePrompt netted by a prefix-cache hit rate, as
@@ -1080,6 +1131,31 @@ func (pf *pricedFleet) prefixCachePrompt(il float64) (float64, float64) {
 		return il, 0
 	}
 	return pf.pv.shape.ILeff, pf.pv.shape.PrefixHitRate
+}
+
+// stepComputedPrompt prices the prompt a backtest step's prefill pods
+// computed, computed tokens of a whole prompt of whole, with
+// slo.SwitchTTFTPrefixAttention on (issue
+// llm-d-incubation/llm-d-scaling-manager#311): the prefill work is what
+// those pods computed, and the rest of the whole prompt is the cached
+// context its attention spans (cachedContext). Without it a step's whole
+// prompt is netted by the hit of the fit's rows, so a step whose prefill
+// pods hit, fitted on rows that did not, is priced as if they computed all
+// of it. A stated hit governs; off, with no computed prompt read, or with
+// the step's hit at most whatif.MaterialPrefixHitMove (the two prompts are
+// read off different rows, decode's and prefill's, and agree only to within
+// that with no cache), nothing moves.
+func (pf *pricedFleet) stepComputedPrompt(whole, computed float64) {
+	if !pf.prefixAttention || !(computed > 0) || !(whole > 0) || !(1-computed/whole > whatif.MaterialPrefixHitMove) {
+		return
+	}
+	if pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead {
+		return
+	}
+	p := &pf.fleet.Prefill
+	p.PromptTokens, p.PromptHitRate, p.WholePromptTokens = computed, 1-computed/whole, whole
+	pf.stepComputed = true
+	pf.assume("prompt %s tokens computed of %s, as the step's prefill pods computed them", num(round(computed)), num(round(whole)))
 }
 
 // prefillHit is the prefill variant's measured prefix-cache hit rate, false

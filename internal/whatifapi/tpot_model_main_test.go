@@ -31,7 +31,7 @@ func tpotEntry(t *testing.T, model bool, slots int) (*Server, *inputsEntry) {
 	e.engine = EngineSlots{DecodeSlots: slots, SpecTokens: 3}
 	e.id = "sha256:main-tpot"
 	if model {
-		e.tpotModel = fitMainTPOT(e)
+		e.tpotModel = fitMainTPOT(e, "", 0)
 		info := e.tpotModel.info
 		e.doc.TPOTModel = &info
 		e.id += "-v2"
@@ -91,7 +91,7 @@ func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
 	assert.LessOrEqual(t, h.P90Inside, h.Steps)
 	assert.LessOrEqual(t, h.P95Inside, h.Steps)
 	assert.Equal(t, 2, h.Decode)
-	assert.Regexp(t, `^held-out steps, at the measured mean: p90 in the measured bucket on \d+ of \d+, p95 on \d+$`, mt.info.Evidence)
+	assert.Regexp(t, `^held-out steps, at the measured mean: p90 in the measured p90's joint bracket on \d+ of \d+, p95 on \d+$`, mt.info.Evidence)
 	require.NotNil(t, mt.info.P95Ratio)
 	top := *mt.info.MeasuredUpTo
 	assert.InDelta(t, 13.5, top, 0.5, "the highest step rate the window served")
@@ -144,6 +144,32 @@ func TestMainViewTPOT_ExperimentalModelPricesThePercentileCurve(t *testing.T) {
 	assert.False(t, limit.Extrapolated, "a limit under the load served is not extrapolated")
 	assert.InEpsilon(t, target, mt.ratio(0.9)*(0.005+*limit.Value/1000), 1e-9, "the p90 at the limit is the target")
 	assert.Contains(t, strings.Join(out.Assumed, "; "), "experimental TPOT distribution")
+}
+
+// The per-length mixture (whatif.TPOTPerLengthMixture) is fitted and named as
+// the one lognormal is, and prices each rate at the source window's pooled
+// output lengths: its ratio is the mixture's quantile at a mean of one, not
+// the lognormal's at the pooled E[1/(L-1)]. An unknown model is refused.
+func TestMainViewTPOT_PerLengthMixture(t *testing.T) {
+	e, _ := tdEntries(t, 960)
+	e.doc.Fleet.Decode.Replicas = 2
+	e.engine = EngineSlots{DecodeSlots: 64, SpecTokens: 3}
+	one, mix := fitMainTPOT(e, "", 0), fitMainTPOT(e, whatif.TPOTPerLengthMixture, 0)
+	require.Empty(t, one.info.Abstained)
+	require.Empty(t, mix.info.Abstained)
+	assert.Equal(t, whatif.TPOTRenewalLognormal, one.info.Model)
+	assert.Equal(t, whatif.TPOTPerLengthMixture, mix.info.Model)
+	assert.Empty(t, one.dist.PerLength)
+	require.NotEmpty(t, mix.dist.PerLength)
+	require.NotNil(t, mix.info.P90Ratio)
+	assert.InDelta(t, mix.dist.Quantile(1, 0, 0.9), *mix.info.P90Ratio, 1e-12)
+	assert.NotEqual(t, *one.info.P90Ratio, *mix.info.P90Ratio)
+	assert.Contains(t, mix.tq.report.Assumed, "one lognormal per length")
+	_, err := tpotModelOf("renewal-lognormal-mix", "")
+	require.Error(t, err)
+	m, err := tpotModelOf("", whatif.TPOTPerLengthMixture)
+	require.NoError(t, err)
+	assert.Equal(t, whatif.TPOTPerLengthMixture, m)
 }
 
 // The p90 and the p95 are priced, each at its own ratio: the curve is the
@@ -218,10 +244,10 @@ func TestMainViewTPOT_DefaultStandsWhereTheModelDoesNotPrice(t *testing.T) {
 	}
 	short, _ := tdEntries(t, 200)
 	short.engine = EngineSlots{DecodeSlots: 64, SpecTokens: 3}
-	assert.Contains(t, fitMainTPOT(short).info.Abstained, "fit steps")
+	assert.Contains(t, fitMainTPOT(short, "", 0).info.Abstained, "fit steps")
 	nodecode, _ := tdEntries(t, 960)
 	nodecode.decode = nil
-	assert.Contains(t, fitMainTPOT(nodecode).info.Abstained, "decode series")
+	assert.Contains(t, fitMainTPOT(nodecode, "", 0).info.Abstained, "decode series")
 }
 
 // An inputs request names the model, and gets an entry of its own; on the
@@ -497,7 +523,7 @@ func TestDayPlan_ExperimentalTPOTModelLeavesTheDayPlanToTheDefault(t *testing.T)
 		tdRouter(e.latency, e.decode, len(e.series)*3/4)
 		e.engine.DecodeSlots, e.engine.SpecTokens = 64, 3
 		if model {
-			e.tpotModel = fitMainTPOT(e)
+			e.tpotModel = fitMainTPOT(e, "", 0)
 			require.True(t, e.tpotModel.priced(), e.tpotModel.info.Abstained)
 			require.NotNil(t, e.ttftModel)
 		}
@@ -510,14 +536,14 @@ func TestDayPlan_ExperimentalTPOTModelLeavesTheDayPlanToTheDefault(t *testing.T)
 }
 
 // A day plan asked for the experimental models prices each bucket at its
-// own rate but at the window's request shape, the one the models were
-// fitted at, even where its cycles read lengths of their own (as a
-// recording's do): every bucket with data is flagged WindowShape, the
-// model prices the buckets it would on a window that read no lengths, need
-// for need, and a note says the per-bucket shape is not modelled. Unasked,
-// each bucket keeps its own shape. A stated shape stays the planner's own,
-// and so does a TPOT target at the mean, which the TPOT model does not
-// price; the note says why for each.
+// own rate and, where its cycles read lengths of their own (as a
+// recording's do) inside what the model's fit served, at its own shape:
+// the model draws from the bucket's own histograms, here the window's
+// shape throughout, so it prices the buckets it would on a window that
+// read no lengths, need for need, and a note says how. Unasked, each
+// bucket keeps its own shape, the planner's own. A stated shape stays the
+// planner's own, and so does a TPOT target at the mean, which the TPOT
+// model does not price; the note says why for each.
 func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 	dayPlan := func(s *Server, e *inputsEntry, req DayPlanRequest) (DayPlanResponse, string) {
 		t.Helper()
@@ -529,7 +555,7 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 		return out, strings.Join(out.Notes, "\n")
 	}
 	ttft := &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}}
-	const windowNote = "each bucket is priced at its own rate but at the window's request shape"
+	const modelNote = "a bucket is priced at its own rate and its own request shape"
 
 	s, e := mainEntry(t, true)
 	require.True(t, slices.ContainsFunc(e.series, func(x SeriesSample) bool { return x.HasShape }), "the cycles read their lengths")
@@ -537,20 +563,22 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 	require.Positive(t, out.Summary.Counts.Sized)
 	require.NotNil(t, out.TTFTModel)
 	require.Empty(t, out.TTFTModel.Abstained)
-	assert.Contains(t, text, windowNote)
+	assert.Contains(t, text, modelNote)
 	priced := 0
 	for _, b := range out.Buckets {
 		if b.Status == BucketNoData {
 			continue
 		}
-		assert.Contains(t, b.Flags, FlagWindowShape, "the bucket at %s is priced at the window's shape", b.Start)
-		assert.Equal(t, "window", b.Shape.Source)
-		assert.Nil(t, b.Shape.PromptTokens)
+		if b.Needed != nil {
+			assert.NotContains(t, b.Flags, FlagWindowShape, "the bucket at %s is priced at its own shape", b.Start)
+			assert.Equal(t, "bucket", b.Shape.Source)
+			assert.NotNil(t, b.Shape.Model)
+		}
 		if b.Limit != nil && slices.Contains(b.Limit.Flags, string(whatif.RankMixtureTTFT)) {
 			priced++
 		}
 	}
-	require.Positive(t, priced, "at the window's shape, the model prices buckets whose cycles read their own")
+	require.Positive(t, priced, "the model prices buckets whose cycles read their own shape")
 	t.Logf("shapes kept: the TTFT model priced %d of the %d sized buckets", priced, out.Summary.Counts.Sized)
 	assert.Contains(t, text, fmt.Sprintf("priced %d of the %d sized buckets", priced, out.Summary.Counts.Sized))
 
@@ -569,7 +597,7 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 
 	// Unasked, each bucket is priced at its own shape, as before.
 	plain, plainText := dayPlan(s, e, DayPlanRequest{SLO: ttft})
-	assert.NotContains(t, plainText, windowNote)
+	assert.NotContains(t, plainText, modelNote)
 	for _, b := range plain.Buckets {
 		if b.Status != BucketNoData {
 			assert.NotContains(t, b.Flags, FlagWindowShape)
@@ -580,7 +608,7 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 	// A stated shape keeps today's rule: every bucket at it, the planner's own.
 	stated, text := dayPlan(s, e, DayPlanRequest{ExperimentalModels: true, SLO: ttft, Traffic: &Traffic{Mix: &Mix{PromptTokens: 4000}}})
 	require.Positive(t, stated.Summary.Counts.Sized)
-	assert.NotContains(t, text, windowNote)
+	assert.NotContains(t, text, modelNote)
 	for _, b := range stated.Buckets {
 		if b.Status != BucketNoData {
 			assert.Equal(t, dayShapeStated, b.Shape.Source)
@@ -598,18 +626,30 @@ func TestDayPlan_ExperimentalModelsSayWhyABucketIsThePlanners(t *testing.T) {
 	require.Empty(t, out.TPOTModel.Abstained)
 	assert.Contains(t, text, fmt.Sprintf("priced 0 of the %d sized buckets", out.Summary.Counts.Sized), "a mean TPOT is the planner's")
 	assert.Contains(t, text, fmt.Sprintf("the model prices p90 and p95, not mean (%d)", out.Summary.Counts.Sized))
-	// A model that prices no target the plan asks buys nothing at the
-	// window's shape: each bucket keeps its own.
+	// A model that prices no target the plan asks reads no bucket's shape:
+	// each bucket keeps its own, the planner's.
 	require.True(t, slices.ContainsFunc(e.series, func(x SeriesSample) bool { return x.HasShape }), "the cycles read their lengths")
-	assert.NotContains(t, text, windowNote)
+	assert.NotContains(t, text, modelNote)
 	for _, b := range out.Buckets {
 		if b.Status != BucketNoData {
 			assert.Equal(t, "bucket", b.Shape.Source, "bucket %s", b.Start)
 			assert.NotContains(t, b.Flags, FlagWindowShape, "bucket %s", b.Start)
 		}
 	}
-	// At a p90 TPOT target it prices, and the buckets are at the window's.
-	_, text = dayPlan(s, e, DayPlanRequest{ExperimentalModels: true,
+	// At a p90 TPOT target it prices each bucket at its own shape, its ratio
+	// the window's.
+	out, text = dayPlan(s, e, DayPlanRequest{ExperimentalModels: true,
 		SLO: &SLORequest{TTFT: &Objective{Statistic: "p90", Target: f64(3)}, TPOT: &Objective{Statistic: "p90", Target: f64(tpotTarget)}}})
-	assert.Contains(t, text, windowNote)
+	assert.Contains(t, text, "With the experimental TPOT model, a bucket is priced at its own rate and its own request shape")
+	priced = 0
+	for _, b := range out.Buckets {
+		if b.Needed != nil {
+			assert.Equal(t, "bucket", b.Shape.Source, "bucket %s", b.Start)
+			assert.NotContains(t, b.Flags, FlagWindowShape, "bucket %s", b.Start)
+			if slices.Contains(b.Limit.Flags, string(whatif.TPOTDistribution)) {
+				priced++
+			}
+		}
+	}
+	assert.Positive(t, priced, "the TPOT model prices buckets at their own shape")
 }

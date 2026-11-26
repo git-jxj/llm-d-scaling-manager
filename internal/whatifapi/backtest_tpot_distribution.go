@@ -5,6 +5,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
 
@@ -42,7 +43,7 @@ type TPOTDistCheck struct {
 	Inv    float64 `json:"inv"`
 	// KS is the largest gap under a bucket edge (TPOTDistScore), at the
 	// predicted mean; P90Inside and P95Inside say the predicted percentile
-	// lies in the measured one's bucket.
+	// lies in the measured one's joint bracket (TPOTDistScore).
 	KS        *float64 `json:"ks,omitempty"`
 	P90Inside *bool    `json:"p90Inside,omitempty"`
 	P95Inside *bool    `json:"p95Inside,omitempty"`
@@ -51,14 +52,19 @@ type TPOTDistCheck struct {
 	Refused   string `json:"refused,omitempty"`
 	Abstained bool   `json:"abstained,omitempty"`
 	// planner is the planner's own p90 and p95 the distribution replaced,
-	// for the score's comparison.
+	// for the score's comparison; law the step's output lengths the
+	// per-length mixture priced it at.
 	planner []*float64
+	law     []whatif.LengthGroup
 }
 
 // tpotDistQ is a backtest's fitted distribution (whatif.TPOTDistFitted).
 type tpotDistQ struct {
 	c      float64
 	report TPOTDistReport
+	// perLength says the distribution is the per-length mixture
+	// (whatif.TPOTPerLengthMixture).
+	perLength bool
 	// stepRates is each fit step's mean arrival rate over the cycles it
 	// holds that read one, beside the steps the fit read: the loads the
 	// fit window served (tpot_model_main.go).
@@ -78,8 +84,10 @@ func decodeWindow(e *inputsEntry, idx []int, from, to time.Time) []whatif.Decode
 
 // routerTPOTStep is the step anchored at the cycle a of e
 // (whatif.RouterTPOTStepAt): its router TPOT histogram and mean over the
-// router's window, and the decode cycles of that window among idx. ok is
-// false where the router's TPOT or the output lengths are not read.
+// router's window, the decode cycles of that window among idx, and the
+// decode engines' TPOT histogram the cycle read (withEngineTPOT), which the
+// step's joint bracket reads (whatif.JointBracket). ok is false where the
+// router's TPOT or the output lengths are not read.
 func routerTPOTStep(e *inputsEntry, idx []int, a int) (whatif.TPOTDistStep, bool) {
 	if a >= len(e.latency) {
 		return whatif.TPOTDistStep{}, false
@@ -88,23 +96,43 @@ func routerTPOTStep(e *inputsEntry, idx []int, a int) (whatif.TPOTDistStep, bool
 	return whatif.RouterTPOTStepAt(fitCycles(e, idx), &anchor)
 }
 
+// withEngineTPOT is st with the engines' TPOT histogram bs, its rates
+// counted over the minute they were read over (whatif.WithEngineTPOT).
+func withEngineTPOT(st whatif.TPOTDistStep, bs []domain.LatencyBucket) whatif.TPOTDistStep {
+	return whatif.WithEngineTPOT(st, bs)
+}
+
 // fitTPOTDist fits the distribution on the fit entry's cycles at fitIdx, cut
 // into steps of step (whatif.FitTPOTDistCycles); slots is the decode engine's
-// max-num-seqs and spec its num_speculative_tokens.
-func fitTPOTDist(fit *inputsEntry, fitIdx []int, step time.Duration, slots, spec int) *tpotDistQ {
+// max-num-seqs and spec its num_speculative_tokens. model is the
+// distribution (whatif.TPOTRenewalLognormal, or whatif.TPOTPerLengthMixture).
+// minSteps is the fewest steps it fits on, 0 MinTPOTDistFitSteps.
+func fitTPOTDist(fit *inputsEntry, fitIdx []int, step time.Duration, slots, spec int, model string, minSteps int) *tpotDistQ {
 	if len(fit.decode) != len(fit.series) {
-		return &tpotDistQ{report: TPOTDistReport{Model: whatif.TPOTRenewalLognormal, Experimental: true, FoldC: []float64{},
-			Fold: []TPOTDistScore{}, SpecTokens: spec, DecodeSlots: slots, Abstained: "the fit source did not give the decode series"}}
+		return &tpotDistQ{report: TPOTDistReport{Model: model, Experimental: true, FoldC: []float64{},
+			Fold: []TPOTDistScore{}, SpecTokens: spec, DecodeSlots: slots, Abstained: "the fit source did not give the decode series"},
+			perLength: model == whatif.TPOTPerLengthMixture}
 	}
-	f := whatif.FitTPOTDistCycles(fitCycles(fit, fitIdx), step, slots, spec)
-	return &tpotDistQ{c: f.C, report: f.Report, stepRates: f.StepRates}
+	return tpotDistQOf(whatif.FitTPOTDistCycles(fitCycles(fit, fitIdx), step, slots, spec, model, minSteps))
+}
+
+// tpotDistQOf is the backtest's distribution of the shared fit f.
+func tpotDistQOf(f *whatif.TPOTDistFitted) *tpotDistQ {
+	return &tpotDistQ{c: f.C, report: f.Report, perLength: f.PerLength, stepRates: f.StepRates}
+}
+
+// distAt is the fitted distribution at a step's group spread g2 and
+// renewal coefficient c, at the step's lengths law where it is the
+// per-length mixture (whatif.TPOTDistFitted.DistAt).
+func (tq *tpotDistQ) distAt(g2, c float64, law []whatif.LengthGroup) whatif.TPOTDist {
+	return (&whatif.TPOTDistFitted{Report: tq.report, PerLength: tq.perLength}).DistAt(g2, c, law)
 }
 
 // assumedLines is the distribution's assumed lines for the answer.
 func (tq *tpotDistQ) assumedLines() []string {
 	if tq.report.Abstained != "" {
 		return []string{fmt.Sprintf("experimental TPOT distribution %s abstained (%s): every TPOT percentile is the planner's own, flagged %s",
-			whatif.TPOTRenewalLognormal, tq.report.Abstained, whatif.TPOTDistributionAbstained)}
+			tq.report.Model, tq.report.Abstained, whatif.TPOTDistributionAbstained)}
 	}
 	return []string{tq.report.Assumed + "; no percentile is fitted (p90 and p95 are held out); every TPOT percentile is flagged " +
 		string(whatif.TPOTDistribution) + " and is OUTSIDE VALIDATED REGION"}
@@ -127,7 +155,8 @@ func (q *backtestQuestion) priceTPOTDist(pred *prediction, out *BacktestStep, st
 		return
 	}
 	at := q.test.series[st.anchor].At
-	inv, g2, ok := whatif.DecodeWindow(decodeWindow(q.test, st.window, st.windowStart, at))
+	window := decodeWindow(q.test, st.window, st.windowStart, at)
+	inv, g2, ok := whatif.DecodeWindow(window)
 	mean := pred.tpot[0].Value
 	switch {
 	case !ok:
@@ -139,8 +168,12 @@ func (q *backtestQuestion) priceTPOTDist(pred *prediction, out *BacktestStep, st
 		flag(whatif.TPOTDistribution)
 		return
 	}
-	d := whatif.TPOTDist{GroupCV2: g2, C: q.tpotDist.c}
-	out.TPOTDist = &TPOTDistCheck{Sigma2: d.Sigma2(inv), Inv: inv}
+	var law []whatif.LengthGroup
+	if q.tpotDist.perLength {
+		law, _ = whatif.DecodeWindowLaw(window)
+	}
+	d := q.tpotDist.distAt(g2, q.tpotDist.c, law)
+	out.TPOTDist = &TPOTDistCheck{Sigma2: d.Sigma2(inv), Inv: inv, law: law}
 	for i, s := range backtestStats {
 		if s == 0 {
 			continue
@@ -148,7 +181,7 @@ func (q *backtestQuestion) priceTPOTDist(pred *prediction, out *BacktestStep, st
 		if s == 0.9 || s == 0.95 {
 			out.TPOTDist.planner = append(out.TPOTDist.planner, pred.tpot[i].Value)
 		}
-		pred.tpot[i] = validate(figureOf(whatif.Answer{Value: d.Quantile(*mean, inv, s), Flags: []whatif.Flag{whatif.TPOTDistribution}},
+		pred.tpot[i] = validate(figureOf(whatif.Answer{Value: d.Quantile(*mean, inv, s), Flags: q.tpotDist.report.Flags()},
 			unitSeconds, true), whatif.FigurePercentileTPOT, s, whatif.FigureClass{}, 0)
 		pred.tpotBound[i] = nil
 	}
@@ -186,8 +219,9 @@ func (q *backtestQuestion) scoreTPOTDist(steps []stepOf, out *BacktestResponse) 
 		if !ok || mean == nil {
 			continue
 		}
-		d := whatif.TPOTDist{GroupCV2: chk.Sigma2 - q.tpotDist.c*chk.Inv, C: q.tpotDist.c}
-		ks, p90, p95 := sc.add(d, whatif.TPOTDistStep{Mean: st.Mean, Inv: chk.Inv, Edges: st.Edges, Counts: st.Counts}, *mean, chk.planner)
+		d := q.tpotDist.distAt(chk.Sigma2-q.tpotDist.c*chk.Inv, q.tpotDist.c, chk.law)
+		st.Inv = chk.Inv
+		ks, p90, p95 := sc.add(d, st, *mean, chk.planner)
 		chk.KS, chk.P90Inside, chk.P95Inside = ptr(ks), &p90, &p95
 	}
 	t := sc.score()
@@ -199,14 +233,15 @@ func (tq *tpotDistQ) note() string {
 	t := tq.report.Test
 	if tq.report.Abstained != "" || t == nil || t.Steps == 0 {
 		return fmt.Sprintf("Experimental TPOT distribution %s: not scored at the histogram's resolution (it priced no judged step).",
-			whatif.TPOTRenewalLognormal)
+			tq.report.Model)
 	}
 	return fmt.Sprintf("Experimental TPOT distribution %s at the router histogram's resolution, over %d judged steps: the largest gap "+
 		"between the predicted and the measured share of requests under a bucket edge has median %.3f and p90 %.3f (%.3f and %.3f "+
-		"placed at the measured mean: the shape alone); the predicted p90 lies in the bucket the measured p90 fell in on %d steps "+
-		"(the planner's own ratio: %d), the p95 on %d (own: %d).",
-		whatif.TPOTRenewalLognormal, t.Steps, t.KSMedian, t.KSP90, t.ShapeKSMedian, t.ShapeKSP90, t.P90Inside, deref(t.DefaultP90Inside),
-		t.P95Inside, deref(t.DefaultP95Inside))
+		"placed at the measured mean: the shape alone); the predicted p90 lies in the measured p90's joint bracket (the router's "+
+		"TPOT histogram and, above their first edge, the decode engines', at their sampling noise) on %d steps (the planner's own ratio: %d; "+
+		"under it %d, over it %d), the p95 on %d (own: %d; under %d, over %d).",
+		tq.report.Model, t.Steps, t.KSMedian, t.KSP90, t.ShapeKSMedian, t.ShapeKSP90, t.P90Inside, deref(t.DefaultP90Inside), t.P90Below,
+		t.P90Above, t.P95Inside, deref(t.DefaultP95Inside), t.P95Below, t.P95Above)
 }
 
 // deref is *p, 0 for nil.
