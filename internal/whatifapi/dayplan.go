@@ -623,7 +623,11 @@ func DayPlan(ctx context.Context, res *Resolved, req DayPlanRequest, whatifSchem
 		// The models are fitted on the source as POST /v1/inputs fits them:
 		// each one the source was resolved for (Resolved.Mixture, Decode),
 		// and read each bucket's own shape from the same series.
-		withModels(e, res, whatif.DefaultRankMixtureStratified)
+		o := res.TTFTModel
+		if o.Model == "" {
+			o = TTFTModelOptions{Model: string(whatif.QueueRankMixture), Stratified: whatif.DefaultRankMixtureStratified}
+		}
+		withModels(e, res, o)
 		e.mixture, e.decode, e.engine = res.Mixture, res.Decode, res.Engine
 	}
 	req.InputsID = e.id
@@ -683,7 +687,7 @@ func (q *dayQuestion) modelNotes(out *DayPlanResponse, sized map[int]sizedBucket
 	if m.ttft != nil {
 		info := m.ttft.info
 		out.TTFTModel = &info
-		notes = append(notes, note(TTFTModelLabel, string(whatif.QueueRankMixture), whatif.RankMixtureTTFT, info.Abstained, func(g *dayGroup) string {
+		notes = append(notes, note(info.Label, info.Model, whatif.RankMixtureTTFT, info.Abstained, func(g *dayGroup) string {
 			if q.noTTFT {
 				return "the plan prices no TTFT target"
 			}
@@ -714,12 +718,12 @@ func probeKnobs(g *dayGroup) Knobs {
 // withModels fits on e the experimental models res was resolved for: the
 // TTFT model where it carries each cycle's rank mixture, the TPOT model
 // where it carries each cycle's decode, each as POST /v1/inputs fits it.
-func withModels(e *inputsEntry, res *Resolved, stratified bool) {
+func withModels(e *inputsEntry, res *Resolved, o TTFTModelOptions) {
 	if res.Mixture != nil {
-		e.ttftModel = fitMainMixture(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, stratified)
+		e.ttftModel = fitMainMixture(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, o.switches())
 	}
 	if res.Decode != nil {
-		e.tpotModel = fitMainTPOT(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine})
+		e.tpotModel = fitMainTPOT(&inputsEntry{doc: e.doc, series: res.Series, latency: res.Latency, decode: res.Decode, engine: res.Engine}, res.TPOTMinFitSteps)
 	}
 }
 
@@ -897,8 +901,9 @@ func dayQuestionOf(e *inputsEntry, req DayPlanRequest) (*dayQuestion, error) {
 	q.e = e
 	if req.ExperimentalModels {
 		if q.models = e.models(); q.models == nil {
-			return nil, InputErrorf("experimentalModels: the inputs were resolved with no experimental model; resolve them with ttftModel %q "+
-				"or tpotModel %q (or start the server with --experimental-ttft=v2 or --experimental-tpot=v2)", whatif.QueueRankMixture, whatif.TPOTRenewalLognormal)
+			return nil, InputErrorf("experimentalModels: the inputs were resolved with no experimental model; resolve them with ttftModel %q or %q "+
+				"or tpotModel %q (or start the server with --experimental-ttft=v2 or =v2nl-line, or --experimental-tpot=v2)",
+				whatif.QueueRankMixture, whatif.QueueRankMixtureNLLine, whatif.TPOTRenewalLognormal)
 		}
 	}
 	q.lead = DayLeads{Prefill: leadOf(q.lead.Prefill, e.doc.Fleet.Prefill), Decode: leadOf(q.lead.Decode, &e.doc.Fleet.Decode)}

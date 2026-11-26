@@ -8,9 +8,9 @@ import (
 )
 
 // --experimental-ttft=v2nl-line sets v2 and the variant where the flag takes
-// it (backtest), and is refused where it does not (answer, serve); every
-// other value clears the variant. =v2nl, the attention variant, is not a
-// value.
+// it (backtest, serve, at-replicas), and is refused where it does not;
+// every other value clears the variant. =v2nl, the attention variant, is
+// not a value.
 func TestExperimentalTTFTValue_V2NLLine(t *testing.T) {
 	var sw, v2, line bool
 	v := experimentalTTFTValue{switches: &sw, v2: &v2, nlLine: &line}

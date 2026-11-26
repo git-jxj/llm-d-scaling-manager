@@ -176,6 +176,10 @@ func (mm *mainMixture) computedAt(n int) (map[float64]float64, whatif.Flag, stri
 	return whatif.ComputedAtScale(computed, mm.pooled.Prompt, r.ComputedScale), flag, note
 }
 
+// TTFTModelNLLineLabel names the variant whatif.QueueRankMixtureNLLine on
+// the TTFT figure and its curve, so the page says which model priced.
+const TTFTModelNLLineLabel = TTFTModelLabel + " v2nl-line"
+
 // ttftModelOf is the model a source is resolved with: the request's, else
 // the server's. An unknown model is the caller's error.
 func ttftModelOf(req, server string) (string, error) {
@@ -183,18 +187,60 @@ func ttftModelOf(req, server string) (string, error) {
 	if m == "" {
 		m = server
 	}
-	if m != "" && m != string(whatif.QueueRankMixture) {
-		return "", InputErrorf("ttftModel %q, want %q or none", m, whatif.QueueRankMixture)
+	if m != "" && m != string(whatif.QueueRankMixture) && m != string(whatif.QueueRankMixtureNLLine) {
+		return "", InputErrorf("ttftModel %q, want %q, %q or none", m, whatif.QueueRankMixture, whatif.QueueRankMixtureNLLine)
 	}
 	return m, nil
 }
 
-// fitMainMixture fits the model on e's cycles up to the cycle answered, cut
-// into DefaultBacktestStep steps, with the prefill engine's max-num-seqs
-// read from the source; stratified prices it with the stratified service
-// moments (whatif.RankMixtureOptions.StratifiedMoments).
-func fitMainMixture(e *inputsEntry, stratified bool) *mainMixture {
-	mm := &mainMixture{info: TTFTModelInfo{Model: string(whatif.QueueRankMixture), Experimental: true, Label: TTFTModelLabel}}
+// TTFTModelOptions is how the main view's experimental TTFT model is
+// fitted, as a backtest's request fits it (BacktestRequest TTFTModel and
+// its rank-mixture switches): Model is whatif.QueueRankMixture or
+// whatif.QueueRankMixtureNLLine, and Stratified prices v2 with the
+// stratified service moments (the variant always does).
+type TTFTModelOptions struct {
+	Model      string
+	Stratified bool
+	// KVHold and RemainderSpread are the variant's modes
+	// (BacktestRequest RankMixtureKVHold, RankMixtureRemainderSpread), and
+	// MinFitWindow the shortest fit window either model prices from
+	// (BacktestRequest.RankMixtureMinFitWindow), 0 the default.
+	KVHold, RemainderSpread bool
+	MinFitWindow            time.Duration
+}
+
+// switches is the backtest's switches the options turn on.
+func (o TTFTModelOptions) switches() rankMixtureSwitches {
+	return rankMixtureSwitches{stratified: o.Stratified, nlLine: o.Model == string(whatif.QueueRankMixtureNLLine),
+		kvHold: o.KVHold, remainderSpread: o.RemainderSpread, minFitWindow: o.MinFitWindow}
+}
+
+// moved says the options fit the model other than its defaults do, apart
+// from Stratified: a mode on, or another shortest fit window.
+func (o TTFTModelOptions) moved() bool {
+	return o.KVHold || o.RemainderSpread || o.MinFitWindow > 0
+}
+
+// Check refuses options the model does not take: the modes are the
+// variant's only.
+func (o TTFTModelOptions) Check() error {
+	if (o.KVHold || o.RemainderSpread) && o.Model != string(whatif.QueueRankMixtureNLLine) {
+		return InputErrorf("rankMixtureKVHold and rankMixtureRemainderSpread are modes of ttftModel %q: give them with that model",
+			whatif.QueueRankMixtureNLLine)
+	}
+	return nil
+}
+
+// fitMainMixture fits the model sw names on e's cycles up to the cycle
+// answered, cut into DefaultBacktestStep steps, with the prefill engine's
+// max-num-seqs read from the source, as a backtest fits it on its fit
+// window (fitRankMixtureSteps).
+func fitMainMixture(e *inputsEntry, sw rankMixtureSwitches) *mainMixture {
+	label := TTFTModelLabel
+	if sw.nlLine {
+		label = TTFTModelNLLineLabel
+	}
+	mm := &mainMixture{info: TTFTModelInfo{Model: string(sw.model()), Experimental: true, Label: label}}
 	if p := e.doc.Fleet.Prefill; p != nil {
 		mm.prefill = p.Replicas
 	}
@@ -220,7 +266,7 @@ func fitMainMixture(e *inputsEntry, stratified bool) *mainMixture {
 			idx = append(idx, i)
 		}
 	}
-	rq, steps, err := fitRankMixtureSteps(e, idx, DefaultBacktestStep, e.engine.PrefillSlots, rankMixtureSwitches{stratified: stratified})
+	rq, steps, err := fitRankMixtureSteps(e, idx, DefaultBacktestStep, e.engine.PrefillSlots, sw)
 	if err != nil {
 		return abstain(err.Error())
 	}
@@ -240,9 +286,12 @@ func fitMainMixture(e *inputsEntry, stratified bool) *mainMixture {
 	}
 	first := e.series[idx[0]].At
 	mm.pooled = whatif.MixtureStepOf(mixtureWindow(e, idx, first.Add(-time.Nanosecond), answered), answered)
-	o := whatif.RankMixtureOptions{Slots: rq.m.Slots, MinSpreadSpan: whatif.MinSpreadFitWindow, SpreadFloor: whatif.MinSpread,
-		StratifiedMoments: stratified}
-	if h := whatif.RankMixtureHeldOut(steps, o, rq.m.Spread, BacktestTolerance); h.Steps > 0 {
+	o := sw.options(rq.m.Slots)
+	h := whatif.RankMixtureHeldOut(steps, o, rq.m.Spread, BacktestTolerance)
+	if sw.nlLine {
+		h = whatif.RankMixtureNLHeldOut(steps, o, BacktestTolerance)
+	}
+	if h.Steps > 0 {
 		mm.info.HeldOut = &HeldOutScore{Statistic: statisticMean, Within: h.Within, Low: h.Low, Steps: h.Steps, MedianRatio: h.MedianRatio,
 			RateFrom: h.RateLo, RateTo: h.RateHi, Prefill: mm.prefill, Decode: e.doc.Fleet.Decode.Replicas}
 		mm.info.Evidence = heldOutWords(h.Within, h.Steps)
@@ -405,13 +454,25 @@ func (f *mixtureFleet) TTFTAt(rate float64) whatif.Result {
 	return whatif.TTFT{Seconds: v, Independent: v, Pooled: v, Floor: f.floor, Flags: f.flags()}
 }
 
-// flags are the flags of a TTFT the model prices: RankMixtureTTFT, and the
-// prefix hit's at another prefill count (mainMixture.computedAt).
+// flags are the flags of a TTFT the model prices: RankMixtureTTFT, the fit
+// window's (RankMixtureReport.shortFlags), and the prefix hit's at another
+// prefill count (mainMixture.computedAt).
 func (f *mixtureFleet) flags() []whatif.Flag {
+	out := f.mm.modelFlags()
 	if f.hitFlag != "" {
-		return []whatif.Flag{whatif.RankMixtureTTFT, f.hitFlag}
+		out = append(out, f.hitFlag)
 	}
-	return []whatif.Flag{whatif.RankMixtureTTFT}
+	return out
+}
+
+// modelFlags is the flags every figure the model sets carries:
+// RankMixtureTTFT, and RankMixtureShortFitWindow where it was fitted on a
+// window under the default (RankMixtureReport.ShortFitWindow).
+func (mm *mainMixture) modelFlags() []whatif.Flag {
+	if mm == nil || mm.rq == nil {
+		return []whatif.Flag{whatif.RankMixtureTTFT}
+	}
+	return append([]whatif.Flag{whatif.RankMixtureTTFT}, mm.rq.report.shortFlags()...)
 }
 
 // TTFTPoint is TTFTAt with the planner's notes.
@@ -482,7 +543,7 @@ func (mm *mainMixture) view(fl Fleet, k Knobs) *TTFTModelView {
 	if mm == nil {
 		return nil
 	}
-	v := &TTFTModelView{Model: mm.info.Model, Experimental: true, Label: TTFTModelLabel, Evidence: mm.info.Evidence}
+	v := &TTFTModelView{Model: mm.info.Model, Experimental: true, Label: mm.info.Label, Evidence: mm.info.Evidence}
 	f, ok := fl.(*mixtureFleet)
 	if !ok {
 		v.NotPriced = mm.notPricedAt(k)
@@ -515,7 +576,10 @@ func (mm *mainMixture) applyToReport(out *ReportResponse, q ReportQuery) {
 	}
 	scale := float64(mm.prefill) / float64(out.Fleet.Prefill)
 	computed, hitFlag, hitNote := mm.computedAt(out.Fleet.Prefill)
-	flags := []string{string(whatif.RankMixtureTTFT)}
+	var flags []string
+	for _, fl := range mm.modelFlags() {
+		flags = append(flags, string(fl))
+	}
 	if hitFlag != "" {
 		flags = append(flags, string(hitFlag))
 	}
@@ -558,10 +622,14 @@ func (mm *mainMixture) applyToReport(out *ReportResponse, q ReportQuery) {
 			}
 		}
 		if moved {
-			if !slices.Contains(sh.Flags, string(whatif.RankMixtureTTFT)) {
-				sh.Flags = append(sh.Flags, string(whatif.RankMixtureTTFT))
+			// The shape's flags are every flag its figures carry: the
+			// short fit window's and the prefix hit's as well.
+			for _, fl := range flags {
+				if !slices.Contains(sh.Flags, fl) {
+					sh.Flags = append(sh.Flags, fl)
+				}
 			}
-			line := TTFTModelLabel + " (" + string(whatif.QueueRankMixture) + ") prices the table's TTFT up to the lower knee"
+			line := TTFTModelLabel + " (" + mm.info.Model + ") prices the table's TTFT up to the lower knee"
 			if mm.info.Evidence != "" {
 				line += " (" + mm.info.Evidence + ")"
 			}
@@ -575,11 +643,11 @@ func (mm *mainMixture) applyToReport(out *ReportResponse, q ReportQuery) {
 
 // ApplyTTFTModel fits the experimental TTFT model on res, a source resolved
 // with InputsRequest.TTFTModel, and prices out's TTFT tables with it as
-// POST /v1/report does: at-replicas --experimental-ttft=v2, stratified its
-// --rank-mixture-stratified (InputsRequest.RankMixtureStratified). It
+// POST /v1/report does: at-replicas --experimental-ttft=v2 or =v2nl-line,
+// fitted as o says (o.Stratified its --rank-mixture-stratified). It
 // returns the model as fitted, abstained or not.
-func ApplyTTFTModel(res *Resolved, out *ReportResponse, q ReportQuery, stratified bool) *TTFTModelInfo {
-	mm := fitMainMixture(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, stratified)
+func ApplyTTFTModel(res *Resolved, out *ReportResponse, q ReportQuery, o TTFTModelOptions) *TTFTModelInfo {
+	mm := fitMainMixture(&inputsEntry{doc: res.Inputs, series: res.Series, latency: res.Latency, mixture: res.Mixture, engine: res.Engine}, o.switches())
 	mm.applyToReport(out, q)
 	info := mm.info
 	return &info
@@ -700,11 +768,11 @@ func (f *mixtureFleet) sharedRate(target float64) float64 {
 func (f *mixtureFleet) prefillLimit(target float64) whatif.Result {
 	r, atEnd, ok := f.rateAtTarget(target)
 	if !ok {
-		return whatif.Unanswerable{Reason: whatif.TargetBelowFloor, Flags: []whatif.Flag{whatif.RankMixtureTTFT},
+		return whatif.Unanswerable{Reason: whatif.TargetBelowFloor, Flags: f.mm.modelFlags(),
 			Detail: fmt.Sprintf("the experimental TTFT model prices a TTFT over %.3g s at every rate", target)}
 	}
 	a := whatif.Answer{Value: r, Flags: f.limitFlags(atEnd)}
-	a.Basis.BoundBy = []whatif.Bound{whatif.Bound("TTFT, " + string(whatif.QueueRankMixture))}
+	a.Basis.BoundBy = []whatif.Bound{whatif.Bound("TTFT, " + f.mm.info.Model)}
 	if atEnd {
 		a.Basis.BoundBy = []whatif.Bound{whatif.Bound("the highest rate the experimental TTFT model prices")}
 	}
@@ -716,9 +784,9 @@ func (f *mixtureFleet) prefillLimit(target float64) whatif.Result {
 // bound (endAtLeast).
 func (f *mixtureFleet) limitFlags(atEnd bool) []whatif.Flag {
 	if atEnd && f.endAtLeast {
-		return []whatif.Flag{whatif.RankMixtureTTFT, whatif.VPLowerBound}
+		return append(f.mm.modelFlags(), whatif.VPLowerBound)
 	}
-	return []whatif.Flag{whatif.RankMixtureTTFT}
+	return f.mm.modelFlags()
 }
 
 // fleetLimit is the fleet's limit at headroom: the lowest of headroom
@@ -761,8 +829,10 @@ func (f *mixtureFleet) fleetLimit(headroom float64, decode, prefill whatif.Resul
 			}
 		}
 	}
-	if !slices.Contains(a.Flags, whatif.RankMixtureTTFT) {
-		a.Flags = append(a.Flags, whatif.RankMixtureTTFT)
+	for _, fl := range f.mm.modelFlags() {
+		if !slices.Contains(a.Flags, fl) {
+			a.Flags = append(a.Flags, fl)
+		}
 	}
 	return a
 }
