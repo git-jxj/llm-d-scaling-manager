@@ -21,15 +21,16 @@ import (
 // fit's count N, and the computed tokens a request with it:
 //
 //   - N' = N: h, nothing moves.
-//   - N' < N, with the engine's KV residency histograms (ReuseHistograms):
-//     the reuse-gap rule. The histograms close Che's occupancy equation at
-//     the fit; at N' a pod takes N/N' times the block accesses with the same
-//     reuse gaps (affinity keeps a prefix on one pod), so the cache horizon
-//     T' solves the occupancy at N', and the hits priced are those whose gap
-//     is under T'. Never above h, but not a floor: in the lab simulation it
-//     read over the truth from 4 pods to 2, where duplication changes
-//     between the counts. Untested on real data, and no caller passes the
-//     histograms yet.
+//   - N' != N, with the engines' KV residency histograms (ReuseHistograms):
+//     the reuse-gap rule, Che's characteristic time over a reuse-gap law
+//     fitted at N (HitModel, hit_model.go), at fewer pods and at more. The
+//     histograms close Che's occupancy equation at the fit; at N' a pod
+//     takes N/N' times the block accesses with the same reuse gaps
+//     (affinity keeps a prefix on one pod), so the cache horizon T' solves
+//     the occupancy at N', and the hits priced are those whose gap is under
+//     T'. It is held to the bracket below; with no tier past the GPU the
+//     law's ceiling is assumed, and at more pods the miss is held to fall
+//     no faster than the pods rise, 1 - h' >= (1 - h) N/N'.
 //   - N' < N without them: the floor h x N'/N. The hit is concave in each
 //     pod's cache over its working set, so it is at least that; on every
 //     measured and simulated pair of the lab run it read at or under the
@@ -51,7 +52,8 @@ const (
 	HitSameCount HitRule = "same"
 	// HitFloor is the concavity floor h x N'/N, at fewer pods.
 	HitFloor HitRule = "floor"
-	// HitReuseGap is the reuse-gap rule, at fewer pods.
+	// HitReuseGap is the reuse-gap rule (HitModel), at fewer or more
+	// pods.
 	HitReuseGap HitRule = "gap"
 	// HitHeld is the fit's hit held, at more pods.
 	HitHeld HitRule = "held"
@@ -66,13 +68,12 @@ type ReuseBucket struct {
 // ReuseHistograms are a prefill variant's KV residency histograms over the
 // fit's window (vLLM with --kv-cache-metrics), summed over its pods: Gap is
 // vllm:kv_block_reuse_gap_seconds, one observation per block hit, the time
-// since the block's last use, and GapSum its _sum; Idle is
+// since the block's last use; Idle is
 // vllm:kv_block_idle_before_evict_seconds, one observation per block
 // evicted, the time it sat unused. Both cumulative, edges ascending.
 type ReuseHistograms struct {
-	Gap    []ReuseBucket
-	GapSum float64
-	Idle   []ReuseBucket
+	Gap  []ReuseBucket
+	Idle []ReuseBucket
 }
 
 // HitAtCount is the hit priced at a prefill count other than the fit's.
@@ -90,6 +91,10 @@ type HitAtCount struct {
 	// Computed is the computed tokens a request at Count, ComputedScale
 	// that over the fit's: (1 - h')/(1 - h).
 	Computed, ComputedScale float64
+	// GPUScale is the GPU prefix-cache hit at Count over the fit's, and
+	// TierScale the share of the tiers past the GPU at Count over the fit's:
+	// the reuse-gap rule's, 1 under any other.
+	GPUScale, TierScale float64
 }
 
 // Moved says the hit priced differs from the fit's.
@@ -97,91 +102,87 @@ func (a HitAtCount) Moved() bool { return a.Hit != a.FitHit }
 
 // HitAtCountOf prices the hit and the computed tokens a request at count,
 // from the fit's hit h and computed tokens a request on fitCount pods, with
-// the reuse-gap rule where reuse is non-nil and usable. ok is false where
-// nothing can be priced: a count or the fit's count under 1, h outside [0, 1)
-// or not a number, or computed not a positive finite number; the caller then
-// keeps the fit's figures. At h = 0 the hit stays 0 at every count.
-func HitAtCountOf(h, computed float64, fitCount, count int, reuse *ReuseHistograms) (HitAtCount, bool) {
+// the reuse-gap rule where m is non-nil (FitHitModel), else the floor at
+// fewer pods and the fit's hit held at more. ok is false where nothing can
+// be priced: a count or the fit's count under 1, h outside [0, 1) or not a
+// number, or computed not a positive finite number; the caller then keeps
+// the fit's figures. At h = 0 the hit stays 0 at every count.
+func HitAtCountOf(h, computed float64, fitCount, count int, m *HitModel) (HitAtCount, bool) {
 	if fitCount < 1 || count < 1 || !(h >= 0 && h < 1) || !(computed > 0) || math.IsInf(computed, 0) {
 		return HitAtCount{}, false
 	}
 	x := float64(count) / float64(fitCount)
-	out := HitAtCount{FitHit: h, Hit: h, FitCount: fitCount, Count: count, Lo: h, Hi: h, Computed: computed, ComputedScale: 1}
+	out := HitAtCount{FitHit: h, Hit: h, FitCount: fitCount, Count: count, Lo: h, Hi: h, Computed: computed, ComputedScale: 1,
+		GPUScale: 1, TierScale: 1}
 	switch {
 	case count == fitCount:
 		out.Rule = HitSameCount
 		return out, true
 	case count > fitCount:
 		out.Rule, out.Hi = HitHeld, min(1, h*x)
-		return out, true
+	default:
+		out.Rule, out.Hit, out.Lo = HitFloor, h*x, h*x
 	}
-	out.Rule, out.Hit, out.Lo = HitFloor, h*x, h*x
-	if g, ok := reuseGapHit(h, fitCount, count, reuse); ok {
-		out.Rule, out.Hit = HitReuseGap, max(min(g, h), 0)
+	if r, ok := m.moveOf(fitCount, count); ok && h > 0 {
+		if m.CeilingAssumed && count > fitCount {
+			// No tier read the share ever reused, so the law's ceiling is
+			// 1 and at many more pods it prices every prompt token cached.
+			// The miss is held to fall no faster than the pods rise.
+			// Stated, not derived: the miss falls slower than that
+			// while each pod's cache holds a small part of the
+			// prefixes it serves, and the law is not trusted past it.
+			// On the lab run it priced 0.764 at 4 pods from 2 (0.792
+			// measured; the law alone 0.816).
+			out.Hi = min(out.Hi, 1-(1-h)/x)
+		}
+		out.Rule = HitReuseGap
+		out.Hit = min(max(r.move(h), out.Lo), out.Hi)
+		out.GPUScale, out.TierScale = r.gpu, r.tier
 	}
 	out.ComputedScale = (1 - out.Hit) / (1 - h)
 	out.Computed = computed * out.ComputedScale
 	return out, true
 }
 
-// reuseGapHit is the reuse-gap rule's hit at count < fitCount, false where
-// the histograms do not give it: no hit or no eviction counted, edges not
-// ascending, counts not cumulative, or a horizon not read.
-//
-// Occupancy, Che's approximation read as an identity: a pod's cache holds,
-// over a span, the sum over its block accesses of min(the gap to the next
-// access, T), T the cache horizon. A hit block holds its gap; every miss,
-// evicted after T idle, holds T. At the fit, with H hits, M misses (in steady
-// state every miss is evicted once, so M is the eviction count) and T the
-// median idle before eviction,
-//
-//	B ~ S(inf) + M T                        (per span, per pod)
-//
-// S(t) the sum of the hit gaps under t and H(t) their count. At N' < N one
-// pod takes N/N' times the accesses with the same gaps, so T' solves
-//
-//	(N/N') (S(T') + (M + H - H(T')) T') = S(inf) + M T
-//
-// and the hit is h H(T')/H: the hits whose gap is under the new horizon.
-// Gaps longer than T are evictions, never seen as gaps, so the rule works
-// downward only.
-func reuseGapHit(h float64, fitCount, count int, r *ReuseHistograms) (float64, bool) {
-	if r == nil {
-		return 0, false
+// hitMove is what the reuse-gap law moves from the fit's count to another
+// (HitModel.moveOf): the total hit, the GPU hit and the share of the tiers
+// past it, each as a ratio of the fit's.
+type hitMove struct {
+	t0, t1, gpu, tier float64
+}
+
+// move is h, a hit read at the fit, at the other count. Where h is the
+// law's own total, t0, it is t1. A caller whose h is read otherwise (a
+// histogram's mean) moves by the law's hit ratio, t1/t0, at or under t0,
+// and by its computed share's ratio, (1 - t1)/(1 - t0), above it: each
+// stays in [0, 1], where the other can leave it, and the first does not
+// amplify a low reading's error. On the lab run's 4-pod fit priced at 2
+// pods, a histogram reading 0.74 for the law's 0.81 moved by the computed
+// share's ratio to 0.38, the floor; by the hit ratio to 0.50 (0.48 measured
+// the same way).
+func (r hitMove) move(h float64) float64 {
+	if h <= r.t0 {
+		return h * r.t1 / r.t0
 	}
-	gap, okG := newReuseHist(r.Gap)
-	idle, okI := newReuseHist(r.Idle)
-	if !okG || !okI {
-		return 0, false
+	return 1 - (1-h)*(1-r.t1)/(1-r.t0)
+}
+
+// moveOf is the law's move from fitCount to count at the fit's rate, false
+// for a nil model or one that does not price both counts.
+func (m *HitModel) moveOf(fitCount, count int) (hitMove, bool) {
+	if m == nil {
+		return hitMove{}, false
 	}
-	t := idle.quantile(0.5)
-	if !(t > 0) || math.IsInf(t, 0) {
-		return 0, false
+	g0, t0, ok0 := m.HitAt(fitCount, 1)
+	g1, t1, ok1 := m.HitAt(count, 1)
+	if !ok0 || !ok1 || !(g0 > 0) || !(t0 < 1) {
+		return hitMove{}, false
 	}
-	hits, misses := gap.total(), idle.total()
-	all := gap.sumUnder(math.Inf(1))
-	if r.GapSum > 0 && !math.IsInf(r.GapSum, 0) {
-		all = r.GapSum
+	r := hitMove{t0: t0, t1: t1, gpu: g1 / g0, tier: 1}
+	if t0-g0 > 0 {
+		r.tier = (t1 - g1) / (t0 - g0)
 	}
-	target := all + misses*t
-	ratio := float64(fitCount) / float64(count)
-	occupancy := func(tp float64) float64 {
-		return ratio * (gap.sumUnder(tp) + (misses+hits-gap.countUnder(tp))*tp)
-	}
-	lo, hi := 0.0, t
-	if !(occupancy(hi) >= target) {
-		// The horizon at N' is at least the fit's: no fewer pods do that.
-		return 0, false
-	}
-	for range 100 {
-		mid := (lo + hi) / 2
-		if occupancy(mid) < target {
-			lo = mid
-		} else {
-			hi = mid
-		}
-	}
-	return h * gap.countUnder(lo) / hits, true
+	return r, true
 }
 
 // reuseHist is a cumulative histogram read with every observation spread
@@ -227,41 +228,6 @@ func (h reuseHist) bucket(i int) (lo, hi float64) {
 		hi = lo
 	}
 	return lo, hi
-}
-
-// countUnder is the observations under t.
-func (h reuseHist) countUnder(t float64) float64 {
-	n, _ := h.under(t)
-	return n
-}
-
-// sumUnder is the sum of the observations under t.
-func (h reuseHist) sumUnder(t float64) float64 {
-	_, s := h.under(t)
-	return s
-}
-
-// under is the count and the sum of the observations under t. A bucket
-// past the last finite edge holds its observations on that edge.
-func (h reuseHist) under(t float64) (n, s float64) {
-	prev := 0.0
-	for i := range h.edges {
-		c := h.counts[i] - prev
-		prev = h.counts[i]
-		lo, hi := h.bucket(i)
-		switch {
-		case hi == lo:
-			if t > lo {
-				n, s = n+c, s+c*lo
-			}
-		case t >= hi:
-			n, s = n+c, s+c*(lo+hi)/2
-		case t > lo:
-			part := c * (t - lo) / (hi - lo)
-			n, s = n+part, s+part*(lo+t)/2
-		}
-	}
-	return n, s
 }
 
 // quantile is the q quantile, interpolated in its bucket; the last finite

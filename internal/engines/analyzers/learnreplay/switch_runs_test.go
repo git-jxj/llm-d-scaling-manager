@@ -1828,8 +1828,11 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestHitAtCount_TheSameCountMovesNothing"},
 		{"../../../signals/prefill", "TestHitAtCount_Edges"},
 		{"../../../signals/prefill", "TestHitAtCount_TheFloor"},
-		{"../../../signals/prefill", "TestHitAtCount_TheReuseGapRule"},
-		{"../../../signals/prefill", "TestHitAtCount_TheReuseGapRuleFallsBackToTheFloor"},
+		{"../../../signals/prefill", "TestHitModel_TheLabCountTransfer"},
+		{"../../../signals/prefill", "TestHitAtCountOf_WithTheLaw"},
+		{"../../../signals/prefill", "TestFitHitModel_RefusesWhatDoesNotCloseIt"},
+		{"../../../signals/whatif", "TestComputedAtCount"},
+		{"../../../signals/whatif", "TestPromptWindow_HitModel"},
 	},
 	saturation.SwitchPrefillVPPromptCoverage: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},

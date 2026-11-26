@@ -1143,7 +1143,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 			if ferr != nil {
 				q.mixture = abstainedMixture(ferr.Error())
 			} else {
-				q.mixture = fitted.identified()
+				q.mixture = fitted.identified().withHitAtCount(fit, fitIdx)
 			}
 		}
 		q.mixture.report.Model = string(sw.model())

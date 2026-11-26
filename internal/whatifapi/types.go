@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 )
 
 // SchemaVersion is the API's own schema version. Removing, renaming or
@@ -143,6 +145,11 @@ type InputsResponse struct {
 	// at each prefill count (InputsRequest.PrefillHitAtCount); absent
 	// otherwise.
 	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
+	// PrefillHitModel is the reuse-gap law the prefix hit at another
+	// prefill count is priced with, fitted on the source's KV residency
+	// histograms (prefill.FitHitModel); absent with PrefillHitAtCount off
+	// or no histograms recorded.
+	PrefillHitModel *prefill.HitModel `json:"prefillHitModel,omitempty"`
 	// PrefillVPServiceLine says the source was read with V_P from the
 	// prefill service line (InputsRequest.PrefillVPServiceLine); absent
 	// otherwise.
