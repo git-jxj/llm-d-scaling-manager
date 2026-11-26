@@ -73,6 +73,26 @@ const SwitchTTFTProcessorSharing = "slo-ttft-processor-sharing"
 // stage").
 const SwitchTTFTRouterWait = "slo-ttft-router-wait"
 
+// SwitchTTFTRouterWaitInPrefill is the replay switch for
+// whatif.TTFTFleet.RouterWaitInPrefill: on, the router's wait past the
+// prefill flow-control onset is taken as already inside the
+// processor-sharing prefill price, as the capacity planner's
+// --router-wait-in-prefill (on by default there,
+// whatif.DefaultRouterWaitInPrefill) and the planner API's
+// assume.routerWait inPrefill take it. The figure does not move: where the
+// switch takes (processor sharing at a prompt spread up to
+// whatif.MaxPSPromptCV, a rate up to whatif.MaxRouterWaitKneeShare of the
+// prefill knee), the TTFT is flagged FlowControlWaitPriced in place of
+// AboveFlowControlOnset and read by its figure (whatif.TTFTMeets), and the
+// published rate may stand past the onset. Off, as before, the wait is
+// flagged AboveFlowControlOnset and is a miss however low the figure. Off
+// from the constructor, so the controller's verdict does not move until a
+// live check with the controller turns it on; a replay turns it on (issue
+// llm-d-incubation/llm-d-scaling-manager#367). Measured on llm-d-router
+// v1.0.0 only (#287); on v0.11.0 the figure reads short past the onset. With
+// SwitchTTFTRouterWait on too, the gate stage takes, as in the planner.
+const SwitchTTFTRouterWaitInPrefill = "slo-ttft-router-wait-in-prefill"
+
 // SwitchTTFTPSOnsets is the replay switch for whatif.TTFTFleet.PSOnsets: on,
 // the prefill flow-control onset is placed on the processor-sharing stage
 // the price runs on, a pod's prompts past its running cap counted as
@@ -674,7 +694,7 @@ func (a *Analyzer) priceTTFTVariants(logger logr.Logger, input domain.AnalyzerIn
 			transfer: a.transferPerToken(transfer, decodeRows, prompt), decode: decode, decodeVariant: decodeVariant,
 			transferHeld: a.ttftMeasuredTransfer && a.ttftQuietTransfer && transfer.Held,
 			decodeTTFT:   measured, term: term, legacyDecodeSum: !a.ttftDecodeTerm, flow: flow, mismatch: mismatch,
-			processorSharing: a.ttftProcessorSharing, routerWait: a.ttftRouterWait,
+			processorSharing: a.ttftProcessorSharing, routerWait: a.ttftRouterWait, routerWaitInPrefill: a.ttftRouterWaitInPrefill,
 			psOnsets: a.ttftPSOnsets, decodeGateCharge: a.ttftDecodeGateCharge,
 			acrossCounts: a.ttftImbalanceAcrossCounts, aFromJoint: aFromJoint,
 		}

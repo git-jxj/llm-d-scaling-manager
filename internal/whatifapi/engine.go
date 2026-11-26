@@ -58,6 +58,10 @@ type Resolved struct {
 	// Decode[i] the cycle of Series[i] (learnreplay.DecodeSeriesFrom); nil
 	// unless that model was asked for (BacktestRequest.TPOTModel).
 	Decode []whatif.DecodeCycle
+	// TPOTModel is the experimental TPOT distribution Decode was read for
+	// (whatif.TPOTRenewalLognormal or whatif.TPOTPerLengthMixture; "" the
+	// former), what a day plan and at-replicas fit on it.
+	TPOTModel string
 	// Engine is the engines' flags those models read, as the source gives
 	// them; zero where neither model was asked for. A backtest request that
 	// does not state them takes the fit's.

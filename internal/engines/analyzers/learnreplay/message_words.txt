@@ -2751,6 +2751,7 @@ removing
 rename
 renewal
 renewal-lognormal
+renewal-lognormal-per-length
 repeated
 replaced
 replacement
@@ -3135,6 +3136,7 @@ slo-ttft-ps-onsets
 slo-ttft-pull-work
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
+slo-ttft-router-wait-in-prefill
 slo-ttft-sizes-prefill
 slo-ttft-tier-kv-wait
 slo-ttft-tier-load
