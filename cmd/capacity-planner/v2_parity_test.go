@@ -101,4 +101,19 @@ func TestV2Parity_ControllerAndPlannerAgreeOnTheRecording(t *testing.T) {
 	_, tpot := plannerV2At(t, q32Recording, 0)
 	assert.NotEqual(t, *tpot.Fit, dropped.TPOT.Fitted.Report, "an input dropped on the controller side moves the fit")
 	assert.NotEmpty(t, dropped.TPOT.Abstained)
+
+	// The decode engines' TPOT histogram rides on the controller's decode
+	// cycle (whatif.DecodeCycle.EngineTPOT) and joins the router's in the
+	// fit's fold scores: dropped on the controller side alone, they move.
+	joined := 0
+	for _, f := range tpot.Fit.Fold {
+		joined += f.EngineJoined
+	}
+	require.Positive(t, joined, "the recording's decode engines read a TPOT histogram the folds join")
+	noEngine := controllerV2At(t, q32Recording, 0, func(in *domain.AnalyzerInput) {
+		for i := range in.ReplicaMetrics {
+			in.ReplicaMetrics[i].TPOTBuckets = nil
+		}
+	})
+	assert.NotEqual(t, tpot.Fit.Fold, noEngine.TPOT.Fitted.Report.Fold, "the engines' histogram dropped on the controller side moves the folds")
 }
