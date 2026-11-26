@@ -180,7 +180,7 @@ try {
   const v2 = copy(answer);
   v2.rankMixture = {model: "rank-mixture", experimental: true, abstained: "the spread is not calibrated <b>", assumed: ""};
   v2.tpotDistribution = {model: "renewal-lognormal", experimental: true, assumed: "C 0.4 fitted on 30 steps.",
-    test: {steps: 10, p90Inside: 7, p95Inside: 6, defaultP90Inside: 2, defaultP95Inside: 1}};
+    test: {steps: 10, p90Inside: 7, p95Inside: 6, defaultP90Inside: 2, defaultP95Inside: 1, p90Below: 1, p90Above: 2, p95Below: 3}};
   const vs = v2.steps.find(s => !s.excluded && btPoint(s, "tpot", "p90") && btPoint(s, "tpot", "p95"));
   for (const p of vs.ttft) p.predicted.flags = (p.predicted.flags || []).concat(["RankMixtureAbstained"]);
   for (const p of vs.tpot) if (p.statistic !== "mean") p.predicted.flags = (p.predicted.flags || []).concat(["TPOTDistribution"]);
@@ -188,7 +188,9 @@ try {
   const vl = btSummaryText(v2);
   check("the TTFT model's abstention says why", vl.some(l => l.startsWith("EXPERIMENTAL TTFT model v2") && l.includes("abstained: the spread is not calibrated")), vl.join(" | "));
   check("the TPOT model says it is experimental", vl.some(l => l.startsWith("EXPERIMENTAL TPOT model v2") && l.includes("outside the validated region")));
-  check("the TPOT model's bucket score is shown beside the planner's", vl.some(l => l.includes("p90 in the measured bucket at 7 of 10 steps (the planner's own: 2), p95 at 6 (the planner's own: 1)")));
+  check("the TPOT model's bracket score is shown beside the planner's, with its misses under and over", vl.some(l => l.includes(
+    "p90 in the measured joint bracket at 7 of 10 steps (the planner's own: 2), under it at 1 and over at 2; " +
+    "p95 at 6 (the planner's own: 1), under at 3 and over at 0.")), vl.join(" | "));
   check("what was not judged still follows the verdict", vl[v2.verdictLines.length] === v2.excluded);
   const vt = btStepTable(v2), vtip = btTipHTML(v2, vs);
   check("a TPOT v2 figure carries a dagger in the table and the tooltip", vt.includes("\u2020") && vtip.includes("\u2020"));
@@ -197,8 +199,8 @@ try {
   const abst = copy(v2);
   for (const s of abst.steps) for (const k of ["ttft", "tpot"]) for (const p of s[k] || []) p.predicted.flags = (p.predicted.flags || []).filter(f => f !== "TPOTDistribution");
   check("an abstained figure is the planner's own, with no dagger", !btStepTable(abst).includes("\u2020"));
-  check("TPOT p90 and p95 say whether they land in the measured bucket", vt.includes("(in the measured bucket)") && vt.includes("(not in the measured bucket)") &&
-    vtip.includes("(in the measured bucket)"), vtip);
+  check("TPOT p90 and p95 say whether they land in the measured bracket", vt.includes("(in the measured bracket)") && vt.includes("(not in the measured bracket)") &&
+    vtip.includes("(in the measured bracket)"), vtip);
   const priced = copy(v2);
   priced.rankMixture = {model: "rank-mixture", experimental: true, assumed: "S0 0.1 s."};
   check("a priced TTFT model says it is experimental", btSummaryText(priced).some(l => l.startsWith("EXPERIMENTAL TTFT model v2 (rank-mixture): every TTFT it prices is not validated")));

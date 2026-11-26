@@ -59,6 +59,8 @@ type dayPlanFlags struct {
 	rankMixtureTTFT  bool
 	experimentalTPOT string
 	tpotDistribution bool
+	// tpotModel is the distribution --experimental-tpot names.
+	tpotModel string
 	// rankMixtureNLLine is --experimental-ttft=v2nl-line, and
 	// rankMixtureFit the variant's modes and the shortest fit window
 	// (rank_mixture_fit.go): the TTFT model is fitted as serve fits it.
@@ -119,11 +121,11 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
-	on, err := experimentalTPOTOf(f.experimentalTPOT)
+	model, err := experimentalTPOTOf(f.experimentalTPOT)
 	if err != nil {
 		return err
 	}
-	f.tpotDistribution = on
+	f.tpotDistribution, f.tpotModel = model != "", model
 	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
 		return err
 	}
@@ -259,7 +261,7 @@ func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.
 		in.TTFTModel = rankMixtureModel(f.rankMixtureNLLine)
 	}
 	if f.tpotDistribution {
-		in.TPOTModel = whatif.TPOTRenewalLognormal
+		in.TPOTModel = f.tpotModel
 	}
 	src := &servedSources{warn: warn}
 	switch {

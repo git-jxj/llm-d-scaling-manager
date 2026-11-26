@@ -527,11 +527,12 @@ In a cluster, add both to the StatefulSet's `args`
   experimental and reads outside the validated region, with its fit; or
   that it abstained and why, and every figure is then the planner's own.
   For TPOT it adds in how many steps the predicted p90 and p95 fell in the
-  measured histogram bucket, beside the planner's own count. The step table
+  measured one's joint bracket, and under or over it, beside the planner's
+  own count ([the joint bracket](accuracy.md#where-a-measured-tpot-p90-or-p95-lies-the-joint-bracket)). The step table
   shows mean, p90 and p95 of TTFT and TPOT, predicted against measured.
   Each figure a model priced is marked `[experimental TTFT v2 ...]` or
   `[experimental TPOT v2 ...]`, one it abstained on `[... v2 abstained ...]`,
-  and each TPOT p90 and p95 says whether it is in the measured bucket.
+  and each TPOT p90 and p95 says whether it is in the measured bracket.
 - **What it costs.** Every source the server loads is read once more for
   each model, so loading is slower.
 - **The draws.** The v2 TTFT model reads each prefill rank's service from
@@ -596,8 +597,11 @@ In a cluster, add both to the StatefulSet's `args`
   and the planner's own ratio is read the same way.
 - **The evidence.** The caption names the "Experimental TPOT model" and its
   score on the source's held-out folds, at the measured mean: in how many
-  steps the predicted p90 and p95 fell in the router histogram's bucket the
-  measured one fell in. Each fold fits the model on the steps before its
+  steps the predicted p90 and p95 fell in the measured one's joint bracket:
+  the router's TPOT histogram and, above their first edge, the decode
+  engines', read together at their sampling noise
+  ([how](accuracy.md#where-a-measured-tpot-p90-or-p95-lies-the-joint-bracket)).
+  Each fold fits the model on the steps before its
   cut alone, so a source whose traffic changes over the window can score
   low here while the curve still lands in the measured buckets (see
   [Known issue](#known-issue-a-low-held-out-score)).
@@ -613,11 +617,17 @@ In a cluster, add both to the StatefulSet's `args`
 - **The CLI.** `at-replicas --experimental-tpot=v2` prices its tables' TPOT
   percentile the same way, from a `--recording`, at `--shape measured`.
   The default shape, the load's own, stays the planner's.
+- **The per-length mixture.** `--experimental-tpot=v2-mix` (`tpotModel`
+  `renewal-lognormal-per-length`) prices the same curve with one lognormal
+  per output-length group in place of one at their mean
+  ([accuracy](accuracy.md#experimental-the-per-length-mixture---experimental-tpotv2-mix)).
+  Every rate is priced at the source window's pooled lengths, so the ratio
+  is again one per source. It is off unless given.
 
 ##### Known issue: a low held-out score
 
 On the repo's Qwen3-32B staircase recording the held-out score reads "p90
-in the measured bucket on 0 of 22", while the curve at the rates served
+in the measured p90's joint bracket on 0 of 22", every one over it, while the curve at the rates served
 lands in it on 24 of 29 steps. The two folds fit on the window's early
 steps, whose outputs are long, so the renewal term barely moves their
 spread and C is poorly pinned there: it comes out 19.5 and 16.4, against

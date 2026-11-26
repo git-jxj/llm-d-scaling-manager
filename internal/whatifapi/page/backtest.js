@@ -49,17 +49,19 @@ function btV2Mark(p) {
 }
 
 // btInBucket is whether the TPOT distribution's p90 or p95 at a step lies
-// in the measured one's histogram bucket, in words, or "".
+// in the measured one's joint bracket (the router's TPOT histogram and,
+// above their first edge, the decode engines'), in words, or "".
 function btInBucket(step, key, stat) {
   const d = key === "tpot" && step.tpotDistribution;
   const v = d && (stat === "p90" ? d.p90Inside : stat === "p95" ? d.p95Inside : undefined);
   if (v == null) return "";
-  return v ? " (in the measured bucket)" : " (not in the measured bucket)";
+  return v ? " (in the measured bracket)" : " (not in the measured bracket)";
 }
 
 // btV2Lines are the experimental models' standing, a sentence each: what
 // they price and that it is experimental, or why they abstained; and for
-// TPOT, how often its p90 and p95 landed in the measured bucket.
+// TPOT, how often its p90 and p95 landed in the measured joint bracket, and
+// under or over it.
 function btV2Lines(bt) {
   const out = [];
   const m = bt.rankMixture;
@@ -74,8 +76,9 @@ function btV2Lines(bt) {
     const t = d.test;
     if (!d.abstained && t && t.steps > 0) {
       const own = v => v == null ? "" : ` (the planner's own: ${v})`;
-      out.push(`TPOT v2 predicted p90 in the measured bucket at ${t.p90Inside} of ${t.steps} steps${own(t.defaultP90Inside)}, ` +
-        `p95 at ${t.p95Inside}${own(t.defaultP95Inside)}.`);
+      out.push(`TPOT v2 predicted p90 in the measured joint bracket at ${t.p90Inside} of ${t.steps} steps${own(t.defaultP90Inside)}, ` +
+        `under it at ${t.p90Below || 0} and over at ${t.p90Above || 0}; p95 at ${t.p95Inside}${own(t.defaultP95Inside)}, ` +
+        `under at ${t.p95Below || 0} and over at ${t.p95Above || 0}.`);
     }
   }
   return out;
