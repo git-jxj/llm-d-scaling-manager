@@ -121,3 +121,19 @@ func TestServer_RankMixtureDefaults(t *testing.T) {
 	code, _, body = inputs(Config{TTFTModel: string(whatif.QueueRankMixture), RankMixtureKVHold: true}, InputsRequest{})
 	assert.Equal(t, http.StatusOK, code, "a server's modes are the variant's: a v2 source takes none: %s", body)
 }
+
+// The main view defaults the variant's modes before it checks them, as a
+// backtest does: the remainder server asked for on a server whose remainder
+// spread is on by default is the server's spread's, not refused for want of
+// the request's own; without a spread on either side it is still refused.
+func TestMainTTFTOptions_RemainderServerTakesTheServersSpread(t *testing.T) {
+	nl := string(whatif.QueueRankMixtureNLLine)
+	o, err := New(Config{RankMixtureRemainderSpread: true}).mainTTFTOptions(InputsRequest{TTFTModel: nl,
+		RankMixtureRemainderServer: true})
+	require.NoError(t, err)
+	assert.True(t, o.RemainderSpread)
+	assert.True(t, o.RemainderServer)
+
+	_, err = New(Config{}).mainTTFTOptions(InputsRequest{TTFTModel: nl, RankMixtureRemainderServer: true})
+	assert.Error(t, err, "no spread asked and none served")
+}

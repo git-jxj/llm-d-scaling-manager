@@ -75,6 +75,14 @@ func (s *Server) mainTTFTOptions(req InputsRequest) (TTFTModelOptions, error) {
 	if err := checkMinFitWindow(req.RankMixtureMinFitWindow, req.TTFTModel); err != nil {
 		return o, err
 	}
+	// The modes are defaulted before they are checked, as a backtest's are
+	// (rankMixtureDefaults): the remainder server asked for with the
+	// server's remainder spread is not refused for want of the request's.
+	if req.TTFTModel == string(whatif.QueueRankMixtureNLLine) {
+		o.KVHold = o.KVHold || s.kvHold
+		o.RemainderSpread = o.RemainderSpread || s.remainderSpread
+		o.RemainderServer = o.RemainderServer || (s.remainderServer && o.RemainderSpread)
+	}
 	if err := o.Check(); err != nil {
 		return o, err
 	}
@@ -84,11 +92,6 @@ func (s *Server) mainTTFTOptions(req InputsRequest) (TTFTModelOptions, error) {
 	o.MinFitWindow = minFitWindowOf(req.RankMixtureMinFitWindow)
 	if req.RankMixtureMinFitWindow == "" {
 		o.MinFitWindow = s.minFitWindow
-	}
-	if req.TTFTModel == string(whatif.QueueRankMixtureNLLine) {
-		o.KVHold = o.KVHold || s.kvHold
-		o.RemainderSpread = o.RemainderSpread || s.remainderSpread
-		o.RemainderServer = o.RemainderServer || (s.remainderServer && o.RemainderSpread)
 	}
 	return o, nil
 }
