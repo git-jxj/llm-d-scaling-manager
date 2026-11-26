@@ -95,6 +95,10 @@ it.
 | `vllm:kv_offload_load_time_total` | counter | | seconds those loads took: a host, disk or peer hit's load time per token; recorded | optional |
 | `vllm:kv_offload_tiering_read_bytes_total` | counter | | bytes a tiering offload read from a peer or disk tier into its CPU tier; recorded (vLLM 0.28 and later) | optional |
 | `vllm:kv_offload_tiering_read_time_total` | counter | | seconds those reads took: added to a disk or peer hit's load time; recorded | optional |
+| `vllm:e2e_request_latency_seconds_sum` | histogram sum | | the engine's mean end-to-end time: with the HTTP handler's below, a pod's API-server time outside the engine, `--rank-mixture-remainder-server` | optional |
+| `vllm:e2e_request_latency_seconds_count` | histogram count | | as above | optional |
+| `http_request_duration_seconds_sum` | histogram sum | `handler` (no `model_name`) | the API server's mean handler time, on the generation endpoints and on their `/render`: `--rank-mixture-remainder-server` | optional |
+| `http_request_duration_seconds_count` | histogram count | `handler` (no `model_name`) | as above; the `/render` calls a second | optional |
 | `vllm:num_preemptions_total` | counter | | preemptions | optional |
 | `vllm:spec_decode_num_accepted_tokens_total` | counter | | accepted draft tokens: TPOT per token under speculative decoding | optional |
 
@@ -161,11 +165,14 @@ flow control and the router's own latency go unread.
 | `llm_d_epp_request_processing_duration_seconds_bucket` | histogram buckets | `le` (no model labels) | the router's own time: `--rank-mixture-remainder-spread` | optional |
 | `llm_d_epp_request_processing_duration_seconds_sum` | histogram sum | (no model labels) | the router's mean own time: `--rank-mixture-remainder-spread` | optional |
 | `llm_d_epp_request_processing_duration_seconds_count` | histogram count | (no model labels) | as above | optional |
+| `llm_d_epp_token_producer_render_duration_seconds_sum` | histogram sum | (no model labels) | the router's mean render call, inside its own time: `--rank-mixture-remainder-server` | optional |
+| `llm_d_epp_token_producer_render_duration_seconds_count` | histogram count | (no model labels) | as above | optional |
 
-The request-processing series carry no model. A recording or a capture
-gives them to a model only where the router's TTFT names that model and no
-other in the namespace; with two models behind one namespace's routers,
-neither gets them.
+The request-processing and render series carry no model. A recording or a
+capture gives them to a model only where the router's TTFT names that model
+and no other in the namespace; with two models behind one namespace's
+routers, neither gets them. The HTTP handler series carry no model either:
+they are read per Pod, for the Pods the model's own series name.
 
 ## kube-state-metrics
 
@@ -342,7 +349,7 @@ that lacks one saves an empty answer.
 Collect these to explain the part of the router's TTFT that the engines'
 own TTFT does not cover: the router's processing and plugins, prompt
 rendering, the P/D sidecar, and the engine's HTTP front end. The planner
-does not price them; each row is **diagnostic: TTFT outside the engines**. The capture checks
+does not price them, except under an experimental mode the row names; each row is **diagnostic: TTFT outside the engines**. The capture checks
 each one and prints whether it was present, like the series above.
 
 | Series | Source and version | Produced with | Tier | Without it |
@@ -350,7 +357,7 @@ each one and prints whether it was present, like the series above.
 | `llm_d_epp_request_processing_duration_seconds_sum` | llm-d router v1.0.0; no model labels | on by default | diagnostic: TTFT outside the engines | the router's own time before it picks an endpoint unseen |
 | `llm_d_epp_request_processing_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
 | `llm_d_epp_request_processing_duration_seconds_bucket` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | no spread of the router's own time: `--rank-mixture-remainder-spread` draws the remainder as its line |
-| `llm_d_epp_token_producer_render_duration_seconds_sum` | llm-d router v1.0.0; `plugin_type`, `plugin_name`, `backend`, `result` | on by default; observed only when a token-producer plugin renders prompts | diagnostic: TTFT outside the engines | time spent rendering prompts for the prefix scorer unseen |
+| `llm_d_epp_token_producer_render_duration_seconds_sum` | llm-d router v1.0.0; `plugin_type`, `plugin_name`, `backend`, `result` | on by default; observed only when a token-producer plugin renders prompts | diagnostic: TTFT outside the engines | time spent rendering prompts for the prefix scorer unseen; `--rank-mixture-remainder-server` cannot take the render call out of the router's own time |
 | `llm_d_epp_token_producer_render_duration_seconds_count` | llm-d router v1.0.0 | as above | diagnostic: TTFT outside the engines | as above |
 | `llm_d_epp_plugin_duration_seconds_sum` | llm-d router v1.0.0; `extension_point`, `plugin_type`, `plugin_name` | on by default | diagnostic: TTFT outside the engines | no split of the router's time by plugin |
 | `llm_d_epp_plugin_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
@@ -360,11 +367,11 @@ each one and prints whether it was present, like the series above.
 | `llm_d_epp_request_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
 | `llm_d_disagg_sidecar_prefill_duration_seconds_sum` | llm-d router v1.0.0 P/D sidecar; no model labels | off by default: start the sidecar with `--metrics-port` and scrape that port | diagnostic: TTFT outside the engines | the P/D prefill leg, as decode's sidecar sees it, unseen |
 | `llm_d_disagg_sidecar_prefill_duration_seconds_count` | llm-d router v1.0.0 P/D sidecar | as above | diagnostic: TTFT outside the engines | as above |
-| `vllm:e2e_request_latency_seconds_sum` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | no engine end-to-end latency to set the router's against |
+| `vllm:e2e_request_latency_seconds_sum` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | no engine end-to-end latency to set the router's against; with the HTTP handler's, no API-server time per Pod, so `--rank-mixture-remainder-server` draws the remainder as the plain spread |
 | `vllm:e2e_request_latency_seconds_count` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | as above |
 | `vllm:request_render_duration_seconds_sum` | vLLM 0.34.0+; `request_type` | on by default | diagnostic: TTFT outside the engines | chat-template and tokenization time read as queue or prefill |
 | `vllm:request_render_duration_seconds_count` | vLLM 0.34.0+ | on by default | diagnostic: TTFT outside the engines | as above |
-| `http_request_duration_seconds_sum` | vLLM's API server (prometheus-fastapi-instrumentator); `handler`, `method` | on by default; every handler is saved and checked, by `handler` | diagnostic: TTFT outside the engines | the engine's HTTP front end, before the scheduler, unseen |
+| `http_request_duration_seconds_sum` | vLLM's API server (prometheus-fastapi-instrumentator); `handler`, `method` | on by default; every handler is saved and checked, by `handler` | diagnostic: TTFT outside the engines | the engine's HTTP front end, before the scheduler, unseen: `--rank-mixture-remainder-server` draws the remainder as the plain spread |
 | `http_request_duration_seconds_count` | vLLM's API server | as above | diagnostic: TTFT outside the engines | as above |
 | `llm_d_epp_scheduler_e2e_duration_seconds_bucket` | llm-d router | on by default | diagnostic: TTFT outside the engines | no spread of the router's scheduling time |
 | `llm_d_epp_scheduler_e2e_duration_seconds_sum` | llm-d router | on by default | diagnostic: TTFT outside the engines | the router's scheduling time unseen |
@@ -463,10 +470,10 @@ the counter files the exporter ships: add them to a custom one.
 
 | Source | Series | required | TPOT | TTFT | optional |
 | --- | --- | --- | --- | --- | --- |
-| vLLM | 34 | 1 | 8 | 4 | 21 |
+| vLLM | 46 | 1 | 8 | 4 | 33 |
 | SGLang | 23 | 1 | 8 | 0 | 14 |
-| Router (EPP) | 20 | 0 | 1 | 2 | 17 |
+| Router (EPP) | 22 | 0 | 1 | 2 | 19 |
 | kube-state-metrics | 15 | 0 | 0 | 0 | 15 |
-| All | 92 | 2 | 17 | 6 | 67 |
+| All | 106 | 2 | 17 | 6 | 81 |
 
 A capture reads one engine's series, vLLM's or SGLang's, never both.

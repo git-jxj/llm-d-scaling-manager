@@ -56,6 +56,7 @@ func (c *ReplicaMetricsCollector) extractTTFTInputs(ctx context.Context, modelID
 	}
 	c.extractCacheTiers(ctx, modelID, namespace, results, podData)
 	c.extractKVTransfers(ctx, modelID, namespace, results, podData)
+	c.extractFrontend(ctx, modelID, namespace, results, podData)
 }
 
 // extractNonNegative reads one per-instance figure into the value and

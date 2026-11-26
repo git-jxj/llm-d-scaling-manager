@@ -60,11 +60,12 @@ func TestCodec_R1FieldsAreLeftOutWhileZero(t *testing.T) {
 		reflect.TypeFor[domain.ReplicaMetrics](): {"QueueLengthKnown", "AvgServiceTimeKnown", "AvgTTFTKnown",
 			"PromptTokensBuckets", "ComputedTokensBuckets", "OutputTokensBuckets", "TTFTBuckets", "AvgQueueTime", "AvgQueueTimeKnown",
 			"QueueTimeBuckets", "AvgPrefillTime", "AvgPrefillTimeKnown", "AvgKVTransferTime",
-			"AvgKVTransferTimeKnown", "TPOTBuckets", "QueueMin", "QueueMinKnown", "GroupEngines",
+			"AvgKVTransferTimeKnown", "AvgFrontendTime", "AvgFrontendTimeKnown", "AvgRenderTime", "AvgRenderTimeKnown",
+			"RenderRate", "RenderRateKnown", "TPOTBuckets", "QueueMin", "QueueMinKnown", "GroupEngines",
 			"ExternalPrefixCacheHitTokenRate", "ExternalPrefixCacheHitTokenRateKnown", "ExternalPrefixCacheQueryTokenRate",
 			"ExternalPrefixCacheQueryTokenRateKnown", "CachedTokenRateBySource", "KVTransferRates"},
 		reflect.TypeFor[domain.RouterLatency](): {"TTFTSumRate", "TTFTCountRate", "TPOTBuckets", "FlowControlWaitBuckets",
-			"ProcessingBuckets", "ProcessingSumRate", "ProcessingCountRate"},
+			"ProcessingBuckets", "ProcessingSumRate", "ProcessingCountRate", "RenderSumRate", "RenderCountRate"},
 		reflect.TypeFor[Input](): {"RouterLatency", "FlowControlPools"},
 	}
 	for typ, added := range r1 {

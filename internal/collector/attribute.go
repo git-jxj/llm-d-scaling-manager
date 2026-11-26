@@ -555,6 +555,9 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 		metric.LandedQueueLength = data.landedQueue
 		metric.MaxRankLandedQueueLength = data.maxRankLandedQueue
 	}
+	// The API server's own time, as read (domain.ReplicaMetrics
+	// AvgFrontendTime, AvgRenderTime, RenderRate).
+	data.frontend.setFrontend(&metric)
 
 	return metric, pairedAs, place, true
 }

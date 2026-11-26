@@ -62,6 +62,9 @@ var recordOnlyNames = []string{
 	registration.QueryAvgKVTransferTime, registration.QueryTPOTBuckets, registration.QueryComputedTokensBuckets,
 	registration.QuerySLORouterTPOTBuckets, registration.QueryFlowControlWaitBuckets, registration.QuerySLORouterProcessingBuckets,
 	registration.QuerySLORouterProcessingSum, registration.QuerySLORouterProcessingCount,
+	registration.QuerySLORouterRenderSum, registration.QuerySLORouterRenderCount,
+	registration.QueryAvgHTTPGenerationTime, registration.QueryAvgHTTPRenderTime, registration.QueryHTTPRenderRate,
+	registration.QueryAvgE2ELatency,
 	registration.QueryFlowControlPoolModels, registration.QueryFlowControlPoolSaturation, registration.QueryFlowControlOutcomes,
 }
 
@@ -106,9 +109,11 @@ func TestRecordOnlyQueries_IssuedOnlyWhileRecording(t *testing.T) {
 	}
 	// The spec's cost (analyzer-learner.md, 2.9): for a vLLM namespace whose
 	// models list no slo analyzer, the recording adds these queries a cycle:
-	// its 17, and the router's request-processing histogram with its _sum
-	// and _count, recorded for the capacity planner's remainder spread.
-	assert.Equal(t, 20, total)
+	// its 17, the router's request-processing histogram with its _sum
+	// and _count, recorded for the capacity planner's remainder spread,
+	// and for its remainder server the router's render _sum and _count and
+	// the pods' four API-server queries.
+	assert.Equal(t, 26, total)
 }
 
 // The recording flag is the cycle's: on, then off, then on again, each cycle
@@ -162,10 +167,11 @@ func TestRecordOnlyQueries_FailureCountedOnceUnderItsOwnType(t *testing.T) {
 		want, wantRead := 0.0, 0.0
 		if recording {
 			// 6 per pod, 3 per pod for the cache tiers, 6 per pod for the KV transfers, 2 router
-			// histograms, the router's request processing (3), 3 pool
-			// queries; and the 3 per pod and 2 router queries the TTFT
-			// pricing reads, under their own type.
-			want, wantRead = 23, 5
+			// histograms, the router's request processing (3) and render
+			// (2), 4 per pod for the API server, 3 pool queries; and the 3
+			// per pod and 2 router queries the TTFT pricing reads, under
+			// their own type.
+			want, wantRead = 29, 5
 		}
 		assert.Equal(t, want, errorsOfType(t, registry, constants.QueryTypeLearnerRecording), "recording %v", recording)
 		assert.Equal(t, wantRead, errorsOfType(t, registry, constants.QueryTypeTTFTInputs), "recording %v", recording)
@@ -187,9 +193,9 @@ func TestCollectRouterLatency_RefreshErrorCountedPerIssuedQuery(t *testing.T) {
 	c.EndCycle()
 	assert.Equal(t, 3.0, errorsOfType(t, registry, constants.QueryTypeRouterLatency))
 	assert.Equal(t, 2.0, errorsOfType(t, registry, constants.QueryTypeTTFTInputs))
-	// The TPOT and flow-control wait histograms, and the router's request
-	// processing with its _sum and _count.
-	assert.Equal(t, 5.0, errorsOfType(t, registry, constants.QueryTypeLearnerRecording))
+	// The TPOT and flow-control wait histograms, the router's request
+	// processing with its _sum and _count, and its render _sum and _count.
+	assert.Equal(t, 7.0, errorsOfType(t, registry, constants.QueryTypeLearnerRecording))
 }
 
 // The router TTFT histogram is sorted by bound, so two identical cycles

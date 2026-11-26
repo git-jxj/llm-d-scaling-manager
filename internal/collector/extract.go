@@ -128,6 +128,10 @@ type podMetricData struct {
 	avgKVTransferTimeKnown bool
 	queueMin               float64
 	queueMinKnown          bool
+	// The API server's own time (frontend.go): the generation and render
+	// handlers' means, the render rate and the engine's end-to-end mean,
+	// with their presence bits.
+	frontend frontendReading
 	// The cache tiers (cache_tiers.go): the connector's token rates with
 	// their presence bits, and the cached tokens by source, nil when no
 	// source was read.

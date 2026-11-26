@@ -38,6 +38,15 @@ const (
 	QuerySLORouterProcessingBuckets = "slo_router_processing_buckets"
 	QuerySLORouterProcessingSum     = "slo_router_processing_sum"
 	QuerySLORouterProcessingCount   = "slo_router_processing_count"
+	// QuerySLORouterRenderSum and QuerySLORouterRenderCount are the rates
+	// of the router's token-producer render histogram's _sum and _count:
+	// the router's call to a prefill pod's /render handler, inside its
+	// request processing. No model label, so per namespace, joined to a
+	// model as the processing series are. Recorded for the capacity
+	// planner's remainder server mode, so issued only while a learner
+	// recording is on.
+	QuerySLORouterRenderSum   = "slo_router_render_sum"
+	QuerySLORouterRenderCount = "slo_router_render_count"
 
 	// SLORouterWindow is the rate window of the queries above. Five
 	// minutes, not the one minute the engine queries use: a percentile and an
@@ -79,6 +88,10 @@ const (
 		`rate(llm_d_epp_request_processing_duration_seconds_sum{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
 	sloRouterProcessingCount = `sum(` +
 		`rate(llm_d_epp_request_processing_duration_seconds_count{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
+	sloRouterRenderSum = `sum(` +
+		`rate(llm_d_epp_token_producer_render_duration_seconds_sum{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
+	sloRouterRenderCount = `sum(` +
+		`rate(llm_d_epp_token_producer_render_duration_seconds_count{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
 )
 
 // RegisterSLOQueries registers the router latency queries the slo analyzer
@@ -155,5 +168,19 @@ func RegisterSLOQueries(sourceRegistry *source.SourceRegistry) {
 		Template:    sloRouterProcessingCount,
 		Params:      []string{source.ParamNamespace},
 		Description: "Router (EPP) request-processing histogram _count rate per namespace",
+	})
+	registry.MustRegister(source.QueryTemplate{
+		Name:        QuerySLORouterRenderSum,
+		Type:        source.QueryTypePromQL,
+		Template:    sloRouterRenderSum,
+		Params:      []string{source.ParamNamespace},
+		Description: "Router (EPP) token-producer render histogram _sum rate per namespace; the series carries no model",
+	})
+	registry.MustRegister(source.QueryTemplate{
+		Name:        QuerySLORouterRenderCount,
+		Type:        source.QueryTypePromQL,
+		Template:    sloRouterRenderCount,
+		Params:      []string{source.ParamNamespace},
+		Description: "Router (EPP) token-producer render histogram _count rate per namespace",
 	})
 }
