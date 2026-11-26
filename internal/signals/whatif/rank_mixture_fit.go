@@ -346,13 +346,11 @@ type RankMixtureOptions struct {
 	// (rank_mixture_modes.go). Both are modes of FitRankMixtureNL, each
 	// off by default; FitRankMixture does not read them.
 	KVHold, RemainderSpread bool
-	// RemainderServer draws the router's remainder from the prefill pods'
-	// API servers and the router's own work on the remainder spread's
-	// shape (rank_mixture_server.go); a mode of FitRankMixtureNL on top of
+	// RemainderServer draws the router's remainder from the pods' API
+	// servers and the router's own work on the remainder spread's shape
+	// (rank_mixture_server.go); a mode of FitRankMixtureNL on top of
 	// RemainderSpread, off by default, and nothing without it.
-	// RemainderServerQueue fits the pods' API-server queue (K) as well; off,
-	// K is 0.
-	RemainderServer, RemainderServerQueue bool
+	RemainderServer bool
 }
 
 // MinSpreadFitWindow is the shortest fit window the planner calibrates the

@@ -44,24 +44,26 @@ type RankMixtureZParts struct {
 
 // RankMixtureServer is the remainder server's fit (whatif.ZServer), seconds
 // and seconds a prompt token: the render handler's line, the generation
-// frontend's, the API-server load's share K (0 no queue), the router's work
-// outside its render call, the rest's line, and what it was read on.
+// frontend's (absent where the pods did not record it), the router's work
+// outside its render call, the unmeasured rest's line and its share of the
+// fit window's remainder, the fit window's top rate past which a figure is
+// flagged where that share is over whatif.MaxRemainderRestShare, and what it
+// was read on.
 type RankMixtureServer struct {
-	RenderA          float64 `json:"renderA"`
-	RenderB          float64 `json:"renderB"`
-	FrontendA        float64 `json:"frontendA"`
-	FrontendB        float64 `json:"frontendB"`
-	K                float64 `json:"k"`
-	RouterOther      float64 `json:"routerOther"`
-	RouterOtherB     float64 `json:"routerOtherB,omitempty"`
-	RestA            float64 `json:"restA"`
-	RestB            float64 `json:"restB"`
-	HasRender        bool    `json:"hasRender"`
-	RenderPerRequest float64 `json:"renderPerRequest,omitempty"`
-	Pods             int     `json:"pods"`
-	BusiestShare     float64 `json:"busiestShare"`
-	FitSteps         int     `json:"fitSteps"`
-	PodSteps         int     `json:"podSteps"`
+	RenderA      float64 `json:"renderA"`
+	RenderB      float64 `json:"renderB"`
+	HasRender    bool    `json:"hasRender"`
+	FrontendA    float64 `json:"frontendA"`
+	FrontendB    float64 `json:"frontendB"`
+	HasFrontend  bool    `json:"hasFrontend"`
+	RouterOther  float64 `json:"routerOther"`
+	RouterOtherB float64 `json:"routerOtherB,omitempty"`
+	RestA        float64 `json:"restA"`
+	RestB        float64 `json:"restB"`
+	RestShare    float64 `json:"restShare"`
+	TopRate      float64 `json:"topRate"`
+	FitSteps     int     `json:"fitSteps"`
+	PodSteps     int     `json:"podSteps"`
 }
 
 // remainderShape sets the remainder's measured law, where it has one.
@@ -83,13 +85,9 @@ func (z *RankMixtureZParts) remainderServer(m whatif.RankMixture) {
 		z.RemainderServerOff = m.RemainderServerOff
 		return
 	}
-	busiest := 0.0
-	if len(s.Shares) > 0 {
-		busiest = s.Shares[0]
-	}
-	z.RemainderServer = &RankMixtureServer{RenderA: s.R0, RenderB: s.R1, FrontendA: s.F0, FrontendB: s.F1, K: s.K,
-		RouterOther: s.Other, RouterOtherB: s.Other1, RestA: s.N0, RestB: s.N1, HasRender: s.HasRender,
-		RenderPerRequest: s.RenderPerRequest, Pods: len(s.Shares), BusiestShare: busiest, FitSteps: s.Steps, PodSteps: s.PodSteps}
+	z.RemainderServer = &RankMixtureServer{RenderA: s.R0, RenderB: s.R1, HasRender: s.HasRender, FrontendA: s.F0, FrontendB: s.F1,
+		HasFrontend: s.HasFrontend, RouterOther: s.Other, RouterOtherB: s.Other1, RestA: s.N0, RestB: s.N1, RestShare: s.RestShare,
+		TopRate: s.TopRate, FitSteps: s.Steps, PodSteps: s.PodSteps}
 }
 
 // identifiedNL is identified for the variant. Its Z is measured, not

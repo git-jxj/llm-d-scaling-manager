@@ -264,9 +264,18 @@ func (m RankMixture) modesAssumed() string {
 	case !m.RemainderServer:
 	case m.Parts != nil && m.Parts.Remainder.Server != nil:
 		s := m.Parts.Remainder.Server
-		parts = append(parts, fmt.Sprintf("router remainder from the prefill pods' API servers on %d pods (K = %.3g): "+
-			"router work outside render %.3g s, render %.3g s + %.3g us x L, frontend %.3g s + %.3g us x L, rest %.3g s + %.3g us x L",
-			len(s.Shares), s.K, s.other(0), s.R0, s.R1*1e6, s.F0, s.F1*1e6, s.N0, s.N1*1e6))
+		fe := "frontend not recorded (in the rest)"
+		if s.HasFrontend {
+			fe = fmt.Sprintf("frontend %.3g s + %.3g us x L", s.F0, s.F1*1e6)
+		}
+		parts = append(parts, fmt.Sprintf("router remainder from the pods' API servers: router work outside render %.3g s, "+
+			"render %.3g s + %.3g us x L, %s; unmeasured rest (sidecar, network, the decode pod's API server, the API server's "+
+			"output path) %.3g s + %.3g us x L, %.2g of the fit window's remainder",
+			s.other(0), s.R0, s.R1*1e6, fe, s.N0, s.N1*1e6, s.RestShare))
+		if s.RestShare > MaxRemainderRestShare {
+			parts = append(parts, fmt.Sprintf("the unmeasured rest is over %.2g of the remainder: a TTFT priced past the fit "+
+				"window's top rate (%.3g r/s) is flagged %s", MaxRemainderRestShare, s.TopRate, RemainderRestPastFit))
+		}
 	default:
 		parts = append(parts, "router remainder server not applied ("+m.RemainderServerOff+"): the remainder is the spread")
 	}

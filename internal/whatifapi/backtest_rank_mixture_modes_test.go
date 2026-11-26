@@ -151,9 +151,10 @@ func TestBacktest_RankMixtureRemainderServer(t *testing.T) {
 	require.NotNil(t, zp.RemainderServer, zp.RemainderServerOff)
 	assert.Empty(t, zp.RemainderServerOff)
 	assert.InDelta(t, 0.012, zp.RemainderServer.FrontendA+zp.RemainderServer.FrontendB*1e4, 0.012)
-	assert.Zero(t, zp.RemainderServer.K, "no queue by default")
 	assert.True(t, zp.RemainderServer.HasRender)
-	assert.Positive(t, zp.RemainderServer.Pods)
-	assert.Contains(t, on.RankMixture.Assumed, "router remainder from the prefill pods' API servers")
+	assert.True(t, zp.RemainderServer.HasFrontend)
+	assert.Positive(t, zp.RemainderServer.TopRate)
+	assert.Positive(t, zp.RemainderServer.PodSteps)
+	assert.Contains(t, on.RankMixture.Assumed, "router remainder from the pods' API servers")
 	assert.Equal(t, spread.RankMixture.FitMean, on.RankMixture.FitMean, "the server does not move the fit window's checks")
 }

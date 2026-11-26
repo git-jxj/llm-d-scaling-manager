@@ -92,6 +92,7 @@ func TestMixtureCycleOf_RouterProcessing(t *testing.T) {
 
 // Each rank carries its pod's API-server figures: an LWS group's engine its
 // own Pod's, a row's ranks the row's with its render rate split over them.
+// A decode Pod's API server is never a rank's, though the collector reads it.
 // A figure not known reads 0, and so does the router's render mean without
 // its _count; with it, the mean is _sum over _count.
 func TestMixtureCycleOf_APIServer(t *testing.T) {
@@ -106,10 +107,16 @@ func TestMixtureCycleOf_APIServer(t *testing.T) {
 	plain := domain.ReplicaMetrics{PodName: "p", VariantName: "p1", Ready: true, EngineRanks: 2, RequestRate: 4, RequestRateKnown: true,
 		AvgFrontendTime: -0.002, AvgFrontendTimeKnown: true, AvgRenderTime: 0.3, AvgRenderTimeKnown: true, RenderRate: 4,
 		RenderRateKnown: true}
-	in := seriesInput(7, group, plain)
+	decode := domain.ReplicaMetrics{PodName: "d", VariantName: "d1", Ready: true, RequestRate: 7, RequestRateKnown: true,
+		AvgFrontendTime: 0.5, AvgFrontendTimeKnown: true, AvgRenderTime: 0.9, AvgRenderTimeKnown: true, RenderRate: 7,
+		RenderRateKnown: true}
+	in := seriesInput(7, group, plain, decode)
 	in.RouterLatency = &domain.RouterLatency{WindowSeconds: 300, RenderSumRate: 0.9, RenderCountRate: 3}
 	c := mixtureCycleOf(in, at, SeriesVariants{})
-	require.Len(t, c.Ranks, 4)
+	require.Len(t, c.Ranks, 4, "the decode row gives no rank")
+	for _, r := range c.Ranks {
+		assert.NotEqual(t, 0.5, r.Frontend, "the decode pod's frontend on rank %s", r.Key)
+	}
 	assert.Equal(t, 0.01, c.Ranks[0].Frontend)
 	assert.Equal(t, 0.2, c.Ranks[0].Render)
 	assert.Equal(t, 1.0, c.Ranks[0].RenderRate)

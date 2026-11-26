@@ -168,17 +168,17 @@ const z90 = 1.2815515655446004
 // zSeed fixes the parts' draws.
 const zSeed = 0x5eed + 99
 
-// draws is each request's Z at its prompt l, priced at rate: every part
-// lognormal about its line, or drawn from its shape, and the remainder from
-// its server where it has one; nil where p is nil or no part is spread (Z is
-// then the lines' sum, priced as a0 + beta L).
-func (p *ZParts) draws(l []float64, rate float64) []float64 {
+// draws is each request's Z at its prompt l: every part lognormal about its
+// line, or drawn from its shape, and the remainder from its server where it
+// has one; nil where p is nil or no part is spread (Z is then the lines'
+// sum, priced as a0 + beta L).
+func (p *ZParts) draws(l []float64) []float64 {
 	if p == nil || (!p.Overhead.spread() && !p.Decode.spread() && !p.Remainder.spread()) {
 		return nil
 	}
 	if s := p.Remainder.Server; s != nil && p.Remainder.Shape != nil {
 		out := drawParts(l, []ZPart{p.Overhead, p.Decode})
-		for i, r := range s.draws(l, rate, p.Remainder.Shape) {
+		for i, r := range s.draws(l, p.Remainder.Shape) {
 			out[i] += r
 		}
 		return out
@@ -397,7 +397,7 @@ func FitRankMixtureNL(steps []MixtureStep, o RankMixtureOptions) (RankMixture, R
 		if parts.Remainder.Shape == nil {
 			m.RemainderServerOff = "no remainder spread to draw it on"
 		} else {
-			parts.Remainder.Server, m.RemainderServerOff = FitZServer(steps, stepLength(steps).Seconds(), o.RemainderServerQueue)
+			parts.Remainder.Server, m.RemainderServerOff = FitZServer(steps, stepLength(steps).Seconds())
 		}
 	}
 	return m, diag, nil

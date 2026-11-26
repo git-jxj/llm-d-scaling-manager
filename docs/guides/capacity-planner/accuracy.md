@@ -380,33 +380,39 @@ A third mode builds on the remainder spread: the **remainder server**
 (`--rank-mixture-remainder-server`, `rankMixtureRemainderServer`), refused
 without `--experimental-ttft=v2nl-line` and `--rank-mixture-remainder-spread`
 and off by default. It does not move `fitMean` or `fitP90` either. Most of
-the router's remainder is the router calling a prefill pod's `/render`
-endpoint, and the prefill pod's API server handling the generation request
-before and after the engine's own time. The mode draws the remainder from
-those parts, each measured, in place of one line:
+the router's remainder is the router calling a serving pod's `/render`
+endpoint, and that pod's API server handling the generation request before
+and after the engine's own time. The mode draws the remainder from those
+parts, each measured, in place of one line:
 
 - the router's own work outside its render call: its request-processing mean
   less its render mean (`llm_d_epp_token_producer_render_duration_seconds`),
   a constant;
-- the render call on the prefill pod: that pod's `/render` handler time
+- the render call on the pod: its `/render` handler time
   (`http_request_duration_seconds`), a line in the prompt;
 - the generation request's time in the pod's API server outside the engine:
   its HTTP handler time less vLLM's end-to-end time
-  (`vllm:e2e_request_latency_seconds`), a line in the prompt;
-- the rest (the sidecar, the network, the decode pod's API server): a line
-  in the prompt, fitted to what the parts above leave of each fit step's
-  remainder.
+  (`vllm:e2e_request_latency_seconds`), a line in the prompt. Optional: where
+  the pods do not record it, it is part of the rest;
+- the rest, which nothing measures (the sidecar, the network, the decode
+  pod's API server, the API server's output path): a line in the prompt,
+  fitted to what the parts above leave of each fit step's remainder.
 
-The first two are drawn on the remainder spread's measured law, as the
-spread draws the router's processing; the pod is drawn by the fit window's
-share profile of the prefill pods. `rankMixture.zParts.remainderServer`
-gives every fitted figure. The pods' API servers are taken as delays, not as
-queues (`k` is 0): a fitted queue term added nothing on the recording below,
-and it stays off until a busier recording shows it. It needs at least 12 fit
-steps that hold a prefill pod's frontend: recordings made before these
-series were recorded, and every public recording here, hold none, and the
-remainder is then the plain spread, `zParts.remainderServerOff` says why and
-the assumed line says so.
+The pods read are the ones the variant prices (prefill pods); a decode pod's
+API server is never read, and is part of the rest. The router's work and the
+render are drawn on the remainder spread's measured law, scaled to their
+predicted mean, as the spread draws the router's processing. No part moves
+with the rate: a load-dependent term on the pods' API servers added nothing
+on two production recordings. `rankMixture.zParts.remainderServer` gives
+every fitted figure. The assumed line names the rest and its share of the fit
+window's remainder (`restShare`); where that share is over 0.5, a TTFT priced
+at a rate past the fit window's top (`topRate`) is flagged
+`RemainderRestPastFit`, since nothing says how the unmeasured part moves past
+the loads it was read over. The mode needs at least 12 fit steps that hold
+the router's processing and a pod's render or frontend: recordings made
+before these series were recorded, and every public recording here, hold
+none, and the remainder is then the plain spread, `zParts.remainderServerOff`
+says why and the assumed line says so.
 
 On a production P/D recording re-captured with these series (development
 window only), against the hold and the spread together, the remainder
@@ -424,7 +430,7 @@ server:
 
 Its render, frontend and router-work figures matched the offline reference's
 within a few percent (the rest has the same mean, held as a constant), and
-the deltas above matched the reference's in direction and size. On every
+the deltas above matched the reference's in direction. On every
 public recording, and on that recording as first captured (without the
 pods' series), the mode prices every figure exactly as the spread does.
 
