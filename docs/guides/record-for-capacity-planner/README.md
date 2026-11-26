@@ -59,8 +59,12 @@ For an operator collecting a window for someone else to plan from.
   unscored. Set `metrics.requestTPOTBuckets` in the router's
   EndpointPickerConfig (an llm-d-router build after v1.0.0,
   [llm-d-router#3539](https://github.com/llm-d/llm-d-router/pull/3539)), or
-  vLLM's `--custom-histogram-buckets` (v0.33.0 and later), before the window
-  you record ([why](../capacity-planner/check.md#read-the-answer)).
+  vLLM's `--custom-histogram-buckets` (v0.32.0 and later), before the window
+  you record ([why](../capacity-planner/check.md#read-the-answer)). For
+  vLLM the family is `inter_token_latency`: it sets the per-request TPOT
+  histogram too. For example:
+  `--custom-histogram-buckets '{"inter_token_latency":[0.005,0.00575,0.0066,0.0076,0.0087,0.01,0.0115,0.0132,0.0152,0.0175,0.02,0.023,0.0265,0.0305,0.035,0.04,0.046,0.053,0.075,0.1,0.25,1.0]}'`
+  ([what it sets](../capacity-planner/check.md#vllms-tpot-buckets)).
 - [ ] `kubectl` access to Prometheus' namespace (a port-forward), or its URL.
 - [ ] For Path 1: the `capacity-planner` binary of the release you run
   ([Get the planner](../capacity-planner/README.md#get-the-planner)), or a
