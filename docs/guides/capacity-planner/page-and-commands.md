@@ -379,6 +379,16 @@ it read some TTFT figures under what was measured. Set, every figure reads
 OUTSIDE VALIDATED REGION. The same commands take it, and `POST /v1/inputs`
 takes `prefillVPServiceLine` ([API](api.md)).
 
+**f against the load (`--prefill-f-load-curve`, lab-validated only).** The
+busiest prefill pod's extra share is largest at a light load. This flag fits
+f, the imbalance, against the tokens a pod computes a second at each prefill
+count, `f(u) = f_inf + delta/u`, and prices the higher of that and the usual
+f at each rate, so a light load reads the higher f it showed. A count with
+fewer than 8 minutes, or whose f does not fall with the load, keeps its f,
+and the answer says so. Set, every figure reads OUTSIDE VALIDATED REGION. The
+same commands take it, and `POST /v1/inputs` takes `prefillFLoadCurve`
+([API](api.md)).
+
 **An experimental TTFT model (`--experimental-ttft`, for demonstration).**
 The TTFT model has seven switches that are off by default, because none of
 them has passed the release's validation. `--experimental-ttft` turns all

@@ -481,6 +481,14 @@ type shapeSample struct {
 // the fit's hit held at more. It goes on once the public cross-validation
 // shows no figure newly under what was measured.
 //
+// saturation.SwitchPrefillFLoadCurve is planner-only and not listed (issue
+// llm-d-incubation/llm-d-scaling-manager#482): it fits f against the load
+// per pod at each prefill count, f(u) = f_inf + delta/u, and the planner
+// prices f at a rate as the higher of its f and the curve's. It passed one
+// pre-registered offline test on the lab's Qwen3-32B recordings (a later
+// run at the same count, held out); it goes on once the public
+// cross-validation shows no figure newly under what was measured.
+//
 // saturation.SwitchPrefillVPWindowBest is planner-only and not listed: it
 // keeps the peak under a queue read anywhere in the recording, not only in
 // the last 6 hours, flagged with its age (VPFromEarlierInWindow). No public

@@ -914,7 +914,7 @@ func splitOf(e *inputsEntry, split, fitUntil string) (int, time.Time, string, er
 func refitRequest(e *inputsEntry, cycle int, cutoff time.Time) (InputsRequest, error) {
 	d := e.doc
 	in := InputsRequest{Model: d.Model, DecodeVariant: d.Fleet.Decode.Variant, PrefillVPPlateau: d.PrefillVPPlateau, PrefillHitAtCount: d.PrefillHitAtCount,
-		PrefillVPServiceLine: d.PrefillVPServiceLine, ExperimentalTTFT: d.ExperimentalTTFT}
+		PrefillVPServiceLine: d.PrefillVPServiceLine, PrefillFLoadCurve: d.PrefillFLoadCurve, ExperimentalTTFT: d.ExperimentalTTFT}
 	if d.Fleet.Prefill != nil {
 		in.PrefillVariant = d.Fleet.Prefill.Variant
 	}

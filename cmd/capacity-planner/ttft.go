@@ -868,6 +868,10 @@ func (f *answerFlags) prefillInputs(pf *pricedFleet, ps *learnreplay.PrefillStat
 				num(p.Imbalance), p.ImbalanceUtilization)
 		}
 	}
+	if f.fLoadCurve && f.fixedImbalance == 0 {
+		// The sensitivity to f prices the f it states, not the curve's.
+		pf.priceFLoadCurve(ps, &p)
+	}
 	return p, nil
 }
 

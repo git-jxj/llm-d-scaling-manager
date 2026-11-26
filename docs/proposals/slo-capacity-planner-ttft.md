@@ -370,6 +370,42 @@ form near the knee. No recording says what the router scores (the backtest's
 `notRecordedConfig`), so the flag is the operator's statement, and it is off by
 default.
 
+**`f` against the load per pod** (`--prefill-f-load-curve`,
+`saturation.SwitchPrefillFLoadCurve`, opt-in; issue #482). The busiest pod
+carries a roughly fixed amount of prefill work over the mean (a prefix group
+or a long prompt the router keeps on one pod), and the router spreads the
+rest, so the busiest pod's excess share falls as the inverse of the load:
+
+    f(u) = f_inf + delta/u,     u = computed tokens a second a pod
+
+P1 fits it at each pod count by least squares of every kept minute's
+de-biased `f` on `1/u` (`prefill.FLoadCurve`, `Estimate.FCurveByPods`), and
+prices it only with at least 8 minutes, `delta > 0` and `f_inf > 0`. The
+planner prices `f` at a rate as the higher of its `f` (held, or falling with
+`--load-aware-router`) and `f(u)`, `u = rate · E[I_eff] / N_p`, at most
+`N_p`. `f(u)·ρ` is `(f_inf·u + delta)/V_P`, which rises with the rate, so
+TTFT stays monotone, and the knee is the lower of today's and the root of
+`f(u)·ρ = 1 − margin`, `ρ = (1 − margin − delta/V_P)/f_inf`. A count with no
+identified fit keeps its `f`, and the answer says so.
+
+It was scored once, against acceptance written first, on the lab's Qwen3-32B
+fleet of long prompts on 2 prefill pods with minutes pooled
+(`SwitchPrefillFPooledMinutes`, which it needs: no minute of those runs
+carries 100 requests a pod alone). The figures are the planner's own pools
+and fit. Fitted on one run (23 pools, 850 to 13,200 tokens a second a pod):
+`f_inf` 0.9575, `delta` 590.8; its four light pools read 1.52 to 1.71 and the
+curve 1.56 to 1.65 there. Held out, a later run at the same count (19 pools,
+3,000 to 13,400): mean absolute error 0.029 against 0.048 for one `f` at every
+load, median signed error on its light pools 0.000, and at the busy load
+`f(u)` within 0.03 of the busy `f`; the 2+2 knee on the fit run did not move
+(it binds on the served-work floor). Reported only, at 4 pods: the 2-pod curve
+gave 1.125 and 1.124 at the loads where 1.125 and 1.085 were measured.
+Limits: the held-out run has no pool under 3,000 tokens a second a pod, so
+the regime under 1,000 rests on the fit run alone, and those light pools were
+its first 12 minutes, where a warm-up (a cold prefix cache) is not ruled out. It stays
+off, and every figure it prices reads OUTSIDE VALIDATED REGION, until the
+public cross-validation shows no figure newly under what was measured.
+
 Sticky routing
 (one pod wins a whole refresh window `w`) averages back toward 1 per minute; the
 worst pod then gets `Ca² ≈ 1 + λ_w·w`, uncapped.
