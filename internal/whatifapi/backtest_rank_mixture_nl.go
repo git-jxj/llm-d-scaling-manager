@@ -64,7 +64,7 @@ func (rq *rankMixtureQ) identifiedNL() *rankMixtureQ {
 		why = append(why, "the prefill engine's max-num-seqs not read")
 	}
 	if r.SpreadDefaulted {
-		why = append(why, fmt.Sprintf("fit window under %s: too short for its own checks", whatif.MinSpreadFitWindow))
+		why = append(why, fmt.Sprintf("fit window under %s: too short for its own checks", r.window()))
 	}
 	if !(r.FitMean >= whatif.MinNLFitMean && r.FitMean <= whatif.MaxNLFitMean) {
 		why = append(why, fmt.Sprintf("the fit window's own mean not priced (median ratio %.3g, outside %g-%g)",

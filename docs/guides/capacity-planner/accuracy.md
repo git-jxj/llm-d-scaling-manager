@@ -369,8 +369,19 @@ only):
   read within with both off. Use the two together.
 
 The hold given without the remainder spread is not refused, so each can
-still be compared alone, but `backtest` prints a warning and the assumed
-line says so.
+still be compared alone, but `backtest`, `serve`, `at-replicas` and
+`day-plan` print a warning and the backtest's assumed line says so.
+
+The 12-hour minimum, for v2 and the variant alike, is a default:
+`--rank-mixture-min-fit-window` (`rankMixtureMinFitWindow`) lowers it, on
+`backtest`, `serve`, `at-replicas` and `day-plan`. A model fitted on a shorter
+window prices as it would on a long one, but its own checks (v2's spread
+calibration, the variant's fit-window ratios) read fewer hours and loads, so
+every TTFT it prices is flagged `RankMixtureShortFitWindow`.
+
+`serve` and `at-replicas` take `--experimental-ttft=v2nl-line` too, and fit
+and price the variant exactly as `backtest` does, abstentions included
+([serve with the experimental models](page-and-commands.md#serve-with-the-experimental-v2-models)).
 
 ## Experimental: the per-request TPOT distribution
 
@@ -410,6 +421,14 @@ The model abstains on the whole backtest where `--max-num-seqs` is not read,
 where a slot queue would form, where under two hours of fit steps read the
 router's TPOT histogram and the output lengths, or where `C` ends at its bound.
 Every percentile is then the planner's own, flagged `TPOTDistributionAbstained`.
+
+The two hours of fit steps (24 five-minute steps) are a default:
+`--tpot-dist-min-fit-steps` (`tpotDistMinFitSteps`, at least 4) lowers it on
+`backtest`, `serve`, `at-replicas` and `day-plan`, so a lab recording gets the
+distribution too. A distribution fitted on fewer than 24 steps reports
+`shortFit` and `minFitSteps`, and flags every percentile it prices
+`TPOTDistributionShortFit`: its renewal coefficient and its self-check folds
+read fewer steps.
 
 ## Adding a run
 

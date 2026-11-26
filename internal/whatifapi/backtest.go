@@ -352,6 +352,12 @@ type BacktestRequest struct {
 	// the remainder is its line, as off, and the assumed line says so. Off
 	// by default; only with TTFTModel rank-mixture-nl-line.
 	RankMixtureRemainderSpread bool `json:"rankMixtureRemainderSpread,omitempty"`
+	// RankMixtureMinFitWindow is the shortest fit window the model, v2 or
+	// its variant, prices from, a duration ("4h"): absent, the server's
+	// default, else whatif.MinSpreadFitWindow (12h). A model fitted on a
+	// window under 12h is flagged RankMixtureShortFitWindow. Only with a
+	// TTFTModel.
+	RankMixtureMinFitWindow string `json:"rankMixtureMinFitWindow,omitempty"`
 	// PrefillSlots is the prefill engine's max-num-seqs, read by
 	// TTFTModel's limited-PS check; 0 not known.
 	PrefillSlots int `json:"prefillSlots,omitempty"`
@@ -366,6 +372,12 @@ type BacktestRequest struct {
 	// SpecTokens, no speculative decoding).
 	DecodeSlots int `json:"decodeSlots,omitempty"`
 	SpecTokens  int `json:"specTokens,omitempty"`
+	// TPOTDistMinFitSteps is the fewest fit steps the TPOT distribution
+	// fits on: absent, the server's default, else MinTPOTDistFitSteps (24,
+	// two hours of 5-minute steps). A distribution fitted on fewer than 24
+	// is flagged TPOTDistributionShortFit. At least MinTPOTDistFitStepsFloor;
+	// only with a TPOTModel.
+	TPOTDistMinFitSteps int `json:"tpotDistMinFitSteps,omitempty"`
 }
 
 // BacktestResponse is POST /v1/backtest's answer, and capacity-planner
@@ -702,6 +714,7 @@ func (s *Server) backtest(ctx context.Context, req BacktestRequest) (*BacktestRe
 		on := s.stratified()
 		req.RankMixtureStratified = &on
 	}
+	s.rankMixtureDefaults(&req)
 	test, ok := s.inputs.get(req.InputsID)
 	if !ok {
 		return nil, errUnknownInputs
@@ -1099,6 +1112,12 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 		q.assumed = append(q.assumed, "random (Poisson) arrivals: the recording does not measure how bursty arrivals are; "+
 			"state it with --arrival-cv2 (arrivalCV2) when known")
 	}
+	if err := checkMinFitWindow(req.RankMixtureMinFitWindow, req.TTFTModel); err != nil {
+		return nil, err
+	}
+	if err := checkTPOTMinFitSteps(req.TPOTDistMinFitSteps, req.TPOTModel); err != nil {
+		return nil, err
+	}
 	if (req.RankMixtureKVHold || req.RankMixtureRemainderSpread) && req.TTFTModel != string(whatif.QueueRankMixtureNLLine) {
 		return nil, InputErrorf("rankMixtureKVHold and rankMixtureRemainderSpread are modes of ttftModel %q: give them with that model",
 			whatif.QueueRankMixtureNLLine)
@@ -1137,7 +1156,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 			q.tpotDist = &tpotDistQ{report: TPOTDistReport{Model: whatif.TPOTRenewalLognormal, Experimental: true, FoldC: []float64{},
 				Fold: []TPOTDistScore{}, Abstained: "the test source did not give the decode series"}}
 		} else {
-			q.tpotDist = fitTPOTDist(fit, fitIdx, q.step, req.DecodeSlots, req.SpecTokens)
+			q.tpotDist = fitTPOTDist(fit, fitIdx, q.step, req.DecodeSlots, req.SpecTokens, req.TPOTDistMinFitSteps)
 		}
 		q.assumed = append(q.assumed, q.tpotDist.assumedLines()...)
 	default:
