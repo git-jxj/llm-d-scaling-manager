@@ -95,6 +95,8 @@ type ttftInputs struct {
 	// processorSharing is SwitchTTFTProcessorSharing, routerWait
 	// SwitchTTFTRouterWait.
 	processorSharing, routerWait bool
+	// routerWaitInPrefill is SwitchTTFTRouterWaitInPrefill.
+	routerWaitInPrefill bool
 	// psOnsets is SwitchTTFTPSOnsets, decodeGateCharge
 	// SwitchTTFTDecodeGateCharge.
 	psOnsets, decodeGateCharge bool
@@ -182,7 +184,8 @@ func ttftFleet(in ttftInputs, pods int) (whatif.TTFTFleet, []whatif.Flag) {
 	p.PromptCV, p.PromptCVAssumed, p.PromptMaxRatio = in.spread.CV, in.spread.Assumed, in.spread.MaxRatio
 	p.TransferSecondsPerToken = in.transfer
 	fl := whatif.TTFTFleet{Prefill: p, Decode: in.decode, FlowControl: in.flow, ProcessorSharing: in.processorSharing,
-		PriceRouterWait: in.routerWait, PSOnsets: in.psOnsets, ChargeDecodeGate: in.decodeGateCharge}
+		PriceRouterWait: in.routerWait, RouterWaitInPrefill: in.routerWaitInPrefill, PSOnsets: in.psOnsets,
+		ChargeDecodeGate: in.decodeGateCharge}
 	if in.decode == nil {
 		fl.DecodeTTFT = in.decodeTTFT
 	} else {

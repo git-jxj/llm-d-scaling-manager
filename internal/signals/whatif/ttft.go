@@ -317,7 +317,8 @@ const DefaultPriceRouterWait = false
 // prefill knee, a TTFT is flagged FlowControlWaitPriced and stands, and a
 // rate answer may pass the onset. --price-router-wait, or
 // --router-wait-in-prefill=false (assume.routerWait gateStage or none), turns
-// it off. The SLO analyzer has no switch for it.
+// it off. The SLO analyzer's switch for it, slo.SwitchTTFTRouterWaitInPrefill,
+// is off from its constructor until a live check with the controller.
 //
 // On by the router v1.0.0 staircase of issue #287 (Qwen3-32B, 2 prefill and
 // 2 decode, three seeds at Ca^2 4 and two at Poisson), backtested against its
@@ -477,7 +478,8 @@ type TTFTFleet struct {
 	// MaxRouterWaitKneeShare of the prefill knee), so a rate answer may stand
 	// past the onset. The CLI and the planner API turn it on by default
 	// (DefaultRouterWaitInPrefill); it is measured on llm-d-router v1.0.0
-	// only. The struct's zero value is off.
+	// only. The struct's zero value is off, and so is the SLO analyzer's
+	// (slo.SwitchTTFTRouterWaitInPrefill), which a replay turns on.
 	//
 	// On v1.0.0 the gate moves the wait from the pods to the router rather
 	// than adding to it: on the Qwen3-32B flow-control A/B, at six bursty
