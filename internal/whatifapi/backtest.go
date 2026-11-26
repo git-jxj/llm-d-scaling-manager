@@ -352,6 +352,14 @@ type BacktestRequest struct {
 	// the remainder is its line, as off, and the assumed line says so. Off
 	// by default; only with TTFTModel rank-mixture-nl-line.
 	RankMixtureRemainderSpread bool `json:"rankMixtureRemainderSpread,omitempty"`
+	// RankMixtureRemainderServer draws the router's remainder from the
+	// prefill pods' API servers and the router's own work, on the remainder
+	// spread's shape, where the fit window recorded the pods' HTTP and
+	// end-to-end series (whatif.RankMixtureOptions.RemainderServer);
+	// without them the remainder is the spread, and the assumed line says
+	// so. Off by default; only with TTFTModel rank-mixture-nl-line and
+	// RankMixtureRemainderSpread.
+	RankMixtureRemainderServer bool `json:"rankMixtureRemainderServer,omitempty"`
 	// RankMixtureMinFitWindow is the shortest fit window the model, v2 or
 	// its variant, prices from, a duration ("4h"): absent, the server's
 	// default, else whatif.MinSpreadFitWindow (12h). A model fitted on a
@@ -1125,6 +1133,9 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 	if (req.RankMixtureKVHold || req.RankMixtureRemainderSpread) && req.TTFTModel != string(whatif.QueueRankMixtureNLLine) {
 		return nil, InputErrorf("rankMixtureKVHold and rankMixtureRemainderSpread are modes of ttftModel %q: give them with that model",
 			whatif.QueueRankMixtureNLLine)
+	}
+	if err := checkRemainderServer(req.RankMixtureRemainderServer, req.RankMixtureRemainderSpread, req.TTFTModel); err != nil {
+		return nil, err
 	}
 	switch req.TTFTModel {
 	case "":

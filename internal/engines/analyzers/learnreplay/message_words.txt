@@ -94,6 +94,8 @@ A
 A-Za-z0-9_.-
 A100
 AMD
+API
+API-server
 AUncertain
 AboveDecodeOnset
 AboveFlowControlOnset
@@ -1157,6 +1159,7 @@ drainRegion
 drainReplicas
 drainSeconds
 drains
+draw
 drawn
 drift
 dropped
@@ -2749,6 +2752,7 @@ removedNamespaces
 removes
 removing
 rename
+render
 renewal
 renewal-lognormal
 repeated
@@ -3009,6 +3013,7 @@ served-peak
 served-siblings
 servedBound
 server
+servers
 serves
 service
 service-line

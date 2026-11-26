@@ -260,6 +260,16 @@ func (m RankMixture) modesAssumed() string {
 		parts = append(parts, fmt.Sprintf("router remainder drawn as its line: fewer than %d fit steps hold the router's "+
 			"request-processing histogram (not recorded, or not exported by the router)", MinRemainderSpreadSteps))
 	}
+	switch {
+	case !m.RemainderServer:
+	case m.Parts != nil && m.Parts.Remainder.Server != nil:
+		s := m.Parts.Remainder.Server
+		parts = append(parts, fmt.Sprintf("router remainder from the prefill pods' API servers on %d pods (K = %.3g): "+
+			"router work outside render %.3g s, render %.3g s + %.3g us x L, frontend %.3g s + %.3g us x L, rest %.3g s + %.3g us x L",
+			len(s.Shares), s.K, s.other(0), s.R0, s.R1*1e6, s.F0, s.F1*1e6, s.N0, s.N1*1e6))
+	default:
+		parts = append(parts, "router remainder server not applied ("+m.RemainderServerOff+"): the remainder is the spread")
+	}
 	if len(parts) == 0 {
 		return ""
 	}

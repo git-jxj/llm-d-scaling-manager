@@ -85,3 +85,75 @@ func TestBacktest_RankMixtureNLLineModes(t *testing.T) {
 	assert.Contains(t, spread.RankMixture.Assumed, "router remainder spread as the router's measured request processing")
 	assert.Equal(t, off.RankMixture.FitMean, spread.RankMixture.FitMean, "the spread does not move the fit window's checks")
 }
+
+// The remainder server: refused without the variant and its remainder
+// spread; off, the answer has no trace of it; on a recording without the
+// pods' API-server series it abstains to the spread, figure for figure, and
+// says why; on one with them it reports its fit.
+func TestBacktest_RankMixtureRemainderServer(t *testing.T) {
+	r := &stubResolver{}
+	fit := rmFit(t, r, 3120)
+	ts, tl := btSeries(240, 0, 1)
+	test := btEntry(t, r, "test", ts, tl, btConfig("H100"))
+	test.mixture = btMixture(ts)
+
+	nl := string(whatif.QueueRankMixtureNLLine)
+	for name, req := range map[string]BacktestRequest{
+		"no model":         {RankMixtureRemainderServer: true, RankMixtureRemainderSpread: true},
+		"v2":               {TTFTModel: string(whatif.QueueRankMixture), PrefillSlots: 4, RankMixtureRemainderServer: true},
+		"without a spread": {TTFTModel: nl, PrefillSlots: 4, RankMixtureRemainderServer: true},
+	} {
+		_, err := backtestQuestionOf(fit, test, req, time.Time{}, "")
+		require.Error(t, err, name)
+		assert.True(t, IsInputError(err), "%s: %v", name, err)
+	}
+	_, err := backtestQuestionOf(fit, test, BacktestRequest{TTFTModel: nl, PrefillSlots: 4, RankMixtureRemainderServer: true},
+		time.Time{}, "")
+	assert.Contains(t, err.Error(), "rankMixtureRemainderSpread")
+	b, err := json.Marshal(BacktestRequest{TTFTModel: nl, RankMixtureRemainderSpread: true})
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "rankMixtureRemainderServer")
+
+	recorded := *fit
+	recorded.mixture = slices.Clone(fit.mixture)
+	for i := range recorded.mixture {
+		recorded.mixture[i].RouterProcessingHist = map[float64]float64{0.01: 1, 0.05: 3, 0.2: 4.5, 1: 4.9, math.Inf(1): 5}
+		recorded.mixture[i].RouterProcessingMean = 0.06
+	}
+	req := BacktestRequest{TTFTModel: nl, PrefillSlots: 4, RankMixtureRemainderSpread: true}
+	spread := btRun(t, &recorded, test, req)
+	spreadJSON, err := json.Marshal(spread)
+	require.NoError(t, err)
+	assert.NotContains(t, string(spreadJSON), "remainderServer", "off, the answer has no trace of it")
+
+	req.RankMixtureRemainderServer = true
+	absent := btRun(t, &recorded, test, req)
+	zp := absent.RankMixture.ZParts
+	require.NotNil(t, zp)
+	assert.Nil(t, zp.RemainderServer)
+	assert.Contains(t, zp.RemainderServerOff, "fewer than")
+	assert.Contains(t, absent.RankMixture.Assumed, "router remainder server not applied")
+	assert.Equal(t, predictedOf(t, spread), predictedOf(t, absent), "no API-server series: the spread's figures")
+
+	withPods := recorded
+	withPods.mixture = slices.Clone(recorded.mixture)
+	for i := range withPods.mixture {
+		c := &withPods.mixture[i]
+		c.Ranks = slices.Clone(c.Ranks)
+		for j := range c.Ranks {
+			c.Ranks[j].Frontend, c.Ranks[j].Render, c.Ranks[j].RenderRate = 0.012, 0.03, c.Ranks[j].Rate
+		}
+		c.RouterRenderMean = 0.03
+	}
+	on := btRun(t, &withPods, test, req)
+	zp = on.RankMixture.ZParts
+	require.NotNil(t, zp)
+	require.NotNil(t, zp.RemainderServer, zp.RemainderServerOff)
+	assert.Empty(t, zp.RemainderServerOff)
+	assert.InDelta(t, 0.012, zp.RemainderServer.FrontendA+zp.RemainderServer.FrontendB*1e4, 0.012)
+	assert.Zero(t, zp.RemainderServer.K, "no queue by default")
+	assert.True(t, zp.RemainderServer.HasRender)
+	assert.Positive(t, zp.RemainderServer.Pods)
+	assert.Contains(t, on.RankMixture.Assumed, "router remainder from the prefill pods' API servers")
+	assert.Equal(t, spread.RankMixture.FitMean, on.RankMixture.FitMean, "the server does not move the fit window's checks")
+}

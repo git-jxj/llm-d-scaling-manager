@@ -301,7 +301,8 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlannerVersion: plannerVersion(), SelfCheck: defaultSelfCheck && !f.noSelfCheck, PlanBudget: f.planBudget,
 		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes, NoRankMixtureStratified: !stratifiedOr(f.rankMixtureStratified),
 		RankMixtureKVHold: f.rankMixtureFit.kvHold, RankMixtureRemainderSpread: f.rankMixtureFit.remainderSpread,
-		RankMixtureMinFitWindow: f.rankMixtureFit.window(), TPOTDistMinFitSteps: f.tpotFit.steps()}
+		RankMixtureRemainderServer: f.rankMixtureFit.remainderServer,
+		RankMixtureMinFitWindow:    f.rankMixtureFit.window(), TPOTDistMinFitSteps: f.tpotFit.steps()}
 	if f.rankMixtureTTFT {
 		cfg.TTFTModel = rankMixtureModel(f.rankMixtureNLLine)
 	}

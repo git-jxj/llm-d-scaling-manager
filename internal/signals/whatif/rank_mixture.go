@@ -210,6 +210,12 @@ type RankMixture struct {
 	// QueueRankMixtureNLLine (RankMixtureOptions, rank_mixture_modes.go);
 	// KV.RhoHold and Parts.Remainder.Shape say whether each applies.
 	KVHold, RemainderSpread bool
+	// RemainderServer says the fit was asked for the remainder server
+	// (RankMixtureOptions.RemainderServer, rank_mixture_server.go):
+	// Parts.Remainder.Server says whether it applies, and
+	// RemainderServerOff why not, "" where it does.
+	RemainderServer    bool
+	RemainderServerOff string
 }
 
 // MaxRelaxationShare is the largest relaxation time, as a share of the step
@@ -472,7 +478,7 @@ func (m RankMixture) Draws(rate float64, computed, prompt map[float64]float64, n
 			out.W = append(out.W, w)
 		}
 	}
-	out.Z = m.Parts.draws(out.L)
+	out.Z = m.Parts.draws(out.L, rate)
 	if m.KV.Known {
 		mean := rhoSum / float64(len(shares))
 		out.Checks.KVOutside = mean < m.KV.RhoLo || mean > m.KV.RhoHi

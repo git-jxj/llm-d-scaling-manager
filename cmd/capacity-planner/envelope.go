@@ -74,7 +74,7 @@ var (
 		// The same: read only with --experimental-ttft=v2 or =v2nl-line
 		// (refused without), whose every TTFT is flagged RankMixtureTTFT; a
 		// window under 12h adds RankMixtureShortFitWindow.
-		"rank-mixture-kv-hold", "rank-mixture-remainder-spread", rankMixtureMinFitWindowFlag,
+		"rank-mixture-kv-hold", "rank-mixture-remainder-spread", rankMixtureRemainderServerFlag, rankMixtureMinFitWindowFlag,
 		// Read only with --experimental-tpot=v2 (refused without), whose
 		// every percentile is flagged TPOTDistribution; under 24 steps it
 		// adds TPOTDistributionShortFit.

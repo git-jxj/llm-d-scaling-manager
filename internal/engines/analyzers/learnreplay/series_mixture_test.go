@@ -89,3 +89,43 @@ func TestMixtureCycleOf_RouterProcessing(t *testing.T) {
 	assert.Nil(t, c.RouterProcessingHist, "a recording made before the series was recorded")
 	assert.Zero(t, c.RouterProcessingMean)
 }
+
+// Each rank carries its pod's API-server figures: an LWS group's engine its
+// own Pod's, a row's ranks the row's with its render rate split over them.
+// A figure not known reads 0, and so does the router's render mean without
+// its _count; with it, the mean is _sum over _count.
+func TestMixtureCycleOf_APIServer(t *testing.T) {
+	at := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	group := domain.ReplicaMetrics{PodName: "g-0", VariantName: "p1", Ready: true, EngineRanks: 2, RequestRate: 3, RequestRateKnown: true,
+		GroupEngines: []domain.EngineReading{
+			{PodName: "g-0", RequestRate: 1, RequestRateKnown: true, AvgFrontendTime: 0.01, AvgFrontendTimeKnown: true,
+				AvgRenderTime: 0.2, AvgRenderTimeKnown: true, RenderRate: 1, RenderRateKnown: true},
+			{PodName: "g-0-1", RequestRate: 2, RequestRateKnown: true, AvgFrontendTime: 0.03, AvgFrontendTimeKnown: false,
+				AvgRenderTime: 0.4, AvgRenderTimeKnown: true, RenderRate: 2, RenderRateKnown: true},
+		}}
+	plain := domain.ReplicaMetrics{PodName: "p", VariantName: "p1", Ready: true, EngineRanks: 2, RequestRate: 4, RequestRateKnown: true,
+		AvgFrontendTime: -0.002, AvgFrontendTimeKnown: true, AvgRenderTime: 0.3, AvgRenderTimeKnown: true, RenderRate: 4,
+		RenderRateKnown: true}
+	in := seriesInput(7, group, plain)
+	in.RouterLatency = &domain.RouterLatency{WindowSeconds: 300, RenderSumRate: 0.9, RenderCountRate: 3}
+	c := mixtureCycleOf(in, at, SeriesVariants{})
+	require.Len(t, c.Ranks, 4)
+	assert.Equal(t, 0.01, c.Ranks[0].Frontend)
+	assert.Equal(t, 0.2, c.Ranks[0].Render)
+	assert.Equal(t, 1.0, c.Ranks[0].RenderRate)
+	assert.Zero(t, c.Ranks[1].Frontend, "not known reads 0")
+	assert.Equal(t, 0.4, c.Ranks[1].Render)
+	assert.Equal(t, -0.002, c.Ranks[2].Frontend, "a reading under 0 is kept")
+	assert.Equal(t, 0.3, c.Ranks[2].Render)
+	assert.Equal(t, 2.0, c.Ranks[2].RenderRate, "the row's render rate split over its 2 ranks")
+	assert.InDelta(t, 0.3, c.RouterRenderMean, 1e-12)
+
+	in.RouterLatency.RenderCountRate = 0
+	c = mixtureCycleOf(in, at, SeriesVariants{})
+	assert.Zero(t, c.RouterRenderMean)
+	in.RouterLatency = nil
+	plain.RenderRateKnown = false
+	c = mixtureCycleOf(seriesInput(7, plain), at, SeriesVariants{})
+	assert.Zero(t, c.Ranks[0].Render, "a render mean without its rate reads 0")
+	assert.Zero(t, c.Ranks[0].RenderRate)
+}

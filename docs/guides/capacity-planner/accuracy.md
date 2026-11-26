@@ -376,6 +376,58 @@ The hold given without the remainder spread is not refused, so each can
 still be compared alone, but `backtest`, `serve`, `at-replicas` and
 `day-plan` print a warning and the backtest's assumed line says so.
 
+A third mode builds on the remainder spread: the **remainder server**
+(`--rank-mixture-remainder-server`, `rankMixtureRemainderServer`), refused
+without `--experimental-ttft=v2nl-line` and `--rank-mixture-remainder-spread`
+and off by default. It does not move `fitMean` or `fitP90` either. Most of
+the router's remainder is the router calling a prefill pod's `/render`
+endpoint, and the prefill pod's API server handling the generation request
+before and after the engine's own time. The mode draws the remainder from
+those parts, each measured, in place of one line:
+
+- the router's own work outside its render call: its request-processing mean
+  less its render mean (`llm_d_epp_token_producer_render_duration_seconds`),
+  a constant;
+- the render call on the prefill pod: that pod's `/render` handler time
+  (`http_request_duration_seconds`), a line in the prompt;
+- the generation request's time in the pod's API server outside the engine:
+  its HTTP handler time less vLLM's end-to-end time
+  (`vllm:e2e_request_latency_seconds`), a line in the prompt;
+- the rest (the sidecar, the network, the decode pod's API server): a line
+  in the prompt, fitted to what the parts above leave of each fit step's
+  remainder.
+
+The first two are drawn on the remainder spread's measured law, as the
+spread draws the router's processing; the pod is drawn by the fit window's
+share profile of the prefill pods. `rankMixture.zParts.remainderServer`
+gives every fitted figure. The pods' API servers are taken as delays, not as
+queues (`k` is 0): a fitted queue term added nothing on the recording below,
+and it stays off until a busier recording shows it. It needs at least 12 fit
+steps that hold a prefill pod's frontend: recordings made before these
+series were recorded, and every public recording here, hold none, and the
+remainder is then the plain spread, `zParts.remainderServerOff` says why and
+the assumed line says so.
+
+On a production P/D recording re-captured with these series (development
+window only), against the hold and the spread together, the remainder
+server:
+
+- read every p90 and p95 figure on the load split within 1.25 of measured,
+  where the hold and the spread together left several over it;
+- brought the busiest steps' p90 and p95 closer to measured, with fewer
+  figures over 1.25;
+- cost the time split a little: its p95 read slightly lower, and a few more
+  figures read under 0.8 than with the spread alone, though far fewer than
+  with every mode off;
+- read one more mean under 0.8 on the load split, on the same outlier step
+  the hold lowers (just under 0.8 now, just over it before).
+
+Its render, frontend and router-work figures matched the offline reference's
+within a few percent (the rest has the same mean, held as a constant), and
+the deltas above matched the reference's in direction and size. On every
+public recording, and on that recording as first captured (without the
+pods' series), the mode prices every figure exactly as the spread does.
+
 The 12-hour minimum, for v2 and the variant alike, is a default:
 `--rank-mixture-min-fit-window` (`rankMixtureMinFitWindow`) lowers it, on
 `backtest`, `serve`, `at-replicas` and `day-plan`. A model fitted on a shorter

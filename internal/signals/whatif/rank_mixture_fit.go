@@ -22,6 +22,13 @@ type MixtureRank struct {
 	PrefillTime, QueueTime, TTFT float64
 	// Computed and Prompt are its mean computed and whole prompt, tokens.
 	Computed, Prompt float64
+	// Frontend is its pod's API-server time outside the engine on a
+	// generation request (domain.ReplicaMetrics.AvgFrontendTime), Render
+	// the pod's mean /render handler time, seconds, and RenderRate the
+	// rank's share of the pod's /render requests a second; each 0 where not
+	// recorded (a measured frontend of exactly 0 reads as not recorded).
+	// Only RankMixtureOptions.RemainderServer reads them.
+	Frontend, Render, RenderRate float64
 }
 
 // MixtureStep is one step of a fleet, as the model fits and prices it.
@@ -52,6 +59,11 @@ type MixtureStep struct {
 	// reads them.
 	RouterProcessingHist map[float64]float64
 	RouterProcessingMean float64
+	// RouterRenderMean is the router's mean render call (its token
+	// producer's /render request to a prefill pod), seconds, inside its
+	// request processing; 0 where not recorded. Only
+	// RankMixtureOptions.RemainderServer reads it.
+	RouterRenderMean float64
 }
 
 // minRankRate is the least rate a rank's means are read at: below it a
@@ -334,6 +346,13 @@ type RankMixtureOptions struct {
 	// (rank_mixture_modes.go). Both are modes of FitRankMixtureNL, each
 	// off by default; FitRankMixture does not read them.
 	KVHold, RemainderSpread bool
+	// RemainderServer draws the router's remainder from the prefill pods'
+	// API servers and the router's own work on the remainder spread's
+	// shape (rank_mixture_server.go); a mode of FitRankMixtureNL on top of
+	// RemainderSpread, off by default, and nothing without it.
+	// RemainderServerQueue fits the pods' API-server queue (K) as well; off,
+	// K is 0.
+	RemainderServer, RemainderServerQueue bool
 }
 
 // MinSpreadFitWindow is the shortest fit window the planner calibrates the
