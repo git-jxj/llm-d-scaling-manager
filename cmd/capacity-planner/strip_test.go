@@ -36,6 +36,16 @@ func TestStripLatency(t *testing.T) {
 	}
 	assert.Contains(t, got, `"Kind":"saturation.Analyze","Seq":2`, "the events are numbered from 1")
 
+	// The router prefix producer's cached tokens are no latency: they stay,
+	// with or without a router TTFT to keep the window for.
+	prefix := `{"Seq":1,"Kind":"start","Data":{"Commit":"x"}}` + "\n" +
+		`{"Seq":2,"Kind":"saturation.Analyze","Data":{"Input":{"RouterLatency":{"WindowSeconds":300,` +
+		`"PrefixPredictedTokenRate":9335,"PrefixBestAvailableTokenRate":10000,"TPOTSumRate":0.1}}}}`
+	out.Reset()
+	_, err = stripLatency(strings.NewReader(prefix), &out, false)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), `"RouterLatency":{"PrefixBestAvailableTokenRate":10000,"PrefixPredictedTokenRate":9335}`)
+
 	_, err = stripLatency(strings.NewReader("{not json\n{}"), &bytes.Buffer{}, false)
 	require.Error(t, err, "a line that is not JSON, and not the last, is an error")
 	assert.Equal(t, 2, exitCode(err))

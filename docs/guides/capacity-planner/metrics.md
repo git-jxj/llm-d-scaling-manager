@@ -163,11 +163,22 @@ flow control and the router's own latency go unread.
 | `llm_d_epp_request_processing_duration_seconds_bucket` | histogram buckets | `le` (no model labels) | the router's own time: `--rank-mixture-remainder-spread` | optional |
 | `llm_d_epp_request_processing_duration_seconds_sum` | histogram sum | (no model labels) | the router's mean own time: `--rank-mixture-remainder-spread` | optional |
 | `llm_d_epp_request_processing_duration_seconds_count` | histogram count | (no model labels) | as above | optional |
+| `llm_d_epp_prefix_predicted_cached_tokens_sum` | histogram sum | `plugin_name`, `endpoint_role` (no model labels) | prefix duplication across prefill pods: `--prefill-hit-at-count` with the KV residency histograms | optional |
+| `llm_d_epp_prefix_best_available_cached_tokens_sum` | histogram sum | `plugin_name`, `endpoint_role` (no model labels) | as above | optional |
 
 The request-processing series carry no model. A recording or a capture
 gives them to a model only where the router's TTFT names that model and no
 other in the namespace; with two models behind one namespace's routers,
-neither gets them.
+neither gets them. The two prefix producer series are joined the same way.
+A P/D router runs one prefix producer per profile, and each counts every
+prompt, so the producers are not summed: the planner reads the one that
+predicted the most cached tokens. The share it could have hit on the best
+endpoint and sent elsewhere is how much the routing duplicates a prefix
+across prefill pods, which the hit at another prefill count reads; without
+them the planner takes no duplication. Behind a P/D router the best
+available endpoint is chosen before the role filter, so it spans the
+decode pods too: a producer that indexes the decode pods' caches reads a
+larger loss, and a larger duplication, than the prefill routing gave up.
 
 ## kube-state-metrics
 
@@ -311,10 +322,10 @@ exports `lmcache:*` on the engine's own `/metrics`.
 | `llm_d_epp_request_cached_tokens_sum` | llm-d router v1.0.0 | the engine reports cached tokens in its response (vLLM: `--enable-prompt-tokens-details`) | needed for TTFT on cached fleets | no fleet-wide cached tokens per request |
 | `llm_d_epp_request_cached_tokens_count` | llm-d router v1.0.0 | as above | needed for TTFT on cached fleets | as above |
 | `llm_d_epp_request_cached_tokens_bucket` | llm-d router v1.0.0 | as above | needed for TTFT on cached fleets | no spread of cached tokens per request |
-| `llm_d_epp_prefix_predicted_cached_tokens_sum` | llm-d router v1.0.0 | an `approx-prefix-cache-producer` or `precise-prefix-cache-producer` plugin | diagnostic | none |
+| `llm_d_epp_prefix_predicted_cached_tokens_sum` | llm-d router v1.0.0 | an `approx-prefix-cache-producer` or `precise-prefix-cache-producer` plugin | needed for TTFT on cached fleets | no prefix duplication across prefill pods: `--prefill-hit-at-count` takes none |
 | `llm_d_epp_prefix_predicted_cached_tokens_count` | llm-d router v1.0.0 | as above | diagnostic | none |
 | `llm_d_epp_prefix_best_predicted_cached_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
-| `llm_d_epp_prefix_best_available_cached_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
+| `llm_d_epp_prefix_best_available_cached_tokens_sum` | llm-d router v1.0.0 | as above | needed for TTFT on cached fleets | as above |
 | `llm_d_epp_prefix_prompt_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
 | `llm_d_epp_prefix_best_predicted_cached_tokens_count` | llm-d router | as above | diagnostic | how much cache affinity the routing gives up under load, unseen |
 | `llm_d_epp_prefix_best_available_cached_tokens_count` | llm-d router | as above | diagnostic | as above |

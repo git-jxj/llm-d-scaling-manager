@@ -190,6 +190,29 @@ func (m HitModel) horizonHit(target float64) float64 {
 	return m.F(math.Exp((lo + hi) / 2))
 }
 
+// DuplicationOfAffinityLoss is K, the duplication of a prefix across count
+// prefill pods, read from the affinity the router gave up there: loss is 1
+// - predicted / best available, the router prefix producer's share of the
+// cached tokens it could have hit on the best endpoint and sent elsewhere
+// (domain.RouterLatency.PrefixPredictedTokenRate). Each such request writes
+// the prefix again on the pod it went to, so a prefix's accesses split,
+// 1 - loss on the pod holding it and loss over the other count - 1. K is
+// the number of pods the accesses read as, evenly: the inverse of the sum
+// of the squared shares (the inverse Simpson concentration),
+//
+//	K = 1 / ((1 - loss)^2 + loss^2 / (count - 1)),
+//
+// 1 at no loss and count at an even spread. A loss the router counts is a
+// floor on the true one: once a second pod holds the prefix, a request sent
+// there loses nothing the router sees. 1 on one pod, and with a loss not in
+// [0, 1).
+func DuplicationOfAffinityLoss(loss float64, count int) float64 {
+	if count <= 1 || !(loss > 0 && loss < 1) {
+		return 1
+	}
+	return 1 / ((1-loss)*(1-loss) + loss*loss/float64(count-1))
+}
+
 // duplication is k(n): 1 on one pod, K on more.
 func (m HitModel) duplication(n int) float64 {
 	if n <= 1 {
