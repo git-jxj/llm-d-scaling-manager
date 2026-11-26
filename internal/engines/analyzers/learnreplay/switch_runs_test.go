@@ -1767,6 +1767,7 @@ var heldBy = map[string][]heldTest{
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestImbalance_PooledMinutesLearnFUnderTheThreshold"},
 		{"../../../signals/prefill", "TestImbalance_AMinuteAtTheThresholdIsReadAlone"},
+		{"../../../signals/prefill", "TestImbalance_AMinuteAtTheThresholdAfterLightOnesIsReadAlone"},
 		{"../../../signals/prefill", "TestImbalance_APoolEndsAtABreak"},
 		{"../saturation", "TestPrefillFPooledMinutes_LongPromptsThroughAnalyze"},
 	},

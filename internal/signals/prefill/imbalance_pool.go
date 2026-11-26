@@ -111,6 +111,12 @@ func (ks *keyState) notePooledImbalance(shares []share, allAdmitted bool, now ti
 			p.minutes = slices.Delete(p.minutes, 0, len(p.minutes)-MaxPooledMinutes)
 		}
 	}
+	if m.perPod >= MinRequestsPerPodMinute {
+		// A minute that carries the threshold alone is read alone, as with
+		// the switch off: the lighter minutes pooled before it are dropped,
+		// not read into its f.
+		p.minutes = p.minutes[len(p.minutes)-1:]
+	}
 	s, ok := p.sample()
 	if !ok {
 		return

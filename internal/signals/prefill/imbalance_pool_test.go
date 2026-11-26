@@ -2,6 +2,7 @@ package prefill
 
 import (
 	"math/rand/v2"
+	"slices"
 	"testing"
 	"time"
 
@@ -93,4 +94,28 @@ func TestImbalance_APoolEndsAtABreak(t *testing.T) {
 	enough := run(NewObserver(), pooled(sharedMinutes(rng, 30, 25, 1, 1), true)...)
 	assert.Empty(t, enough.FRefused)
 	assert.LessOrEqual(t, enough.FSamples, 7, "thirty minutes in pools of four or five")
+}
+
+// A minute that carries MinRequestsPerPodMinute alone is read alone even
+// right after lighter minutes, whose pool it would otherwise join: light
+// minutes at 3:1 and 60 a pod alternate with busy ones at 1.2:1 and 300 a
+// pod. Off reads the busy minutes; on reads the same busy minutes, each
+// alone, and the light ones never reach a pool of their own (one light
+// minute between two busy ones carries 60).
+func TestImbalance_AMinuteAtTheThresholdAfterLightOnesIsReadAlone(t *testing.T) {
+	for seed := range uint64(5) {
+		rng := rand.New(rand.NewPCG(seed, 11))
+		light, busy := sharedMinutes(rng, 20, 60, 3, 1), sharedMinutes(rng, 20, 300, 1.2, 1)
+		cs := make([]Cycle, 0, 2*len(light))
+		for i := range light {
+			cs = append(cs, light[i], busy[i])
+		}
+		off := run(NewObserver(), pooled(slices.Clone(cs), false)...)
+		on := run(NewObserver(), pooled(slices.Clone(cs), true)...)
+		require.Empty(t, off.FRefused, "seed %d", seed)
+		assert.Equal(t, 20, off.FSamples, "seed %d: the busy minutes", seed)
+		assert.Equal(t, off.FSamples, on.FSamples, "seed %d", seed)
+		assert.InDelta(t, off.F, on.F, 1e-9, "seed %d", seed)
+		assert.InDelta(t, off.FLoad, on.FLoad, 1e-6, "seed %d", seed)
+	}
 }
