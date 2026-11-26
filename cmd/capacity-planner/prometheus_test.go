@@ -473,9 +473,17 @@ func TestPrometheus_TheSourceNamesTheWindow(t *testing.T) {
 // token over http): capture's and the --prometheus mode's, in text and in
 // -o json. It keeps its exit code and what errors.Is finds.
 func TestPrometheus_ErrorsNameNoSecret(t *testing.T) {
-	dead := httptest.NewServer(nil)
+	// dead closes every connection before it answers, so no query is
+	// answered and the HTTP client quotes the URL. A closed server's port
+	// would do the same until another test's server took it, and then a
+	// query was answered with a 404 that quotes no URL.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(dead.Close)
 	deadURL := dead.URL
-	dead.Close()
 	srv := sweepServer(t)
 	failing := sweepServer(t)
 	failing.Fail(queryOf(t, registration.QueryKvCacheUsage), "query processing would load too many samples")
