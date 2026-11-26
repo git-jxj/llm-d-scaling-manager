@@ -260,6 +260,25 @@ func (m RankMixture) modesAssumed() string {
 		parts = append(parts, fmt.Sprintf("router remainder drawn as its line: fewer than %d fit steps hold the router's "+
 			"request-processing histogram (not recorded, or not exported by the router)", MinRemainderSpreadSteps))
 	}
+	switch {
+	case !m.RemainderServer:
+	case m.Parts != nil && m.Parts.Remainder.Server != nil:
+		s := m.Parts.Remainder.Server
+		fe := "frontend not recorded (in the rest)"
+		if s.HasFrontend {
+			fe = fmt.Sprintf("frontend %.3g s + %.3g us x L", s.F0, s.F1*1e6)
+		}
+		parts = append(parts, fmt.Sprintf("router remainder from the pods' API servers: router work outside render %.3g s, "+
+			"render %.3g s + %.3g us x L, %s; unmeasured rest (sidecar, network, the decode pod's API server, the API server's "+
+			"output path) %.3g s + %.3g us x L, %.2g of the fit window's remainder",
+			s.other(0), s.R0, s.R1*1e6, fe, s.N0, s.N1*1e6, s.RestShare))
+		if s.RestShare > MaxRemainderRestShare {
+			parts = append(parts, fmt.Sprintf("the unmeasured rest is over %.2g of the remainder: a TTFT priced past the fit "+
+				"window's top rate (%.3g r/s) is flagged %s", MaxRemainderRestShare, s.TopRate, RemainderRestPastFit))
+		}
+	default:
+		parts = append(parts, "router remainder server not applied ("+m.RemainderServerOff+"): the remainder is the spread")
+	}
 	if len(parts) == 0 {
 		return ""
 	}

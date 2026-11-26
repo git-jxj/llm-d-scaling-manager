@@ -208,28 +208,32 @@ type TTFTModelOptions struct {
 	// (BacktestRequest.RankMixtureMinFitWindow), 0 the default.
 	KVHold, RemainderSpread bool
 	MinFitWindow            time.Duration
+	// RemainderServer is the variant's remainder server mode
+	// (BacktestRequest.RankMixtureRemainderServer), on top of
+	// RemainderSpread.
+	RemainderServer bool
 }
 
 // switches is the backtest's switches the options turn on.
 func (o TTFTModelOptions) switches() rankMixtureSwitches {
 	return rankMixtureSwitches{stratified: o.Stratified, nlLine: o.Model == string(whatif.QueueRankMixtureNLLine),
-		kvHold: o.KVHold, remainderSpread: o.RemainderSpread, minFitWindow: o.MinFitWindow}
+		kvHold: o.KVHold, remainderSpread: o.RemainderSpread, remainderServer: o.RemainderServer, minFitWindow: o.MinFitWindow}
 }
 
 // moved says the options fit the model other than its defaults do, apart
 // from Stratified: a mode on, or another shortest fit window.
 func (o TTFTModelOptions) moved() bool {
-	return o.KVHold || o.RemainderSpread || o.MinFitWindow > 0
+	return o.KVHold || o.RemainderSpread || o.RemainderServer || o.MinFitWindow > 0
 }
 
 // Check refuses options the model does not take: the modes are the
-// variant's only.
+// variant's only, and the remainder server needs the remainder spread.
 func (o TTFTModelOptions) Check() error {
 	if (o.KVHold || o.RemainderSpread) && o.Model != string(whatif.QueueRankMixtureNLLine) {
 		return InputErrorf("rankMixtureKVHold and rankMixtureRemainderSpread are modes of ttftModel %q: give them with that model",
 			whatif.QueueRankMixtureNLLine)
 	}
-	return nil
+	return checkRemainderServer(o.RemainderServer, o.RemainderSpread, o.Model)
 }
 
 // fitMainMixture fits the model sw names on e's cycles up to the cycle

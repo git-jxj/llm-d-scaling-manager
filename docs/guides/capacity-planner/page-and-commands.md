@@ -512,7 +512,9 @@ In a cluster, add both to the StatefulSet's `args`
 - **The variant's modes.** `--rank-mixture-kv-hold` and
   `--rank-mixture-remainder-spread`, with `=v2nl-line`, turn the variant's
   two modes on for every check and source, as on `backtest`. Give them
-  together ([accuracy](accuracy.md)).
+  together ([accuracy](accuracy.md)). `--rank-mixture-remainder-server`,
+  with both of them, adds the third: the remainder drawn from the prefill
+  pods' API servers, where the recording holds their series.
 - **Shorter recordings.** Both TTFT models abstain on a fit window under
   12 hours, which every lab recording is. `--rank-mixture-min-fit-window 2h`
   lowers that minimum for every check and source; each TTFT a model prices

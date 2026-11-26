@@ -143,6 +143,12 @@ func TestBacktestFlags(t *testing.T) {
 			"--experimental-ttft=v2nl-line"},
 		"spread with v2": {[]string{"backtest", "--recording", "a", "--experimental-ttft=v2", "--rank-mixture-remainder-spread"},
 			"--experimental-ttft=v2nl-line"},
+		"server alone": {[]string{"backtest", "--recording", "a", "--" + rankMixtureRemainderServerFlag},
+			"--rank-mixture-remainder-spread"},
+		"server without the spread": {[]string{"backtest", "--recording", "a", "--experimental-ttft=v2nl-line",
+			"--" + rankMixtureRemainderServerFlag}, "--rank-mixture-remainder-spread"},
+		"server with v2": {[]string{"backtest", "--recording", "a", "--experimental-ttft=v2", "--rank-mixture-remainder-spread",
+			"--" + rankMixtureRemainderServerFlag}, "--experimental-ttft=v2nl-line"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var out strings.Builder
@@ -151,5 +157,44 @@ func TestBacktestFlags(t *testing.T) {
 			assert.Equal(t, 2, exitCode(err))
 			assert.Contains(t, err.Error(), c.want)
 		})
+	}
+}
+
+// The remainder server on a recording made before the pods' API-server
+// series were recorded (every public one): the backtest sends it, the model
+// reports why it did not apply, and every figure is the spread's own.
+func TestBacktest_RemainderServerWithoutTheSeries(t *testing.T) {
+	base := []string{"backtest", "--recording", q32Recording, "--split", "50%", "--experimental-ttft=v2nl-line",
+		"--rank-mixture-min-fit-window", "2h", "--rank-mixture-kv-hold", "--rank-mixture-remainder-spread", "-o", "json"}
+	type answer struct {
+		Steps []struct {
+			TTFT json.RawMessage `json:"ttft"`
+		} `json:"steps"`
+		RankMixture struct {
+			ZParts *struct {
+				RemainderServer    json.RawMessage `json:"remainderServer"`
+				RemainderServerOff string          `json:"remainderServerOff"`
+			} `json:"zParts"`
+		} `json:"rankMixture"`
+	}
+	read := func(args []string) answer {
+		var out, warn strings.Builder
+		require.NoError(t, run(t.Context(), args, &out, &warn), warn.String())
+		var a answer
+		require.NoError(t, json.Unmarshal([]byte(out.String()), &a))
+		require.NotNil(t, a.RankMixture.ZParts)
+		return a
+	}
+	spread := read(base)
+	server := read(append(slices.Clone(base), "--"+rankMixtureRemainderServerFlag))
+	assert.Empty(t, spread.RankMixture.ZParts.RemainderServerOff, "not asked, nothing said")
+	// The public recordings hold no router processing either, so no spread
+	// to draw on: the first reason it did not apply.
+	assert.Equal(t, "no remainder spread to draw it on", server.RankMixture.ZParts.RemainderServerOff)
+	assert.Nil(t, server.RankMixture.ZParts.RemainderServer)
+	require.NotEmpty(t, spread.Steps)
+	require.Len(t, server.Steps, len(spread.Steps))
+	for i := range spread.Steps {
+		assert.JSONEq(t, string(spread.Steps[i].TTFT), string(server.Steps[i].TTFT), "step %d", i)
 	}
 }

@@ -62,6 +62,7 @@ func (s *Server) rankMixtureDefaults(req *BacktestRequest) {
 	if req.TTFTModel == string(whatif.QueueRankMixtureNLLine) {
 		req.RankMixtureKVHold = req.RankMixtureKVHold || s.kvHold
 		req.RankMixtureRemainderSpread = req.RankMixtureRemainderSpread || s.remainderSpread
+		req.RankMixtureRemainderServer = req.RankMixtureRemainderServer || (s.remainderServer && req.RankMixtureRemainderSpread)
 	}
 }
 
@@ -69,9 +70,18 @@ func (s *Server) rankMixtureDefaults(req *BacktestRequest) {
 // already defaulted): the request's switches, else the server's, checked
 // as a backtest checks them. Stratified is the caller's to set.
 func (s *Server) mainTTFTOptions(req InputsRequest) (TTFTModelOptions, error) {
-	o := TTFTModelOptions{Model: req.TTFTModel, KVHold: req.RankMixtureKVHold, RemainderSpread: req.RankMixtureRemainderSpread}
+	o := TTFTModelOptions{Model: req.TTFTModel, KVHold: req.RankMixtureKVHold, RemainderSpread: req.RankMixtureRemainderSpread,
+		RemainderServer: req.RankMixtureRemainderServer}
 	if err := checkMinFitWindow(req.RankMixtureMinFitWindow, req.TTFTModel); err != nil {
 		return o, err
+	}
+	// The modes are defaulted before they are checked, as a backtest's are
+	// (rankMixtureDefaults): the remainder server asked for with the
+	// server's remainder spread is not refused for want of the request's.
+	if req.TTFTModel == string(whatif.QueueRankMixtureNLLine) {
+		o.KVHold = o.KVHold || s.kvHold
+		o.RemainderSpread = o.RemainderSpread || s.remainderSpread
+		o.RemainderServer = o.RemainderServer || (s.remainderServer && o.RemainderSpread)
 	}
 	if err := o.Check(); err != nil {
 		return o, err
@@ -83,11 +93,17 @@ func (s *Server) mainTTFTOptions(req InputsRequest) (TTFTModelOptions, error) {
 	if req.RankMixtureMinFitWindow == "" {
 		o.MinFitWindow = s.minFitWindow
 	}
-	if req.TTFTModel == string(whatif.QueueRankMixtureNLLine) {
-		o.KVHold = o.KVHold || s.kvHold
-		o.RemainderSpread = o.RemainderSpread || s.remainderSpread
-	}
 	return o, nil
+}
+
+// checkRemainderServer refuses rankMixtureRemainderServer without the
+// variant and its remainder spread, whose shape it is drawn on.
+func checkRemainderServer(server, spread bool, model string) error {
+	if server && (model != string(whatif.QueueRankMixtureNLLine) || !spread) {
+		return InputErrorf("rankMixtureRemainderServer draws on the remainder spread of ttftModel %q: give it with that model "+
+			"and rankMixtureRemainderSpread", whatif.QueueRankMixtureNLLine)
+	}
+	return nil
 }
 
 // MinTPOTDistFitStepsFloor is the fewest fit steps the TPOT distribution

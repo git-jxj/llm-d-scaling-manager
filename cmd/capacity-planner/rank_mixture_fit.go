@@ -33,18 +33,40 @@ const (
 		"95th percentile rank utilization: held past it, not extrapolated; off by default"
 	rankMixtureRemainderSpreadUsage = "with --experimental-ttft=v2nl-line, draw the router's remainder from the router's measured " +
 		"request-processing time where the fit window recorded it (its line where not, as off); off by default"
+	rankMixtureRemainderServerUsage = "with --experimental-ttft=v2nl-line and --rank-mixture-remainder-spread, draw the router's " +
+		"remainder from the prefill pods' API servers (their render and HTTP handlers against vLLM's end-to-end time) and the " +
+		"router's own work, on the spread's shape, where the fit window recorded them (the plain spread where not); off by default"
 )
+
+// rankMixtureRemainderServerFlag is the remainder server's flag.
+const rankMixtureRemainderServerFlag = "rank-mixture-remainder-server"
 
 // rankMixtureFit is the fit flags one command was given.
 type rankMixtureFit struct {
-	kvHold, remainderSpread bool
-	minFitWindow            time.Duration
+	kvHold, remainderSpread, remainderServer bool
+	minFitWindow                             time.Duration
 }
 
 // registerModes registers the variant's modes.
 func (r *rankMixtureFit) registerModes(fs *flag.FlagSet) {
 	fs.BoolVar(&r.kvHold, "rank-mixture-kv-hold", false, rankMixtureKVHoldUsage)
 	fs.BoolVar(&r.remainderSpread, "rank-mixture-remainder-spread", false, rankMixtureRemainderSpreadUsage)
+	r.registerServer(fs)
+}
+
+// registerServer registers the remainder server mode.
+func (r *rankMixtureFit) registerServer(fs *flag.FlagSet) {
+	fs.BoolVar(&r.remainderServer, rankMixtureRemainderServerFlag, false, rankMixtureRemainderServerUsage)
+}
+
+// checkRemainderServer refuses the remainder server without the variant and
+// its remainder spread.
+func checkRemainderServer(server, spread, nlLine bool) error {
+	if server && (!nlLine || !spread) {
+		return usagef("--%s draws on the remainder spread of the rank mixture's variant: give it with "+
+			"--experimental-ttft=v2nl-line and --rank-mixture-remainder-spread", rankMixtureRemainderServerFlag)
+	}
+	return nil
 }
 
 // registerWindow registers the shortest fit window.
@@ -60,6 +82,8 @@ func (r rankMixtureFit) check(v2, nlLine bool) error {
 	case (r.kvHold || r.remainderSpread) && !nlLine:
 		return usagef("--rank-mixture-kv-hold and --rank-mixture-remainder-spread are modes of the rank mixture's variant: " +
 			"give them with --experimental-ttft=v2nl-line")
+	case r.remainderServer && (!nlLine || !r.remainderSpread):
+		return checkRemainderServer(r.remainderServer, r.remainderSpread, nlLine)
 	case r.minFitWindow < 0:
 		return usagef("--%s %s, want a duration such as 2h", rankMixtureMinFitWindowFlag, r.minFitWindow)
 	case r.window() > 0 && !v2:
@@ -100,7 +124,7 @@ func (r rankMixtureFit) windowField() string {
 // Resolved.TTFTModel), stratified as given.
 func (r rankMixtureFit) options(model string, stratified bool) whatifapi.TTFTModelOptions {
 	return whatifapi.TTFTModelOptions{Model: model, Stratified: stratified, KVHold: r.kvHold, RemainderSpread: r.remainderSpread,
-		MinFitWindow: r.window()}
+		RemainderServer: r.remainderServer, MinFitWindow: r.window()}
 }
 
 // tpotDistMinFitStepsFlag is the TPOT distribution's fewest-fit-steps flag,

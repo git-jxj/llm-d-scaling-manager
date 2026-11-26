@@ -82,6 +82,10 @@ type backtestFlags struct {
 	// variant's modes (whatifapi.BacktestRequest RankMixtureKVHold and
 	// RankMixtureRemainderSpread).
 	rankMixtureKVHold, rankMixtureRemainderSpread bool
+	// rankMixtureRemainderServer is --rank-mixture-remainder-server, the
+	// variant's remainder server on top of the spread
+	// (whatifapi.BacktestRequest.RankMixtureRemainderServer).
+	rankMixtureRemainderServer bool
 	// fitWindow is --rank-mixture-min-fit-window and tpotFit
 	// --tpot-dist-min-fit-steps (rank_mixture_fit.go).
 	fitWindow rankMixtureFit
@@ -155,6 +159,7 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.BoolVar(&f.rankMixtureRemainderSpread, "rank-mixture-remainder-spread", false, "with --experimental-ttft=v2nl-line, draw "+
 		"the router's remainder from the router's measured request-processing time where the fit window recorded it "+
 		"(its line where not, as off); off by default")
+	fs.BoolVar(&f.rankMixtureRemainderServer, rankMixtureRemainderServerFlag, false, rankMixtureRemainderServerUsage)
 	f.fitWindow.registerWindow(fs)
 	f.tpotFit.register(fs)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage)
@@ -173,6 +178,9 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	if (f.rankMixtureKVHold || f.rankMixtureRemainderSpread) && !f.rankMixtureNLLine {
 		return usagef("--rank-mixture-kv-hold and --rank-mixture-remainder-spread are modes of the rank mixture's variant: " +
 			"give them with --experimental-ttft=v2nl-line")
+	}
+	if err := checkRemainderServer(f.rankMixtureRemainderServer, f.rankMixtureRemainderSpread, f.rankMixtureNLLine); err != nil {
+		return err
 	}
 	if err := f.fitWindow.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
 		return err
@@ -305,6 +313,7 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 	req.RankMixtureFitSteps = f.rankMixtureFitSteps
 	req.RankMixtureStratified = f.rankMixtureStratified
 	req.RankMixtureKVHold, req.RankMixtureRemainderSpread = f.rankMixtureKVHold, f.rankMixtureRemainderSpread
+	req.RankMixtureRemainderServer = f.rankMixtureRemainderServer
 	req.RankMixtureMinFitWindow = f.fitWindow.windowField()
 	if err := withRankMixture(testPath, test, nil); err != nil {
 		return err

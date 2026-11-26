@@ -78,6 +78,11 @@ type InputsRequest struct {
 	RankMixtureKVHold          bool   `json:"rankMixtureKVHold,omitempty"`
 	RankMixtureRemainderSpread bool   `json:"rankMixtureRemainderSpread,omitempty"`
 	RankMixtureMinFitWindow    string `json:"rankMixtureMinFitWindow,omitempty"`
+	// RankMixtureRemainderServer is BacktestRequest's for the main view's
+	// model, defaulted as the modes above are (serve
+	// --rank-mixture-remainder-server); only with the variant and its
+	// remainder spread. It changes the inputsId.
+	RankMixtureRemainderServer bool `json:"rankMixtureRemainderServer,omitempty"`
 	// TPOTDistMinFitSteps is BacktestRequest's for the main view's TPOT
 	// distribution: absent, the server's default (serve
 	// --tpot-dist-min-fit-steps), else 24. Only with a TPOTModel; another

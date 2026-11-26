@@ -318,6 +318,10 @@ type rankMixtureSwitches struct {
 	// (whatif.RankMixtureOptions KVHold and RemainderSpread):
 	// BacktestRequest RankMixtureKVHold and RankMixtureRemainderSpread.
 	kvHold, remainderSpread bool
+	// remainderServer is the variant's remainder server mode
+	// (whatif.RankMixtureOptions.RemainderServer):
+	// BacktestRequest.RankMixtureRemainderServer.
+	remainderServer bool
 	// minFitWindow is the shortest fit window the model prices from
 	// (BacktestRequest.RankMixtureMinFitWindow): 0 is
 	// whatif.MinSpreadFitWindow, the default. A model priced from a window
@@ -334,6 +338,7 @@ func rankMixtureSwitchesOf(req BacktestRequest) rankMixtureSwitches {
 		nlLine:          req.TTFTModel == string(whatif.QueueRankMixtureNLLine),
 		kvHold:          req.RankMixtureKVHold,
 		remainderSpread: req.RankMixtureRemainderSpread,
+		remainderServer: req.RankMixtureRemainderServer,
 		minFitWindow:    minFitWindowOf(req.RankMixtureMinFitWindow)}
 }
 
@@ -359,7 +364,8 @@ func (sw rankMixtureSwitches) model() whatif.QueueModel {
 func (sw rankMixtureSwitches) options(slots int) whatif.RankMixtureOptions {
 	return whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: sw.fitWindow(),
 		SpreadFloor: whatif.MinSpread, CleanFitSteps: sw.fitSteps, SharesAtLoad: sw.fitSteps,
-		StratifiedMoments: sw.stratified, KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread}
+		StratifiedMoments: sw.stratified, KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread,
+		RemainderServer: sw.remainderServer}
 }
 
 // stratifiedOf is a request's rankMixtureStratified: the value where it
@@ -459,6 +465,7 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 		r.ZParts = &RankMixtureZParts{OverheadA: p.Overhead.A, OverheadB: p.Overhead.B, DecodeA: p.Decode.A, DecodeB: p.Decode.B,
 			RemainderA: p.Remainder.A, RemainderB: p.Remainder.B, OverheadSigma: p.Overhead.Sigma, DecodeSigma: p.Decode.Sigma}
 		r.ZParts.remainderShape(p.Remainder)
+		r.ZParts.remainderServer(m)
 	}
 	return &rankMixtureQ{m: m, report: r, fitPrefill: actualOf(seriesAt(fit.series, idx)).Prefill}, steps, nil
 }

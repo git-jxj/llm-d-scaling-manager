@@ -66,12 +66,16 @@ const (
 // draws the part from a measured law in place of Sigma's lognormal
 // (remainder spread, rank_mixture_modes.go): Shape is that law's quantiles
 // over its mean on shapeGrid's mid-points, and ShapeMean its mean, seconds.
+// Server, where set on the remainder (remainder server,
+// rank_mixture_server.go), draws the part from the prefill pods' API
+// servers and the router's own work on Shape in place of the line.
 type ZPart struct {
 	A, B       float64
 	Identified bool
 	Sigma      float64
 	Shape      []float64
 	ShapeMean  float64
+	Server     *ZServer
 }
 
 // ZParts is Z measured part by part.
@@ -165,11 +169,19 @@ const z90 = 1.2815515655446004
 const zSeed = 0x5eed + 99
 
 // draws is each request's Z at its prompt l: every part lognormal about its
-// line, or drawn from its shape; nil where p is nil or no part is spread (Z
-// is then the lines' sum, priced as a0 + beta L).
+// line, or drawn from its shape, and the remainder from its server where it
+// has one; nil where p is nil or no part is spread (Z is then the lines'
+// sum, priced as a0 + beta L).
 func (p *ZParts) draws(l []float64) []float64 {
 	if p == nil || (!p.Overhead.spread() && !p.Decode.spread() && !p.Remainder.spread()) {
 		return nil
+	}
+	if s := p.Remainder.Server; s != nil && p.Remainder.Shape != nil {
+		out := drawParts(l, []ZPart{p.Overhead, p.Decode})
+		for i, r := range s.draws(l, p.Remainder.Shape) {
+			out[i] += r
+		}
+		return out
 	}
 	return drawParts(l, []ZPart{p.Overhead, p.Decode, p.Remainder})
 }
@@ -379,6 +391,16 @@ func FitRankMixtureNL(steps []MixtureStep, o RankMixtureOptions) (RankMixture, R
 	}
 	if o.RemainderSpread && !noPrompt {
 		parts.Remainder.Shape, parts.Remainder.ShapeMean = remainderShape(steps)
+	}
+	if o.RemainderServer && o.RemainderSpread {
+		// Asked for, it is named whether or not it applies: with no prompt
+		// recorded there is no spread, and the assumed line says so.
+		m.RemainderServer = true
+		if parts.Remainder.Shape == nil {
+			m.RemainderServerOff = "no remainder spread to draw it on"
+		} else {
+			parts.Remainder.Server, m.RemainderServerOff = FitZServer(steps, stepLength(steps).Seconds())
+		}
 	}
 	return m, diag, nil
 }
