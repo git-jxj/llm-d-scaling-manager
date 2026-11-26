@@ -195,11 +195,11 @@ const MinFLoadCurveMinutes = 8
 //
 // Measured on the Qwen3-32B lab fleet of long prompts (2 prefill pods,
 // minutes pooled, issue llm-d-incubation/llm-d-scaling-manager#482): Floor
-// 0.97 and Excess 520 tok/s a pod, from minutes at 570 to 13,000 tok/s a
-// pod that read f 1.6 to 1.7 under 1,000 and about 1.0 above 9,000. On a
-// later run at the same count, held out, it read the minutes' f with a mean
-// absolute error of 0.031, against 0.047 for one f at every load. That run
-// had no minute under 3,500 tok/s a pod: below it the curve rests on the
+// 0.96 and Excess 591 tok/s a pod, from 23 pools at 850 to 13,200 tok/s a
+// pod that read f 1.5 to 1.7 under 1,000 and about 1.0 above 9,000. On a
+// later run at the same count, held out, it read the pools' f with a mean
+// absolute error of 0.029, against 0.048 for one f at every load. That run
+// had no pool under 3,000 tok/s a pod: below it the curve rests on the
 // fit window alone, whose light minutes were its first twelve (a cold
 // prefix cache is not ruled out for them).
 type FLoadCurve struct {

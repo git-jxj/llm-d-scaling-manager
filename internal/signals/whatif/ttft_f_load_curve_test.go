@@ -5,8 +5,9 @@ import (
 )
 
 // curvePrefill is loadAwarePrefill's fleet, f held at 1.05, with f against
-// the load f(u) = 0.97 + 520/u (the lab's fit, issue
-// llm-d-incubation/llm-d-scaling-manager#482) when curve is set: three pods
+// the load f(u) = 0.97 + 520/u (the lab's offline fit; the planner's own
+// read 0.96 + 591/u, issue llm-d-incubation/llm-d-scaling-manager#482)
+// when curve is set: three pods
 // at V_P 30,000 tok/s and 1000-token prompts, so u is rate * 1000 / 3.
 func curvePrefill(curve bool) Prefill {
 	p := loadAwarePrefill(false, DefaultVPMargin)
