@@ -155,10 +155,10 @@ type modelWindow struct {
 	// the last pricing, held for ModelPriceEvery.
 	now             modelFigures
 	lastPrefillPods int
+	priced          modelPricing
 	// unreadSince is the first cycle of a run whose variant pair or
 	// argument tags did not read (unreadPair), zero while they read.
 	unreadSince time.Time
-	priced          modelPricing
 }
 
 // modelPricing is a model's last v2 TTFT pricing and what it was priced at:
