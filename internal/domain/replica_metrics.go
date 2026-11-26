@@ -650,6 +650,16 @@ type ReplicaMetrics struct {
 	// merge by summing each source's rate, and the pod has the split only
 	// when every rank had one. Nil when absent.
 	CachedTokenRateBySource []SourceRate `learnrec:"omitzero"`
+	// KVReuseGapBuckets and KVIdleBeforeEvictBuckets are the pod's KV
+	// residency histograms, seconds, as per-second rates over [1m], each
+	// bound's rate summed over its ranks (vllm:kv_block_reuse_gap_seconds,
+	// one observation per prefix-cache hit block, the time since its last
+	// use; vllm:kv_block_idle_before_evict_seconds, one per evicted block,
+	// the time it sat unused; --kv-cache-metrics). Read by the capacity
+	// planner alone, for the prefix hit at another prefill count
+	// (prefill.FitHitModel). Nil when absent.
+	KVReuseGapBuckets        []LatencyBucket `learnrec:"omitzero"`
+	KVIdleBeforeEvictBuckets []LatencyBucket `learnrec:"omitzero"`
 	// KVTransferRates is what the pod spent moving KV that it did not
 	// compute, over [1m], one entry per kind, sorted by kind
 	// (KVTransferOffloadLoad, KVTransferTierRead, KVTransferNIXL): bytes a

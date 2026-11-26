@@ -88,6 +88,8 @@ it.
 | `vllm:request_prefill_time_seconds_sum` | histogram sum | | mean prefill time, recorded | optional |
 | `vllm:request_prefill_time_seconds_count` | histogram count | | mean prefill time, recorded | optional |
 | `vllm:request_time_per_output_token_seconds_bucket` | histogram buckets | `le` | the engine's TPOT distribution, recorded | optional |
+| `vllm:kv_block_reuse_gap_seconds_bucket` | histogram buckets | `le` | the time since a cached block's last use, at each prefix-cache hit: the prefix hit at another prefill count (`--prefill-hit-at-count`); recorded (with `--kv-cache-metrics`) | optional |
+| `vllm:kv_block_idle_before_evict_seconds_bucket` | histogram buckets | `le` | how long an evicted block sat unused: the cache's horizon, for the same; recorded (with `--kv-cache-metrics`) | optional |
 | `vllm:nixl_xfer_time_seconds_sum` | histogram sum | | KV transfer time between prefill and decode | optional |
 | `vllm:nixl_xfer_time_seconds_count` | histogram count | | KV transfer time | optional |
 | `vllm:nixl_bytes_transferred_sum` | histogram sum | | bytes NIXL moved: with the transfer time above, a peer hit's load time per token; recorded | optional |
@@ -283,11 +285,11 @@ exports `lmcache:*` on the engine's own `/metrics`.
 | `vllm:kv_block_lifetime_seconds_bucket` | vLLM | `--kv-cache-metrics` | diagnostic | how long a cached prefix lives in the GPU cache, unseen |
 | `vllm:kv_block_lifetime_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
 | `vllm:kv_block_lifetime_seconds_count` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
-| `vllm:kv_block_idle_before_evict_seconds_bucket` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
-| `vllm:kv_block_idle_before_evict_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_idle_before_evict_seconds_bucket` | vLLM | `--kv-cache-metrics` | needed for TTFT on cached fleets | the prefix hit at another prefill count falls back to the floor and the held hit |
+| `vllm:kv_block_idle_before_evict_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | the mean idle time before an eviction, unseen |
 | `vllm:kv_block_idle_before_evict_seconds_count` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
-| `vllm:kv_block_reuse_gap_seconds_bucket` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
-| `vllm:kv_block_reuse_gap_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_reuse_gap_seconds_bucket` | vLLM | `--kv-cache-metrics` | needed for TTFT on cached fleets | as above |
+| `vllm:kv_block_reuse_gap_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | the mean reuse gap, unseen |
 | `vllm:kv_block_reuse_gap_seconds_count` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
 | `vllm:hisparse_` | vLLM, builds with a decode host cache; every series whose name starts so, checked and saved as one | the host cache on | diagnostic | decode host-cache traffic unseen |
 | `vllm:nixl_bytes_transferred_sum` | vLLM 0.11.1+ | `NixlConnector` | needed for TTFT on cached fleets | no P/D transfer volume, so no time per byte |

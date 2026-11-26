@@ -338,6 +338,10 @@ func mergePodInstances(group []domain.ReplicaMetrics) domain.ReplicaMetrics {
 	pod.TTFTBuckets = mergeBuckets(group, func(m domain.ReplicaMetrics) []domain.LatencyBucket { return m.TTFTBuckets })
 	pod.QueueTimeBuckets = mergeBuckets(group, func(m domain.ReplicaMetrics) []domain.LatencyBucket { return m.QueueTimeBuckets })
 	pod.TPOTBuckets = mergeBuckets(group, func(m domain.ReplicaMetrics) []domain.LatencyBucket { return m.TPOTBuckets })
+	pod.KVReuseGapBuckets = mergeBuckets(group, func(m domain.ReplicaMetrics) []domain.LatencyBucket { return m.KVReuseGapBuckets })
+	pod.KVIdleBeforeEvictBuckets = mergeBuckets(group, func(m domain.ReplicaMetrics) []domain.LatencyBucket {
+		return m.KVIdleBeforeEvictBuckets
+	})
 	pod.AvgQueueTime, pod.AvgQueueTimeKnown = mergeKnownMean(group, func(m domain.ReplicaMetrics) (float64, bool) {
 		return m.AvgQueueTime, m.AvgQueueTimeKnown
 	}, queueTimeCountRate)
