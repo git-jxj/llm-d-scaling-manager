@@ -610,7 +610,7 @@ func FigureOf(r whatif.Result, unit string, worseIsHigh bool) Figure {
 // handleReport is POST /v1/report.
 func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 	var req ReportRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	out, err := s.report(r.Context(), req)

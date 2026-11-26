@@ -683,7 +683,7 @@ const (
 // handleBacktest is POST /v1/backtest.
 func (s *Server) handleBacktest(w http.ResponseWriter, r *http.Request) {
 	var req BacktestRequest
-	if !readJSON(w, r, &req) {
+	if !s.readLongJSON(w, r, &req, maxBody) {
 		return
 	}
 	out, err := s.backtest(r.Context(), req)
@@ -1143,7 +1143,7 @@ func questionOf(fit, test *inputsEntry, req BacktestRequest, cutoff, until time.
 			if ferr != nil {
 				q.mixture = abstainedMixture(ferr.Error())
 			} else {
-				q.mixture = fitted.identified()
+				q.mixture = fitted.identified().withHitAtCount(fit, fitIdx)
 			}
 		}
 		q.mixture.report.Model = string(sw.model())
