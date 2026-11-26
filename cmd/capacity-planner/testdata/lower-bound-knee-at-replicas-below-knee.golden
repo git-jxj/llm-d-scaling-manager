@@ -20,7 +20,7 @@ utilization at the load judged
 capacity            req/s     out tok/s   in system   bound by
   prefill knee      >=4.17    106         not known   prefill work served: the 33370 computed tokens/s the prefill pods sustained over 2 min / 8007 tokens; at least: V_P is a lower bound
   decode knee       134.15    3428        unbounded   decode band top at fill 0.798
-                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+                    OUTSIDE VALIDATED REGION (flow control unknown, measured off)
   fleet knee        >=4.17    106         not known   prefill; at least: V_P is a lower bound
   operating (0.85)  >=3.54    91          <=34        0.85 x fleet knee (scaleUpThreshold); at least: V_P is a lower bound
   max at SLO        target below the floor                        target 0.2 s at or below the TTFT floor 2.787 s; the floor is priced from a lower bound of V_P, so it is at most this, and the target may be reachable
