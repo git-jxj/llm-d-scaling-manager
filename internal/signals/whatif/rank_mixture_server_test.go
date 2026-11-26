@@ -253,16 +253,18 @@ func TestFitRankMixtureNL_RemainderServer(t *testing.T) {
 // (absent counts as none); the router's render mean is the mean of the
 // cycles that read one.
 func TestMixtureStepOf_PoolsTheAPIServer(t *testing.T) {
+	// The render rates run against the request rates, so a render mean
+	// weighted by the request rate reads 0.35, not 0.28.
 	c1 := MixtureCycle{Ranks: []MixtureRankReading{{Key: "p0", MixtureRank: MixtureRank{Rate: 1, Frontend: 0.01, Render: 0.2,
-		RenderRate: 1}}}, RouterRenderMean: 0.2}
+		RenderRate: 3}}}, RouterRenderMean: 0.2}
 	c2 := MixtureCycle{Ranks: []MixtureRankReading{{Key: "p0", MixtureRank: MixtureRank{Rate: 3, Frontend: 0.03, Render: 0.4,
-		RenderRate: 3}}}}
+		RenderRate: 2}}}}
 	s := MixtureStepOf([]MixtureCycle{c1, c2}, time.Time{})
 	require.Len(t, s.Ranks, 1)
 	r := s.Ranks[0]
-	assert.InDelta(t, 0.025, r.Frontend, 1e-12)
-	assert.InDelta(t, 0.35, r.Render, 1e-12)
-	assert.InDelta(t, 2, r.RenderRate, 1e-12)
+	assert.InDelta(t, 0.025, r.Frontend, 1e-12, "the frontend by request rate")
+	assert.InDelta(t, 0.28, r.Render, 1e-12, "the render mean by render rate")
+	assert.InDelta(t, 2.5, r.RenderRate, 1e-12)
 	assert.Equal(t, 0.2, s.RouterRenderMean)
 
 	s = MixtureStepOf([]MixtureCycle{{Ranks: []MixtureRankReading{{Key: "p0", MixtureRank: MixtureRank{Rate: 1}}}}}, time.Time{})
