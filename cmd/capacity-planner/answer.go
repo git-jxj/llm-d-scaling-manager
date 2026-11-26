@@ -93,12 +93,21 @@ type answerFlags struct {
 	assumeRouterHop      time.Duration
 	prefill              int
 	set                  map[string]bool
+	// inputTokensRead says inputTokens was read from the source's cycles (a
+	// day plan's bucket, a backtest's step), not stated
+	// (whatifapi.Knobs.PromptTokensRead).
+	inputTokensRead bool
 	// prefixHit is a stated prefix-cache hit rate, nil the measured one (a
 	// report shape, at-replicas --shape).
 	prefixHit *float64
 	// prefixHitRead says prefixHit was read from the source (the load
 	// cycles, --shape load), not stated (whatifapi.Knobs.PrefixHitRead).
 	prefixHitRead bool
+	// prefillComputed is the prompt a backtest step's prefill pods computed
+	// a request (whatifapi.Knobs.PrefillComputedTokens), read beside the
+	// whole prompt inputTokens; 0 none. No flag sets it, and it is priced
+	// only with slo.SwitchTTFTPrefixAttention on (stepComputedPrompt).
+	prefillComputed float64
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
 	// assumeTransferBase is --assume-transfer-base, a TTFT flag (ttft.go,
@@ -138,17 +147,29 @@ type answerFlags struct {
 	// hitAtCount is --prefill-hit-at-count: the replay turns
 	// saturation.SwitchPrefillHitAtCount on (replayOptions); off by default.
 	hitAtCount bool
+	// vpServiceLine is --prefill-vp-service-line: the replay turns
+	// saturation.SwitchPrefillVPServiceLine on (replayOptions); off by default.
+	vpServiceLine bool
 	// experimentalTTFT is --experimental-ttft: the replay turns the TTFT
 	// model's off-by-default switches on (replayOptions); off by default.
 	experimentalTTFT bool
 	// rankMixtureTTFT is --experimental-ttft=v2: at-replicas prices its
 	// tables' TTFT with the experimental rank-mixture model, fitted on the
 	// recording (experimental_ttft_v2.go); refused elsewhere.
-	rankMixtureTTFT bool
+	// rankMixtureNLLine is its =v2nl-line: the variant
+	// (whatif.QueueRankMixtureNLLine) in place of v2, rankMixtureTTFT set
+	// too.
+	rankMixtureTTFT, rankMixtureNLLine bool
 	// rankMixtureStratified is --rank-mixture-stratified, read with
 	// rankMixtureTTFT (whatifapi.ApplyTTFTModel): nil is the default
 	// (whatif.DefaultRankMixtureStratified).
 	rankMixtureStratified *bool
+	// rankMixtureFit is the variant's modes and the shortest fit window
+	// (rank_mixture_fit.go), read with rankMixtureTTFT.
+	rankMixtureFit rankMixtureFit
+	// tpotFit is --tpot-dist-min-fit-steps (rank_mixture_fit.go), read
+	// with tpotDistribution.
+	tpotFit tpotDistFit
 	// experimentalTPOT is --experimental-tpot (=v2): at-replicas prices its
 	// tables' TPOT p90 and p95 with the experimental per-request TPOT
 	// distribution, fitted on the recording (experimental_tpot.go); refused
@@ -216,9 +237,14 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.loadAwareRouter, "load-aware-router", whatif.DefaultPlannerLoadAwareRouter, "state that the router scores each pod's queue (llm-d's EPP queue scorer): f is held to the load it was learned at, then falls to 1 at full load, so the prefill knee is the pooled one less the margin and f prices only the latency below it; off by default, because no recording says what the router scores")
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
-	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT}, experimentalTTFTFlag, experimentalTTFTUsage+
-		". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on the --recording")
+	fs.BoolVar(&f.vpServiceLine, vpServiceLineFlag, false, vpServiceLineUsage)
+	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag,
+		experimentalTTFTUsage+". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on "+
+			"the --recording, and "+experimentalTTFTNLLineUsage)
 	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
+	f.rankMixtureFit.registerModes(fs)
+	f.rankMixtureFit.registerWindow(fs)
+	f.tpotFit.register(fs)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", "at-replicas only: =v2 prices the measured shape's (--shape measured) TPOT p90 and p95 with an "+
 		"experimental per-request TPOT distribution fitted on the --recording, around the planner's own mean; every percentile it prices "+
 		"is flagged TPOTDistribution and reads OUTSIDE VALIDATED REGION")
@@ -245,15 +271,21 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 		return err
 	}
 	f.tpotDistribution = on
+	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
+		return err
+	}
+	if err := f.tpotFit.check(f.tpotDistribution); err != nil {
+		return err
+	}
 	switch {
 	case f.tpotDistribution && f.question != reportQuestion:
 		return usagef("--%s=%s is backtest's, day-plan's, serve's and at-replicas'", experimentalTPOTFlag, experimentalTPOTV2)
 	case f.tpotDistribution && f.recording == "":
 		return usagef("--%s=%s fits the model on a --recording", experimentalTPOTFlag, experimentalTPOTV2)
 	case f.rankMixtureTTFT && f.question != reportQuestion:
-		return usagef("--%s=%s is backtest's, day-plan's, predict's, serve's and at-replicas'", experimentalTTFTFlag, experimentalTTFTV2)
+		return usagef("--%s=%s is backtest's, day-plan's, predict's, serve's and at-replicas'", experimentalTTFTFlag, f.rankMixtureValue())
 	case f.rankMixtureTTFT && f.recording == "":
-		return usagef("--%s=%s fits the model on a --recording", experimentalTTFTFlag, experimentalTTFTV2)
+		return usagef("--%s=%s fits the model on a --recording", experimentalTTFTFlag, f.rankMixtureValue())
 	case f.output != outputText && f.output != outputJSON:
 		return usagef("-o %q, want text or json", f.output)
 	case f.decode < 0:
@@ -531,6 +563,9 @@ type pricedVariant struct {
 	check whatif.LineCheck
 	// assumedIL and assumedOL say which lengths the flags assumed.
 	assumedIL, assumedOL bool
+	// ilRead says the assumed prompt was read from the source, not stated
+	// (answerFlags.inputTokensRead).
+	ilRead bool
 	// assumedHit says the prefix-hit rate was stated.
 	assumedHit bool
 	// hitRead says that hit was read from the source, not stated
@@ -683,7 +718,7 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 		vs = pv.state
 		il, ol := vs.Shape.InputTokens, vs.Shape.OutputTokens
 		if f.set["assume-input-tokens"] {
-			il, pv.assumedIL = f.inputTokens, true
+			il, pv.assumedIL, pv.ilRead = f.inputTokens, true, f.inputTokensRead
 		}
 		if f.set["assume-output-tokens"] {
 			ol, pv.assumedOL = f.outputTokens, true
@@ -717,8 +752,9 @@ func (f *answerFlags) decodeVariants(st *learnreplay.State) ([]pricedVariant, er
 			ReplicaCap: perRank * int64(max(vs.Ranks, 1)), Replicas: replicas, Tier: vs.Tier,
 			// A typed B is a guess: the line is not read below the band from
 			// it. A B from the floor puts the line through the floor itself.
-			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL},
-			AssumedB:  pv.itlB.Applied,
+			BelowBand: whatif.BelowBand{Read: !pv.itlB.Applied || pv.itlB.Source == itlBFromFloor, LeastITL: vs.BelowBandITL,
+				LeastSequences: vs.BelowBandLeastSequences, ByCount: vs.BelowBandByCount},
+			AssumedB: pv.itlB.Applied,
 		}
 		if st.DecodeResidencePull && domain.CanonicalRole(vs.Role) == domain.RoleDecode && slices.ContainsFunc(st.Variants, func(v learnreplay.VariantState) bool {
 			return domain.CanonicalRole(v.Role) == domain.RolePrefill

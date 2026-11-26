@@ -37,7 +37,8 @@ func resultFlags(r whatif.Result) []whatif.Flag {
 // states an input the run priced at (the lengths, the spread, the arrivals,
 // the flow-control state, the pod counts), which the class then holds to the
 // run's. A flag in flagsOutside states an input no run priced at: setting
-// it puts every figure outside. A flag in neither fails
+// it puts every figure outside, except capture's flags with --prometheus,
+// which say how the window is captured (statedOutside). A flag in neither fails
 // TestEnvelope_EveryFlagIsClassified, so a new flag is decided, not missed.
 var (
 	flagsInside = []string{"recording", "cycle", "model", "namespace", "variant", "decode", "prefill", "prefill-variant",
@@ -70,26 +71,58 @@ var (
 		// flagged RankMixtureTTFT, which no envelope row allows; without
 		// v2 it states nothing.
 		rankMixtureStratifiedFlag,
+		// The same: read only with --experimental-ttft=v2 or =v2nl-line
+		// (refused without), whose every TTFT is flagged RankMixtureTTFT; a
+		// window under 12h adds RankMixtureShortFitWindow.
+		"rank-mixture-kv-hold", "rank-mixture-remainder-spread", rankMixtureMinFitWindowFlag,
+		// Read only with --experimental-tpot=v2 (refused without), whose
+		// every percentile is flagged TPOTDistribution; under 24 steps it
+		// adds TPOTDistributionShortFit.
+		tpotDistMinFitStepsFlag,
 		// The same: every TPOT percentile it prices is flagged
 		// TPOTDistribution, which no envelope row allows.
 		experimentalTPOTFlag}
 	flagsOutside = []string{"batch-cap", "assume-tpot-ratio", "assume-vp", "assume-a", "assume-router-hop", "price-router-wait",
 		"ps-onsets", "prefill-running-cap", "charge-decode-gate", "input-bucket", "engine", "engine-args", "prefill-engine-args", "gpus-per-replica",
 		"accelerator", "policy", "engine-image", "vllm-version", "imbalance-across-counts", "assume-transfer-base",
-		"load-aware-router"}
+		"load-aware-router",
+		// V_P from the prefill service line failed the public cross-validation
+		// (vp_service_line.go), and its figures carry no flag of their own.
+		vpServiceLineFlag}
 )
 
 // statedOutside is the flags in flagsOutside that were set, as --name;
 // --imbalance-across-counts and --load-aware-router only away from the
-// planner's defaults.
+// planner's defaults, and --prefill-vp-service-line by its field, whether
+// the flag or the server's request set it. With --prometheus, capture's
+// flags state nothing: the window's flags (windowFlags) and --batch-cap, the
+// engine's cap the window is captured with (pricedBatchCap), say how the
+// window is captured, as capture's own do for a recording, and the answer
+// from that recording states none of them. Stating them here put the
+// --prometheus answer's figures outside by "--batch-cap stated" where the
+// recorded answer's read a flag (issue #359).
 func (f *answerFlags) statedOutside() []string {
 	var out []string
+	var capture []string
+	if f.prometheus() {
+		capture = append(windowFlags(), "batch-cap")
+	}
 	for _, name := range flagsOutside {
+		if slices.Contains(capture, name) {
+			continue
+		}
 		// Either flag at the planner's default states nothing.
 		if name == "imbalance-across-counts" && f.imbalanceAcrossCounts == whatif.DefaultPlannerImbalanceAcrossCounts {
 			continue
 		}
 		if name == "load-aware-router" && f.loadAwareRouter == whatif.DefaultPlannerLoadAwareRouter {
+			continue
+		}
+		// Read from the field, which the server sets from its request too.
+		if name == vpServiceLineFlag {
+			if f.vpServiceLine {
+				out = append(out, "--"+name)
+			}
 			continue
 		}
 		if f.set[name] {

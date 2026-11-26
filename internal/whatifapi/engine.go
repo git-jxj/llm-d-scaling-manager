@@ -62,6 +62,12 @@ type Resolved struct {
 	// them; zero where neither model was asked for. A backtest request that
 	// does not state them takes the fit's.
 	Engine EngineSlots
+	// TTFTModel is how a caller outside a server fits the TTFT model on
+	// Mixture (DayPlan): the zero value is v2 at its defaults.
+	TTFTModel TTFTModelOptions
+	// TPOTMinFitSteps is the fewest fit steps the TPOT distribution fits on
+	// for that caller (DayPlan), 0 MinTPOTDistFitSteps.
+	TPOTMinFitSteps int
 	// Bytes is an estimate of the memory the entry keeps alive (the Pricer,
 	// the Series and the Inputs), its weight in the inputs cache
 	// (Config.MaxInputsBytes); 0 weighs nothing.
@@ -94,6 +100,14 @@ type Knobs struct {
 	// of the observed ones (the CLI's --assume-input-tokens and
 	// --assume-output-tokens, flagged AssumedShape); 0 is the observed one.
 	PromptTokens, OutputTokens float64
+	// PromptTokensRead says PromptTokens is a whole prompt read from the
+	// source's own cycles (a day plan's bucket, a backtest's step), not
+	// stated: its hit is then the source's too, and on a P/D fleet the
+	// prefill pods' computed-token hit nets it, as it nets a PrefixHit read
+	// from the load's cycles (PrefixHitRead). The decode rows' prefix-cache
+	// hit is not a hit of the prefill pods: netted by it, the prompt their
+	// caches served was priced as computed.
+	PromptTokensRead bool
 	// PrefixHit is a stated prefix-cache hit rate in [0, 1), nil the
 	// observed one (flagged AssumedShape).
 	PrefixHit *float64
@@ -102,6 +116,16 @@ type Knobs struct {
 	// pods' computed-token hit replaces it, with slo.SwitchTTFTComputedHit on
 	// or off, and a stated one governs.
 	PrefixHitRead bool
+	// PrefillComputedTokens is the prompt the prefill pods computed a
+	// request, read over the same cycles as PromptTokens (a backtest's
+	// step), off the prefill pods' rows where PromptTokens is read off the
+	// decode rows; 0 is none. It moves a figure only where the replay turned
+	// slo.SwitchTTFTPrefixAttention on: the prefill work is then this
+	// prompt, and PromptTokens less it is the cached context its attention
+	// spans (whatif.Prefill.CachedContextRead). PrefixHit is not used for
+	// it: that hit nets the decode variant's prompt too, with the switch off
+	// as on.
+	PrefillComputedTokens float64
 	// CachedTokenCost is phi, the cost of a cached prompt token, priced in
 	// place of the one the pricer fitted (CachedTokenCost); nil is the
 	// pricer's own. It moves a figure only where the replay turned
@@ -182,8 +206,10 @@ type TPOTRatioFleet interface {
 // every figure priced with it, the Source the plan's ratio names, and the
 // Assumed line the fleet adds.
 type ModelRatio struct {
-	Value   float64
-	Flag    whatif.Flag
+	Value float64
+	Flag  whatif.Flag
+	// More is the flags the ratio's figures carry beside Flag.
+	More    []whatif.Flag
 	Source  string
 	Assumed string
 }

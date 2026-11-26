@@ -55,7 +55,10 @@ type wireHitAtCount struct {
 // moves. The hit is read over the prompt window, so it was read on the most
 // pods any of its cycles served (hitFitCount): a window that spans a
 // scale-down reads the larger count's hit, and the floor taken from the
-// smaller count would price over the truth at fewer pods.
+// smaller count would price over the truth at fewer pods. A backtest step's
+// computed prompt (stepComputedPrompt) is not moved either: its prefill pods
+// computed it at the step's own count, so it is the prompt at that count as
+// measured, and moving it again would net the fit's hit into it twice.
 func (pf *pricedFleet) priceHitAtCount(ps *learnreplay.PrefillState) {
 	p := &pf.fleet.Prefill
 	fitCount := pf.hitFitCount(ps)
@@ -63,7 +66,7 @@ func (pf *pricedFleet) priceHitAtCount(ps *learnreplay.PrefillState) {
 		return
 	}
 	pf.hitModel = pf.promptWindow.HitModel(fitCount)
-	if p.Replicas == fitCount || !(p.PromptTokens > 0) {
+	if pf.stepComputed || p.Replicas == fitCount || !(p.PromptTokens > 0) {
 		return
 	}
 	if pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead {

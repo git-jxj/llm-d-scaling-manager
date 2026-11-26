@@ -31,7 +31,6 @@ func (c *ReplicaMetricsCollector) CollectRouterLatency(
 	ctx context.Context,
 	modelID, namespace string,
 ) *domain.RouterLatency {
-	logger := ctrl.LoggerFrom(ctx)
 	queries := []string{
 		registration.QuerySLORouterTTFTBuckets,
 		registration.QuerySLORouterTPOTSum,
@@ -46,12 +45,54 @@ func (c *ReplicaMetricsCollector) CollectRouterLatency(
 			registration.QuerySLORouterProcessingCount, registration.QuerySLORouterPrefixPredicted,
 			registration.QuerySLORouterPrefixBestAvailable)
 	}
+	return c.collectRouterLatency(ctx, modelID, namespace, queries, routerQueryType)
+}
+
+// CollectPredictionLatency is the router's latency as the slo analyzer's v2
+// models fit on it (docs/proposals/predicted-latency-in-controller.md): the
+// slo analyzer's three queries, the TTFT _sum and _count, and the TPOT
+// histogram, through the cycle's memo, so a model the slo analyzer or a
+// recording reads too costs nothing more. It is its own reading, never
+// handed to an analyzer: CollectRouterLatency answers them as it did before.
+// A failed query only it sent is counted under slo_model_inputs. Nil as
+// CollectRouterLatency is nil.
+func (c *ReplicaMetricsCollector) CollectPredictionLatency(
+	ctx context.Context,
+	modelID, namespace string,
+) *domain.RouterLatency {
+	queries := []string{
+		registration.QuerySLORouterTTFTBuckets,
+		registration.QuerySLORouterTPOTSum,
+		registration.QuerySLORouterTPOTCount,
+		registration.QuerySLORouterTTFTSum,
+		registration.QuerySLORouterTTFTCount,
+		registration.QuerySLORouterTPOTBuckets,
+	}
+	typeOf := func(q string) string {
+		if q == registration.QuerySLORouterTPOTBuckets && !c.RecordsTTFTInputs() {
+			return constants.QueryTypeSLOModelInputs
+		}
+		return routerQueryType(q)
+	}
+	return c.collectRouterLatency(ctx, modelID, namespace, queries, typeOf)
+}
+
+// collectRouterLatency issues queries for one model through the cycle's
+// memo and reads the router's latency from what came back, a failure counted
+// under typeOf's query_type.
+func (c *ReplicaMetricsCollector) collectRouterLatency(
+	ctx context.Context,
+	modelID, namespace string,
+	queries []string,
+	typeOf func(string) string,
+) *domain.RouterLatency {
+	logger := ctrl.LoggerFrom(ctx)
 	results, issued, err := c.refreshSharedIssued(ctx, queries, map[string]string{source.ParamNamespace: namespace})
 	if err != nil {
 		// Counted, not only logged: an absent latency series reads the same
 		// whether the router is unscraped or Prometheus is down, and the
 		// collection-error counter is what tells the two apart.
-		reason := countRefreshFailure(issued, err, routerQueryType)
+		reason := countRefreshFailure(issued, err, typeOf)
 		logger.V(logging.DEBUG).Info("Router latency unavailable",
 			"modelID", modelID, "namespace", namespace, "reason", reason, "error", err)
 		return nil
@@ -61,7 +102,7 @@ func (c *ReplicaMetricsCollector) CollectRouterLatency(
 	// error from the refresh, so each result is checked as the arrival-rate
 	// path checks its own: counted by the call that sent it, and not again
 	// by every model that reads it from the cycle's memo.
-	countFailedIssued(issued, results, routerQueryType)
+	countFailedIssued(issued, results, typeOf)
 	for _, q := range queries {
 		if r := results[q]; r != nil && r.HasError() {
 			logger.V(logging.DEBUG).Info("Router latency query failed",

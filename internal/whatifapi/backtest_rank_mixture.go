@@ -103,6 +103,34 @@ type RankMixtureReport struct {
 	// computed-token histogram itself, not from the rank's own draws
 	// (BacktestRequest.RankMixtureStratified, on by default).
 	Stratified bool `json:"stratified,omitempty"`
+	// MinFitWindow is the shortest fit window the model was allowed to
+	// price from, where the request set one
+	// (BacktestRequest.RankMixtureMinFitWindow), absent at the default
+	// (whatif.MinSpreadFitWindow). ShortFitWindow says the fit window was
+	// under the default and the model was fitted on it all the same: every
+	// figure it prices is flagged whatif.RankMixtureShortFitWindow.
+	MinFitWindow   string `json:"minFitWindow,omitempty"`
+	ShortFitWindow bool   `json:"shortFitWindow,omitempty"`
+	// fitWindow is MinFitWindow as a duration, 0 the default.
+	fitWindow time.Duration
+}
+
+// window is the shortest fit window the model was allowed to price from.
+func (r RankMixtureReport) window() time.Duration {
+	if r.fitWindow > 0 {
+		return r.fitWindow
+	}
+	return whatif.MinSpreadFitWindow
+}
+
+// shortFlags is the flags every figure the model prices carries for its
+// fit window: whatif.RankMixtureShortFitWindow where the window was under
+// the default, none otherwise.
+func (r RankMixtureReport) shortFlags() []whatif.Flag {
+	if r.ShortFitWindow {
+		return []whatif.Flag{whatif.RankMixtureShortFitWindow}
+	}
+	return nil
 }
 
 // RankMixtureKV is the fitted KV-deferral wait.
@@ -290,6 +318,11 @@ type rankMixtureSwitches struct {
 	// (whatif.RankMixtureOptions KVHold and RemainderSpread):
 	// BacktestRequest RankMixtureKVHold and RankMixtureRemainderSpread.
 	kvHold, remainderSpread bool
+	// minFitWindow is the shortest fit window the model prices from
+	// (BacktestRequest.RankMixtureMinFitWindow): 0 is
+	// whatif.MinSpreadFitWindow, the default. A model priced from a window
+	// under the default is flagged whatif.RankMixtureShortFitWindow.
+	minFitWindow time.Duration
 }
 
 // rankMixtureSwitchesOf is the switches req turns on. The server has set
@@ -300,7 +333,16 @@ func rankMixtureSwitchesOf(req BacktestRequest) rankMixtureSwitches {
 		stratified:      stratifiedOf(req.RankMixtureStratified, whatif.DefaultRankMixtureStratified),
 		nlLine:          req.TTFTModel == string(whatif.QueueRankMixtureNLLine),
 		kvHold:          req.RankMixtureKVHold,
-		remainderSpread: req.RankMixtureRemainderSpread}
+		remainderSpread: req.RankMixtureRemainderSpread,
+		minFitWindow:    minFitWindowOf(req.RankMixtureMinFitWindow)}
+}
+
+// fitWindow is the shortest fit window sw prices from.
+func (sw rankMixtureSwitches) fitWindow() time.Duration {
+	if sw.minFitWindow > 0 {
+		return sw.minFitWindow
+	}
+	return whatif.MinSpreadFitWindow
 }
 
 // model is the model sw fits.
@@ -309,6 +351,15 @@ func (sw rankMixtureSwitches) model() whatif.QueueModel {
 		return whatif.QueueRankMixtureNLLine
 	}
 	return whatif.QueueRankMixture
+}
+
+// options is the fit's options sw turns on, with slots the prefill
+// engine's max-num-seqs: the backtest's fit and the main view's
+// (fitMainMixture) read the same.
+func (sw rankMixtureSwitches) options(slots int) whatif.RankMixtureOptions {
+	return whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: sw.fitWindow(),
+		SpreadFloor: whatif.MinSpread, CleanFitSteps: sw.fitSteps, SharesAtLoad: sw.fitSteps,
+		StratifiedMoments: sw.stratified, KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread}
 }
 
 // stratifiedOf is a request's rankMixtureStratified: the value where it
@@ -375,9 +426,7 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 			"ranks' own rates on stationary steps: of the fit window's %d steps, %d read no router TTFT, %d no prefill rank's rate "+
 			"and %d were not stationary", sw.model(), len(order), noRouter, noRanks, backlog)
 	}
-	o := whatif.RankMixtureOptions{Slots: slots, MinSpreadSpan: whatif.MinSpreadFitWindow,
-		SpreadFloor: whatif.MinSpread, CleanFitSteps: sw.fitSteps, SharesAtLoad: sw.fitSteps,
-		StratifiedMoments: sw.stratified, KVHold: sw.kvHold, RemainderSpread: sw.remainderSpread}
+	o := sw.options(slots)
 	fitter := whatif.FitRankMixture
 	if sw.nlLine {
 		fitter = whatif.FitRankMixtureNL
@@ -391,6 +440,10 @@ func fitRankMixtureSteps(fit *inputsEntry, fitIdx []int, step time.Duration, slo
 		BetaDecode: m.BetaDecode, BetaRemainder: m.BetaRemainder, BetaUnidentified: m.BetaUnidentified, Spread: m.Spread, FoldSpread: diag.FoldSpread,
 		SpreadAtBound: diag.SpreadAtBound, SpreadDefaulted: diag.SpreadDefaulted, SpreadFloored: diag.SpreadFloored, FitP90: diag.FitP90, FitSteps: diag.Steps, Slots: slots,
 		FitStepsBacklogged: backlog, Queue: string(whatif.QueueLimitedProcessorSharing), Stratified: sw.stratified}
+	if sw.minFitWindow > 0 {
+		r.fitWindow, r.MinFitWindow = sw.minFitWindow, sw.minFitWindow.String()
+		r.ShortFitWindow = !diag.SpreadDefaulted && diag.Span < whatif.MinSpreadFitWindow
+	}
 	if slots <= 0 {
 		r.Queue = string(whatif.QueueProcessorSharing)
 	}
@@ -436,7 +489,7 @@ func (rq *rankMixtureQ) identified() *rankMixtureQ {
 		why = append(why, "prompt slope not identified ("+strings.Join(r.BetaUnidentified, ", ")+")")
 	}
 	if r.SpreadDefaulted {
-		why = append(why, fmt.Sprintf("spread not calibrated (fit window under %s)", whatif.MinSpreadFitWindow))
+		why = append(why, fmt.Sprintf("spread not calibrated (fit window under %s)", r.window()))
 	}
 	if r.Spread >= whatif.MaxSpread || slices.ContainsFunc(r.FoldSpread, func(s float64) bool { return s >= whatif.MaxSpread }) {
 		why = append(why, fmt.Sprintf("spread not identified (a self-check fold's p90 ratio does not reach 1 at any spread up to %g)",
@@ -487,7 +540,11 @@ func (rq *rankMixtureQ) assumedLines() []string {
 			"read at the prompts it was measured at")
 	}
 	if rq.report.SpreadDefaulted {
-		out = append(out, fmt.Sprintf("the fit window is shorter than %s: the prompt term's spread is 1, not calibrated", whatif.MinSpreadFitWindow))
+		out = append(out, fmt.Sprintf("the fit window is shorter than %s: the prompt term's spread is 1, not calibrated", rq.report.window()))
+	}
+	if rq.report.ShortFitWindow {
+		out = append(out, fmt.Sprintf("the fit window is shorter than %s, priced all the same down to the %s asked: every TTFT the "+
+			"model prices is also flagged %s", whatif.MinSpreadFitWindow, rq.report.window(), whatif.RankMixtureShortFitWindow))
 	}
 	if rq.report.SpreadFloored {
 		out = append(out, fmt.Sprintf("the folds fitted the prompt term's spread under %g: it is priced at %g", whatif.MinSpread, whatif.MinSpread))
@@ -515,7 +572,7 @@ func (rq *rankMixtureQ) price(cycles []whatif.MixtureCycle, at time.Time, stepSe
 	if len(c.Rho) > 0 {
 		chk.BusiestRho = slices.Max(c.Rho)
 	}
-	flags := append([]whatif.Flag{whatif.RankMixtureTTFT}, c.Flags(stepSeconds)...)
+	flags := append(append([]whatif.Flag{whatif.RankMixtureTTFT}, rq.report.shortFlags()...), c.Flags(stepSeconds)...)
 	qs := []float64{}
 	for _, q := range backtestStats {
 		if q != 0 {

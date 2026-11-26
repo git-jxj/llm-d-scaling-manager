@@ -102,6 +102,13 @@ it. On:
 - The planner nets an assumed prompt by a stated hit rate (`--prefix-hit`),
   else the prefill variant's, not the decode variant's
   (`pricedFleet.effectivePrompt`).
+- A backtest's step is priced at the prompt its own prefill pods computed,
+  their computed tokens over their requests
+  (`whatifapi.Knobs.PrefillComputedTokens`, `pricedFleet.stepComputedPrompt`),
+  and `h` is its whole prompt less that. Off, the step's whole prompt is
+  netted by the fit's hit, so a step that hit, tested against a fit that did
+  not, is priced as if it computed the whole prompt. A step's hit at or under
+  `MaterialPrefixHitMove` moves nothing.
 - The KV transfer scales with the tokens it moves, the whole prompt less the
   decode variant's hits (`pricedFleet.transferPerToken`).
 
@@ -138,6 +145,11 @@ showed, and V_P is read from that counter. Details:
   decode variant's, which on a P/D fleet is not the prefill pods'. Its prompt
   is then in computed tokens, so it keeps the served-work floor
   (`pricedFleet.servedComputed`).
+- So is a whole prompt read from the source's own cycles with no hit stated
+  (`whatifapi.Knobs.PromptTokensRead`): a day plan's bucket at its own shape
+  (`readShape`) and a backtest's step. `loadShapeRead` is the one rule for
+  both. A stated prompt (`--assume-input-tokens`, a stated mix, a plan's
+  bucket edges) is netted as before.
 - It applies only where the computed-token hit or the hit it replaces is
   above `MaterialPrefixHitMove`. No committed recording has a hit, so it
   moves no golden.

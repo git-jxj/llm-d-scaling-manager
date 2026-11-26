@@ -77,6 +77,7 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	if err := f.check(fs); err != nil {
 		return err
 	}
+	warnKVHoldAlone(warn, f.rankMixtureFit.kvHold, f.rankMixtureFit.remainderSpread)
 	q, err := f.reportQuery(rf)
 	if err != nil {
 		return err
@@ -107,7 +108,7 @@ func atReplicas(ctx context.Context, args []string, out, warn io.Writer) error {
 	}
 	s := &servedState{st: st, decodeVariant: variants[0].state.Variant, prefillVariant: f.prefillVariant, hint: f.hintSource(),
 		imbalanceAcrossCounts: f.imbalanceAcrossCounts, loadAwareRouter: f.loadAwareRouter, cachedCost: f.cachedCost,
-		experimentalTTFT: f.experimentalTTFT}
+		experimentalTTFT: f.experimentalTTFT, vpServiceLine: f.vpServiceLine}
 	rep, err := buildReport(ctx, st, s, q)
 	if err != nil {
 		if whatifapi.IsInputError(err) {

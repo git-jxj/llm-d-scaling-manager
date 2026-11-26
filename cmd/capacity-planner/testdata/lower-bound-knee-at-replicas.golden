@@ -21,7 +21,7 @@ utilization at the load judged
 capacity            req/s     out tok/s   in system   bound by
   prefill knee      >=32.37   36680       not known   prefill compute: N_p 2 x V_P x (1 - 0.05 margin) / (f 1.000 x 1000 tokens); at least: V_P is a lower bound
   decode knee       13.35     15124       unbounded   decode batch cap at fill 0.551
-                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+                    OUTSIDE VALIDATED REGION (more sequences a pod than the decode line was fitted on, never measured there)
   fleet knee        13.35     15124       unbounded   decode
   operating (0.85)  11.35     12855       <=329       0.85 x fleet knee (scaleUpThreshold)
   max at SLO        target below the floor                        target 0.2 s at or below the TTFT floor 0.3792 s; the floor is priced from a lower bound of V_P, so it is at most this, and the target may be reachable

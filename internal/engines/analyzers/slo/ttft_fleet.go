@@ -20,7 +20,9 @@ const (
 	// Poisson, which over-promises on bursty traffic.
 	AssumedPoissonArrivals whatif.Flag = "AssumedPoissonArrivals"
 	// PromptSpreadClamped is a measured prompt spread with mass past the
-	// histogram's last bound, or above whatif.PromptCVStop: priced at that stop.
+	// histogram's last bound and no context window to hold it under (the
+	// variant's --max-model-len unread, or at or under that bound), or above
+	// whatif.PromptCVStop: priced at that stop.
 	PromptSpreadClamped whatif.Flag = "PromptSpreadClamped"
 	// FlowControlMismatch is a declared slo.flowControl the router's series
 	// contradict: priced as declared.
