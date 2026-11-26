@@ -408,8 +408,8 @@ and fit. Fitted on one run (23 pools, 850 to 13,200 tokens a second a pod):
 curve 1.56 to 1.65 there. Held out, a later run at the same count (19 pools,
 3,000 to 13,400): mean absolute error 0.029 against 0.048 for one `f` at every
 load, median signed error on its light pools 0.000, and at the busy load
-`f(u)` within 0.03 of the busy `f`; the 2+2 knee on the fit run did not move
-(it binds on the served-work floor). Reported only, at 4 pods: the 2-pod curve
+`f(u)` within 0.03 of the busy `f`; the 2+2 knee on the fit run fell 0.6%
+(2.71 to 2.70 requests a second, the guard allowed 3%). Reported only, at 4 pods: the 2-pod curve
 gave 1.125 and 1.124 at the loads where 1.125 and 1.085 were measured.
 Limits: the held-out run has no pool under 3,000 tokens a second a pod, so
 the regime under 1,000 rests on the fit run alone, and those light pools were
