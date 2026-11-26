@@ -51,7 +51,7 @@ func shapeEntry(t *testing.T, long func(i int) bool, f float64, refit bool) (*Se
 	if refit {
 		lengthen()
 	}
-	e.ttftModel = fitMainMixture(e, whatif.DefaultRankMixtureStratified)
+	e.ttftModel = fitMainMixture(e, rankMixtureSwitches{stratified: whatif.DefaultRankMixtureStratified})
 	require.Empty(t, e.ttftModel.info.Abstained)
 	if !refit {
 		lengthen()
