@@ -7,24 +7,29 @@ import (
 )
 
 // ServedWorkWindow is the span the prefill fleet's served work is averaged
-// over (servedWork.peaks): the planner's busiest stretch of load
-// (whatifapi.RollingWindow), about the scale-up lag. Over two minutes a
-// one-minute rate's counting noise is averaged down, while a stretch that
-// long is work the pods kept up.
-const ServedWorkWindow = 2 * time.Minute
+// over (servedWork.peaks), and the shortest stretch of steady backlog it is
+// read from. A two-minute stretch read a burst the pods carried with a queue
+// building as work they keep up (#477): on a lab 2-pod fleet of long prompts
+// it floored the 2+2 knee at 2.92 r/s, where that arm ran away past about 2.6.
+// Five minutes is the issue's own minimum, chosen before any figure was read.
+const ServedWorkWindow = 5 * time.Minute
 
 // servedWorkMaxGap is the widest gap between two cycles that still continues
 // a stretch: a missed cycle at the 15 s default, not a missing minute.
 const servedWorkMaxGap = time.Minute
 
-// servedWorkSample is one cycle of a prefill variant: its serving pods, and
-// the computed-token rate summed over them, ok when every serving pod read
-// one.
+// servedWorkSample is one cycle of a prefill variant: its serving pods, the
+// computed-token rate summed over them, ok when every serving pod read one,
+// and its prefill backlog: the requests waiting summed over the serving pods
+// (domain.ReplicaMetrics.QueueLength), queueOK when every one of them read
+// it.
 type servedWorkSample struct {
-	at   time.Time
-	pods int
-	sum  float64
-	ok   bool
+	at      time.Time
+	pods    int
+	sum     float64
+	ok      bool
+	queue   int
+	queueOK bool
 }
 
 // servedWork is a prefill variant's computed-token work over prefill.Retention,
@@ -35,6 +40,9 @@ type servedWork struct {
 	// best is, by pod count, the highest stretch read from samples since
 	// forgotten (windowPeaks): a recording is read as a whole.
 	best map[int]float64
+	// unsteady is, by pod count, whether a stretch of ServedWorkWindow was
+	// seen whose backlog grew (servedWork.stretches), forgotten or not.
+	unsteady map[int]bool
 }
 
 // note keeps one cycle and forgets what is older than prefill.Retention.
@@ -57,13 +65,15 @@ func (w *servedWork) note(s servedWorkSample) {
 }
 
 // peaks is, at each pod count, the highest mean computed-token rate the
-// variant's serving pods sustained over a stretch of ServedWorkWindow or
-// more: consecutive cycles, each read on every pod, at that one count, none
-// more than servedWorkMaxGap apart. A stretch shorter than the window, or
-// broken, is no reading. The prefill pods compute no faster than their
-// capacity, queued or not, so each is a lower bound on what that many pods
-// can compute at the traffic they ran: the floor under a prefill knee priced
-// from a lower bound (the planner's servedKneeFloor).
+// variant's serving pods sustained over a steady stretch of ServedWorkWindow
+// or more: consecutive cycles, each read on every pod, at that one count,
+// none more than servedWorkMaxGap apart, whose prefill backlog did not grow
+// (steady). A stretch shorter than the window, broken, or whose backlog grew
+// is no reading: a burst the pods carry with a queue building is not a rate
+// they hold. The prefill pods compute no faster than their capacity, so each
+// reading is a lower bound on what that many pods can compute at the traffic
+// they ran: the floor under a prefill knee priced from a lower bound (the
+// planner's servedKneeFloor).
 func (w *servedWork) peaks() map[int]float64 {
 	return w.stretches(0, len(w.samples))
 }
@@ -81,7 +91,24 @@ func (w *servedWork) windowPeaks() map[int]float64 {
 	return out
 }
 
+// unsteadyCounts is the pod counts at which a stretch of ServedWorkWindow
+// was seen, forgotten or not, and read gives none: served work was there,
+// and not sustained.
+func (w *servedWork) unsteadyCounts(read map[int]float64) map[int]bool {
+	var out map[int]bool
+	for pods, seen := range w.unsteady {
+		if _, ok := read[pods]; seen && !ok {
+			if out == nil {
+				out = map[int]bool{}
+			}
+			out[pods] = true
+		}
+	}
+	return out
+}
+
 // stretches is peaks over the stretches that start at samples lo to hi-1.
+// A stretch of the full window whose backlog grew is recorded in unsteady.
 func (w *servedWork) stretches(lo, hi int) map[int]float64 {
 	out := map[int]float64{}
 	n := len(w.samples)
@@ -90,15 +117,22 @@ func (w *servedWork) stretches(lo, hi int) map[int]float64 {
 		if !first.ok || first.pods < 1 {
 			continue
 		}
+		steady := w.enteredSteady(i)
 		sum := 0.0
 		for j := i; j < n; j++ {
 			s := w.samples[j]
 			if !s.ok || s.pods != first.pods || (j > i && s.at.Sub(w.samples[j-1].at) > servedWorkMaxGap) {
 				break
 			}
+			steady = steady && s.queueOK && s.queue <= first.queue+first.pods
 			sum += s.sum
 			if s.at.Sub(first.at) >= ServedWorkWindow {
-				if mean := sum / float64(j-i+1); mean > out[first.pods] {
+				if !steady {
+					if w.unsteady == nil {
+						w.unsteady = map[int]bool{}
+					}
+					w.unsteady[first.pods] = true
+				} else if mean := sum / float64(j-i+1); mean > out[first.pods] {
 					out[first.pods] = mean
 				}
 				break
@@ -106,4 +140,24 @@ func (w *servedWork) stretches(lo, hi int) map[int]float64 {
 		}
 	}
 	return out
+}
+
+// enteredSteady says a stretch starting at sample i is not entered while the
+// backlog grows: the backlog there is read, and at most one request a pod
+// over the cycle before it, where that cycle continues the stretch (read, at
+// the same count, within servedWorkMaxGap). A first cycle with no such cycle
+// before it passes.
+func (w *servedWork) enteredSteady(i int) bool {
+	s := w.samples[i]
+	if !s.queueOK {
+		return false
+	}
+	if i == 0 {
+		return true
+	}
+	p := w.samples[i-1]
+	if !p.ok || !p.queueOK || p.pods != s.pods || s.at.Sub(p.at) > servedWorkMaxGap {
+		return true
+	}
+	return s.queue <= p.queue+s.pods
 }
