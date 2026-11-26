@@ -230,3 +230,18 @@ func TestHitAtCountOf_WithTheLaw(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 0.0, zero.Hit)
 }
+
+// K from the affinity the router gave up: 1 at none and on one pod, the
+// count at an even spread, and the lab's figures (2 pods, 6.65% given up
+// on the fit arm: 1.142 (1.1418); 4 pods, 0.46%: 1.009). A loss not in [0, 1) reads 1.
+func TestDuplicationOfAffinityLoss(t *testing.T) {
+	assert.Equal(t, 1.0, DuplicationOfAffinityLoss(0, 2))
+	assert.Equal(t, 1.0, DuplicationOfAffinityLoss(0.3, 1), "one pod holds every copy")
+	assert.InDelta(t, 2, DuplicationOfAffinityLoss(0.5, 2), 1e-12)
+	assert.InDelta(t, 4, DuplicationOfAffinityLoss(0.75, 4), 1e-12)
+	assert.InDelta(t, 1.1418, DuplicationOfAffinityLoss(0.0665, 2), 1e-4)
+	assert.InDelta(t, 1.0093, DuplicationOfAffinityLoss(0.0046, 4), 1e-4)
+	for _, bad := range []float64{-0.1, 1, math.NaN(), math.Inf(1)} {
+		assert.Equal(t, 1.0, DuplicationOfAffinityLoss(bad, 3), "%v", bad)
+	}
+}

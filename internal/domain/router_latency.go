@@ -84,6 +84,21 @@ type RouterLatency struct {
 	// on, and left out of a recording while zero.
 	RenderSumRate   float64 `learnrec:"omitzero"`
 	RenderCountRate float64 `learnrec:"omitzero"`
+	// PrefixPredictedTokenRate and PrefixBestAvailableTokenRate are the
+	// router prefix producer's cached tokens a second over the same window:
+	// predicted on the endpoint each request was sent to, and available on
+	// the endpoint that held the most of its prefix. Their gap is the
+	// affinity the routing gave up, from which the capacity planner reads
+	// the prefix duplication across prefill pods
+	// (prefill.DuplicationOfAffinityLoss). A P/D router runs one producer per
+	// profile; the pair is the producer that predicted the most cached
+	// tokens, the one that routes the prefill pods (a producer for pods with
+	// no prefix cache predicts none). The series carry no model, so the pair
+	// is joined to a model as the processing histogram is. Both zero with no
+	// such series, a failed query or no join; collected only while a learner
+	// recording is on and left out of a recording while zero.
+	PrefixPredictedTokenRate     float64 `learnrec:"omitzero"`
+	PrefixBestAvailableTokenRate float64 `learnrec:"omitzero"`
 }
 
 // Judgeable reports whether r is a reading of the router's latency: a TTFT

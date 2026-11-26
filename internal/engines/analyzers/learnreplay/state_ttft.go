@@ -435,6 +435,7 @@ func (t *ttftSamples) note(in domain.AnalyzerInput, cycle int, at time.Time) {
 			t.prompts[v] = &whatif.PromptWindow{}
 		}
 		t.prompts[v].Note(rowsOfVariant(in.ReplicaMetrics, v), cycle, at)
+		t.prompts[v].NoteRouterPrefix(cycle, in.RouterLatency)
 	}
 	for v, d := range decode {
 		var slot whatif.DecodeTTFT
