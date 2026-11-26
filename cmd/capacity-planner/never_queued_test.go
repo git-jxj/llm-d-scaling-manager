@@ -242,6 +242,29 @@ func TestServedKneeFloor(t *testing.T) {
 	assert.Equal(t, whatif.Result(refused), pf.servedKneeFloor(refused))
 }
 
+// #477: where the prefill pods served at the pod count priced only with
+// their backlog growing, no work floors the knee: it is left at its lower
+// bound and flagged ServedWorkUnsteady. A count with steady work is floored
+// as before, unflagged.
+func TestServedKneeFloor_UnsteadyWorkIsNoFloor(t *testing.T) {
+	pf := &pricedFleet{fleet: whatif.TTFTFleet{Prefill: whatif.Prefill{Replicas: 2, PromptTokens: 1000}},
+		servedComputed: map[int]float64{3: 90000}, servedUnsteady: map[int]bool{2: true}}
+	lb := whatif.Answer{Value: 10, Flags: []whatif.Flag{whatif.VPLowerBound}}
+	got, ok := pf.servedKneeFloor(lb).(whatif.Answer)
+	require.True(t, ok)
+	assert.InDelta(t, 10.0, got.Value, 1e-9, "left at its lower bound")
+	assert.True(t, got.HasFlag(servedWorkUnsteady))
+	assert.False(t, got.HasFlag(kneeAtServedWork))
+	assert.False(t, lb.HasFlag(servedWorkUnsteady), "the priced answer is not changed in place")
+
+	steady := *pf
+	steady.fleet.Prefill.Replicas = 3
+	got, ok = steady.servedKneeFloor(lb).(whatif.Answer)
+	require.True(t, ok)
+	assert.InDelta(t, 90.0, got.Value, 1e-9)
+	assert.False(t, got.HasFlag(servedWorkUnsteady))
+}
+
 // A knee raised to the work served (KneeAtServedWork) is still a lower
 // bound: a window that served past it does not contradict it (#297), as
 // it does not a lower-bound knee left as priced.

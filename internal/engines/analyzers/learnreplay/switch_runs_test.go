@@ -1290,6 +1290,7 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	saturation.SwitchPrefillAEngineTiming:   nil,
 	saturation.SwitchPrefillQueueByCapacity: nil,
 	saturation.SwitchPrefillFBusyMinutes:    nil,
+	saturation.SwitchPrefillFPooledMinutes:  nil,
 	saturation.SwitchPrefillALowLoadByRate:  nil,
 	saturation.SwitchPrefillAMedianOverhead: nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
@@ -1768,6 +1769,14 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestImbalance_TooFewBusyMinutesTakeTheBusiest"},
 		{"../../../signals/prefill", "TestImbalance_BusyIsComputedTokensNotRequests"},
 		{"../saturation", "TestPrefillFBusyMinutes_LightMinutesThroughAnalyze"},
+	},
+	saturation.SwitchPrefillFPooledMinutes: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestImbalance_PooledMinutesLearnFUnderTheThreshold"},
+		{"../../../signals/prefill", "TestImbalance_AMinuteAtTheThresholdIsReadAlone"},
+		{"../../../signals/prefill", "TestImbalance_AMinuteAtTheThresholdAfterLightOnesIsReadAlone"},
+		{"../../../signals/prefill", "TestImbalance_APoolEndsAtABreak"},
+		{"../saturation", "TestPrefillFPooledMinutes_LongPromptsThroughAnalyze"},
 	},
 	saturation.SwitchPrefillVPFloorServed: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},

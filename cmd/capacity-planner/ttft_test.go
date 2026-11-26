@@ -1227,7 +1227,7 @@ func TestPrometheus_TheTTFTAnswerIsTheFilesAnswer(t *testing.T) {
 // series. So the identity here says that capture carries those series into
 // the capture file, generate into the recording, and the replay reads them
 // back the same in both modes, and the assertions after it say what they read
-// is the fake's: f 1.5, a transfer of 20 ms, the gate on. It says nothing of
+// is the fake's: f its 1.5 de-biased, a transfer of 20 ms, the gate on. It says nothing of
 // whether a real engine's series mean what the model takes them to.
 func TestPrometheus_TheTTFTInputsCrossTheCapture(t *testing.T) {
 	srv := pdRichServer(t)
@@ -1258,8 +1258,12 @@ func TestPrometheus_TheTTFTInputsCrossTheCapture(t *testing.T) {
 	require.GreaterOrEqual(t, i, 0, out)
 	in := w.Roles[i].TTFT
 	assert.Equal(t, 2, in.Replicas)
-	assert.Equal(t, "assumed", in.ImbalanceSource, "minutes of 100 requests a pod are needed to learn f")
-	near(t, "f, the raw share", in.Imbalance, 1.5, 1e-9)
+	// No minute alone carries prefill.MinRequestsPerPodMinute requests a
+	// pod; the planner pools them (SwitchPrefillFPooledMinutes) and learns
+	// the fake's 3:1 share, 1.5, less the chance excess at the pooled count.
+	assert.Equal(t, "learned", in.ImbalanceSource, "f from pooled minutes")
+	near(t, "f, the share de-biased", in.Imbalance, 1.45, 0.01)
+	assert.Less(t, in.Imbalance, 1.5, "the de-bias takes the chance excess off")
 	assert.Equal(t, "on", in.FlowControl)
 	assert.Contains(t, in.Assumed, "flow-control thresholds 5 and 0.8 (upstream defaults)")
 	assert.Equal(t, "line", in.DecodeSide)

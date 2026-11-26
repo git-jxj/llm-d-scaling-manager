@@ -2553,6 +2553,7 @@ prefill-capacity-observed
 prefill-catchup
 prefill-demand-held
 prefill-f-busy-minutes
+prefill-f-pooled-minutes
 prefill-hit-at-count
 prefill-knee
 prefill-latency

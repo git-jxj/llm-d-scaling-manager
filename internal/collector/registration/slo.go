@@ -38,6 +38,16 @@ const (
 	QuerySLORouterProcessingBuckets = "slo_router_processing_buckets"
 	QuerySLORouterProcessingSum     = "slo_router_processing_sum"
 	QuerySLORouterProcessingCount   = "slo_router_processing_count"
+	// QuerySLORouterPrefixPredicted and QuerySLORouterPrefixBestAvailable
+	// are the rates of the router prefix producer's cached tokens predicted
+	// on the endpoint it chose and available on the best endpoint, per
+	// producer (plugin_name, endpoint_role): the affinity the routing gave up,
+	// which the capacity planner reads the prefix duplication across prefill
+	// pods from (prefill.DuplicationOfAffinityLoss). The series carry no
+	// model, so these are per namespace, joined to a model as the processing
+	// ones are. Issued only while a learner recording is on.
+	QuerySLORouterPrefixPredicted     = "slo_router_prefix_predicted"
+	QuerySLORouterPrefixBestAvailable = "slo_router_prefix_best_available"
 
 	// SLORouterWindow is the rate window of the queries above. Five
 	// minutes, not the one minute the engine queries use: a percentile and an
@@ -79,6 +89,12 @@ const (
 		`rate(llm_d_epp_request_processing_duration_seconds_sum{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
 	sloRouterProcessingCount = `sum(` +
 		`rate(llm_d_epp_request_processing_duration_seconds_count{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
+	// A P/D router runs one prefix producer per scheduling profile, and each
+	// counts every prompt: the producers are kept apart, never summed.
+	sloRouterPrefixPredicted = `sum by (plugin_name, endpoint_role) (` +
+		`rate(llm_d_epp_prefix_predicted_cached_tokens_sum{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
+	sloRouterPrefixBestAvailable = `sum by (plugin_name, endpoint_role) (` +
+		`rate(llm_d_epp_prefix_best_available_cached_tokens_sum{namespace="{{.namespace}}"}[` + SLORouterWindow + `]))`
 )
 
 // RegisterSLOQueries registers the router latency queries the slo analyzer
@@ -155,5 +171,19 @@ func RegisterSLOQueries(sourceRegistry *source.SourceRegistry) {
 		Template:    sloRouterProcessingCount,
 		Params:      []string{source.ParamNamespace},
 		Description: "Router (EPP) request-processing histogram _count rate per namespace",
+	})
+	registry.MustRegister(source.QueryTemplate{
+		Name:        QuerySLORouterPrefixPredicted,
+		Type:        source.QueryTypePromQL,
+		Template:    sloRouterPrefixPredicted,
+		Params:      []string{source.ParamNamespace},
+		Description: "Router (EPP) prefix producer's cached tokens predicted on the chosen endpoint, rate per producer and namespace",
+	})
+	registry.MustRegister(source.QueryTemplate{
+		Name:        QuerySLORouterPrefixBestAvailable,
+		Type:        source.QueryTypePromQL,
+		Template:    sloRouterPrefixBestAvailable,
+		Params:      []string{source.ParamNamespace},
+		Description: "Router (EPP) prefix producer's cached tokens available on the best endpoint, rate per producer and namespace",
 	})
 }

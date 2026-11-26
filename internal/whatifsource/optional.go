@@ -194,10 +194,10 @@ var OptionalSeriesList = []OptionalSeries{
 	{Name: "llm_d_epp_request_cached_tokens_sum", Source: SourceRouter, Tier: TierCachedFleet},
 	{Name: "llm_d_epp_request_cached_tokens_count", Source: SourceRouter, Tier: TierCachedFleet},
 	{Name: "llm_d_epp_request_cached_tokens_bucket", Source: SourceRouter, Tier: TierCachedFleet},
-	{Name: "llm_d_epp_prefix_predicted_cached_tokens_sum", Source: SourceRouter, Tier: TierDiagnostic},
+	{Name: "llm_d_epp_prefix_predicted_cached_tokens_sum", Source: SourceRouter, Tier: TierCachedFleet},
 	{Name: "llm_d_epp_prefix_predicted_cached_tokens_count", Source: SourceRouter, Tier: TierDiagnostic},
 	{Name: "llm_d_epp_prefix_best_predicted_cached_tokens_sum", Source: SourceRouter, Tier: TierDiagnostic},
-	{Name: "llm_d_epp_prefix_best_available_cached_tokens_sum", Source: SourceRouter, Tier: TierDiagnostic},
+	{Name: "llm_d_epp_prefix_best_available_cached_tokens_sum", Source: SourceRouter, Tier: TierCachedFleet},
 	{Name: "llm_d_epp_prefix_prompt_tokens_sum", Source: SourceRouter, Tier: TierDiagnostic},
 	// llm-d router: how much cache affinity the routing gives up under
 	// load, and the prefix indexer.

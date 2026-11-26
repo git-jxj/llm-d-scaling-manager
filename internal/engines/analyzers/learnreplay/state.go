@@ -322,6 +322,10 @@ type shapeSample struct {
 //     counted by its capacity part only, so deferred waits are not a queue.
 //   - saturation.SwitchPrefillFBusyMinutes: f, the prefill imbalance, the
 //     median of the busiest minutes, not of every minute.
+//   - saturation.SwitchPrefillFPooledMinutes: f from consecutive minutes
+//     pooled to prefill.MinRequestsPerPodMinute requests a pod, where a
+//     minute alone carries fewer (a fleet of long prompts), in place of no
+//     f and whatif.ImbalanceFloor at every count above one.
 //   - saturation.SwitchPrefillALowLoadByRate: a's low-load minutes read by
 //     their rate against their prompt cluster's service time, not their own.
 //   - saturation.SwitchPrefillAMedianOverhead: a's overhead the median of
@@ -553,6 +557,7 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillAEngineTiming:         true,
 		saturation.SwitchPrefillQueueByCapacity:       true,
 		saturation.SwitchPrefillFBusyMinutes:          true,
+		saturation.SwitchPrefillFPooledMinutes:        true,
 		saturation.SwitchPrefillALowLoadByRate:        true,
 		saturation.SwitchPrefillAMedianOverhead:       true,
 		saturation.SwitchITLAdaptiveBandFloor:         true,
