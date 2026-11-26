@@ -330,6 +330,17 @@ of every minute read `f` 1.23, where the busy minutes' raw shares were 1.01 to
 1.06 and their `f` 1.00, so the knee read about 20% low (issue #266). Below the knee the busy minutes' `f` prices
 the worst pod's queue a little low.
 
+Long prompts serve fewer than 100 requests a pod a minute even at the knee:
+the Qwen3-32B lab fleet, at about 16000 tokens a prompt, served about 78. It
+learned no `f`, so the planner priced every count above one at the 1.5 floor.
+The planner pools consecutive minutes on the same pods until they carry 100
+requests a pod between them, five minutes at most, and de-biases the pool at
+its pooled count (`saturation.SwitchPrefillFPooledMinutes`). A minute that
+carries 100 alone is read alone, as before, even after lighter minutes. The
+controller does not pool. Open: the lab fleet learned `f` at two pods only,
+1.00 there, and the count curve carries it to 1.00 at four, where four pods'
+pooled minutes measured about 1.13.
+
 **`f` by load** (issue #300). On every recording that learned `f`, the
 de-biased `f` of each minute falls as the pods fill. By the minute's mean pod
 utilization `ρ` (computed tokens a pod over `V_P`), median `f`, two pods, a

@@ -213,6 +213,10 @@ type Cycle struct {
 	// minutes only (busiestMinutes), not from every minute
 	// (saturation.SwitchPrefillFBusyMinutes).
 	FBusyMinutes bool
+	// FPooledMinutes pools consecutive minutes under MinRequestsPerPodMinute
+	// requests a pod until they carry it, so a fleet of long prompts learns f
+	// (imbalance_pool.go; saturation.SwitchPrefillFPooledMinutes).
+	FPooledMinutes bool
 	// VPFloorServed raises a lower-bound V_P to the highest computed-token
 	// rate a pod was seen to sustain, queued or not (Estimate.floorAtServed;
 	// saturation.SwitchPrefillVPFloorServed).
@@ -548,6 +552,8 @@ type keyState struct {
 	pods     map[string]*podState
 	f        []fSample
 	lastSeen time.Time
+	// pool is the minutes pooled toward the next f (Cycle.FPooledMinutes).
+	pool fPool
 	// bestQueued is the best peak under a queue the key has read since its
 	// first cycle, with the last minute of its run, kept past Retention for
 	// Cycle.VPWindowBest; bestQueuedOK says one was read.
@@ -690,11 +696,11 @@ func (o *Observer) Observe(c Cycle) Estimate {
 			s.lone, s.loneOK = loneSpeed(rm, ieff)
 		}
 		ps.add(s)
-		shares = append(shares, share{rate: s.rate, rateOK: s.rateOK, requests: rr, requestsOK: rrOK, multiRank: s.multiRank})
+		shares = append(shares, share{pod: rm.PodName, rate: s.rate, rateOK: s.rateOK, requests: rr, requestsOK: rrOK, multiRank: s.multiRank})
 	}
 	ks.prune(c.Now)
 
-	ks.noteImbalance(shares, allAdmitted, c.Now)
+	ks.noteImbalance(shares, allAdmitted, c.FPooledMinutes, c.Now)
 	est.capacity(ks, c, sglang)
 	est.plateauFill(ks, c)
 	if c.VPLoneRate {

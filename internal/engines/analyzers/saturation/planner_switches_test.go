@@ -25,7 +25,7 @@ func TestPlannerSwitches_OffFromTheConstructor(t *testing.T) {
 	a := NewSaturationAnalyzer(capacity.NewStore())
 	fields := a.switchFields()
 	for _, name := range []string{SwitchPrefillALowLoadPerRank, SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
-		SwitchPrefillFBusyMinutes, SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
+		SwitchPrefillFBusyMinutes, SwitchPrefillFPooledMinutes, SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
 		SwitchITLAdaptiveBandFloor, SwitchITLHoldSteadySlope, SwitchITLLineAtFloor,
 		SwitchTPOTRatioCensored, SwitchDecodeResidencePull, SwitchDecodeBurstFill, SwitchBacktestStepOutputDispersion,
 		SwitchPlannerCapAtStepBudget, SwitchPrefillVPFloorServed, SwitchPrefillVPServedUnqueued, SwitchPrefillVPWindowBest, SwitchPrefillVPAtServedWork, SwitchMoEBusiestRank,
@@ -413,6 +413,27 @@ func TestPrefillFBusyMinutes_LightMinutesThroughAnalyze(t *testing.T) {
 	assert.InDelta(t, 1.033, on.F, 0.005)
 	assert.InDelta(t, 1.454, off.F, 0.01)
 	assert.Equal(t, off.FSamples, on.FSamples, "the same minutes are kept")
+}
+
+// Through Analyze: two prefill pods at 1.3:1 serving 60 requests a pod a
+// minute, the long prompts' load. On, pairs of minutes carry 120 a pod and
+// give f: the busiest share 2.6/2.3 = 1.130 less the chance excess at 120 a
+// pod. Off, no minute carries 100 and f is refused.
+func TestPrefillFPooledMinutes_LongPromptsThroughAnalyze(t *testing.T) {
+	run := func(on bool) prefill.Estimate {
+		h := newObserveHarness(t, &capacity.EngineParams{Engine: inferenceengine.EngineVLLM})
+		require.NoError(t, h.a.SetSwitchesForReplay(map[string]bool{SwitchPrefillFPooledMinutes: on}))
+		var est prefill.Estimate
+		for range 20 {
+			est = h.twoPrefillCycle(60, 1.3)
+		}
+		return est
+	}
+	on, off := run(true), run(false)
+	assert.Equal(t, prefill.TooFewImbalanceMinutes, off.FRefused, "%+v", off)
+	require.Empty(t, on.FRefused, "%+v", on)
+	assert.InDelta(t, 1.08, on.F, 0.02)
+	assert.InDelta(t, 10, on.FSamples, 1, "twenty minutes, pooled in pairs")
 }
 
 // holdRampCycle runs one decode cycle of three replicas at fill k reading
