@@ -1842,7 +1842,13 @@ func (pl ttftPlan) priceOne(rate, q float64, withDecodeWait, extras bool) priced
 		if fill < d.Band.Lo {
 			out.Flags = addFlags(out.Flags, BelowFittedBand)
 		}
-		lowest := d.lowestFill()
+		// The floor is the one at the request's own count (lowestFillAt),
+		// as its TPOT reads it (issue
+		// llm-d-incubation/llm-d-scaling-manager#485).
+		lowest, _ := d.lowestFillAt(fill)
+		if _, extrapolated := d.readFill(fill); extrapolated {
+			out.Flags = addFlags(out.Flags, ExtrapolatedBelowFloor)
+		}
 		k = max(fill, lowest)
 		first, floorStep = d.itlAt(k), d.itlAt(lowest)
 		oldFirst, oldFloorStep = first, floorStep

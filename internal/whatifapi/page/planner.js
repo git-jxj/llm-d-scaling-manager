@@ -64,7 +64,7 @@ const FLAG_WORDS = {
   TierUnstable: ["Resamples fit the ITL line at another tier and move the answer by more than 5%.", "more steady readings"],
   LineNearGate: ["The ITL line sits near the tracker's gate; the answer does not care which side (informational).", "nothing"],
   ExtrapolatedFill: ["The fill is above the highest fill the ITL line was read at: extrapolated.", "readings at higher load"],
-  ExtrapolatedBelowFloor: ["Each replica runs fewer sequences than any reading of the floor below the band ran: TPOT is held to that floor extended down to this count, an extrapolation.", "readings at this light a load"],
+  ExtrapolatedBelowFloor: ["Each replica runs fewer sequences than any reading of the floor below the band ran: the figure is held to that floor extended down to this count, an extrapolation.", "readings at this light a load"],
   AssumedShape: ["Priced at a prompt or output length you set, not the measured one.", "price at the current mix"],
   ExtrapolatedShape: ["The request shape is outside the prompt and output lengths the source saw: the figures extrapolate the learned lines past the traffic they were fitted on.", "a source that served this shape"],
   DecodeOnly: ["The prefill side is not priced: the report judged decode alone, gives no fleet rate at the SLO, and never calls the fleet over-provisioned.", "a learned or assumed prefill speed (--assume-vp)"],
