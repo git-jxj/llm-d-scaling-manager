@@ -237,6 +237,11 @@ type Engine struct {
 	// per controller start (startLearnerRecording).
 	learnRecStarted bool
 
+	// sloModelInputs is the models the slo analyzer's v2 model series were
+	// published for (slo_model_inputs.go), by utils.GetNamespacedKey, so the
+	// prune can delete them.
+	sloModelInputs map[string][2]string
+
 	// clock is the cycle clock: pinned once per optimize cycle (optimizeV2),
 	// it is what the analyzers and the capacity store stamp and age their
 	// learned state on, so one cycle reads one instant. Nil in an engine a
@@ -1757,6 +1762,7 @@ func (e *Engine) optimizeV2(
 			reportSignalReason(namespace, modelID, nil)
 			continue
 		}
+		e.observeModelInputs(ctx, data)
 
 		req, err := e.collectV2ModelRequest(ctx, modelID, namespace,
 			data.replicaMetrics, scalingPolicyConfig, data.variantStates, data.variantMetadata,

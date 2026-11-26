@@ -25,8 +25,15 @@ const experimentalTTFTV2 = "v2"
 
 // experimentalTTFTV2NLLine is the flag's value that asks for the rank
 // mixture's variant with Z measured part by part on v2's service line
-// (whatif.QueueRankMixtureNLLine). Backtest only.
+// (whatif.QueueRankMixtureNLLine), wherever =v2 is taken: backtest, serve
+// and at-replicas, each fitting and pricing it as backtest does
+// (whatifapi's fitRankMixtureSteps).
 const experimentalTTFTV2NLLine = "v2nl-line"
+
+// experimentalTTFTNLLineUsage is the help for =v2nl-line, on every command
+// that takes it.
+const experimentalTTFTNLLineUsage = "=v2nl-line prices with its variant that measures each part of the non-queue time on its own, " +
+	"calibrates nothing to the router and abstains unless its fit window prices itself (flagged the same)"
 
 // experimentalTTFTV2Usage is backtest's and predict's help for the flag: the
 // switches' (experimentalTTFTUsage), and =v2.
@@ -114,7 +121,7 @@ func (v experimentalTTFTValue) Set(s string) error {
 		*v.switches, *v.v2 = false, true
 	case experimentalTTFTV2NLLine:
 		if v.nlLine == nil {
-			return fmt.Errorf("--%s=%s is backtest's only", experimentalTTFTFlag, s)
+			return fmt.Errorf("--%s=%s is backtest's, serve's, at-replicas' and day-plan's", experimentalTTFTFlag, s)
 		}
 		*v.switches, *v.v2 = false, true
 	default:
@@ -181,7 +188,8 @@ func prefillSlotsOf(res *whatifapi.Resolved) int {
 }
 
 // experimentalReport prices rep's tables with the experimental models
-// asked: the TTFT with the rank-mixture model (--experimental-ttft=v2), the
+// asked: the TTFT with the rank-mixture model (--experimental-ttft=v2) or
+// its variant (=v2nl-line), the
 // TPOT p90 and p95 with the per-request TPOT distribution
 // (--experimental-tpot=v2), each fitted on the recording read again with
 // the series it reads, as serve's POST /v1/report does.
@@ -191,9 +199,9 @@ func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.Rep
 		return err
 	}
 	req := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.variant, PrefillVPPlateau: f.vpPlateau,
-		PrefillHitAtCount: f.hitAtCount, Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(f.recording), Cycle: cycle}}
+		PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(f.recording), Cycle: cycle}}
 	if f.rankMixtureTTFT {
-		req.TTFTModel = string(whatif.QueueRankMixture)
+		req.TTFTModel = rankMixtureModel(f.rankMixtureNLLine)
 	}
 	if f.tpotDistribution {
 		req.TPOTModel = whatif.TPOTRenewalLognormal
@@ -207,10 +215,32 @@ func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.Rep
 		return err
 	}
 	if f.rankMixtureTTFT {
-		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q, stratifiedOr(f.rankMixtureStratified))
+		rep.TTFTModel = whatifapi.ApplyTTFTModel(res, rep, q,
+			f.rankMixtureFit.options(req.TTFTModel, stratifiedOr(f.rankMixtureStratified)))
 	}
 	if f.tpotDistribution {
-		rep.TPOTModel = whatifapi.ApplyTPOTModel(res, rep, q)
+		rep.TPOTModel = whatifapi.ApplyTPOTModel(res, rep, q, f.tpotFit.steps())
 	}
 	return nil
+}
+
+// rankMixtureModel is the experimental TTFT model --experimental-ttft=v2
+// asks for (whatif.QueueRankMixture), or =v2nl-line where nlLine
+// (whatif.QueueRankMixtureNLLine): the name a backtest's, a source's and a
+// server's request carry (whatifapi BacktestRequest.TTFTModel,
+// InputsRequest.TTFTModel, Config.TTFTModel).
+func rankMixtureModel(nlLine bool) string {
+	if nlLine {
+		return string(whatif.QueueRankMixtureNLLine)
+	}
+	return string(whatif.QueueRankMixture)
+}
+
+// rankMixtureValue is the --experimental-ttft value the answer was asked
+// with, v2 or v2nl-line, for its messages.
+func (f *answerFlags) rankMixtureValue() string {
+	if f.rankMixtureNLLine {
+		return experimentalTTFTV2NLLine
+	}
+	return experimentalTTFTV2
 }

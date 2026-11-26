@@ -123,6 +123,7 @@ var notOnTheTTFTPath = map[string]string{
 	"CoarseTPOTBucket":          "TPOT",
 	"EngineTPOTHistogram":       "TPOT",
 	"ExtrapolatedFill":          "decode line",
+	"ExtrapolatedBelowFloor":    "TPOT: the floor by running count is read only by the planner's TPOT figure",
 	"GlobalTPOTRatio":           "TPOT",
 	"MeanBoundedTPOTPercentile": "TPOT",
 	"HeldLine":                  "decode line",
@@ -137,11 +138,13 @@ var notOnTheTTFTPath = map[string]string{
 	"PSSlotsExceeded":           "planner only: slo-ttft-ps-by-engine, which the analyzer never prices with",
 	"RankMixtureTTFT":           "planner backtest only: --experimental-ttft=v2",
 	"RankMixtureAbstained":      "planner backtest only: --experimental-ttft=v2",
+	"RankMixtureShortFitWindow": "planner only: --rank-mixture-min-fit-window",
 	"LimitedPSHeavyTraffic":     "planner backtest only: --experimental-ttft=v2",
 	"KVDeferralOutside":         "planner backtest only: --experimental-ttft=v2",
 	"RelaxationLong":            "planner backtest only: --experimental-ttft=v2",
 	"TPOTDistribution":          "TPOT, planner backtest only: --experimental-tpot=v2",
 	"TPOTDistributionAbstained": "TPOT, planner backtest only: --experimental-tpot=v2",
+	"TPOTDistributionShortFit":  "TPOT, planner only: --tpot-dist-min-fit-steps",
 }
 
 // Every flag the whatif package declares is on the TTFT series' list, the
