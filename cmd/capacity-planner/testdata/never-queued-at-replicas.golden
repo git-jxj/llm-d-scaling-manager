@@ -21,7 +21,7 @@ utilization at the load judged
 capacity            req/s     out tok/s   in system   bound by
   prefill knee      >=32.37   36680       not known   prefill compute: N_p 2 x V_P x (1 - 0.05 margin) / (f 1.000 x 1000 tokens); at least: V_P is a lower bound
   decode knee       13.35     15124       unbounded   decode batch cap at fill 0.551
-                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+                    OUTSIDE VALIDATED REGION (more sequences a pod than the decode line was fitted on, never measured there)
   fleet knee        13.35     15124       unbounded   decode
   operating (0.85)  11.35     12855       -           0.85 x fleet knee (scaleUpThreshold)
   max at SLO        TTFT not priced (V_P a lower bound)                        V_P 17046 tokens/s is only the rate a prefill pod was seen to compute (it never queued for capacity): no TTFT is priced from it; pass --assume-vp for a flagged answer

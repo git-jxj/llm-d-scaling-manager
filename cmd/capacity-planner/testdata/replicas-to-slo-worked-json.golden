@@ -123,8 +123,8 @@
             ],
             "validation": {
               "validated": false,
-              "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
-              "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
+              "label": "OUTSIDE VALIDATED REGION (--assume-tpot-ratio stated, which the run did not price)",
+              "outside": "--assume-tpot-ratio stated, which the run did not price"
             }
           }
         },
