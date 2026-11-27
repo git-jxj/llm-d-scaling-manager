@@ -1514,7 +1514,7 @@ func (q *dayQuestion) measuredTTFT(last time.Time, lat map[time.Time]LatencySamp
 		return nil
 	}
 	h, ok := histOf(l.Router.TTFTBuckets)
-	if !ok || h.total*measureWindowOf(l, MeasuredRouter) < minRequestsFor(stat) {
+	if !ok || h.Total*measureWindowOf(l, MeasuredRouter) < minRequestsFor(stat) {
 		return nil
 	}
 	if stat == 0 {
@@ -1523,11 +1523,11 @@ func (q *dayQuestion) measuredTTFT(last time.Time, lat map[time.Time]LatencySamp
 		}
 		return ptr(l.Router.TTFTSumRate / l.Router.TTFTCountRate)
 	}
-	v := h.quantile(stat)
+	v := h.Quantile(stat)
 	if !whatif.Finite(v) {
 		// Past the top bucket: the statistic is at least the top bound, which
 		// says it is over a target under that bound, and nothing of one above.
-		if t := h.top(); t > q.sc.TTFT.Target {
+		if t := h.Top(); t > q.sc.TTFT.Target {
 			return ptr(t)
 		}
 		return nil

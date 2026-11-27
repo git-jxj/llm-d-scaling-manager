@@ -271,32 +271,26 @@ func fitMainMixture(e *inputsEntry, sw rankMixtureSwitches) *mainMixture {
 			idx = append(idx, i)
 		}
 	}
-	rq, steps, err := fitRankMixtureSteps(e, idx, DefaultBacktestStep, e.engine.PrefillSlots, sw)
-	if err != nil {
-		return abstain(err.Error())
+	// The slo analyzer's v2 TTFT learner fits and prices its own cycles with
+	// the same call.
+	w := whatif.FitMixtureWindow(fitCycles(e, idx), DefaultBacktestStep, e.engine.PrefillSlots, BacktestTolerance, sw.shared())
+	if w.FitErr != nil {
+		return abstain(w.FitErr.Error())
 	}
-	mm.rq = rq.identified()
+	mm.rq = &rankMixtureQ{m: w.Fitted.M, report: w.Fitted.Report}
 	r := mm.rq.report
 	mm.info.Fit = &r
 	if r.Abstained != "" {
 		mm.info.Abstained = r.Abstained
 		return mm
 	}
-	for _, st := range steps {
-		mm.top = max(mm.top, st.Rate)
-	}
-	mm.fit = mixtureRangeOf(steps)
+	mm.top = w.Top
+	mm.fit = mixtureRangeOf(w.Steps)
 	if mm.top > 0 {
 		mm.info.MeasuredUpTo = ptr(mm.top)
 	}
-	first := e.series[idx[0]].At
-	mm.pooled = whatif.MixtureStepOf(mixtureWindow(e, idx, first.Add(-time.Nanosecond), answered), answered)
-	o := sw.options(rq.m.Slots)
-	h := whatif.RankMixtureHeldOut(steps, o, rq.m.Spread, BacktestTolerance)
-	if sw.nlLine {
-		h = whatif.RankMixtureNLHeldOut(steps, o, BacktestTolerance)
-	}
-	if h.Steps > 0 {
+	mm.pooled = w.Pooled
+	if h := w.HeldOut; h.Steps > 0 {
 		mm.info.HeldOut = &HeldOutScore{Statistic: statisticMean, Within: h.Within, Low: h.Low, Steps: h.Steps, MedianRatio: h.MedianRatio,
 			RateFrom: h.RateLo, RateTo: h.RateHi, Prefill: mm.prefill, Decode: e.doc.Fleet.Decode.Replicas}
 		mm.info.Evidence = heldOutWords(h.Within, h.Steps)
@@ -477,7 +471,7 @@ func (mm *mainMixture) modelFlags() []whatif.Flag {
 	if mm == nil || mm.rq == nil {
 		return []whatif.Flag{whatif.RankMixtureTTFT}
 	}
-	return append([]whatif.Flag{whatif.RankMixtureTTFT}, mm.rq.report.shortFlags()...)
+	return append([]whatif.Flag{whatif.RankMixtureTTFT}, mm.rq.report.ShortFlags()...)
 }
 
 // TTFTPoint is TTFTAt with the planner's notes.

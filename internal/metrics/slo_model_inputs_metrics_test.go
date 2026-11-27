@@ -21,8 +21,8 @@ func TestRecordSLOModelInputs(t *testing.T) {
 		t.Fatalf("signal-missing = %v, %v; want 1, true", v, ok)
 	}
 	if v, ok := gaugeAt(t, registry, constants.LLMSMSLOModelCoverage, map[string]string{
-		constants.LabelObjective: "ttft", constants.LabelReason: constants.SLOModelNotBuilt}); !ok || v != 0 {
-		t.Fatalf("not-built = %v, %v; want 0, true", v, ok)
+		constants.LabelObjective: "ttft", constants.LabelReason: constants.SLOModelWindowShort}); !ok || v != 0 {
+		t.Fatalf("window-short = %v, %v; want 0, true", v, ok)
 	}
 	if got := countSeries(t, registry, constants.LLMSMSLOModelInputMissing); got != 2 {
 		t.Fatalf("%d missing-input series, want 2", got)
@@ -33,7 +33,7 @@ func TestRecordSLOModelInputs(t *testing.T) {
 		constants.LabelSignal: "prefill-time-mean"}); ok {
 		t.Fatal("an input read again kept its missing series")
 	}
-	RecordSLOModelInputs("ns", "m", constants.SLOObjectiveTTFT, constants.SLOModelNotBuilt, nil)
+	RecordSLOModelInputs("ns", "m", constants.SLOObjectiveTTFT, constants.SLOModelWindowShort, nil)
 	if got := countSeries(t, registry, constants.LLMSMSLOModelInputMissing); got != 0 {
 		t.Fatalf("%d missing-input series with none missing, want 0", got)
 	}
@@ -54,6 +54,6 @@ func TestRecordSLOModelInputs(t *testing.T) {
 		t.Fatalf("%d missing-input series after deleting m, want model other's 1", got)
 	}
 	if got := countSeries(t, registry, constants.LLMSMSLOPredictedTPOTSeconds); got != 0 {
-		t.Fatalf("%d predicted TPOT series, want none: nothing prices it yet", got)
+		t.Fatalf("%d predicted TPOT series, want none: RecordSLOModelInputs publishes coverage only", got)
 	}
 }

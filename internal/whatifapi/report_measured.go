@@ -59,13 +59,13 @@ func MeasuredTTFTAtLoad(series []SeriesSample, latency []LatencySample, fleet Fl
 		return sum / count, true
 	}
 	h, ok := histOf(bucketsOf(pooled))
-	if !ok || h.total/float64(n)*window/float64(n) < minRequestsFor(q) {
+	if !ok || h.Total/float64(n)*window/float64(n) < minRequestsFor(q) {
 		return 0, false
 	}
-	v := h.quantile(q)
+	v := h.Quantile(q)
 	if !whatif.Finite(v) {
 		// Past the top bucket: at least the top bound.
-		return h.top(), h.top() > 0
+		return h.Top(), h.Top() > 0
 	}
 	return v, true
 }

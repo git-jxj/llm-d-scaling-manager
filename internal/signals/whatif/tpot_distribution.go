@@ -7,6 +7,8 @@ import (
 	"math"
 	"slices"
 	"time"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 )
 
 // This file is the experimental per-request TPOT distribution
@@ -86,7 +88,10 @@ type DecodeGroup struct {
 // DecodeCycle is one cycle of the decode pods as the TPOT distribution reads
 // it: the pooled output-length histogram (cumulative request rate by upper
 // edge), each replica's reading, and the mean and largest running sequences
-// of a data-parallel rank.
+// of a data-parallel rank. EngineTPOT is the engines' per-request TPOT
+// histogram, each bound's [1m] rate summed over the decode and unsplit pods
+// (sorted by bound, nil with none): the step's joint bracket reads it
+// beside the router's (WithEngineTPOT, JointBracket).
 type DecodeCycle struct {
 	At            time.Time
 	Output        map[float64]float64
@@ -94,6 +99,7 @@ type DecodeCycle struct {
 	MeanRunning   float64
 	MostRunning   float64
 	RanksReported int
+	EngineTPOT    []domain.LatencyBucket
 }
 
 // InverseOutputLength is E[1/(L-1)] over the requests of the cumulative

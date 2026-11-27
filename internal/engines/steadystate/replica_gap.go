@@ -12,7 +12,9 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/allocation"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/metrics"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learn"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/utils"
 )
 
@@ -394,6 +396,9 @@ type replicaGapRecorder struct {
 	plan     *replicaGapPlan
 	gaps     []metrics.ReplicaGap
 	variants []gapVariant
+	// v2Ask is the slo analyzer's v2 TTFT prefill ask for a model this
+	// cycle (slo.Analyzer.ModelPrefillAsk); nil reads none.
+	v2Ask func(namespace, modelID string) (slo.ModelPrefillAsk, bool)
 }
 
 // record returns d's gap at provided, and keeps it for publish.
@@ -405,9 +410,37 @@ func (r *replicaGapRecorder) record(d *domain.VariantDecision, provided int) met
 	return g
 }
 
-// publish replaces the suggested/provided series with this cycle's.
+// publish replaces the suggested/provided series with this cycle's, the v2
+// would-be suggestions among them (v2Gaps).
 func (r *replicaGapRecorder) publish() {
-	metrics.PublishReplicaGaps(r.gaps, r.plan.quotasAfterSuggested(r.variants))
+	metrics.PublishReplicaGaps(append(r.gaps, r.v2Gaps()...), r.plan.quotasAfterSuggested(r.variants))
+}
+
+// v2Gaps is what the analyzers would suggest for the prefill variant of a
+// model nothing is applied to (mode passive or shadow) with the slo analyzer
+// sizing it on the v2 TTFT model: the higher of their own suggestion and the
+// v2 ask, as the combined ask takes the highest analyzer's. Published on
+// llmsm_replicas_suggested under learner ttft-mixture, with no provided
+// figure: nothing applies or limits it. An active model has none: its
+// sizing stays on the default models until the v2 models' turn-on evidence
+// passes (docs/proposals/predicted-latency-in-controller.md).
+func (r *replicaGapRecorder) v2Gaps() []metrics.ReplicaGap {
+	if r.v2Ask == nil {
+		return nil
+	}
+	var out []metrics.ReplicaGap
+	for _, g := range r.gaps {
+		if g.Mode == constants.ReplicasModeActive || g.Role != domain.RolePrefill {
+			continue
+		}
+		ask, ok := r.v2Ask(g.Namespace, g.ModelName)
+		if !ok || ask.Variant != g.VariantName {
+			continue
+		}
+		out = append(out, metrics.ReplicaGap{Namespace: g.Namespace, ModelName: g.ModelName, VariantName: g.VariantName,
+			Role: g.Role, Mode: g.Mode, Learner: learn.TTFTMixture, Suggested: max(g.Suggested, ask.Pods)})
+	}
+	return out
 }
 
 // constrainedEventMessage is the ResourceConstrained Event's text: the

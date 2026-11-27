@@ -241,6 +241,9 @@ type Engine struct {
 	// published for (slo_model_inputs.go), by utils.GetNamespacedKey, so the
 	// prune can delete them.
 	sloModelInputs map[string][2]string
+	// sloModelInputsSeen is the models whose v2 model series were published
+	// since the last prune (retainModelInputs).
+	sloModelInputsSeen map[string]bool
 
 	// clock is the cycle clock: pinned once per optimize cycle (optimizeV2),
 	// it is what the analyzers and the capacity store stamp and age their
@@ -1762,7 +1765,7 @@ func (e *Engine) optimizeV2(
 			reportSignalReason(namespace, modelID, nil)
 			continue
 		}
-		e.observeModelInputs(ctx, data)
+		e.observeModelInputs(ctx, data, &scalingPolicyConfig)
 
 		req, err := e.collectV2ModelRequest(ctx, modelID, namespace,
 			data.replicaMetrics, scalingPolicyConfig, data.variantStates, data.variantMetadata,
@@ -2436,7 +2439,7 @@ func (e *Engine) applySaturationDecisions(
 	defer func() { e.Status.SetResolvedAccelerators(resolved) }()
 	// Each decided variant's suggestion against what it is provided, published
 	// once every decision is applied: a variant with no decision has none.
-	gaps := &replicaGapRecorder{plan: e.cycleGaps}
+	gaps := &replicaGapRecorder{plan: e.cycleGaps, v2Ask: e.modelPrefillAsk}
 	defer gaps.publish()
 
 	// Iterate over ALL active VAs to ensure we update status and trigger reconciliation for everyone

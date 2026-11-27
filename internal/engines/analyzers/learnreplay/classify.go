@@ -201,6 +201,8 @@ var valueRules = map[string]rule{
 	"RateSource": {class: classVocab}, "Source": {class: classVocab}, "Excluded": {class: classVocab},
 	"Objective": {class: classVocab}, "Statistic": {class: classVocab}, "LearnedFrom": {class: classVocab},
 	"VPSource": {class: classVocab}, "Refused": {class: classVocab}, "Flags": {class: classVocab},
+	// The learner a predicted figure is published under (metrics.SLOPrediction).
+	"Learner":         {class: classVocab},
 	"FlowControl":     {class: classVocab},
 	"FreshnessStatus": {class: classVocab}, "Quantity": {class: classVocab}, "Engine": {class: classVocab},
 	"Scope": {class: classVocab}, "Type": {class: classVocab}, "AnalyzerName": {class: classAnalyzer},
@@ -277,6 +279,8 @@ var keyRules = map[string]rule{
 	"Parameters": {class: classVocab},
 	// The joint TTFT model's inputs, keyed by input (J1).
 	"Inputs": {class: classVocab},
+	// The default TTFT model's figures, keyed by statistic (issue #440).
+	"Statistics": {class: classVocab},
 	// The composite's per-role maps, keyed by role.
 	"Holds": {class: classVocab}, "HoldReasons": {class: classVocab}, "ReleaseBound": {class: classVocab},
 	"OtherFrames": {class: classVocab}, "RoleCapacities": {class: classVocab}, "RoleSpare": {class: classVocab},

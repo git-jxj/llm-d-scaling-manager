@@ -3,7 +3,6 @@ package whatifapi
 import (
 	"fmt"
 	"slices"
-	"time"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
 )
@@ -157,27 +156,18 @@ func fitMainTPOT(e *inputsEntry, model string, minSteps int) *mainTPOT {
 			idx = append(idx, i)
 		}
 	}
-	tq := fitTPOTDist(e, idx, DefaultBacktestStep, e.engine.DecodeSlots, e.engine.SpecTokens, model, minSteps)
+	// The slo analyzer's v2 TPOT learner fits and prices its own cycles with
+	// the same call.
+	w := whatif.FitTPOTWindow(fitCycles(e, idx), DefaultBacktestStep, e.engine.DecodeSlots, e.engine.SpecTokens, model, minSteps)
+	tq := tpotDistQOf(w.Fitted)
 	r := tq.report
 	mt.info.Fit = &r
-	if r.Abstained != "" {
-		return abstain(r.Abstained)
+	if w.Abstained != "" {
+		return abstain(w.Abstained)
 	}
-	first := e.series[idx[0]].At
-	window := decodeWindow(e, idx, first.Add(-time.Nanosecond), answered)
-	inv, g2, ok := whatif.DecodeWindow(window)
-	if !ok {
-		return abstain("the source's decode pods read no output-length histogram")
-	}
-	var law []whatif.LengthGroup
-	if tq.perLength {
-		law, _ = whatif.DecodeWindowLaw(window)
-	}
-	mt.tq, mt.inv, mt.dist = tq, inv, tq.distAt(g2, tq.c, law)
+	mt.tq, mt.inv, mt.dist = tq, w.Inv, w.Dist
 	mt.info.P90Ratio, mt.info.P95Ratio = ptr(mt.ratio(0.9)), ptr(mt.ratio(0.95))
-	for _, rate := range tq.stepRates {
-		mt.top = max(mt.top, rate)
-	}
+	mt.top = w.Top
 	if mt.top > 0 {
 		mt.info.MeasuredUpTo = ptr(mt.top)
 	}
@@ -239,7 +229,7 @@ func (mt *mainTPOT) fleet(inner Fleet, k Knobs) Fleet {
 	if !ok {
 		return inner
 	}
-	return x.WithTPOTRatio(ModelRatio{Value: mt.ratio(k.TPOTPercentile), Flag: whatif.TPOTDistribution, More: mt.tq.report.flags()[1:], Source: tpotModelSource,
+	return x.WithTPOTRatio(ModelRatio{Value: mt.ratio(k.TPOTPercentile), Flag: whatif.TPOTDistribution, More: mt.tq.report.Flags()[1:], Source: tpotModelSource,
 		Assumed: mt.assumed(k)})
 }
 
@@ -344,12 +334,12 @@ func (mt *mainTPOT) applyToReport(out *ReportResponse, q ReportQuery) {
 			if !whatif.Finite(v) {
 				continue
 			}
-			st.Figure = Figure{Value: ptr(v), Unit: unitSeconds, Flags: flagStrings(mt.tq.report.flags()),
+			st.Figure = Figure{Value: ptr(v), Unit: unitSeconds, Flags: flagStrings(mt.tq.report.Flags()),
 				Extrapolated: mt.extrapolated(k, row.Rate)}
 			moved = true
 		}
 		if moved {
-			for _, fl := range flagStrings(mt.tq.report.flags()) {
+			for _, fl := range flagStrings(mt.tq.report.Flags()) {
 				if !slices.Contains(sh.Flags, fl) {
 					sh.Flags = append(sh.Flags, fl)
 				}

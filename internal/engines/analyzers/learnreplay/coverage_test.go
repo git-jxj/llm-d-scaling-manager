@@ -109,17 +109,23 @@ var reviewed = map[reflect.Type]buckets{
 		// TakeLearnerReports hands the line's reports to the engine's metrics
 		// and keeps none, as the saturation analyzer's does.
 		// ReadsModelInputs reads the v2 inputs switch. ObserveModelInputs
-		// (issue #440) keeps no state: it publishes which v2 model inputs a
-		// cycle read, and nothing a replay restores or a decision reads; the
-		// v2 learners are recorded once they learn.
+		// (issue #440) feeds the v2 learners, whose figures no decision
+		// reads, and is not recorded: a recording clears no row, so its
+		// saturation Analyze inputs are the cycles the learners read, and
+		// ModelV2At replays them through the learners from those.
+		// ModelPrefillAsk is their would-be ask, published by the engine for
+		// passive and shadow models only; RefitModel refits them at once, for
+		// ModelV2At alone.
 		readers: []string{"Name", "StateTimeout", "SlopeHoldFor", "Judging", "PathCounts", "TakeLearnerReports",
-			"ReadsModelInputs", "ObserveModelInputs"},
+			"ReadsModelInputs", "ObserveModelInputs", "ModelPrefillAsk", "RefitModel"},
 		// WithSettleView hands the slo line the engine's settle tracker; the
 		// replay hands it its own, as it does k2's (settle.go).
 		// WithPrefillEstimates hands it the saturation analyzer's prefill
 		// estimates; the replay hands it its own saturation analyzer.
+		// WithModelRefits sets the v2 learners' refit cadence; ModelV2At sets
+		// its own.
 		builders: []string{"WithClock", "WithStateTimeout", "WithSlopeHoldFor", "WithRecorder", "WithSettleView",
-			"WithOptimizationInterval", "WithPrefillEstimates"},
+			"WithOptimizationInterval", "WithPrefillEstimates", "WithModelRefits"},
 		seams: []string{"SetSwitchesForReplay"},
 	},
 	reflect.TypeFor[*throughput.ThroughputAnalyzer](): {

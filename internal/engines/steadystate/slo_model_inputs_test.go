@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
@@ -23,9 +24,19 @@ func TestSLOV2Inputs_OffByDefault(t *testing.T) {
 	e := &Engine{}
 	groups := map[string][]llmdvariant.Variant{"m": {{ObjectMeta: metav1.ObjectMeta{Namespace: "ns"}}}}
 	assert.Nil(t, e.predictionNamespaces(groups))
-	e.observeModelInputs(context.Background(), &modelData{namespace: "ns", modelID: "m"})
+	e.observeModelInputs(context.Background(), &modelData{namespace: "ns", modelID: "m"}, nil)
 	assert.Empty(t, e.sloModelInputs)
 	e.retainModelInputs(nil)
+}
+
+// A model whose policy does not list the slo analyzer is not observed, the
+// switch on or not: nothing would publish its v2 figures, and its window
+// would hold one of the analyzer's slots for nothing.
+func TestSLOV2Inputs_SkipsAModelThatDoesNotListSLO(t *testing.T) {
+	e := &Engine{sloAnalyzer: sloReadingModelInputs(t)}
+	policy := &config.ScalingPolicy{Analyzers: []config.AnalyzerScoreConfig{{Name: domain.SaturationAnalyzerName}}}
+	e.observeModelInputs(context.Background(), &modelData{namespace: "ns", modelID: "m"}, policy)
+	assert.Empty(t, e.sloModelInputs)
 }
 
 // On, every namespace with a model is named, once.
@@ -56,10 +67,15 @@ func TestSLOV2Inputs_RetainDeletesInactiveModels(t *testing.T) {
 	require.NoError(t, metrics.InitMetrics(registry))
 	a := sloReadingModelInputs(t)
 	e := &Engine{sloAnalyzer: a, sloModelInputs: map[string][2]string{}}
-	for _, m := range []string{"m", "n"} {
-		a.ObserveModelInputs(domain.AnalyzerInput{Namespace: "ns", ModelID: m}, nil)
-		e.sloModelInputs["ns/"+m] = [2]string{"ns", m}
+	observe := func(models ...string) {
+		e.sloModelInputsSeen = map[string]bool{}
+		for _, m := range models {
+			a.ObserveModelInputs(domain.AnalyzerInput{Namespace: "ns", ModelID: m}, nil)
+			e.sloModelInputs["ns/"+m] = [2]string{"ns", m}
+			e.sloModelInputsSeen["ns/"+m] = true
+		}
 	}
+	observe("m", "n")
 	count := func() int {
 		n, err := testutil.GatherAndCount(registry, constants.LLMSMSLOModelCoverage)
 		require.NoError(t, err)
@@ -68,6 +84,11 @@ func TestSLOV2Inputs_RetainDeletesInactiveModels(t *testing.T) {
 	require.Equal(t, 4*len(constants.SLOModelReasons), count())
 	e.retainModelInputs(map[string]bool{"ns/n": true})
 	assert.Equal(t, 2*len(constants.SLOModelReasons), count())
+	// Still reconciled, but not observed on the last cycle (it turned
+	// active, say): its series go too, not frozen at their last value.
+	e.retainModelInputs(map[string]bool{"ns/n": true})
+	assert.Zero(t, count())
+	observe("n")
 	e.retainModelInputs(nil)
 	assert.Zero(t, count())
 }

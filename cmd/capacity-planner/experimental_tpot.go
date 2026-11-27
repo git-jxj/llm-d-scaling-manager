@@ -110,9 +110,5 @@ func decodeEngineOf(res *whatifapi.Resolved) (slots, spec int) {
 	if !ok {
 		return 0, 0
 	}
-	params := variantParams(s.st, res.Inputs.Fleet.Decode.Variant)
-	if params == nil {
-		return 0, 0
-	}
-	return int(params.ExplicitMaxNumSeqs()), params.SpeculativeTokens()
+	return variantParams(s.st, res.Inputs.Fleet.Decode.Variant).DecodeSlots()
 }

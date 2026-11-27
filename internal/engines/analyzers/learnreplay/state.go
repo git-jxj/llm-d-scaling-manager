@@ -1057,16 +1057,10 @@ func shapeOf(samples []shapeSample) MeasuredShape {
 // tpotWindow is the router's per-request TPOT histogram of one cycle, as the
 // what-if library reads it: bucket rates for counts, which give the same
 // quantile and mean.
+// It is whatif.TPOTWindowOf, the window the slo analyzer's default TPOT
+// percentile reads from its own cycles.
 func tpotWindow(rl *domain.RouterLatency) (whatif.TPOTWindow, bool) {
-	if rl == nil || len(rl.TPOTBuckets) == 0 {
-		return whatif.TPOTWindow{}, false
-	}
-	w := whatif.TPOTWindow{Sum: rl.TPOTSumRate, Count: rl.TPOTCountRate, SumMeasured: true,
-		Buckets: make([]whatif.HistogramBucket, len(rl.TPOTBuckets))}
-	for i, b := range rl.TPOTBuckets {
-		w.Buckets[i] = whatif.HistogramBucket{UpperEdge: b.UpperBound, Count: b.Rate}
-	}
-	return w, true
+	return whatif.TPOTWindowOf(rl)
 }
 
 // analyzedPolicy is in's recorded config, or, where the saturation analyzer

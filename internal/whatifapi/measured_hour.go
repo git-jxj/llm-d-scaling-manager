@@ -126,10 +126,10 @@ func measuredStats(pooled map[float64]float64, sum, count, perWindow float64) []
 		switch {
 		case !ok:
 			s.Why = "not measured"
-		case h.total*perWindow < minRequestsFor(q):
+		case h.Total*perWindow < minRequestsFor(q):
 			s.Why = "too few requests"
 		default:
-			v := h.quantile(q)
+			v := h.Quantile(q)
 			switch {
 			case math.IsInf(v, 1):
 				s.Why = "above the top bucket"

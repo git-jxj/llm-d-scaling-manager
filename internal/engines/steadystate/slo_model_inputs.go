@@ -5,6 +5,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/config"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/constants"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
@@ -30,6 +31,7 @@ import (
 type modelInputsObserver interface {
 	ReadsModelInputs() bool
 	ObserveModelInputs(in domain.AnalyzerInput, router *domain.RouterLatency) map[string]slo.ModelCoverage
+	ModelPrefillAsk(namespace, modelID string) (slo.ModelPrefillAsk, bool)
 }
 
 var _ modelInputsObserver = (*slo.Analyzer)(nil)
@@ -79,9 +81,17 @@ func (e *Engine) predictionNamespaces(modelGroups map[string][]llmdvariant.Varia
 // observeModelInputs hands the slo analyzer one model's cycle for its v2
 // models: the rows the collector kept for them, cut to the replicas the
 // analyzers read (routing drops a pod no InferencePool selects), the
-// model's variant states, and the router's latency as the models fit on it.
-func (e *Engine) observeModelInputs(ctx context.Context, data *modelData) {
+// model's variant states, arrival rate and policy (the TTFT objective the
+// v2 prefill ask is priced at), and the router's latency as the models fit
+// on it. A model whose policy does not list the slo analyzer is skipped: the
+// v2 figures are published by its Analyze, which does not run for that
+// model, so its window would hold one of the analyzer's ModelMaxWindows for
+// nothing anyone reads.
+func (e *Engine) observeModelInputs(ctx context.Context, data *modelData, policy domain.AnalyzerConfig) {
 	if data == nil {
+		return
+	}
+	if p, ok := policy.(*config.ScalingPolicy); ok && p != nil && !p.AnalyzerEnabled(domain.SLOAnalyzerName) {
 		return
 	}
 	obs := e.modelInputs(data.namespace, data.modelID)
@@ -95,13 +105,32 @@ func (e *Engine) observeModelInputs(ctx context.Context, data *modelData) {
 		rows = data.replicaMetrics
 	}
 	in := domain.AnalyzerInput{Namespace: data.namespace, ModelID: data.modelID,
-		ReplicaMetrics: sameReplicas(rows, data.replicaMetrics), VariantStates: data.variantStates}
+		ReplicaMetrics: sameReplicas(rows, data.replicaMetrics), VariantStates: data.variantStates,
+		ArrivalRate: data.arrivalRate, Config: policy}
 	router := e.ReplicaMetricsCollector.CollectPredictionLatency(ctx, data.modelID, data.namespace)
-	obs.ObserveModelInputs(in, router)
+	published := obs.ObserveModelInputs(in, router) != nil
 	if e.sloModelInputs == nil {
 		e.sloModelInputs = map[string][2]string{}
 	}
-	e.sloModelInputs[utils.GetNamespacedKey(data.namespace, data.modelID)] = [2]string{data.namespace, data.modelID}
+	key := utils.GetNamespacedKey(data.namespace, data.modelID)
+	e.sloModelInputs[key] = [2]string{data.namespace, data.modelID}
+	if published {
+		if e.sloModelInputsSeen == nil {
+			e.sloModelInputsSeen = map[string]bool{}
+		}
+		e.sloModelInputsSeen[key] = true
+	}
+}
+
+// modelPrefillAsk is the slo analyzer's v2 TTFT prefill ask for a model this
+// cycle, false where the analyzer does not run the v2 models or asks for
+// none.
+func (e *Engine) modelPrefillAsk(namespace, modelID string) (slo.ModelPrefillAsk, bool) {
+	obs, ok := e.sloAnalyzer.(modelInputsObserver)
+	if !ok {
+		return slo.ModelPrefillAsk{}, false
+	}
+	return obs.ModelPrefillAsk(namespace, modelID)
 }
 
 // sameReplicas is the rows of kept whose pod has a row in read, in kept's
@@ -121,13 +150,18 @@ func sameReplicas(kept, read []domain.ReplicaMetrics) []domain.ReplicaMetrics {
 }
 
 // retainModelInputs deletes the v2 model series of every model activeKeys
-// does not hold; nil deletes every one. Published before the model reaches
-// recordAnalyzerMetrics, so tracked apart from lastAnalyzerSeries.
+// does not hold, and of every model the last cycle did not publish them for
+// (sloModelInputsSeen): one still reconciled that turned active, left the
+// share's shadow or dropped slo from its policy would otherwise keep its last
+// coverage for good. nil deletes every one. Published before the model
+// reaches recordAnalyzerMetrics, so tracked apart from lastAnalyzerSeries.
+// It runs at the start of a cycle, before the cycle observes any model.
 func (e *Engine) retainModelInputs(activeKeys map[string]bool) {
 	for key, m := range e.sloModelInputs {
-		if !activeKeys[key] {
+		if !activeKeys[key] || !e.sloModelInputsSeen[key] {
 			metrics.DeleteSLOModelInputs(m[0], m[1])
 			delete(e.sloModelInputs, key)
 		}
 	}
+	e.sloModelInputsSeen = nil
 }

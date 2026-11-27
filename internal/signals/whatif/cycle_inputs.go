@@ -1,6 +1,8 @@
 package whatif
 
 import (
+	"cmp"
+	"slices"
 	"strconv"
 	"time"
 
@@ -142,10 +144,14 @@ func (r *MixtureRank) setFrontend(a apiServerReading, n int) {
 
 // DecodeCycleOf is one cycle of in, read at at, as the TPOT distribution
 // reads it: the decode rows of decodeVariant (every decode row where it is
-// empty), or, on a fleet with no decode role, its serving rows.
+// empty), or, on a fleet with no decode role, its serving rows. Its
+// EngineTPOT is summed as a learner recording's latency sums the engines'
+// TPOT (learnreplay's CycleLatency.EngineTPOT): every decode and unsplit
+// row of decodeVariant, serving or not.
 func DecodeCycleOf(in domain.AnalyzerInput, at time.Time, decodeVariant string) DecodeCycle {
 	c := DecodeCycle{At: at, Output: map[float64]float64{}}
 	roles := rolesOf(in)
+	c.EngineTPOT = engineTPOTOf(in, roles, decodeVariant)
 	decode := false
 	for _, rm := range in.ReplicaMetrics {
 		if domain.CanonicalRole(roles[rm.VariantName]) == domain.RoleDecode {
@@ -199,6 +205,35 @@ func DecodeCycleOf(in domain.AnalyzerInput, at time.Time, decodeVariant string) 
 		c.MeanRunning = running / float64(c.RanksReported)
 	}
 	return c
+}
+
+// engineTPOTOf is the engines' per-request TPOT histogram of in's decode
+// and unsplit rows of decodeVariant (every such row where it is empty), each
+// bound's rate summed over the rows and sorted by bound; nil with none.
+func engineTPOTOf(in domain.AnalyzerInput, roles map[string]string, decodeVariant string) []domain.LatencyBucket {
+	sum := map[float64]float64{}
+	for _, rm := range in.ReplicaMetrics {
+		switch domain.CanonicalRole(roles[rm.VariantName]) {
+		case domain.RoleDecode, domain.RoleBoth:
+		default:
+			continue
+		}
+		if decodeVariant != "" && rm.VariantName != decodeVariant {
+			continue
+		}
+		for _, b := range rm.TPOTBuckets {
+			sum[b.UpperBound] += b.Rate
+		}
+	}
+	if len(sum) == 0 {
+		return nil
+	}
+	out := make([]domain.LatencyBucket, 0, len(sum))
+	for b, r := range sum {
+		out = append(out, domain.LatencyBucket{UpperBound: b, Rate: r})
+	}
+	slices.SortFunc(out, func(x, y domain.LatencyBucket) int { return cmp.Compare(x.UpperBound, y.UpperBound) })
+	return out
 }
 
 // rolesOf is each variant's role as in's variant states give it.

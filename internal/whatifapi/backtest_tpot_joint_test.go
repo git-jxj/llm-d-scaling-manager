@@ -126,7 +126,7 @@ func TestMeasuredOf_TheRoutersOwnReadingIsKeptExactly(t *testing.T) {
 			require.True(t, ok)
 			m := measuredOf(l, MeasuredRouter, window, false)
 			require.NotNil(t, m.tpot[i90])
-			assert.Equal(t, h.quantile(0.9), *m.tpot[i90], "n %g, F(10 ms) %g", n, f)
+			assert.Equal(t, h.Quantile(0.9), *m.tpot[i90], "n %g, F(10 ms) %g", n, f)
 		}
 	}
 }

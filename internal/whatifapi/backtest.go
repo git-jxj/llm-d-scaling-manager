@@ -1,7 +1,6 @@
 package whatifapi
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -1305,13 +1304,15 @@ type stepOf struct {
 }
 
 // defaultMeasureWindow is the rate window a measurement is read over when
-// the source does not say: the engines' histograms are over a minute.
-const defaultMeasureWindow = 60.0
+// the source does not say (whatif.DefaultMeasureWindow).
+const defaultMeasureWindow = whatif.DefaultMeasureWindow
 
-// measureWindowOf is the window, seconds, the latency at l was read over.
+// measureWindowOf is the window, seconds, the latency at l was read over:
+// the router's own for the router (whatif.RouterWindowOf, as the
+// experimental models' fits read it), defaultMeasureWindow otherwise.
 func measureWindowOf(l LatencySample, source string) float64 {
-	if source == MeasuredRouter && l.Router != nil && l.Router.WindowSeconds > 0 {
-		return l.Router.WindowSeconds
+	if source == MeasuredRouter {
+		return whatif.RouterWindowOf(l.Router)
 	}
 	return defaultMeasureWindow
 }
@@ -2145,10 +2146,10 @@ func measuredOf(l LatencySample, source string, windowSeconds float64, pd bool) 
 	th, tok := histOf(tb)
 	ph, pok := histOf(pb)
 	if tok {
-		m.requests, m.ttftTop = th.total*windowSeconds, th.top()
+		m.requests, m.ttftTop = th.Total*windowSeconds, th.Top()
 	}
 	if pok {
-		m.tpotRequests, m.tpotTop = ph.total*windowSeconds, ph.top()
+		m.tpotRequests, m.tpotTop = ph.Total*windowSeconds, ph.Top()
 	}
 	for i, q := range backtestStats {
 		switch q {
@@ -2156,10 +2157,10 @@ func measuredOf(l LatencySample, source string, windowSeconds float64, pd bool) 
 			m.ttft[i], m.tpot[i] = ttftMean, tpotMean
 		default:
 			if tok {
-				m.ttft[i], m.ttftBucket[i] = ptr(th.quantile(q)), th.coarseBucket(q)
+				m.ttft[i], m.ttftBucket[i] = ptr(th.Quantile(q)), th.coarseBucket(q)
 			}
 			if pok {
-				m.tpot[i], m.tpotBucket[i] = ptr(ph.quantile(q)), ph.coarseBucket(q)
+				m.tpot[i], m.tpotBucket[i] = ptr(ph.Quantile(q)), ph.coarseBucket(q)
 				if source == MeasuredRouter && (q == 0.9 || q == 0.95) {
 					m.tpot[i], m.tpotBucket[i] = jointTPOT(l, windowSeconds, q, m.tpot[i], m.tpotBucket[i])
 				}
@@ -2210,67 +2211,19 @@ func jointTPOT(l LatencySample, windowSeconds, q float64, meas *float64, bucket 
 	return p, &Band{Lo: b.Lo, Hi: b.Hi}
 }
 
-// latencyHist is a cumulative latency histogram, repaired to be monotone,
-// ending in +Inf.
+// latencyHist is a cumulative latency histogram (whatif.LatencyHist, the
+// one the slo analyzer's v2 models read), with the backtest's bucket
+// placement (coarseBucket).
 type latencyHist struct {
-	buckets []domain.LatencyBucket
-	total   float64
+	whatif.LatencyHist
 }
 
-// histOf is the histogram bs, repaired as Prometheus's histogram_quantile
-// repairs one; ok false with no +Inf bucket or no request.
+// histOf is the histogram in, repaired as Prometheus's histogram_quantile
+// repairs one (whatif.LatencyHistOf); ok false with no +Inf bucket or no
+// request.
 func histOf(in []domain.LatencyBucket) (latencyHist, bool) {
-	bs := make([]domain.LatencyBucket, 0, len(in))
-	for _, b := range in {
-		if math.IsNaN(b.UpperBound) || !whatif.Finite(b.Rate) || b.Rate < 0 {
-			continue
-		}
-		bs = append(bs, b)
-	}
-	slices.SortFunc(bs, func(x, y domain.LatencyBucket) int { return cmp.Compare(x.UpperBound, y.UpperBound) })
-	if len(bs) == 0 || !math.IsInf(bs[len(bs)-1].UpperBound, 1) {
-		return latencyHist{}, false
-	}
-	for i := 1; i < len(bs); i++ {
-		bs[i].Rate = max(bs[i].Rate, bs[i-1].Rate)
-	}
-	total := bs[len(bs)-1].Rate
-	if !(total > 0) {
-		return latencyHist{}, false
-	}
-	return latencyHist{buckets: bs, total: total}, true
-}
-
-// top is the highest finite bound, 0 with none.
-func (h latencyHist) top() float64 {
-	if len(h.buckets) < 2 {
-		return 0
-	}
-	return h.buckets[len(h.buckets)-2].UpperBound
-}
-
-// quantile is the q-quantile by linear interpolation inside its bucket, as
-// histogram_quantile, but +Inf in the +Inf bucket: the top bound would read
-// the tail low.
-func (h latencyHist) quantile(q float64) float64 {
-	rank := q * h.total
-	for i, b := range h.buckets {
-		if b.Rate < rank {
-			continue
-		}
-		if math.IsInf(b.UpperBound, 1) {
-			return math.Inf(1)
-		}
-		lower, below := 0.0, 0.0
-		if i > 0 {
-			lower, below = h.buckets[i-1].UpperBound, h.buckets[i-1].Rate
-		}
-		if b.Rate == below {
-			return b.UpperBound
-		}
-		return lower + (b.UpperBound-lower)*(rank-below)/(b.Rate-below)
-	}
-	return math.Inf(1)
+	h, ok := whatif.LatencyHistOf(in)
+	return latencyHist{h}, ok
 }
 
 // coarseBucket is the finite bucket holding the q-quantile where it is too
@@ -2278,8 +2231,8 @@ func (h latencyHist) quantile(q float64) float64 {
 // from 0 included; nil where it is narrow enough, or the quantile is above
 // the top bucket (scored as a miss, not placed).
 func (h latencyHist) coarseBucket(q float64) *Band {
-	rank := q * h.total
-	for i, b := range h.buckets {
+	rank := q * h.Total
+	for i, b := range h.Buckets {
 		if b.Rate < rank {
 			continue
 		}
@@ -2288,7 +2241,7 @@ func (h latencyHist) coarseBucket(q float64) *Band {
 		}
 		lower := 0.0
 		if i > 0 {
-			lower = h.buckets[i-1].UpperBound
+			lower = h.Buckets[i-1].UpperBound
 		}
 		if lower > 0 && b.UpperBound <= (1+MeasuredBucketWidth)*lower*(1+bucketEps) {
 			return nil

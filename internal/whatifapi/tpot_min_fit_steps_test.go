@@ -49,7 +49,7 @@ func TestTPOTDist_MinFitSteps(t *testing.T) {
 	require.Empty(t, mt.info.Abstained)
 	require.NotNil(t, mt.info.Fit)
 	assert.True(t, mt.info.Fit.ShortFit)
-	assert.Equal(t, []whatif.Flag{whatif.TPOTDistribution, whatif.TPOTDistributionShortFit}, mt.tq.report.flags())
+	assert.Equal(t, []whatif.Flag{whatif.TPOTDistribution, whatif.TPOTDistributionShortFit}, mt.tq.report.Flags())
 	assert.Contains(t, fitMainTPOT(fit, "", 0).info.Abstained, "under 24")
 
 	long, _ := tdEntries(t, 960)
