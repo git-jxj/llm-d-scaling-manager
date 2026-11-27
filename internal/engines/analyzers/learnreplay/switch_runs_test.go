@@ -150,6 +150,13 @@ var replaySwitches = withMoves(staircaseSwitchMoves, map[string][]string{
 	// committed recording's cycle reaches a priced fleet. Its unit tests hold
 	// it (heldBy).
 	slo.SwitchTTFTRouterWait: nil,
+	// The router's wait taken as inside the prefill price, the planner's
+	// default --router-wait-in-prefill, off from the constructor (issue
+	// #367). It moves no golden, for the gate stage's reason: it moves a
+	// flag and a verdict only above the prefill onset with flow control on,
+	// and no committed recording's cycle reaches a priced fleet. Its unit
+	// tests hold it (heldBy).
+	slo.SwitchTTFTRouterWaitInPrefill: nil,
 	// The prefill onset on the processor-sharing stage, and the decode gate's
 	// closed share charged to the published rate, both off in production
 	// (whatif.DefaultPSOnsets, whatif.DefaultChargeDecodeGate). They move no
@@ -1283,6 +1290,7 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	saturation.SwitchPrefillAEngineTiming:   nil,
 	saturation.SwitchPrefillQueueByCapacity: nil,
 	saturation.SwitchPrefillFBusyMinutes:    nil,
+	saturation.SwitchPrefillFPooledMinutes:  nil,
 	saturation.SwitchPrefillALowLoadByRate:  nil,
 	saturation.SwitchPrefillAMedianOverhead: nil,
 	saturation.SwitchITLAdaptiveBandFloor:   nil,
@@ -1345,6 +1353,11 @@ var earlierSeams = withMoves(kvAboveContextSeamMoves, withMoves(queueDrainSeamMo
 	// replay runs it off and off alone from all on moves nothing. Its unit
 	// tests hold it (heldBy).
 	saturation.SwitchPrefillHitAtCount: nil,
+	// llm-d-incubation/llm-d-scaling-manager#482: f against the load per
+	// pod. Planner-only, off from the constructor, so every golden replay
+	// runs it off and off alone from all on moves nothing. Its unit tests
+	// hold it (heldBy).
+	saturation.SwitchPrefillFLoadCurve: nil,
 	// llm-d-incubation/llm-d-scaling-manager#281: the router hop read off
 	// windows whose prefill pods held no queue, the planner's too (S1's off
 	// from the constructor; the planner reads it for its own windows).
@@ -1762,6 +1775,14 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestImbalance_BusyIsComputedTokensNotRequests"},
 		{"../saturation", "TestPrefillFBusyMinutes_LightMinutesThroughAnalyze"},
 	},
+	saturation.SwitchPrefillFPooledMinutes: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestImbalance_PooledMinutesLearnFUnderTheThreshold"},
+		{"../../../signals/prefill", "TestImbalance_AMinuteAtTheThresholdIsReadAlone"},
+		{"../../../signals/prefill", "TestImbalance_AMinuteAtTheThresholdAfterLightOnesIsReadAlone"},
+		{"../../../signals/prefill", "TestImbalance_APoolEndsAtABreak"},
+		{"../saturation", "TestPrefillFPooledMinutes_LongPromptsThroughAnalyze"},
+	},
 	saturation.SwitchPrefillVPFloorServed: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
 		{"../../../signals/prefill", "TestCapacity_ALowerBoundIsFlooredAtTheServedPeak"},
@@ -1823,8 +1844,11 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestHitAtCount_TheSameCountMovesNothing"},
 		{"../../../signals/prefill", "TestHitAtCount_Edges"},
 		{"../../../signals/prefill", "TestHitAtCount_TheFloor"},
-		{"../../../signals/prefill", "TestHitAtCount_TheReuseGapRule"},
-		{"../../../signals/prefill", "TestHitAtCount_TheReuseGapRuleFallsBackToTheFloor"},
+		{"../../../signals/prefill", "TestHitModel_TheLabCountTransfer"},
+		{"../../../signals/prefill", "TestHitAtCountOf_WithTheLaw"},
+		{"../../../signals/prefill", "TestFitHitModel_RefusesWhatDoesNotCloseIt"},
+		{"../../../signals/whatif", "TestComputedAtCount"},
+		{"../../../signals/whatif", "TestPromptWindow_HitModel"},
 	},
 	saturation.SwitchPrefillVPPromptCoverage: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
@@ -1847,6 +1871,14 @@ var heldBy = map[string][]heldTest{
 		{"../../../signals/prefill", "TestServiceLine_BusyMinutesWin"},
 		{"../../../signals/prefill", "TestServiceLine_ALowerBoundStandsOnlyAboveTheLine"},
 		{"../saturation", "TestPrefillVPServiceLine_ThroughAnalyze"},
+	},
+	saturation.SwitchPrefillFLoadCurve: {
+		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
+		{"../../../signals/prefill", "TestFLoadCurve_FitsTheInverseOfTheLoad"},
+		{"../../../signals/prefill", "TestFLoadCurve_NotIdentified"},
+		{"../../../signals/prefill", "TestFLoadCurve_OnlyWithTheSwitch"},
+		{"../../../signals/whatif", "TestFLoadCurve_TheKneeIsTheLowerRoot"},
+		{"../saturation", "TestPrefillFLoadCurve_ThroughAnalyze"},
 	},
 	saturation.SwitchPrefillVPLoneRate: {
 		{"../saturation", "TestPlannerSwitches_OffFromTheConstructor"},
@@ -2107,6 +2139,14 @@ var heldBy = map[string][]heldTest{
 	// switch on and off through priceTTFT and asserts both flags and verdicts.
 	slo.SwitchTTFTRouterWait: {
 		{"../slo", "TestTTFT_TheRouterWaitSwitch"},
+	},
+	// The router's wait inside the prefill price (issue #367): the first runs
+	// the switch off from the constructor and on through Analyze to the
+	// priced fleet; the second prices one fleet with it on and off and holds
+	// it on to the planner's price at its defaults.
+	slo.SwitchTTFTRouterWaitInPrefill: {
+		{"../slo", "TestTTFT_TheRouterWaitInPrefillSwitchReachesTheFleet"},
+		{"../slo", "TestTTFT_TheRouterWaitInPrefillSwitchIsThePlannersPrice"},
 	},
 	// The onset switches: it prices one fleet with both on and off through
 	// priceTTFT, and asserts the onsets, the shared rate and the verdicts.

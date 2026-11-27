@@ -139,6 +139,7 @@ var notOnTheTTFTPath = map[string]string{
 	"RankMixtureTTFT":           "planner backtest only: --experimental-ttft=v2",
 	"RankMixtureAbstained":      "planner backtest only: --experimental-ttft=v2",
 	"RankMixtureShortFitWindow": "planner only: --rank-mixture-min-fit-window",
+	"RemainderRestPastFit":      "planner only: --rank-mixture-remainder-server",
 	"LimitedPSHeavyTraffic":     "planner backtest only: --experimental-ttft=v2",
 	"KVDeferralOutside":         "planner backtest only: --experimental-ttft=v2",
 	"RelaxationLong":            "planner backtest only: --experimental-ttft=v2",

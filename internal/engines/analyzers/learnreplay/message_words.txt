@@ -31,6 +31,7 @@
 -m
 -pp
 -t
+-token
 -tp
 -unlisted-product
 .jsonl
@@ -53,12 +54,14 @@
 /mu
 /tmp
 /tmp/
+/u
 0
 0-9
 0.3
 0.34
 0.95
 1
+1/
 1/muChoice.maxRatio
 100ms
 12m
@@ -94,6 +97,8 @@ A
 A-Za-z0-9_.-
 A100
 AMD
+API
+API-server
 AUncertain
 AboveDecodeOnset
 AboveFlowControlOnset
@@ -116,6 +121,8 @@ BaseURL
 BelowFittedBand
 BorrowedLine
 Bound
+C
+C/
 C0-agree
 C1-single
 C4-no-signal
@@ -174,6 +181,7 @@ Deployment
 Deployments
 DisaggregatedSet
 Discarding
+E
 E1-const
 E2-query
 ENABLE_SCALE_TO_ZERO
@@ -181,6 +189,7 @@ EPP
 EffectiveMaxBatchedTokens
 EngineParams
 EngineTPOTHistogram
+Erlang
 ErrImagePull
 Error
 Events
@@ -251,6 +260,7 @@ Kind
 Kubernetes
 Kueue
 L
+L-1
 LEADER_ELECT
 LEADER_ELECTION_ID
 LEADER_ELECTION_LEASE_DURATION
@@ -301,6 +311,7 @@ Mode
 Model
 N
 NANOSECONDS
+NIXL
 NVIDIA
 N_dec
 NaN
@@ -424,6 +435,7 @@ RegisterAnalyzer
 RelaxationLong
 Released
 Releasing
+RemainderRestPastFit
 Remove
 Removed
 Replica
@@ -637,9 +649,11 @@ ago
 agree
 agreeCycles
 agreed
+ahead
 aim
 alignment
 aligns
+alike
 all
 all-above-band-below-ksat
 all2all_backend
@@ -689,6 +703,7 @@ applying
 are
 args
 arguments
+around
 arrivalRate
 arrivals
 arrived
@@ -834,8 +849,11 @@ bytes
 c
 caFromSecret
 cache
+cache-aware
+cacheAware
 cacheKey.name
 cacheKey.namespace
+cacheReason
 cached
 calibrated
 called
@@ -844,6 +862,8 @@ calm
 came
 can
 cancelled
+candidate
+candidates
 cannot
 cap
 capBytes
@@ -875,6 +895,7 @@ charged
 cheapest
 check
 checking
+checks
 choose
 chunked
 chunked_prefill_size
@@ -894,6 +915,7 @@ cluster-scoped
 cluster-wide
 clustering
 code
+coefficient
 cohort
 cohorts
 cold
@@ -951,6 +973,7 @@ confirmedFor
 consecutive
 consecutiveFailures
 considered
+constant
 constrained
 constrains
 constraint
@@ -1124,12 +1147,14 @@ disables
 disaggregation_transfer_backend
 disagree
 disagreed
+disagrees
 discarded
 discarding
 discover
 discovery
 disk
 distinctPods
+distribution
 do
 docs/developer-guide/testing.md
 docs/reference/operations.md
@@ -1157,6 +1182,7 @@ drainRegion
 drainReplicas
 drainSeconds
 drains
+draw
 drawn
 drift
 dropped
@@ -1206,6 +1232,7 @@ enables
 encode
 encoding
 ended
+endpoint
 ends
 enforce_eager
 enforced
@@ -1214,6 +1241,7 @@ enforces
 engine
 engine-agnostic
 engine-prefill-timing
+engine-roles-from-signals
 engineMeasured
 engineParams
 engineParamsSource
@@ -1459,6 +1487,7 @@ had
 hadShape
 haircut-held
 half
+halves
 hand
 handed
 handler
@@ -1495,6 +1524,8 @@ historyAgeSeconds
 historyKey
 historyWindowLen
 hit
+hitCycles
+hitReason
 hold
 hold-only
 holdCap
@@ -1526,6 +1557,7 @@ https://prometheus.monitoring.svc:9090
 huge
 hysteresis
 id
+identified
 idle
 idle-line-band
 idleAfterReady
@@ -1579,6 +1611,7 @@ integer
 intercept
 interface
 interval
+interval-censored
 into
 invalid
 inventory
@@ -1728,6 +1761,8 @@ keeping
 keeps
 kept
 keptFor
+keptHeavy
+keptLight
 keptTokens
 key
 keyOutputTokens
@@ -1812,6 +1847,7 @@ larger
 last
 lastAccelerator
 lastKnown
+latency
 later
 latest
 launcher
@@ -1853,6 +1889,7 @@ levels
 liftReason
 lifted
 light
+likelihood
 likely
 limit
 limited
@@ -1961,15 +1998,23 @@ lmcache_mp_lookup_request_hit_tokens_total
 lmcache_mp_lookup_requested_tokens_total
 lo
 load
+load-aware
+loadAware
+loadAwareByHit
+loadAwareBySpread
+loadHeavy
 loadImbalance
 loadImbalance.idleKvUsage
+loadLight
 loaded
 localQueueDemand
 locator.New
+log-variance
 logVerbosity
 log_balancedness
 log_balancedness_interval
 logged
+lognormal
 lone-rate
 long
 longer
@@ -2121,6 +2166,7 @@ mounted
 move
 moved
 moves
+moving
 ms
 mu
 mu-at-step-budget
@@ -2202,6 +2248,7 @@ neighbour
 neither
 nest
 net
+network
 never
 new
 newEntries
@@ -2300,6 +2347,7 @@ observe
 observed
 observed/historical/derived
 observedGPS
+observing
 occupancy
 occupancy-plateau
 occupancy-unknown
@@ -2326,6 +2374,7 @@ one-minute
 one-pod
 one-sided
 one-sided-line
+one-token
 ones
 only
 onset
@@ -2357,6 +2406,7 @@ out
 outcome
 outlived
 output
+output-length
 output-tokens-histogram
 outputDispersion
 outputDispersionRead
@@ -2366,6 +2416,7 @@ outputTokensWas
 outside
 outstanding
 over
+over-budget
 over-ordered
 over-priced
 over-state
@@ -2438,6 +2489,7 @@ pendingSince
 pendingVariants
 per
 per-Pod
+per-endpoint
 per-model
 per-replica
 per-request
@@ -2473,8 +2525,10 @@ placed
 placement
 placement-timeout
 placementTimeout
+placements
 plan
 planned
+planner
 planner-cap-at-step-budget
 planning
 planningFrom
@@ -2482,6 +2536,7 @@ plans
 plateauCycles
 platform
 plugin
+plus
 pod
 pod-template-hash
 pod/
@@ -2529,6 +2584,8 @@ prefill-capacity-observed
 prefill-catchup
 prefill-demand-held
 prefill-f-busy-minutes
+prefill-f-load-curve
+prefill-f-pooled-minutes
 prefill-hit-at-count
 prefill-knee
 prefill-latency
@@ -2595,6 +2652,7 @@ processor
 processor-sharing
 processorSharing
 produced
+producer
 product
 production
 products
@@ -2718,6 +2776,8 @@ redirected
 redistribution
 reduce
 refilled
+refit
+refitted
 refresh
 refreshInterval
 refused
@@ -2749,8 +2809,10 @@ removedNamespaces
 removes
 removing
 rename
+render
 renewal
 renewal-lognormal
+renewal-lognormal-per-length
 repeated
 replaced
 replacement
@@ -3009,6 +3071,7 @@ served-peak
 served-siblings
 servedBound
 server
+servers
 serves
 service
 service-line
@@ -3075,6 +3138,7 @@ sightings
 sigma
 sigmaOK
 signal
+signals
 silent
 since
 single
@@ -3135,6 +3199,7 @@ slo-ttft-ps-onsets
 slo-ttft-pull-work
 slo-ttft-quiet-transfer
 slo-ttft-router-wait
+slo-ttft-router-wait-in-prefill
 slo-ttft-sizes-prefill
 slo-ttft-tier-kv-wait
 slo-ttft-tier-load
@@ -3155,6 +3220,7 @@ slopeAgeSeconds
 slopeBound
 slopeHeld
 slopes
+slot
 slots
 slow
 slower
@@ -3188,6 +3254,11 @@ spend
 spends
 spent
 spread
+spreadBalancing
+spreadCycles
+spreadEven
+spreadReason
+spreads
 stabilization.skipWaitsWhen
 stable
 stableCycles
@@ -3250,6 +3321,7 @@ steadyHeld
 steadyHeldOverThreshold
 steadyHeldThreshold
 steadySpread
+steadystate
 steered
 step
 step-budget
@@ -3332,6 +3404,7 @@ thisControllerGPUs
 those
 threshold
 thresholdPct
+through
 throughput
 throughput-demand-floor
 throughput-demand-floor-total
@@ -3477,6 +3550,7 @@ unless
 unlikely
 unlimited
 unmark
+unmeasured
 unmet
 unparseable
 unread
@@ -3706,6 +3780,7 @@ whole-node
 wholeReplicaCoverage
 whose
 why
+widely
 will
 window
 windowDropped

@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"slices"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -25,8 +26,10 @@ import (
 // TTFT _sum and _count, the decode term's hop, and nothing else reads them. While a
 // learner recording is on (SetRecordTTFTInputs) the engine also calls it for
 // every model every cycle, and it adds the router's TPOT histogram, the
-// flow-control wait histogram and the router's request-processing histogram
-// with its _sum and _count, which only the recording reads.
+// flow-control wait histogram, the router's request-processing histogram
+// with its _sum and _count, its render histogram's _sum and _count, and the
+// router's per-endpoint and per-producer series (routerEndpointQueries),
+// which only the recording reads.
 func (c *ReplicaMetricsCollector) CollectRouterLatency(
 	ctx context.Context,
 	modelID, namespace string,
@@ -42,7 +45,10 @@ func (c *ReplicaMetricsCollector) CollectRouterLatency(
 	if c.RecordsTTFTInputs() {
 		queries = append(queries, registration.QuerySLORouterTPOTBuckets, registration.QueryFlowControlWaitBuckets,
 			registration.QuerySLORouterProcessingBuckets, registration.QuerySLORouterProcessingSum,
-			registration.QuerySLORouterProcessingCount)
+			registration.QuerySLORouterProcessingCount, registration.QuerySLORouterRenderSum,
+			registration.QuerySLORouterRenderCount, registration.QuerySLORouterPrefixPredicted,
+			registration.QuerySLORouterPrefixBestAvailable)
+		queries = append(queries, routerEndpointQueries...)
 	}
 	return c.collectRouterLatency(ctx, modelID, namespace, queries, routerQueryType)
 }
@@ -130,11 +136,45 @@ func (c *ReplicaMetricsCollector) collectRouterLatency(
 	out.TPOTBuckets = routerBuckets(results[registration.QuerySLORouterTPOTBuckets], modelID)
 	out.FlowControlWaitBuckets = routerBuckets(results[registration.QueryFlowControlWaitBuckets], modelID)
 	out.ProcessingBuckets, out.ProcessingSumRate, out.ProcessingCountRate = routerProcessing(results, modelID)
+	out.RenderSumRate, out.RenderCountRate = routerRender(results, modelID)
+	out.PrefixPredictedTokenRate, out.PrefixBestAvailableTokenRate = routerPrefixAffinity(results, modelID)
+	out.Endpoints, out.PrefixProducers = routerEndpoints(results, modelID)
 	if !out.Judgeable() && out.TPOTBuckets == nil && out.FlowControlWaitBuckets == nil && out.ProcessingBuckets == nil &&
-		out.ProcessingCountRate == 0 {
+		out.ProcessingCountRate == 0 && out.RenderCountRate == 0 && out.PrefixBestAvailableTokenRate == 0 &&
+		out.Endpoints == nil && out.PrefixProducers == nil {
 		return nil
 	}
 	return out
+}
+
+// routerRender is the router's render histogram's _sum and _count rates for
+// modelID, joined as routerProcessing joins the processing series: the
+// namespace's, given to modelID only where the router's TTFT names it alone.
+// Zeros otherwise, or with either query failed.
+func routerRender(results map[string]*source.MetricResult, modelID string) (sumRate, countRate float64) {
+	if !onlyModel(results[registration.QuerySLORouterTTFTBuckets], modelID) {
+		return 0, 0
+	}
+	return namespaceMeanRates(results[registration.QuerySLORouterRenderSum], results[registration.QuerySLORouterRenderCount])
+}
+
+// namespaceMeanRates is a router histogram's _sum and _count rates over
+// every series, for a histogram that carries no model: one reading, both
+// zero with either query failed or no time at all.
+func namespaceMeanRates(sum, count *source.MetricResult) (sumRate, countRate float64) {
+	if sum == nil || sum.HasError() || count == nil || count.HasError() {
+		return 0, 0
+	}
+	for _, v := range readableValues(sum) {
+		sumRate += v.Value
+	}
+	for _, v := range readableValues(count) {
+		countRate += v.Value
+	}
+	if !(sumRate > 0) {
+		return 0, 0
+	}
+	return sumRate, countRate
 }
 
 // routerProcessing is the router's request-processing histogram and its
@@ -155,20 +195,47 @@ func routerProcessing(results map[string]*source.MetricResult, modelID string) (
 		}
 	}
 	b = sortedBuckets[domain.LatencyBucket](byBound)
-	sum, count := results[registration.QuerySLORouterProcessingSum], results[registration.QuerySLORouterProcessingCount]
-	if sum == nil || sum.HasError() || count == nil || count.HasError() {
-		return b, 0, 0
-	}
-	for _, v := range readableValues(sum) {
-		sumRate += v.Value
-	}
-	for _, v := range readableValues(count) {
-		countRate += v.Value
-	}
-	if !(sumRate > 0) {
-		return b, 0, 0
-	}
+	sumRate, countRate = namespaceMeanRates(results[registration.QuerySLORouterProcessingSum],
+		results[registration.QuerySLORouterProcessingCount])
 	return b, sumRate, countRate
+}
+
+// routerPrefixAffinity is the router prefix producer's predicted and
+// best-available cached token rates, for modelID, joined as
+// routerProcessing joins its series. A P/D router runs one producer per
+// profile and each counts every prompt, so the producers are not summed:
+// the pair is the producer (plugin_name, endpoint_role) that predicted the
+// most, the one routing pods whose caches hit. Zeros with either query
+// failed, no producer that predicted any, or a best-available rate under the
+// predicted one (the two would not be one reading).
+func routerPrefixAffinity(results map[string]*source.MetricResult, modelID string) (predicted, best float64) {
+	if !onlyModel(results[registration.QuerySLORouterTTFTBuckets], modelID) {
+		return 0, 0
+	}
+	pr, ba := results[registration.QuerySLORouterPrefixPredicted], results[registration.QuerySLORouterPrefixBestAvailable]
+	if pr == nil || pr.HasError() || ba == nil || ba.HasError() {
+		return 0, 0
+	}
+	producer := func(l map[string]string) string { return l["plugin_name"] + "/" + l["endpoint_role"] }
+	bestBy := map[string]float64{}
+	for _, v := range readableValues(ba) {
+		bestBy[producer(v.Labels)] += v.Value
+	}
+	predBy := map[string]float64{}
+	for _, v := range readableValues(pr) {
+		predBy[producer(v.Labels)] += v.Value
+	}
+	var pick string
+	for p, r := range predBy {
+		if r > predicted || (r == predicted && r > 0 && p < pick) {
+			pick, predicted = p, r
+		}
+	}
+	best = bestBy[pick]
+	if !(predicted > 0) || !(best >= predicted) {
+		return 0, 0
+	}
+	return predicted, best
 }
 
 // onlyModel says result, a router series grouped by model, names modelID
@@ -195,10 +262,15 @@ func routerQueryType(query string) string {
 	switch query {
 	case registration.QuerySLORouterTPOTBuckets, registration.QueryFlowControlWaitBuckets,
 		registration.QuerySLORouterProcessingBuckets, registration.QuerySLORouterProcessingSum,
-		registration.QuerySLORouterProcessingCount:
+		registration.QuerySLORouterProcessingCount, registration.QuerySLORouterRenderSum,
+		registration.QuerySLORouterRenderCount, registration.QuerySLORouterPrefixPredicted,
+		registration.QuerySLORouterPrefixBestAvailable:
 		return constants.QueryTypeLearnerRecording
 	case registration.QuerySLORouterTTFTSum, registration.QuerySLORouterTTFTCount:
 		return constants.QueryTypeTTFTInputs
+	}
+	if slices.Contains(routerEndpointQueries, query) {
+		return constants.QueryTypeLearnerRecording
 	}
 	return constants.QueryTypeRouterLatency
 }

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/balance"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 )
 
 // SchemaVersion is the API's own schema version. Removing, renaming or
@@ -44,6 +47,11 @@ type InputsRequest struct {
 	// --prefill-vp-service-line): opt-in, off by default, and not validated,
 	// so every figure reads outside the validated region.
 	PrefillVPServiceLine bool `json:"prefillVPServiceLine,omitempty"`
+	// PrefillFLoadCurve prices f, the prefill imbalance, against the load
+	// per pod at each prefill count whose fit is identified (the CLI's
+	// --prefill-f-load-curve): opt-in, off by default, validated on lab
+	// recordings only, so every figure reads outside the validated region.
+	PrefillFLoadCurve bool `json:"prefillFLoadCurve,omitempty"`
 	// ExperimentalTTFT prices TTFT with the TTFT model's switches that are
 	// off by default (the CLI's --experimental-ttft): for demonstration,
 	// not validated. Every prefill and TTFT figure is flagged
@@ -71,6 +79,11 @@ type InputsRequest struct {
 	RankMixtureKVHold          bool   `json:"rankMixtureKVHold,omitempty"`
 	RankMixtureRemainderSpread bool   `json:"rankMixtureRemainderSpread,omitempty"`
 	RankMixtureMinFitWindow    string `json:"rankMixtureMinFitWindow,omitempty"`
+	// RankMixtureRemainderServer is BacktestRequest's for the main view's
+	// model, defaulted as the modes above are (serve
+	// --rank-mixture-remainder-server); only with the variant and its
+	// remainder spread. It changes the inputsId.
+	RankMixtureRemainderServer bool `json:"rankMixtureRemainderServer,omitempty"`
 	// TPOTDistMinFitSteps is BacktestRequest's for the main view's TPOT
 	// distribution: absent, the server's default (serve
 	// --tpot-dist-min-fit-steps), else 24. Only with a TPOTModel; another
@@ -138,10 +151,18 @@ type InputsResponse struct {
 	// at each prefill count (InputsRequest.PrefillHitAtCount); absent
 	// otherwise.
 	PrefillHitAtCount bool `json:"prefillHitAtCount,omitempty"`
+	// PrefillHitModel is the reuse-gap law the prefix hit at another
+	// prefill count is priced with, fitted on the source's KV residency
+	// histograms (prefill.FitHitModel); absent with PrefillHitAtCount off
+	// or no histograms recorded.
+	PrefillHitModel *prefill.HitModel `json:"prefillHitModel,omitempty"`
 	// PrefillVPServiceLine says the source was read with V_P from the
 	// prefill service line (InputsRequest.PrefillVPServiceLine); absent
 	// otherwise.
 	PrefillVPServiceLine bool `json:"prefillVPServiceLine,omitempty"`
+	// PrefillFLoadCurve says the source was read with f against the load
+	// (InputsRequest.PrefillFLoadCurve); absent otherwise.
+	PrefillFLoadCurve bool `json:"prefillFLoadCurve,omitempty"`
 	// ExperimentalTTFT says the source was read with the experimental TTFT
 	// model (InputsRequest.ExperimentalTTFT); absent otherwise.
 	ExperimentalTTFT bool `json:"experimentalTTFT,omitempty"`
@@ -271,6 +292,12 @@ type PolicyInfo struct {
 	TPOT        *PolicyObjective `json:"tpot,omitempty"`
 	Headroom    float64          `json:"headroom"`
 	FlowControl string           `json:"flowControl"`
+	// Router is what the router scores, the prefix cache, the load, both or
+	// neither, read from its series (balance.DetectRouterPolicy), with the
+	// evidence; absent where the source holds none of them, so such a
+	// source's document is as before. It sets no price:
+	// --load-aware-router (Assume.LoadAwareRouter) still does.
+	Router *balance.RouterPolicy `json:"router,omitempty"`
 }
 
 // PolicyObjective is one SLO objective: its statistic and target.

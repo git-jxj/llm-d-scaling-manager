@@ -103,6 +103,11 @@ type answerFlags struct {
 	// prefixHitRead says prefixHit was read from the source (the load
 	// cycles, --shape load), not stated (whatifapi.Knobs.PrefixHitRead).
 	prefixHitRead bool
+	// prefillComputed is the prompt a backtest step's prefill pods computed
+	// a request (whatifapi.Knobs.PrefillComputedTokens), read beside the
+	// whole prompt inputTokens; 0 none. No flag sets it, and it is priced
+	// only with slo.SwitchTTFTPrefixAttention on (stepComputedPrompt).
+	prefillComputed float64
 	// assumeA is --assume-a, a TTFT flag (ttft.go).
 	assumeA time.Duration
 	// assumeTransferBase is --assume-transfer-base, a TTFT flag (ttft.go,
@@ -145,6 +150,10 @@ type answerFlags struct {
 	// vpServiceLine is --prefill-vp-service-line: the replay turns
 	// saturation.SwitchPrefillVPServiceLine on (replayOptions); off by default.
 	vpServiceLine bool
+	// fLoadCurve is --prefill-f-load-curve: the replay turns
+	// saturation.SwitchPrefillFLoadCurve on (replayOptions), and f is priced
+	// against the load (f_load_curve.go); off by default.
+	fLoadCurve bool
 	// experimentalTTFT is --experimental-ttft: the replay turns the TTFT
 	// model's off-by-default switches on (replayOptions); off by default.
 	experimentalTTFT bool
@@ -168,9 +177,11 @@ type answerFlags struct {
 	// experimentalTPOT is --experimental-tpot (=v2): at-replicas prices its
 	// tables' TPOT p90 and p95 with the experimental per-request TPOT
 	// distribution, fitted on the recording (experimental_tpot.go); refused
-	// elsewhere. tpotDistribution is it read.
+	// elsewhere. tpotDistribution is it read, and tpotModel the distribution
+	// it names (experimentalTPOTOf).
 	experimentalTPOT string
 	tpotDistribution bool
+	tpotModel        string
 	// fixedImbalance, above zero, is f at every prefill count above one,
 	// assumed: the report's sensitivity to f (fSensitivity). No flag sets
 	// it.
@@ -233,6 +244,7 @@ func (f *answerFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.BoolVar(&f.vpServiceLine, vpServiceLineFlag, false, vpServiceLineUsage)
+	fs.BoolVar(&f.fLoadCurve, fLoadCurveFlag, false, fLoadCurveUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag,
 		experimentalTTFTUsage+". On at-replicas, =v2 instead prices the tables' TTFT with the experimental rank-mixture model, fitted on "+
 			"the --recording, and "+experimentalTTFTNLLineUsage)
@@ -261,11 +273,11 @@ func (f *answerFlags) check(fs *flag.FlagSet) error {
 	if err := f.checkTTFT(); err != nil {
 		return err
 	}
-	on, err := experimentalTPOTOf(f.experimentalTPOT)
+	model, err := experimentalTPOTOf(f.experimentalTPOT)
 	if err != nil {
 		return err
 	}
-	f.tpotDistribution = on
+	f.tpotDistribution, f.tpotModel = model != "", model
 	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
 		return err
 	}

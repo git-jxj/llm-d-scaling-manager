@@ -58,6 +58,10 @@ type Resolved struct {
 	// Decode[i] the cycle of Series[i] (learnreplay.DecodeSeriesFrom); nil
 	// unless that model was asked for (BacktestRequest.TPOTModel).
 	Decode []whatif.DecodeCycle
+	// TPOTModel is the experimental TPOT distribution Decode was read for
+	// (whatif.TPOTRenewalLognormal or whatif.TPOTPerLengthMixture; "" the
+	// former), what a day plan and at-replicas fit on it.
+	TPOTModel string
 	// Engine is the engines' flags those models read, as the source gives
 	// them; zero where neither model was asked for. A backtest request that
 	// does not state them takes the fit's.
@@ -116,6 +120,16 @@ type Knobs struct {
 	// pods' computed-token hit replaces it, with slo.SwitchTTFTComputedHit on
 	// or off, and a stated one governs.
 	PrefixHitRead bool
+	// PrefillComputedTokens is the prompt the prefill pods computed a
+	// request, read over the same cycles as PromptTokens (a backtest's
+	// step), off the prefill pods' rows where PromptTokens is read off the
+	// decode rows; 0 is none. It moves a figure only where the replay turned
+	// slo.SwitchTTFTPrefixAttention on: the prefill work is then this
+	// prompt, and PromptTokens less it is the cached context its attention
+	// spans (whatif.Prefill.CachedContextRead). PrefixHit is not used for
+	// it: that hit nets the decode variant's prompt too, with the switch off
+	// as on.
+	PrefillComputedTokens float64
 	// CachedTokenCost is phi, the cost of a cached prompt token, priced in
 	// place of the one the pricer fitted (CachedTokenCost); nil is the
 	// pricer's own. It moves a figure only where the replay turned

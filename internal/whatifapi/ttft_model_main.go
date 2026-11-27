@@ -113,28 +113,53 @@ type mainMixture struct {
 	info    TTFTModelInfo
 	// hitAtCount is InputsRequest.PrefillHitAtCount, as the source was
 	// read: the computed-token histogram is priced at each prefill count's
-	// prefix hit (computedAt).
+	// prefix hit (computedAt), with hitModel where the source gave one
+	// (InputsResponse.PrefillHitModel).
 	hitAtCount bool
+	hitModel   *prefill.HitModel
+	// fit is the shape the fit steps served: what a day-plan bucket's own
+	// shape is checked against before the model prices it (outsideFit).
+	fit mixtureRange
+	// bucket says pooled is a day-plan bucket's own histograms
+	// (experimentalModels.atBucket), not the window's: the bucket's lengths
+	// on the fleet's knobs are then its own, not stated ones.
+	bucket bool
+	// prices is every TTFT priced so far on a day-plan bucket's copy
+	// (atBucket), by prefill count, rate and statistic, and atTarget every
+	// highest rate at a target searched (sharedRate): its sizer prices the
+	// same rates at many decode counts, and one plan prices on one
+	// goroutine. Both nil on the window's model, which a server shares
+	// between requests.
+	prices   map[mixturePriceKey]mixturePrice
+	atTarget map[mixturePriceKey]mixturePrice
+}
+
+// mixturePriceKey is one TTFT the model priced: at the computed-token
+// histogram of n prefill replicas (mixtureFleet.histogramCount), the rate
+// one recorded replica's worth of ranks takes, and the statistic.
+type mixturePriceKey struct {
+	n    int
+	x, q float64
+}
+
+// mixturePrice is a TTFT the model priced, ok false where it refused.
+type mixturePrice struct {
+	v  float64
+	ok bool
 }
 
 // computedAt is the computed-token histogram the model draws from at n
 // prefill replicas, the flag its figures carry and the note that says so.
 // With PrefillHitAtCount on and n not the recorded count, the pooled
-// window's hit h, 1 - E[computed] / E[prompt], is priced at n
-// (prefill.HitAtCountOf) and the histogram's bounds scaled by (1 - h')/(1 - h),
-// capped at the prompt draw (whatif.ComputedAtScale); otherwise the pooled
+// window's hit h, 1 - E[computed] / E[prompt], is priced at n and the
+// histogram moved to it (whatif.ComputedAtCount); otherwise the pooled
 // histogram as it is.
 func (mm *mainMixture) computedAt(n int) (map[float64]float64, whatif.Flag, string) {
 	computed := mm.pooled.Computed
 	if !mm.hitAtCount || n == mm.prefill {
 		return computed, "", ""
 	}
-	ec, okc := whatif.CumulativeMean(computed)
-	el, okl := whatif.CumulativeMean(mm.pooled.Prompt)
-	if !okc || !okl || !(el > 0) {
-		return computed, "", ""
-	}
-	r, ok := prefill.HitAtCountOf(max(1-ec/el, 0), ec, mm.prefill, n, nil)
+	r, moved, ok := whatif.ComputedAtCount(computed, mm.pooled.Prompt, mm.prefill, n, mm.hitModel)
 	if !ok {
 		return computed, "", ""
 	}
@@ -142,9 +167,14 @@ func (mm *mainMixture) computedAt(n int) (map[float64]float64, whatif.Flag, stri
 	if !r.Moved() {
 		return computed, flag, ""
 	}
-	note := fmt.Sprintf("experimental TTFT model's computed tokens at the prefix hit %.3g on %d prefill replicas, from %.3g on %d (%s): "+
-		"its histogram scaled by %.3g, capped at the prompt", r.Hit, n, r.FitHit, mm.prefill, r.Rule, r.ComputedScale)
-	return whatif.ComputedAtScale(computed, mm.pooled.Prompt, r.ComputedScale), flag, note
+	how := fmt.Sprintf("its histogram scaled by %.3g, capped at the prompt", r.ComputedScale)
+	if r.Hit < r.FitHit {
+		how = fmt.Sprintf("a miss mixture: a share of the requests computing their whole prompt, %.3g times the computed tokens",
+			r.ComputedScale)
+	}
+	note := fmt.Sprintf("experimental TTFT model's computed tokens at the prefix hit %.3g on %d prefill replicas, from %.3g on %d (%s): %s",
+		r.Hit, n, r.FitHit, mm.prefill, r.Rule, how)
+	return moved, flag, note
 }
 
 // TTFTModelNLLineLabel names the variant whatif.QueueRankMixtureNLLine on
@@ -178,28 +208,32 @@ type TTFTModelOptions struct {
 	// (BacktestRequest.RankMixtureMinFitWindow), 0 the default.
 	KVHold, RemainderSpread bool
 	MinFitWindow            time.Duration
+	// RemainderServer is the variant's remainder server mode
+	// (BacktestRequest.RankMixtureRemainderServer), on top of
+	// RemainderSpread.
+	RemainderServer bool
 }
 
 // switches is the backtest's switches the options turn on.
 func (o TTFTModelOptions) switches() rankMixtureSwitches {
 	return rankMixtureSwitches{stratified: o.Stratified, nlLine: o.Model == string(whatif.QueueRankMixtureNLLine),
-		kvHold: o.KVHold, remainderSpread: o.RemainderSpread, minFitWindow: o.MinFitWindow}
+		kvHold: o.KVHold, remainderSpread: o.RemainderSpread, remainderServer: o.RemainderServer, minFitWindow: o.MinFitWindow}
 }
 
 // moved says the options fit the model other than its defaults do, apart
 // from Stratified: a mode on, or another shortest fit window.
 func (o TTFTModelOptions) moved() bool {
-	return o.KVHold || o.RemainderSpread || o.MinFitWindow > 0
+	return o.KVHold || o.RemainderSpread || o.RemainderServer || o.MinFitWindow > 0
 }
 
 // Check refuses options the model does not take: the modes are the
-// variant's only.
+// variant's only, and the remainder server needs the remainder spread.
 func (o TTFTModelOptions) Check() error {
 	if (o.KVHold || o.RemainderSpread) && o.Model != string(whatif.QueueRankMixtureNLLine) {
 		return InputErrorf("rankMixtureKVHold and rankMixtureRemainderSpread are modes of ttftModel %q: give them with that model",
 			whatif.QueueRankMixtureNLLine)
 	}
-	return nil
+	return checkRemainderServer(o.RemainderServer, o.RemainderSpread, o.Model)
 }
 
 // fitMainMixture fits the model sw names on e's cycles up to the cycle
@@ -215,7 +249,7 @@ func fitMainMixture(e *inputsEntry, sw rankMixtureSwitches) *mainMixture {
 	if p := e.doc.Fleet.Prefill; p != nil {
 		mm.prefill = p.Replicas
 	}
-	mm.hitAtCount = e.doc.PrefillHitAtCount
+	mm.hitAtCount, mm.hitModel = e.doc.PrefillHitAtCount, e.doc.PrefillHitModel
 	abstain := func(why string) *mainMixture {
 		mm.rq = abstainedMixture(why)
 		mm.info.Abstained = why
@@ -237,31 +271,26 @@ func fitMainMixture(e *inputsEntry, sw rankMixtureSwitches) *mainMixture {
 			idx = append(idx, i)
 		}
 	}
-	rq, steps, err := fitRankMixtureSteps(e, idx, DefaultBacktestStep, e.engine.PrefillSlots, sw)
-	if err != nil {
-		return abstain(err.Error())
+	// The slo analyzer's v2 TTFT learner fits and prices its own cycles with
+	// the same call.
+	w := whatif.FitMixtureWindow(fitCycles(e, idx), DefaultBacktestStep, e.engine.PrefillSlots, BacktestTolerance, sw.shared())
+	if w.FitErr != nil {
+		return abstain(w.FitErr.Error())
 	}
-	mm.rq = rq.identified()
+	mm.rq = &rankMixtureQ{m: w.Fitted.M, report: w.Fitted.Report}
 	r := mm.rq.report
 	mm.info.Fit = &r
 	if r.Abstained != "" {
 		mm.info.Abstained = r.Abstained
 		return mm
 	}
-	for _, st := range steps {
-		mm.top = max(mm.top, st.Rate)
-	}
+	mm.top = w.Top
+	mm.fit = mixtureRangeOf(w.Steps)
 	if mm.top > 0 {
 		mm.info.MeasuredUpTo = ptr(mm.top)
 	}
-	first := e.series[idx[0]].At
-	mm.pooled = whatif.MixtureStepOf(mixtureWindow(e, idx, first.Add(-time.Nanosecond), answered), answered)
-	o := sw.options(rq.m.Slots)
-	h := whatif.RankMixtureHeldOut(steps, o, rq.m.Spread, BacktestTolerance)
-	if sw.nlLine {
-		h = whatif.RankMixtureNLHeldOut(steps, o, BacktestTolerance)
-	}
-	if h.Steps > 0 {
+	mm.pooled = w.Pooled
+	if h := w.HeldOut; h.Steps > 0 {
 		mm.info.HeldOut = &HeldOutScore{Statistic: statisticMean, Within: h.Within, Low: h.Low, Steps: h.Steps, MedianRatio: h.MedianRatio,
 			RateFrom: h.RateLo, RateTo: h.RateHi, Prefill: mm.prefill, Decode: e.doc.Fleet.Decode.Replicas}
 		mm.info.Evidence = heldOutWords(h.Within, h.Steps)
@@ -289,7 +318,7 @@ func (mm *mainMixture) notPricedAt(k Knobs) string {
 		return "the model abstained: " + mm.info.Abstained
 	case mm.prefill <= 0 || k.Prefill <= 0:
 		return "the fleet has no prefill replica"
-	case k.PromptTokens != 0 || k.OutputTokens != 0 || (k.PrefixHit != nil && !k.PrefixHitRead) || k.CachedTokenCost != nil:
+	case (!mm.bucket && (k.PromptTokens != 0 || k.OutputTokens != 0)) || (k.PrefixHit != nil && !k.PrefixHitRead) || k.CachedTokenCost != nil:
 		return "the model prices the source's own request shape, not a stated one"
 	case statesTTFTTerm(k.Assume) || k.ArrivalCV2 != nil:
 		return "the model prices the source's own terms and random arrivals, not stated ones"
@@ -312,8 +341,9 @@ type mixtureFleet struct {
 	mm *mainMixture
 	// q is the TTFT statistic, 0 the mean; scale is the recorded prefill
 	// replicas over the fleet's: the rate one recorded prefill replica's
-	// worth of ranks takes.
+	// worth of ranks takes; n the fleet's prefill replicas.
 	q, scale float64
+	n        int
 	// knee is the highest rate priced (curveCap), kneeOK false with no
 	// knee answered; lowerBound says the prefill knee is a lower bound or
 	// refused.
@@ -338,7 +368,7 @@ func (mm *mainMixture) fleet(inner Fleet, k Knobs) Fleet {
 	if mm == nil || mm.notPricedAt(k) != "" {
 		return inner
 	}
-	f := &mixtureFleet{Fleet: inner, mm: mm, q: k.TTFTPercentile, scale: float64(mm.prefill) / float64(k.Prefill)}
+	f := &mixtureFleet{Fleet: inner, mm: mm, q: k.TTFTPercentile, scale: float64(mm.prefill) / float64(k.Prefill), n: k.Prefill}
 	f.computed, f.hitFlag, f.hitNote = mm.computedAt(k.Prefill)
 	pk, dk := inner.PrefillKnee(), inner.DecodeKnee()
 	f.lowerBound = isRefusal(pk) || slices.Contains(figureOf(pk, unitRate, false).Flags, string(whatif.VPLowerBound))
@@ -356,11 +386,19 @@ func (mm *mainMixture) fleet(inner Fleet, k Knobs) Fleet {
 
 // price is the model's TTFT at the fleet's rate; ok false where it refused.
 func (f *mixtureFleet) price(rate float64) (float64, bool) {
-	v, _, u := f.mm.rq.m.Price(rate*f.scale, f.computed, f.mm.pooled.Prompt, f.q)
-	if u != nil || !whatif.Finite(v) || math.IsNaN(v) {
-		return 0, false
+	key := mixturePriceKey{n: f.histogramCount(), x: rate * f.scale, q: f.q}
+	if p, ok := f.mm.prices[key]; ok {
+		return p.v, p.ok
 	}
-	return v, true
+	v, _, u := f.mm.rq.m.Price(key.x, f.computed, f.mm.pooled.Prompt, f.q)
+	p := mixturePrice{v: v, ok: u == nil && whatif.Finite(v) && !math.IsNaN(v)}
+	if !p.ok {
+		p.v = 0
+	}
+	if f.mm.prices != nil {
+		f.mm.prices[key] = p
+	}
+	return p.v, p.ok
 }
 
 // curveCap is the highest rate the model prices: the lower of the
@@ -433,7 +471,7 @@ func (mm *mainMixture) modelFlags() []whatif.Flag {
 	if mm == nil || mm.rq == nil {
 		return []whatif.Flag{whatif.RankMixtureTTFT}
 	}
-	return append([]whatif.Flag{whatif.RankMixtureTTFT}, mm.rq.report.shortFlags()...)
+	return append([]whatif.Flag{whatif.RankMixtureTTFT}, mm.rq.report.ShortFlags()...)
 }
 
 // TTFTPoint is TTFTAt with the planner's notes.
@@ -451,7 +489,11 @@ func (f *mixtureFleet) TTFTPoint(rate float64) (whatif.Result, []string) {
 // Assumed is the planner's assumed inputs and the model's.
 func (f *mixtureFleet) Assumed() []string {
 	out := slices.Clone(f.Fleet.Assumed())
-	out = append(out, f.mm.rq.report.Assumed+"; TTFT priced at the source window's pooled prompt mix, up to the planner's own lower knee")
+	mix := "the source window's pooled prompt mix"
+	if f.mm.bucket {
+		mix = "the bucket's own prompt and computed-token histograms"
+	}
+	out = append(out, f.mm.rq.report.Assumed+"; TTFT priced at "+mix+", up to the planner's own lower knee")
 	if f.scale != 1 {
 		out = append(out, fmt.Sprintf("experimental TTFT model at %d prefill replicas, %d recorded: each replica's ranks take the recorded "+
 			"share profile, at the rate per replica", int(math.Round(float64(f.mm.prefill)/f.scale)), f.mm.prefill))
@@ -627,6 +669,9 @@ func (f *mixtureFleet) rateAtTarget(target float64) (rate float64, atEnd, ok boo
 	if !f.kneeOK || !(target > 0) {
 		return 0, false, false
 	}
+	if f.mm.atTarget != nil {
+		return f.rateAtTargetShared(target)
+	}
 	meets := func(r float64) bool {
 		v, ok := f.price(r)
 		return ok && v <= target
@@ -649,6 +694,72 @@ func (f *mixtureFleet) rateAtTarget(target float64) (rate float64, atEnd, ok boo
 		}
 	}
 	return lo, false, true
+}
+
+// histogramCount is the prefill count f's computed-token histogram is
+// priced at (mainMixture.computedAt): the fleet's with PrefillHitAtCount,
+// else 0, since every count then draws from the same histogram, and a
+// rate one recorded replica's worth of ranks takes prices the same TTFT at
+// any count.
+func (f *mixtureFleet) histogramCount() int {
+	if f.mm.hitAtCount {
+		return f.n
+	}
+	return 0
+}
+
+// rateAtTargetShared is rateAtTarget on a day-plan bucket's model
+// (mainMixture.atTarget), whose sizer asks it at many fleets of one prefill
+// count: the fleet's rate is read off one search a computed-token
+// histogram (sharedRate), capped at its curve's end, and refused where the model's
+// TTFT with no queue (the floor) is over target. The TTFT is taken to rise
+// with the rate, as rateAtTarget takes it.
+func (f *mixtureFleet) rateAtTargetShared(target float64) (rate float64, atEnd, ok bool) {
+	if v, priced := f.price(1e-6); !priced || v > target {
+		return 0, false, false
+	}
+	x := f.sharedRate(target)
+	if !(x > 0) {
+		return 0, false, false
+	}
+	if x >= f.knee*f.scale {
+		return f.knee, true, true
+	}
+	return x / f.scale, false, true
+}
+
+// sharedRate is the highest rate, as one recorded prefill replica's worth
+// of ranks takes it, whose TTFT the model prices at or under target at the
+// fleet's computed-token histogram: searched once a histogram
+// (histogramCount), statistic and target (mainMixture.atTarget). It doubles from the highest step rate
+// served until the target is missed, then bisects to a millionth of the
+// rate: a replica count is decided far coarser.
+func (f *mixtureFleet) sharedRate(target float64) float64 {
+	key := mixturePriceKey{n: f.histogramCount(), x: target, q: f.q}
+	if p, ok := f.mm.atTarget[key]; ok {
+		return p.v
+	}
+	meets := func(x float64) bool {
+		v, ok := f.price(x / f.scale)
+		return ok && v <= target
+	}
+	lo, hi := 0.0, max(f.mm.top, 1e-9)
+	for range 64 {
+		if !meets(hi) {
+			break
+		}
+		lo, hi = hi, 2*hi
+	}
+	for hi-lo > 1e-6*hi {
+		mid := (lo + hi) / 2
+		if meets(mid) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	f.mm.atTarget[key] = mixturePrice{v: lo, ok: true}
+	return lo
 }
 
 // prefillLimit is the prefill role's limit at target, as an answer, or a

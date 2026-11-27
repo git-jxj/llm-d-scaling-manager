@@ -92,6 +92,11 @@ func (pf *pricedFleet) tierLoad(ps *learnreplay.PrefillState) {
 		return
 	}
 	share := tl.OuterShare
+	if r := pf.hitAtCount; r != nil && r.Rule == prefill.HitReuseGap {
+		// The share of the tiers past the GPU at the fleet's prefill count,
+		// as the reuse-gap rule moved it (priceHitAtCount).
+		share *= r.TierScale
+	}
 	if pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead {
 		share = min(share, pf.pv.shape.PrefixHitRate)
 	}
@@ -157,6 +162,8 @@ func (pf *pricedFleet) cachedContext() {
 	}
 	var h float64
 	switch {
+	case pf.stepComputed:
+		h = max(p.WholePromptTokens-p.PromptTokens, 0)
 	case pf.pv != nil && pf.pv.assumedHit && !pf.pv.hitRead && p.WholePromptTokens > 0:
 		h = max(p.WholePromptTokens-p.PromptTokens, 0)
 	case pf.in.PromptSource != shapeMeasured:

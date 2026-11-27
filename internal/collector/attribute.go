@@ -535,6 +535,8 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 		ExternalPrefixCacheQueryTokenRate:      data.externalQueryRate,
 		ExternalPrefixCacheQueryTokenRateKnown: data.externalQueryRateKnown,
 		CachedTokenRateBySource:                sortedSources(data.cachedBySource),
+		KVReuseGapBuckets:                      sortedBuckets[domain.LatencyBucket](data.kvReuseGapBuckets),
+		KVIdleBeforeEvictBuckets:               sortedBuckets[domain.LatencyBucket](data.kvIdleBeforeEvictBuckets),
 		KVTransferRates:                        sortedTransfers(data.kvTransfers),
 		Metadata: &domain.ReplicaMetricsMetadata{
 			CollectedAt:     collectedAt,
@@ -555,6 +557,9 @@ func (c *ReplicaMetricsCollector) attributeInstance(
 		metric.LandedQueueLength = data.landedQueue
 		metric.MaxRankLandedQueueLength = data.maxRankLandedQueue
 	}
+	// The API server's own time, as read (domain.ReplicaMetrics
+	// AvgFrontendTime, AvgRenderTime, RenderRate).
+	data.frontend.setFrontend(&metric)
 
 	return metric, pairedAs, place, true
 }

@@ -119,7 +119,7 @@ wide (10 ms to 20 ms is 2x wide), the measured p90 is somewhere in it, and
 the check cannot score a prediction against it. The Check tab draws that
 bucket as one band and says so under the charts. Finer edges measure it:
 the router's `metrics.requestTPOTBuckets` in the EndpointPickerConfig, or
-vLLM's `--custom-histogram-buckets`. Edges about 15% apart place p90 and p95
+vLLM's `--custom-histogram-buckets` ([the value](check.md#vllms-tpot-buckets)). Edges about 15% apart place p90 and p95
 within 20%.
 
 ## The answer, from the CLI
@@ -211,7 +211,7 @@ utilization at the load judged
 capacity            req/s     out tok/s   in system   bound by
   prefill knee      no prefill speed learned                        P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
   decode knee       36.98     7396        unbounded   decode band top at fill 0.798
-                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+                    OUTSIDE VALIDATED REGION (ExtrapolatedFill: an input the run did not price)
   fleet knee        36.98     7396        unbounded   decode (prefill not priced)
   operating (0.85)  31.44     6287        -           0.85 x fleet knee (scaleUpThreshold)
   max at SLO        no prefill speed learned                        no fleet rate: the prefill side is not priced, and decode alone does not bound the fleet (slo-to-rate gives none either): P1 refused V_P of variant-02: no prefill speed learned; pass --assume-vp for a flagged answer
@@ -399,7 +399,7 @@ has every rule; [Check the planner](check.md) runs a longer check yourself.
 
 ```text
   decode knee       36.98     7396        decode band top at fill 0.798
-                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+                    OUTSIDE VALIDATED REGION (ExtrapolatedFill: an input the run did not price)
 ```
 
 Each figure says whether a measured run covered conditions like yours.

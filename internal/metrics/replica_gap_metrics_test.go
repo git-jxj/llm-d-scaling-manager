@@ -82,3 +82,28 @@ func TestPublishReplicaGaps_ReplacesTheSet(t *testing.T) {
 		require.Empty(t, gapRows(t, reg, name, constants.LabelVariantName), name)
 	}
 }
+
+// A v2 learner's would-be suggestion is published on
+// llmsm_replicas_suggested under its learner name, beside the analyzers' own
+// (learner empty, which PromQL reads as absent), and on none of the other
+// families: nothing provides or limits it.
+func TestPublishReplicaGaps_V2SuggestionBesideTheOwn(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	require.NoError(t, InitMetrics(reg))
+	PublishReplicaGaps([]ReplicaGap{
+		{Namespace: "ns", ModelName: "m", VariantName: "p", Role: "prefill", Mode: constants.ReplicasModePassive, Suggested: 2, Provided: 2},
+		{Namespace: "ns", ModelName: "m", VariantName: "p", Role: "prefill", Mode: constants.ReplicasModePassive, Learner: "ttft-mixture",
+			Suggested: 3},
+	}, nil)
+	require.Equal(t, map[string]float64{"p//": 2, "p/ttft-mixture/": 3},
+		gapRows(t, reg, constants.LLMSMReplicasSuggested, constants.LabelVariantName, constants.LabelLearner))
+	require.Equal(t, map[string]float64{"p/": 2}, gapRows(t, reg, constants.LLMSMReplicasProvided, constants.LabelVariantName))
+	require.Equal(t, map[string]float64{"p/": 0}, gapRows(t, reg, constants.LLMSMReplicasBorrowed, constants.LabelVariantName))
+
+	// Gone the next cycle, with the passive model's own kept.
+	PublishReplicaGaps([]ReplicaGap{
+		{Namespace: "ns", ModelName: "m", VariantName: "p", Role: "prefill", Mode: constants.ReplicasModePassive, Suggested: 2, Provided: 2},
+	}, nil)
+	require.Equal(t, map[string]float64{"p//": 2},
+		gapRows(t, reg, constants.LLMSMReplicasSuggested, constants.LabelVariantName, constants.LabelLearner))
+}

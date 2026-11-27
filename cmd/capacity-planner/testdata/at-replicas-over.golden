@@ -15,12 +15,13 @@ shape measured: IL 8003 OL 200, prefix hit 0.00 (measured, cycles 269-288)
 utilization at the load judged
   decode        KV fill 0.024 (band top 0.8), slots 10 of 333, wait p 0.000
   KV pull       utilization 0.402 per decode pod, mean wait 40.5 ms: the larger mean wait in TTFT sits on the decode pods
+  KV spread     busiest pod's fill over the pods' mean, measured on the fleet that ran (2 decode pods), not priced: median 1.06, p95 1.24, peak 2.00 over 279 cycles; fill peak busiest 0.821, mean 0.812
   prefill       utilization pooled 0.40, worst pod 0.40 (f 1)
   verdict       RIGHT-SIZED: at the stated load of 20.0 r/s, the fleet holds every target with headroom; decode: no spare: 3 decode if the decode knee reads 99% high; prefill: no spare (52.9% under its operating point).
 capacity            req/s     out tok/s   in system   bound by
   prefill knee      49.97     9993        unbounded   prefill compute: N_p 2 x V_P / (f 1.000 x 8001 tokens)
   decode knee       55.48     11094       unbounded   decode band top at fill 0.798
-                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+                    OUTSIDE VALIDATED REGION (--assume-vp stated, which the run did not price)
   fleet knee        49.97     9993        unbounded   prefill
   operating (0.85)  42.48     8494        82          0.85 x fleet knee (scaleUpThreshold)
   max at SLO        36.60     7319        48          TTFT p90, end to end
@@ -34,7 +35,7 @@ checks
   2 prefill + 2 decode  holds: 20.00 r/s within 0.85 x the fleet knee 36.98 r/s = 31.44 r/s; TTFT p90 674.2 ms meets 2000.0 ms; TPOT mean 3.4 ms meets 30.0 ms
   1 prefill + 3 decode  does not hold: 20.00 r/s within 0.85 x the fleet knee 25.00 r/s = 21.25 r/s; TTFT p90 1284.3 ms is within 2000.0 ms but misses: the rate is above the prefill flow-control onset, where the router queues; TPOT mean 2.5 ms meets 30.0 ms
 assumed: V_P 200000 tok/s (--assume-vp); a 20ms (--assume-a); prompt cv 2 (no computed-prompt histogram); router hop 20 ms (no fit: NoRouterMean); --assume-router-hop supplies one; flow-control thresholds 5 and 0.8 (upstream defaults); Poisson arrivals
-flags: UnvalidatedTTFT; AssumedVP; AssumedPromptSpread; ExtrapolatedFill; BatchBeyondFit; RouterHopAssumed; SpreadBeyondProcessorSharing; BelowFittedBand; KVBoundSlots; AssumedPoissonArrivals; AssumedA; PromptSpreadAbovePeak; CoarseTPOTBucket; HostBoundTPOTTail; AboveFlowControlOnset; ExtrapolatedBelowFloor
+flags: UnvalidatedTTFT; AssumedVP; AssumedPromptSpread; ExtrapolatedFill; BatchBeyondFit; RouterHopAssumed; SpreadBeyondProcessorSharing; BelowFittedBand; KVBoundSlots; AssumedPoissonArrivals; AssumedA; ExtrapolatedBelowFloor; PromptSpreadAbovePeak; CoarseTPOTBucket; HostBoundTPOTTail; AboveFlowControlOnset
 
 not validated:
   - decode knee: outside its validated region (see its label); inside the region the q32 staircase measured (1000-token prompts, 1000 out, Ca^2 1) it read at most +3%, and outside it, on the 0.6B goldens, 43% to 99% high (docs/proposals/slo-capacity-planner.md, Measured on the goldens)

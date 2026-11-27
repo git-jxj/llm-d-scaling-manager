@@ -16,12 +16,13 @@ shape load: IL 1000 OL 1133, prefix hit 0.00 (the load's cycles)
 utilization at the load judged
   decode        KV fill 0.448 (band top 0.8), slots 416 of 512, wait p 0.041
   KV pull       utilization 0.018 per decode pod, mean wait unpriced (TTFT refused)
+  KV spread     busiest pod's fill over the pods' mean, measured on the fleet that ran (2 decode pods), not priced: median 1.03, p95 1.36, peak 1.46 over 204 cycles; 1.01 at the load judged (30 cycles); fill peak busiest 0.800, mean 0.797
   prefill       utilization pooled 0.38, worst pod 0.38 (f 1)
   verdict       UNDER-PROVISIONED: at the p95 less counting noise load of 12.5 r/s, the fleet runs past its operating point of 11.3 r/s (0.85 of its 13.3 r/s knee); needs at least 3 decode (has 2), 5 decode if the decode knee reads 99% high.
 capacity            req/s     out tok/s   in system   bound by
   prefill knee      >=32.37   36680       not known   prefill compute: N_p 2 x V_P x (1 - 0.05 margin) / (f 1.000 x 1000 tokens); at least: V_P is a lower bound
   decode knee       13.35     15124       unbounded   decode batch cap at fill 0.551
-                    OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)
+                    OUTSIDE VALIDATED REGION (more sequences a pod than the decode line was fitted on, never measured there)
   fleet knee        13.35     15124       unbounded   decode
   operating (0.85)  11.35     12855       -           0.85 x fleet knee (scaleUpThreshold)
   max at SLO        TTFT not priced (V_P a lower bound)                        V_P 17046 tokens/s is only the rate a prefill pod was seen to compute (it never queued for capacity): no TTFT is priced from it; pass --assume-vp for a flagged answer

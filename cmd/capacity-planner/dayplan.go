@@ -49,6 +49,9 @@ type dayPlanFlags struct {
 	// vpServiceLine is --prefill-vp-service-line, as answerFlags'
 	// (vp_service_line.go).
 	vpServiceLine bool
+	// fLoadCurve is --prefill-f-load-curve, as answerFlags'
+	// (f_load_curve.go).
+	fLoadCurve bool
 	// experimentalTTFT is --experimental-ttft, as answerFlags'
 	// (experimental_ttft.go).
 	experimentalTTFT bool
@@ -59,6 +62,8 @@ type dayPlanFlags struct {
 	rankMixtureTTFT  bool
 	experimentalTPOT string
 	tpotDistribution bool
+	// tpotModel is the distribution --experimental-tpot names.
+	tpotModel string
 	// rankMixtureNLLine is --experimental-ttft=v2nl-line, and
 	// rankMixtureFit the variant's modes and the shortest fit window
 	// (rank_mixture_fit.go): the TTFT model is fitted as serve fits it.
@@ -108,22 +113,23 @@ func runDayPlan(ctx context.Context, args []string, out, warn io.Writer) error {
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.BoolVar(&f.vpServiceLine, vpServiceLineFlag, false, vpServiceLineUsage)
+	fs.BoolVar(&f.fLoadCurve, fLoadCurveFlag, false, fLoadCurveUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag, experimentalTTFTUsage+
 		". =v2 instead sizes with the experimental rank-mixture TTFT model fitted on the recording, as at-replicas and serve price with it, "+
-		"each bucket at its own rate but at the window's request shape the model is fitted at (WindowShape): where it prices TTFT the planner refuses, prefill is sized on it; every figure it sets is flagged RankMixtureTTFT and reads OUTSIDE VALIDATED REGION; "+experimentalTTFTNLLineUsage)
+		"each bucket at its own rate and its own request shape read over at least an hour and 16000 requests around it, or at the window's (WindowShape) where that shape is outside the model's fit (ShapeOutsideFit) or the requests too few (ShapeFewRequests): where it prices TTFT the planner refuses, prefill is sized on it; every figure it sets is flagged RankMixtureTTFT and reads OUTSIDE VALIDATED REGION; "+experimentalTTFTNLLineUsage)
 	f.rankMixtureFit.registerModes(fs)
 	f.rankMixtureFit.registerWindow(fs)
 	f.tpotFit.register(fs)
-	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage+"; on day-plan it sizes decode with it at a p90 or p95 TPOT target, each bucket at the window's request shape")
+	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage+"; on day-plan it sizes decode with it at a p90 or p95 TPOT target, its ratio at the window's output lengths around the planner's mean at each bucket's own")
 	fs.StringVar(&f.output, "o", outputText, "output: text or json")
 	if ok, err := parse(fs, args); !ok {
 		return err
 	}
-	on, err := experimentalTPOTOf(f.experimentalTPOT)
+	model, err := experimentalTPOTOf(f.experimentalTPOT)
 	if err != nil {
 		return err
 	}
-	f.tpotDistribution = on
+	f.tpotDistribution, f.tpotModel = model != "", model
 	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
 		return err
 	}
@@ -254,12 +260,12 @@ var resolveDay = func(ctx context.Context, f *dayPlanFlags, warn io.Writer) (*wh
 func (f *dayPlanFlags) resolve(ctx context.Context, warn io.Writer) (*whatifapi.Resolved, error) {
 	check := defaultSelfCheck && !f.noSelfCheck
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant, SelfCheck: &check,
-		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, ExperimentalTTFT: f.experimentalTTFT}
+		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, PrefillFLoadCurve: f.fLoadCurve, ExperimentalTTFT: f.experimentalTTFT}
 	if f.rankMixtureTTFT {
 		in.TTFTModel = rankMixtureModel(f.rankMixtureNLLine)
 	}
 	if f.tpotDistribution {
-		in.TPOTModel = whatif.TPOTRenewalLognormal
+		in.TPOTModel = f.tpotModel
 	}
 	src := &servedSources{warn: warn}
 	switch {

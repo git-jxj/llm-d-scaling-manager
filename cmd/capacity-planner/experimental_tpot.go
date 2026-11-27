@@ -23,23 +23,31 @@ import (
 // experimentalTPOTFlag is the flag's name.
 const experimentalTPOTFlag = "experimental-tpot"
 
-// experimentalTPOTV2 is the flag's one value.
+// experimentalTPOTV2 is the flag's value for the one lognormal at the
+// output lengths' mean (whatif.TPOTRenewalLognormal).
 const experimentalTPOTV2 = "v2"
+
+// experimentalTPOTV2Mix is the flag's value for the per-length mixture
+// (whatif.TPOTPerLengthMixture): one lognormal per output-length group, in
+// place of one at their mean. Off unless given.
+const experimentalTPOTV2Mix = "v2-mix"
 
 // experimentalTPOTUsage is backtest's help for the flag.
 const experimentalTPOTUsage = "=v2 prices the TPOT percentiles with an experimental per-request TPOT distribution: lognormal around the " +
 	"planner's mean TPOT, its spread the decode groups' plus the renewal of speculative decode steps over the step's output lengths, " +
 	"fitted on the fit window by interval-censored likelihood over the router's TPOT buckets and scored at the histogram's resolution; " +
+	"=v2-mix prices it as a mixture over the output lengths, one lognormal per length; " +
 	"every percentile it prices is flagged TPOTDistribution and reads OUTSIDE VALIDATED REGION"
 
 // tpotDistribution asks req for the experimental TPOT distribution where
-// --experimental-tpot=v2 is given, and reads each side's decode cycles for
+// --experimental-tpot is given, and reads each side's decode cycles for
 // it: test from testPath, fit from fitPath.
 func (f *backtestFlags) tpotDistribution(req *whatifapi.BacktestRequest, testPath string, test *whatifapi.Resolved, fitPath string, fit *whatifapi.Resolved) error {
-	if on, err := experimentalTPOTOf(f.experimentalTPOT); err != nil || !on {
+	model, err := experimentalTPOTOf(f.experimentalTPOT)
+	if err != nil || model == "" {
 		return err
 	}
-	req.TPOTModel = whatif.TPOTRenewalLognormal
+	req.TPOTModel = model
 	req.DecodeSlots, req.SpecTokens = decodeEngineOf(fit)
 	req.TPOTDistMinFitSteps = f.tpotFit.steps()
 	if err := withDecodeSeries(testPath, test, nil); err != nil {
@@ -49,15 +57,18 @@ func (f *backtestFlags) tpotDistribution(req *whatifapi.BacktestRequest, testPat
 }
 
 // experimentalTPOTOf reads --experimental-tpot's value, backtest's and
-// serve's alike: true for v2, false unset.
-func experimentalTPOTOf(s string) (bool, error) {
+// serve's alike: the distribution it names, "" unset.
+func experimentalTPOTOf(s string) (string, error) {
 	switch s {
 	case "":
-		return false, nil
+		return "", nil
 	case experimentalTPOTV2:
-		return true, nil
+		return whatif.TPOTRenewalLognormal, nil
+	case experimentalTPOTV2Mix:
+		return whatif.TPOTPerLengthMixture, nil
 	}
-	return false, usagef("--%s=%q, want --%s=%s", experimentalTPOTFlag, s, experimentalTPOTFlag, experimentalTPOTV2)
+	return "", usagef("--%s=%q, want --%s=%s or --%s=%s", experimentalTPOTFlag, s, experimentalTPOTFlag, experimentalTPOTV2,
+		experimentalTPOTFlag, experimentalTPOTV2Mix)
 }
 
 // withDecodeSeries is res with the recording's cycles as the TPOT
@@ -99,9 +110,5 @@ func decodeEngineOf(res *whatifapi.Resolved) (slots, spec int) {
 	if !ok {
 		return 0, 0
 	}
-	params := variantParams(s.st, res.Inputs.Fleet.Decode.Variant)
-	if params == nil {
-		return 0, 0
-	}
-	return int(params.ExplicitMaxNumSeqs()), params.SpeculativeTokens()
+	return variantParams(s.st, res.Inputs.Fleet.Decode.Variant).DecodeSlots()
 }

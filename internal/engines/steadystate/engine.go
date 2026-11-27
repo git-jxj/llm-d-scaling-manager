@@ -241,6 +241,9 @@ type Engine struct {
 	// published for (slo_model_inputs.go), by utils.GetNamespacedKey, so the
 	// prune can delete them.
 	sloModelInputs map[string][2]string
+	// sloModelInputsSeen is the models whose v2 model series were published
+	// since the last prune (retainModelInputs).
+	sloModelInputsSeen map[string]bool
 
 	// clock is the cycle clock: pinned once per optimize cycle (optimizeV2),
 	// it is what the analyzers and the capacity store stamp and age their
@@ -359,6 +362,14 @@ type Engine struct {
 	// and hands the analyzer its view; an Engine built as a literal builds
 	// it on first use.
 	settle *settle.Tracker
+	// rolesFromSignals is SwitchRolesFromSignals (role_signals.go): off from
+	// the constructor, so an unlabelled variant reads both as before; a
+	// replay or a test turns it on (SetSwitchesForReplay).
+	rolesFromSignals bool
+	// roles is each unlabelled variant's last role its engine signals
+	// decided, and each labelled one's last disagreement, while
+	// rolesFromSignals is on (role_signals.go). Built on first use.
+	roles *roleMemory
 }
 
 // NewEngine creates a new instance of the saturation engine.
@@ -488,6 +499,7 @@ func newEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		capacityStore:           capacityStore,
 		clock:                   cycleClock,
 		settle:                  settleTracker,
+		roles:                   newRoleMemory(),
 		lastGoodAnalysis:        make(map[string]map[string]time.Time),
 		lastAnalyzerSeries:      make(map[string]analyzerSeries),
 		lastBlockedModels:       make(map[string]blockedModelRef),
@@ -1762,7 +1774,7 @@ func (e *Engine) optimizeV2(
 			reportSignalReason(namespace, modelID, nil)
 			continue
 		}
-		e.observeModelInputs(ctx, data)
+		e.observeModelInputs(ctx, data, &scalingPolicyConfig)
 
 		req, err := e.collectV2ModelRequest(ctx, modelID, namespace,
 			data.replicaMetrics, scalingPolicyConfig, data.variantStates, data.variantMetadata,
@@ -2378,6 +2390,11 @@ func (e *Engine) assembleModelData(
 	for _, m := range variantMetadata {
 		variantStates = append(variantStates, m.ToReplicaState())
 	}
+	// With SwitchRolesFromSignals on, an unlabelled variant's role from its
+	// pods' engine signals, before anything downstream reads a role
+	// (resolveRoles). Off, the states and metadata are discovery's.
+	variantStates, variantMetadata = e.resolveRoles(ctx, namespace, modelID, replicaMetrics,
+		variantStates, variantMetadata, scaleTargets, variants)
 	e.applyStartSeeds(ctx, namespace, variantStates)
 	return &modelData{
 		modelID:         modelID,
@@ -2436,7 +2453,7 @@ func (e *Engine) applySaturationDecisions(
 	defer func() { e.Status.SetResolvedAccelerators(resolved) }()
 	// Each decided variant's suggestion against what it is provided, published
 	// once every decision is applied: a variant with no decision has none.
-	gaps := &replicaGapRecorder{plan: e.cycleGaps}
+	gaps := &replicaGapRecorder{plan: e.cycleGaps, v2Ask: e.modelPrefillAsk}
 	defer gaps.publish()
 
 	// Iterate over ALL active VAs to ensure we update status and trigger reconciliation for everyone

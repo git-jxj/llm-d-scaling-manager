@@ -176,15 +176,7 @@ func prefillSlotsOf(res *whatifapi.Resolved) int {
 	if !ok || res.Inputs.Fleet.Prefill == nil {
 		return 0
 	}
-	params := variantParams(s.st, res.Inputs.Fleet.Prefill.Variant)
-	if params == nil {
-		return 0
-	}
-	k := int(params.ExplicitMaxNumSeqs())
-	if k > 0 && !params.ChunkedPrefillEnabled {
-		return 1
-	}
-	return k
+	return variantParams(s.st, res.Inputs.Fleet.Prefill.Variant).PrefillSlots()
 }
 
 // experimentalReport prices rep's tables with the experimental models
@@ -199,12 +191,12 @@ func (f *answerFlags) experimentalReport(ctx context.Context, rep *whatifapi.Rep
 		return err
 	}
 	req := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.variant, PrefillVPPlateau: f.vpPlateau,
-		PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(f.recording), Cycle: cycle}}
+		PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, PrefillFLoadCurve: f.fLoadCurve, Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(f.recording), Cycle: cycle}}
 	if f.rankMixtureTTFT {
 		req.TTFTModel = rankMixtureModel(f.rankMixtureNLLine)
 	}
 	if f.tpotDistribution {
-		req.TPOTModel = whatif.TPOTRenewalLognormal
+		req.TPOTModel = f.tpotModel
 	}
 	src := &servedSources{warn: f.warn, recordings: filepath.Dir(f.recording)}
 	res, err := src.Resolve(ctx, req)

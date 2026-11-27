@@ -250,8 +250,8 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 		return nil, usagef("--auth=%s needs --tls-cert-file and --tls-key-file: a bearer token is not sent in the clear", whatifapi.AuthKubernetes)
 	}
 	if f.planBudget < 0 || f.planBudget > maxPlanBudget {
-		return nil, usagef("--plan-budget %s: want 0 (the default, %s) up to %s: a plan stopped later is refused after the server's %s write timeout has closed the connection",
-			f.planBudget, whatifapi.DefaultPlanBudget, maxPlanBudget, writeTimeout)
+		return nil, usagef("--plan-budget %s: want 0 (the default, %s) up to %s",
+			f.planBudget, whatifapi.DefaultPlanBudget, maxPlanBudget)
 	}
 	if f.maxInputs < 0 {
 		return nil, usagef("--max-inputs %d: want 1 or more, or 0 for the default, %d", f.maxInputs, whatifapi.DefaultMaxInputs)
@@ -285,29 +285,28 @@ func (f *serveFlags) handler(fs *flag.FlagSet, warn io.Writer) (http.Handler, er
 	if err != nil {
 		return nil, err
 	}
-	tpotV2, err := experimentalTPOTOf(f.experimentalTPOT)
+	tpotModel, err := experimentalTPOTOf(f.experimentalTPOT)
 	if err != nil {
 		return nil, err
 	}
 	if err := f.rankMixtureFit.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
 		return nil, err
 	}
-	if err := f.tpotFit.check(tpotV2); err != nil {
+	if err := f.tpotFit.check(tpotModel != ""); err != nil {
 		return nil, err
 	}
 	warnKVHoldAlone(warn, f.rankMixtureFit.kvHold, f.rankMixtureFit.remainderSpread)
 	src := &servedSources{window: f.window, recordings: f.recordings, warn: warn, allowed: allowed, experimentalTTFT: f.experimentalTTFT,
-		rankMixture: f.rankMixtureTTFT, tpotDistribution: tpotV2, replay: f.replay}
+		rankMixture: f.rankMixtureTTFT, tpotDistribution: tpotModel != "", replay: f.replay}
 	cfg := whatifapi.Config{Resolver: src, WhatifSchema: "schema-v" + strconv.Itoa(schemaVersion), PlannerVersion: plannerVersion(), SelfCheck: defaultSelfCheck && !f.noSelfCheck, PlanBudget: f.planBudget,
 		MaxInputs: f.maxInputs, MaxInputsBytes: cacheBytes, NoRankMixtureStratified: !stratifiedOr(f.rankMixtureStratified),
 		RankMixtureKVHold: f.rankMixtureFit.kvHold, RankMixtureRemainderSpread: f.rankMixtureFit.remainderSpread,
-		RankMixtureMinFitWindow: f.rankMixtureFit.window(), TPOTDistMinFitSteps: f.tpotFit.steps()}
+		RankMixtureRemainderServer: f.rankMixtureFit.remainderServer,
+		RankMixtureMinFitWindow:    f.rankMixtureFit.window(), TPOTDistMinFitSteps: f.tpotFit.steps()}
 	if f.rankMixtureTTFT {
 		cfg.TTFTModel = rankMixtureModel(f.rankMixtureNLLine)
 	}
-	if tpotV2 {
-		cfg.TPOTModel = whatif.TPOTRenewalLognormal
-	}
+	cfg.TPOTModel = tpotModel
 	if f.allowUpload {
 		// Built last, so that no check refusing the flags leaves its
 		// directory behind; the client below is the one step after it.
@@ -363,17 +362,20 @@ func newHTTPServer(addr string, h http.Handler) *http.Server {
 }
 
 // The server's timeouts. A write may run as long as a cold plan, or a capture
-// of a Prometheus window, takes.
+// of a Prometheus window, takes. A route that computes moves its write deadline
+// to whatifapi.LongRequestDeadline once its body is read, and an upload to its
+// own; these hold for the rest.
 const (
 	readTimeout  = 30 * time.Second
 	writeTimeout = 10 * time.Minute
 	idleTimeout  = 2 * time.Minute
 )
 
-// maxPlanBudget is the largest --plan-budget: a minute under writeTimeout, so
-// a plan stopped at its budget, which may run on for one figure, is refused
-// on a connection still open.
-const maxPlanBudget = writeTimeout - time.Minute
+// maxPlanBudget is the largest --plan-budget. A plan stopped at its budget,
+// which may run on for one figure, is refused on a connection still open: a
+// route that plans has whatifapi.LongRequestDeadline, 30 minutes, and a
+// backtest may first load a recording within that same time.
+const maxPlanBudget = 9 * time.Minute
 
 // namespaces is the namespaces a prometheus source may read: --allowed-namespaces,
 // else --namespace alone, each a DNS-1123 label. With --prometheus, one is

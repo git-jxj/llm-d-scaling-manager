@@ -45,16 +45,16 @@ func TestTPOTDist_MinFitSteps(t *testing.T) {
 	}
 	assert.Positive(t, priced)
 
-	mt := fitMainTPOT(fit, 8)
+	mt := fitMainTPOT(fit, "", 8)
 	require.Empty(t, mt.info.Abstained)
 	require.NotNil(t, mt.info.Fit)
 	assert.True(t, mt.info.Fit.ShortFit)
-	assert.Equal(t, []whatif.Flag{whatif.TPOTDistribution, whatif.TPOTDistributionShortFit}, mt.tq.report.flags())
-	assert.Contains(t, fitMainTPOT(fit, 0).info.Abstained, "under 24")
+	assert.Equal(t, []whatif.Flag{whatif.TPOTDistribution, whatif.TPOTDistributionShortFit}, mt.tq.report.Flags())
+	assert.Contains(t, fitMainTPOT(fit, "", 0).info.Abstained, "under 24")
 
 	long, _ := tdEntries(t, 960)
 	long.engine = fit.engine
-	assert.False(t, fitMainTPOT(long, 8).info.Fit.ShortFit, "64 steps are not short")
+	assert.False(t, fitMainTPOT(long, "", 8).info.Fit.ShortFit, "64 steps are not short")
 }
 
 // A count under the floor, or one without a TPOT model, is the caller's

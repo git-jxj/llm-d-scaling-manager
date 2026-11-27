@@ -348,7 +348,28 @@ split the shared prefixes, so each pod's cache holds more of its own and the
 prefix hit rises; fewer pods lower it. By default the planner keeps the hit
 it measured at every count, which reads the prompt tokens a pod computes too
 low when you price fewer pods. `--prefill-hit-at-count` prices the hit at
-the count you ask for:
+the count you ask for.
+
+If the recording holds vLLM's KV residency histograms (start vLLM with
+`--kv-cache-metrics`; see [the metrics](metrics.md)), the planner fits how
+long a cached block waits to be reused and prices the hit from it at fewer
+pods and at more (the reuse-gap rule), flagged `PrefixHitAtCount`. A tier
+past the GPU (CPU offload, a KV connector) keeps the total hit it served,
+and the planner prices the load of the tokens that move to it. The
+recording does not say how large that tier is, so at fewer pods the total
+does not fall: an optimistic reading if the tier is small. On a lab run
+recorded on 2 prefill pods, with the histograms rebuilt from its load
+generator (the run had no `--kv-cache-metrics`), it read 0.29 at 1 pod
+(measured 0.345) and 0.82 at 4 (measured 0.79). Those histograms follow
+the same law the planner fits, so the run checks the arithmetic, not the
+law against a real engine. At 1 pod the hit reads low because one pod
+count does not show how many pods hold a copy of a prefix; that prices
+more computed tokens, the safe side. With no tier past the GPU the most the
+hit can reach is not measured, so at more pods the planner lets the missed
+share of the prompt fall at most as fast as the pods rise, a stated limit
+rather than a measured one: it priced 0.76 at 4.
+
+Without those histograms:
 
 - fewer pods: the hit times the new count over the recorded one, a safe
   floor (each request computes more tokens, so the prefill knee falls),
@@ -378,6 +399,16 @@ plus a time a token. It is off by default because on the public recordings
 it read some TTFT figures under what was measured. Set, every figure reads
 OUTSIDE VALIDATED REGION. The same commands take it, and `POST /v1/inputs`
 takes `prefillVPServiceLine` ([API](api.md)).
+
+**f against the load (`--prefill-f-load-curve`, lab-validated only).** The
+busiest prefill pod's extra share is largest at a light load. This flag fits
+f, the imbalance, against the tokens a pod computes a second at each prefill
+count, `f(u) = f_inf + delta/u`, and prices the higher of that and the usual
+f at each rate, so a light load reads the higher f it showed. A count with
+fewer than 8 minutes, or whose f does not fall with the load, keeps its f,
+and the answer says so. Set, every figure reads OUTSIDE VALIDATED REGION. The
+same commands take it, and `POST /v1/inputs` takes `prefillFLoadCurve`
+([API](api.md)).
 
 **An experimental TTFT model (`--experimental-ttft`, for demonstration).**
 The TTFT model has seven switches that are off by default, because none of
@@ -481,7 +512,9 @@ In a cluster, add both to the StatefulSet's `args`
 - **The variant's modes.** `--rank-mixture-kv-hold` and
   `--rank-mixture-remainder-spread`, with `=v2nl-line`, turn the variant's
   two modes on for every check and source, as on `backtest`. Give them
-  together ([accuracy](accuracy.md)).
+  together ([accuracy](accuracy.md)). `--rank-mixture-remainder-server`,
+  with both of them, adds the third: the remainder drawn from the prefill
+  pods' API servers, where the recording holds their series.
 - **Shorter recordings.** Both TTFT models abstain on a fit window under
   12 hours, which every lab recording is. `--rank-mixture-min-fit-window 2h`
   lowers that minimum for every check and source; each TTFT a model prices
@@ -506,11 +539,12 @@ In a cluster, add both to the StatefulSet's `args`
   experimental and reads outside the validated region, with its fit; or
   that it abstained and why, and every figure is then the planner's own.
   For TPOT it adds in how many steps the predicted p90 and p95 fell in the
-  measured histogram bucket, beside the planner's own count. The step table
+  measured one's joint bracket, and under or over it, beside the planner's
+  own count ([the joint bracket](accuracy.md#where-a-measured-tpot-p90-or-p95-lies-the-joint-bracket)). The step table
   shows mean, p90 and p95 of TTFT and TPOT, predicted against measured.
   Each figure a model priced is marked `[experimental TTFT v2 ...]` or
   `[experimental TPOT v2 ...]`, one it abstained on `[... v2 abstained ...]`,
-  and each TPOT p90 and p95 says whether it is in the measured bucket.
+  and each TPOT p90 and p95 says whether it is in the measured bracket.
 - **What it costs.** Every source the server loads is read once more for
   each model, so loading is slower.
 - **The draws.** The v2 TTFT model reads each prefill rank's service from
@@ -575,8 +609,11 @@ In a cluster, add both to the StatefulSet's `args`
   and the planner's own ratio is read the same way.
 - **The evidence.** The caption names the "Experimental TPOT model" and its
   score on the source's held-out folds, at the measured mean: in how many
-  steps the predicted p90 and p95 fell in the router histogram's bucket the
-  measured one fell in. Each fold fits the model on the steps before its
+  steps the predicted p90 and p95 fell in the measured one's joint bracket:
+  the router's TPOT histogram and, above their first edge, the decode
+  engines', read together at their sampling noise
+  ([how](accuracy.md#where-a-measured-tpot-p90-or-p95-lies-the-joint-bracket)).
+  Each fold fits the model on the steps before its
   cut alone, so a source whose traffic changes over the window can score
   low here while the curve still lands in the measured buckets (see
   [Known issue](#known-issue-a-low-held-out-score)).
@@ -592,11 +629,17 @@ In a cluster, add both to the StatefulSet's `args`
 - **The CLI.** `at-replicas --experimental-tpot=v2` prices its tables' TPOT
   percentile the same way, from a `--recording`, at `--shape measured`.
   The default shape, the load's own, stays the planner's.
+- **The per-length mixture.** `--experimental-tpot=v2-mix` (`tpotModel`
+  `renewal-lognormal-per-length`) prices the same curve with one lognormal
+  per output-length group in place of one at their mean
+  ([accuracy](accuracy.md#experimental-the-per-length-mixture---experimental-tpotv2-mix)).
+  Every rate is priced at the source window's pooled lengths, so the ratio
+  is again one per source. It is off unless given.
 
 ##### Known issue: a low held-out score
 
 On the repo's Qwen3-32B staircase recording the held-out score reads "p90
-in the measured bucket on 0 of 22", while the curve at the rates served
+in the measured p90's joint bracket on 0 of 22", every one over it, while the curve at the rates served
 lands in it on 24 of 29 steps. The two folds fit on the window's early
 steps, whose outputs are long, so the renewal term barely moves their
 spread and C is poorly pinned there: it comes out 19.5 and 16.4, against
@@ -813,8 +856,9 @@ It replays the recording once and answers, for each shape and load:
   say so ("f 1.5 held to 0.35 utilization, then falling to 1 ..."). The
   fleets at f 1 and f 1.5 are priced the same way. A pod much busier than the
   rest still saturates first. With no load measured for f, f is held. The
-  recording does not say what the router scores, so the flag is off by
-  default. The API takes it as `assume.loadAwareRouter: true`, `backtest`
+  flag is off by default, and it still sets the price where the router's
+  series say what it scores ([Router policy](#router-policy)); an answer
+  that disagrees with them says so in its assumed line. The API takes it as `assume.loadAwareRouter: true`, `backtest`
   and `predict` as `--load-aware-router`, and the page as **My router
   balances prefill by load** under **Assume a term**.
   Since no run measured it, the sentence also gives the fleet needed at f 1
@@ -963,10 +1007,17 @@ minutes as V_P, as a lower bound, and nothing more (the assumed line says
 
 - The prefill knee is at least the rate that V_P gives. It is also at least
   the rate the fleet's prefill Pods kept up: the computed-token work they
-  sustained over 2 minutes, at the Pod count priced, in the last 6 hours,
-  over the prompt they computed (flag `KneeAtServedWork`). A Pod computes no
-  faster than it can, so work it kept up is work it can do. Both figures come
-  from the engines' computed-token counter.
+  sustained over 5 minutes with their prefill backlog not growing, at the Pod
+  count priced, in the last 6 hours, over the prompt they computed (flag
+  `KneeAtServedWork`). A Pod computes no faster than it can, so work it kept
+  up is work it can do. Both figures come from the engines' computed-token
+  counter. The figure is the mean over those 5 minutes, not the peak minute.
+  A burst carried with a queue building is not a rate the Pods hold: where
+  the Pods served at the count priced only with their backlog growing, the
+  knee is not raised and carries `ServedWorkUnsteady`. A recording that does
+  not read every prefill Pod's waiting queue cannot show the backlog steady,
+  so its knee is not raised either. It carries no flag, as nothing says the
+  backlog grew.
 - No TTFT is priced from such a V_P: every TTFT, and every rate asked at a
   TTFT target, reads "no prefill speed learned" (`NoPrefillCapacity`), as
   before. The true V_P may be far higher, so a TTFT priced from it would be
@@ -985,6 +1036,50 @@ exits 3. State the load with `--load-seen` to judge anyway. A gap is any
 stretch with no cycle for the model, so a model parked at zero, or a cycle
 time changed mid-window, reads as one too. A scrape that misses only the
 engine's series still leaves a cycle, and is not counted.
+
+### Router policy
+
+Where the recording holds the router's prefix series (`llm_d_epp_prefix_*`)
+or its per-endpoint series, the planner says what the router scores. A TTFT
+answer adds it to its `ttft inputs` line ("router cache-aware and load-aware
+(from its series)"), `-o json` gives it as `routerPolicy`, and the inputs
+document as `policy.router`. A recording without these series answers as
+before, with none of the three.
+
+- **Cache-aware:** at the window's lightest load, the router sends a request
+  where nearly all its cached prefix is (at least 90% of the cached tokens
+  the best pod held). At 60% or less it is not cache-aware. The share is read
+  from one prefix producer; if the producer the router reads changes within
+  the window, the cache side is not detected.
+- **Load-aware:** either of two readings.
+  - The kept share falls as the load rises, over the whole window and in
+    each half of it. This is a correlation, not a test of the scorer: a
+    traffic mix that changes with the time of day, a cold cache, or eviction
+    under load can do the same.
+  - The router places requests unevenly so the pods' in-flight requests come
+    out even. The placements must be uneven by more than twice what random
+    placement would give (about 1/sqrt(n) for n requests per pod per window).
+    With few requests per pod, the spread is not read.
+- **Not detected:** the series are missing, there is one prefill pod (every
+  placement keeps the whole hit), the window is under 20 minutes, the load
+  did not vary enough, the halves disagree, or the readings sit between the
+  bounds.
+
+A cache-blind router also keeps the whole hit when every pod holds the same
+prefix, so "cache-aware" means only that the router lost no hit it could
+have kept. In P/D the spread reads the decode pods, where the router counts
+placements, and the hit reads the prefill pods.
+
+The window holds up to 12 hours. After you change the router's scorers, the
+policy reads the old and new configuration together until the old cycles
+age out, up to 12 hours. If the series stop for an hour, the window is
+cleared and the policy reads not detected.
+
+It sets no price yet: `--load-aware-router` still does. When the two
+disagree, the answer's assumed line says so. The controller reads the same
+series the same way. While a learner recording is on, it logs `router
+policy read from its series` when the policy changes and the new one has
+held for 10 minutes.
 
 ## Plan replicas over a day
 
@@ -1017,11 +1112,16 @@ view prices with them; from the command line, `day-plan
 prefill that never queued), prefill is sized on it. A bucket a model sized
 carries its flag (`RankMixtureTTFT`, `TPOTDistribution`) on its limit, its
 needed replicas are marked † on the page and in the command's hours table,
-and the plan names each model, with how many buckets it priced. The models
-are fitted at the window's request shape, so where one prices a target the
-plan asks, each bucket is priced at its own rate but at the window's shape, flagged `WindowShape`, and a note
-says that per-bucket shape changes are not modelled: a bucket of longer or
-shorter requests than the day's is sized as if they were the day's. A stated
+and the plan names each model, with how many buckets it priced. Where one
+prices a target the plan asks, each bucket is priced at its own rate and its
+own request shape, read over at least an hour and 16000 requests around it
+(at most 2 hours): the TTFT model draws from that window's prompt and
+computed-token histograms, so an hour whose prefix hit is lower than the
+day's is priced with the longer prefills it served; the TPOT model keeps its
+ratio at the window's output lengths. A bucket whose shape lies outside what
+the TTFT model's fit served is priced at the window's shape instead, flagged `WindowShape` and
+`ShapeOutsideFit`, as is one whose window holds too few requests
+(`ShapeFewRequests`); a note counts each. A stated
 shape or term stays the planner's own. The TPOT model prices a p90 or p95
 TPOT target, not the mean. The plan's notes
 say, for each model, why each bucket it did not price is the planner's. On
@@ -1116,7 +1216,10 @@ alone. A higher `--ttft` sizes them.
   held ahead, and a note says so.
 - **Shape.** Each bucket is priced at its own observed prompt and output
   length. A bucket whose cycles read none is priced at the source's shape and
-  flagged `WindowShape`, as is every bucket where an experimental model prices a target the plan asks. `--assume-input-tokens` and `--assume-output-tokens`
+  flagged `WindowShape`. With an experimental model that prices a target
+  the plan asks, a bucket is priced at its own shape read over a window of
+  at least an hour and 16000 requests around it, or at the window's shape,
+  flagged `WindowShape` with `ShapeOutsideFit` or `ShapeFewRequests`. `--assume-input-tokens` and `--assume-output-tokens`
   price every bucket at one stated length, flagged `EXTRAPOLATED` when it lies
   outside what the buckets observed.
 - **No TTFT target.** With no `--ttft` and none in the policy, prefill is

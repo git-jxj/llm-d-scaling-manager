@@ -129,11 +129,12 @@ func (a *SaturationAnalyzer) WithRecorder(rec *learnrec.Recorder) *SaturationAna
 // SwitchStartConfirmsByDistinctPod, SwitchPrefillBusyMinutes,
 // SwitchPrefillAQuadratic, SwitchPrefillALowLoadPerRank,
 // SwitchPrefillAEngineTiming, SwitchPrefillQueueByCapacity,
-// SwitchPrefillFBusyMinutes, SwitchPrefillVPFloorServed,
+// SwitchPrefillFBusyMinutes, SwitchPrefillFPooledMinutes, SwitchPrefillVPFloorServed,
 // SwitchPrefillVPServedUnqueued, SwitchPrefillVPWindowBest,
 // SwitchPrefillVPAtServedWork, SwitchPrefillVPOccupancyPlateau,
 // SwitchPrefillVPPromptCoverage,
 // SwitchPrefillVPLoneRate, SwitchPrefillVPServiceLine, SwitchPrefillHitAtCount,
+// SwitchPrefillFLoadCurve,
 // SwitchPrefillALowLoadByRate, SwitchPrefillAMedianOverhead,
 // SwitchITLAdaptiveBandFloor,
 // SwitchITLHoldSteadySlope, SwitchITLLineAtFloor, SwitchMoEBusiestRank,
@@ -274,6 +275,9 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// The planner's f: the median of the busiest minutes
 		// (prefill.Cycle.FBusyMinutes). Off from the constructor.
 		SwitchPrefillFBusyMinutes: &a.prefillFBusyMinutes,
+		// The planner's f from pooled minutes on a fleet of long prompts
+		// (prefill.Cycle.FPooledMinutes). Off from the constructor.
+		SwitchPrefillFPooledMinutes: &a.prefillFPooledMinutes,
 		// The planner's floor under a lower-bound V_P: the highest rate a
 		// pod was seen to compute (prefill.Cycle.VPFloorServed). Off from
 		// the constructor.
@@ -306,6 +310,10 @@ func (a *SaturationAnalyzer) switchFields() map[string]*bool {
 		// planner's V_P from the prefill service line
 		// (prefill.Cycle.VPServiceLine). Off from the constructor.
 		SwitchPrefillVPServiceLine: &a.prefillVPServiceLine,
+		// Issue llm-d-incubation/llm-d-scaling-manager#482: the planner's
+		// f against the load per pod (prefill.Cycle.FLoadCurve). Off from
+		// the constructor.
+		SwitchPrefillFLoadCurve: &a.prefillFLoadCurve,
 		// Issue llm-d-incubation/llm-d-scaling-manager#384: the planner's
 		// prefix hit at another prefill count (prefill.HitAtCountOf). Off
 		// from the constructor.

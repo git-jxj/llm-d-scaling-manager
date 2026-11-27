@@ -58,6 +58,9 @@ type backtestFlags struct {
 	// vpServiceLine is --prefill-vp-service-line, as answerFlags'
 	// (vp_service_line.go): both sides are read with the switch on.
 	vpServiceLine bool
+	// fLoadCurve is --prefill-f-load-curve, as answerFlags'
+	// (f_load_curve.go): both sides are read with the switch on.
+	fLoadCurve bool
 	// experimentalTTFT is --experimental-ttft, as answerFlags'
 	// (experimental_ttft.go): both sides are read with its switches on.
 	// rankMixtureTTFT is --experimental-ttft=v2 (experimental_ttft_v2.go),
@@ -79,6 +82,10 @@ type backtestFlags struct {
 	// variant's modes (whatifapi.BacktestRequest RankMixtureKVHold and
 	// RankMixtureRemainderSpread).
 	rankMixtureKVHold, rankMixtureRemainderSpread bool
+	// rankMixtureRemainderServer is --rank-mixture-remainder-server, the
+	// variant's remainder server on top of the spread
+	// (whatifapi.BacktestRequest.RankMixtureRemainderServer).
+	rankMixtureRemainderServer bool
 	// fitWindow is --rank-mixture-min-fit-window and tpotFit
 	// --tpot-dist-min-fit-steps (rank_mixture_fit.go).
 	fitWindow rankMixtureFit
@@ -104,6 +111,7 @@ func (f *backtestFlags) registerAssume(fs *flag.FlagSet) {
 	fs.BoolVar(&f.vpPlateau, vpPlateauFlag, false, vpPlateauUsage)
 	fs.BoolVar(&f.hitAtCount, hitAtCountFlag, false, hitAtCountUsage)
 	fs.BoolVar(&f.vpServiceLine, vpServiceLineFlag, false, vpServiceLineUsage)
+	fs.BoolVar(&f.fLoadCurve, fLoadCurveFlag, false, fLoadCurveUsage)
 	fs.Var(experimentalTTFTValue{switches: &f.experimentalTTFT, v2: &f.rankMixtureTTFT, nlLine: &f.rankMixtureNLLine}, experimentalTTFTFlag,
 		experimentalTTFTV2Usage+"; "+experimentalTTFTNLLineUsage)
 	fs.Var(optionalBool{&f.rankMixtureStratified, whatif.DefaultRankMixtureStratified}, rankMixtureStratifiedFlag, rankMixtureStratifiedUsage)
@@ -151,6 +159,7 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 	fs.BoolVar(&f.rankMixtureRemainderSpread, "rank-mixture-remainder-spread", false, "with --experimental-ttft=v2nl-line, draw "+
 		"the router's remainder from the router's measured request-processing time where the fit window recorded it "+
 		"(its line where not, as off); off by default")
+	fs.BoolVar(&f.rankMixtureRemainderServer, rankMixtureRemainderServerFlag, false, rankMixtureRemainderServerUsage)
 	f.fitWindow.registerWindow(fs)
 	f.tpotFit.register(fs)
 	fs.StringVar(&f.experimentalTPOT, experimentalTPOTFlag, "", experimentalTPOTUsage)
@@ -170,14 +179,17 @@ func runBacktest(ctx context.Context, args []string, out, warn io.Writer) error 
 		return usagef("--rank-mixture-kv-hold and --rank-mixture-remainder-spread are modes of the rank mixture's variant: " +
 			"give them with --experimental-ttft=v2nl-line")
 	}
+	if err := checkRemainderServer(f.rankMixtureRemainderServer, f.rankMixtureRemainderSpread, f.rankMixtureNLLine); err != nil {
+		return err
+	}
 	if err := f.fitWindow.check(f.rankMixtureTTFT, f.rankMixtureNLLine); err != nil {
 		return err
 	}
-	tpotV2, err := experimentalTPOTOf(f.experimentalTPOT)
+	tpotModel, err := experimentalTPOTOf(f.experimentalTPOT)
 	if err != nil {
 		return err
 	}
-	if err := f.tpotFit.check(tpotV2); err != nil {
+	if err := f.tpotFit.check(tpotModel != ""); err != nil {
 		return err
 	}
 	warnKVHoldAlone(warn, f.rankMixtureKVHold, f.rankMixtureRemainderSpread)
@@ -301,6 +313,7 @@ func (f *backtestFlags) rankMixture(req *whatifapi.BacktestRequest, testPath str
 	req.RankMixtureFitSteps = f.rankMixtureFitSteps
 	req.RankMixtureStratified = f.rankMixtureStratified
 	req.RankMixtureKVHold, req.RankMixtureRemainderSpread = f.rankMixtureKVHold, f.rankMixtureRemainderSpread
+	req.RankMixtureRemainderServer = f.rankMixtureRemainderServer
 	req.RankMixtureMinFitWindow = f.fitWindow.windowField()
 	if err := withRankMixture(testPath, test, nil); err != nil {
 		return err
@@ -400,7 +413,7 @@ var resolveBacktest = func(ctx context.Context, f *backtestFlags, path string, c
 func resolveCycles(ctx context.Context, f *backtestFlags, path string, cycle int, cycles *whatifapi.CycleSet, warn io.Writer) (*whatifapi.Resolved, error) {
 	src := &servedSources{warn: warn, recordings: filepath.Dir(path)}
 	in := whatifapi.InputsRequest{Model: f.model, PrefillVariant: f.prefillVariant, DecodeVariant: f.decodeVariant,
-		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, ExperimentalTTFT: f.experimentalTTFT,
+		PrefillVPPlateau: f.vpPlateau, PrefillHitAtCount: f.hitAtCount, PrefillVPServiceLine: f.vpServiceLine, PrefillFLoadCurve: f.fLoadCurve, ExperimentalTTFT: f.experimentalTTFT,
 		Source: &whatifapi.SourceRequest{Kind: whatifapi.SourceRecording, Name: filepath.Base(path), Cycle: cycle, Cycles: cycles}}
 	res, err := src.Resolve(ctx, in)
 	if err != nil && whatifapi.IsInputError(err) {
@@ -455,7 +468,8 @@ func seriesSamplesOf(cycles []learnreplay.CycleSample) []whatifapi.SeriesSample 
 			PromptComputedRate: c.PromptComputedRate, PromptRequestRate: c.PromptRequestRate, PromptBuckets: c.PromptBuckets,
 			FlowControlSeries: c.FlowControlSeries, EngineRate: c.EngineRate, PrefillReplicas: c.PrefillReplicas,
 			DecodeReplicas: c.DecodeReplicas, RouterQueued: c.RouterQueued,
-			PrefillNotServing: c.PrefillNotServing, DecodeNotServing: c.DecodeNotServing}
+			PrefillNotServing: c.PrefillNotServing, DecodeNotServing: c.DecodeNotServing,
+			DecodeKVBusiest: c.DecodeKVBusiest, DecodeKVMean: c.DecodeKVMean, DecodeKVPods: c.DecodeKVPods}
 	}
 	return out
 }

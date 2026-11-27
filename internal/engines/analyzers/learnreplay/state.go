@@ -15,6 +15,7 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/slo"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/inferenceengine"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/balance"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/capacity"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/itl"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learn"
@@ -103,6 +104,11 @@ type State struct {
 	// Prefill is each prefill variant at the cycle, by name, as a TTFT
 	// question reads it (state_ttft.go).
 	Prefill []PrefillState
+	// RouterPolicy is what the router scores, the prefix cache, the load,
+	// both or neither, read from its series over every cycle up to Cycle by
+	// the reader the controller reads its own cycles with
+	// (balance.RouterCycleOf, balance.Tracker.ObserveRouter).
+	RouterPolicy balance.RouterPolicy
 	// FlowControlSeries says the router's flow-control queue series exists for
 	// the model at the cycle, by S1's rule (domain.AnalyzerInput.FlowControlSeries).
 	// False is no queue series, which a scrape gap reads as too.
@@ -322,6 +328,10 @@ type shapeSample struct {
 //     counted by its capacity part only, so deferred waits are not a queue.
 //   - saturation.SwitchPrefillFBusyMinutes: f, the prefill imbalance, the
 //     median of the busiest minutes, not of every minute.
+//   - saturation.SwitchPrefillFPooledMinutes: f from consecutive minutes
+//     pooled to prefill.MinRequestsPerPodMinute requests a pod, where a
+//     minute alone carries fewer (a fleet of long prompts), in place of no
+//     f and whatif.ImbalanceFloor at every count above one.
 //   - saturation.SwitchPrefillALowLoadByRate: a's low-load minutes read by
 //     their rate against their prompt cluster's service time, not their own.
 //   - saturation.SwitchPrefillAMedianOverhead: a's overhead the median of
@@ -481,6 +491,14 @@ type shapeSample struct {
 // the fit's hit held at more. It goes on once the public cross-validation
 // shows no figure newly under what was measured.
 //
+// saturation.SwitchPrefillFLoadCurve is planner-only and not listed (issue
+// llm-d-incubation/llm-d-scaling-manager#482): it fits f against the load
+// per pod at each prefill count, f(u) = f_inf + delta/u, and the planner
+// prices f at a rate as the higher of its f and the curve's. It passed one
+// pre-registered offline test on the lab's Qwen3-32B recordings (a later
+// run at the same count, held out); it goes on once the public
+// cross-validation shows no figure newly under what was measured.
+//
 // saturation.SwitchPrefillVPWindowBest is planner-only and not listed: it
 // keeps the peak under a queue read anywhere in the recording, not only in
 // the last 6 hours, flagged with its age (VPFromEarlierInWindow). No public
@@ -553,6 +571,7 @@ func PlannerSwitches() map[string]map[string]bool {
 		saturation.SwitchPrefillAEngineTiming:         true,
 		saturation.SwitchPrefillQueueByCapacity:       true,
 		saturation.SwitchPrefillFBusyMinutes:          true,
+		saturation.SwitchPrefillFPooledMinutes:        true,
 		saturation.SwitchPrefillALowLoadByRate:        true,
 		saturation.SwitchPrefillAMedianOverhead:       true,
 		saturation.SwitchITLAdaptiveBandFloor:         true,
@@ -1044,16 +1063,10 @@ func shapeOf(samples []shapeSample) MeasuredShape {
 // tpotWindow is the router's per-request TPOT histogram of one cycle, as the
 // what-if library reads it: bucket rates for counts, which give the same
 // quantile and mean.
+// It is whatif.TPOTWindowOf, the window the slo analyzer's default TPOT
+// percentile reads from its own cycles.
 func tpotWindow(rl *domain.RouterLatency) (whatif.TPOTWindow, bool) {
-	if rl == nil || len(rl.TPOTBuckets) == 0 {
-		return whatif.TPOTWindow{}, false
-	}
-	w := whatif.TPOTWindow{Sum: rl.TPOTSumRate, Count: rl.TPOTCountRate, SumMeasured: true,
-		Buckets: make([]whatif.HistogramBucket, len(rl.TPOTBuckets))}
-	for i, b := range rl.TPOTBuckets {
-		w.Buckets[i] = whatif.HistogramBucket{UpperEdge: b.UpperBound, Count: b.Rate}
-	}
-	return w, true
+	return whatif.TPOTWindowOf(rl)
 }
 
 // analyzedPolicy is in's recorded config, or, where the saturation analyzer

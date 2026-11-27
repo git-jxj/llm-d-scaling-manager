@@ -613,7 +613,7 @@ across a restart, are otherwise visible only in the logs.
 - **Type**: Counter
 - **Description**: Total number of metrics collection errors
 - **Labels**:
-  - `query_type`: Type of metrics query that failed. `pod_list` is the controller's per-namespace Pod listing, a Kubernetes API read rather than a Prometheus query. `pool_list` is the per-namespace InferencePool listing that decides which replicas the router can reach; on a failure the namespace's supply is counted without that check. A pool kind the API server does not serve is not a failure. `router_latency` is the router's TTFT histogram and TPOT mean the `slo` analyzer reads. `learner_recording` is a query only a learner recording reads (the TTFT inputs: per-pod histograms and means, the router's TPOT, flow-control wait and request-processing histograms, the flow-control pools); these run only while `LEARNER_RECORDING_DIR` names a directory, so the series never appears otherwise, and a failure there leaves scaling untouched: it shows on this counter and does not raise `LLMSMMetricsCollectionFailing`. `ttft_inputs` is a per-pod query the shadow TTFT pricing reads (the queue minimum, the computed-prefill-token histogram, the KV transfer time): these run in a namespace with a model whose policy has a TTFT target and lists the `slo` analyzer, and while recording. A failure leaves scaling untouched and does not raise `LLMSMMetricsCollectionFailing` either: the pricing reads the input as unknown and flags it. `slo_model_inputs` is a query only the slo analyzer's v2 latency models read, issued with its switch `slo-v2-inputs` on ([v2 latency models](#slo-analyzer-v2-latency-models)); its failure does not alert either, and the input reads missing. A `router_latency`, `learner_recording`, `ttft_inputs` or `arrival_rate` failure is counted once per query the controller ran, not once per model that read its result in the same cycle. Before the TTFT recorder (R1) `router_latency` counted once per model per failed query, so with several models in a namespace the same outage now reads a lower rate. `arrival_rate` counted once per model too until it was fixed (ev-shindin/llm-scaling-manager#461), so it also reads a lower rate on namespaces with several models
+  - `query_type`: Type of metrics query that failed. `pod_list` is the controller's per-namespace Pod listing, a Kubernetes API read rather than a Prometheus query. `pool_list` is the per-namespace InferencePool listing that decides which replicas the router can reach; on a failure the namespace's supply is counted without that check. A pool kind the API server does not serve is not a failure. `router_latency` is the router's TTFT histogram and TPOT mean the `slo` analyzer reads. `learner_recording` is a query only a learner recording reads (the TTFT inputs: per-pod histograms and means, the API server's HTTP handler and end-to-end means, the router's TPOT, flow-control wait and request-processing histograms and its render mean, the flow-control pools); these run only while `LEARNER_RECORDING_DIR` names a directory, so the series never appears otherwise, and a failure there leaves scaling untouched: it shows on this counter and does not raise `LLMSMMetricsCollectionFailing`. `ttft_inputs` is a per-pod query the shadow TTFT pricing reads (the queue minimum, the computed-prefill-token histogram, the KV transfer time): these run in a namespace with a model whose policy has a TTFT target and lists the `slo` analyzer, and while recording. A failure leaves scaling untouched and does not raise `LLMSMMetricsCollectionFailing` either: the pricing reads the input as unknown and flags it. `slo_model_inputs` is a query only the slo analyzer's v2 latency models read, issued with its switch `slo-v2-inputs` on ([v2 latency models](#slo-analyzer-v2-latency-models)); its failure does not alert either, and the input reads missing. A `router_latency`, `learner_recording`, `ttft_inputs` or `arrival_rate` failure is counted once per query the controller ran, not once per model that read its result in the same cycle. Before the TTFT recorder (R1) `router_latency` counted once per model per failed query, so with several models in a namespace the same outage now reads a lower rate. `arrival_rate` counted once per model too until it was fixed (ev-shindin/llm-scaling-manager#461), so it also reads a lower rate on namespaces with several models
   - `reason`: Reason for the error. For `pod_list` and `pool_list`: `forbidden`, `unavailable` or `other`
 - **Use Case**: Track metrics collection failures and identify problematic queries. A failed `pod_list` makes the controller treat every Pod in that namespace as Ready and present for the cycle, so a not-Ready Pod's saturated reading can become its variant's k2; a steady rate of `pod_list` errors (`reason="forbidden"` after an RBAC change) is worth an alert
 - **Example**:
@@ -1071,10 +1071,10 @@ whose `mode` changes, loses its old series in the next cycle.
 
 | metric | type | labels | meaning |
 | --- | --- | --- | --- |
-| `llmsm_replicas_suggested` | gauge | `namespace`, `model_name`, `variant_name`, `role`, `mode` | X: the replicas the analyzers ask for before any limiter, the variant's `maxReplicaCount` and the utilization share. Equal to `llmsm_replicas_provided` unless one of those changed the target. |
-| `llmsm_replicas_provided` | gauge | same | Y: the replicas the variant gets, after the limiters and the utilization share. With `mode="active"`, the same value as `llmsm_desired_replicas`. |
-| `llmsm_replicas_short` | gauge | same, plus `reason`, `limiter_name` | How many of the suggested replicas one reason took away. Present only while positive. |
-| `llmsm_replicas_borrowed` | gauge | same as `llmsm_replicas_suggested` | Y − X when the utilization share gave the variant more than the analyzers asked for; `0` otherwise. This is not Kueue cohort borrowing. |
+| `llmsm_replicas_suggested` | gauge | `namespace`, `model_name`, `variant_name`, `role`, `mode`, `learner` | X: the replicas the analyzers ask for before any limiter, the variant's `maxReplicaCount` and the utilization share. Equal to `llmsm_replicas_provided` unless one of those changed the target. `learner` is empty (absent in PromQL) for the analyzers' own ask. With `learner="ttft-mixture"`, a would-be figure, never applied, for the prefill variant of a model with `mode` `passive` or `shadow` (with the utilization share in shadow, an active model's own target is still applied): what the analyzers would ask with the SLO analyzer sizing prefill on the v2 TTFT model (see [SLO analyzer v2 latency models](#slo-analyzer-v2-latency-models)). That series has no `llmsm_replicas_provided` beside it. |
+| `llmsm_replicas_provided` | gauge | same, without `learner` | Y: the replicas the variant gets, after the limiters and the utilization share. With `mode="active"`, the same value as `llmsm_desired_replicas`. |
+| `llmsm_replicas_short` | gauge | same as `llmsm_replicas_provided`, plus `reason`, `limiter_name` | How many of the suggested replicas one reason took away. Present only while positive. |
+| `llmsm_replicas_borrowed` | gauge | same as `llmsm_replicas_provided` | Y − X when the utilization share gave the variant more than the analyzers asked for; `0` otherwise. This is not Kueue cohort borrowing. |
 | `llmsm_quota_remaining_after_suggested_gpus` | gauge | `limiter_name`, `scope`, `accelerator` | GPUs a quota pool would have left if every variant it covers got its suggestion: the pool's limit, minus what is held now, minus the GPUs the suggestions add (or plus the GPUs they free). Negative means the suggestions do not fit in the quota. For a Kueue quota the limit is the guaranteed (nominal) figure, so a negative value can still be covered by borrowing from the cohort. `scope` is the namespace for a namespace-scoped quota, `cluster` otherwise. An unlimited pool has no series. |
 
 `role` is `prefill` or `decode` for a P/D model, `both` otherwise.
@@ -1377,8 +1377,8 @@ reads higher than what clients saw over a whole run.
 | `llmsm_slo_fill` | gauge | `namespace`, `model_name`, `variant_name`, `objective` | The KV fill, as a fraction of physical KV, the variant's SLO capacity is priced at, before any scale-up headroom: where its mean inter-token latency meets the TPOT target, clamped to the ITL band (`analyzerTuning.itlBand.minObservableK`, `analyzerTuning.itlBand.maxObservableK`; [0.15, 0.80] by default), and lowered to the fill the engine can reach when `max_num_seqs` (or `--max-num-active-seqs`, when lower or when `max_num_seqs` is not stated) binds. Clamped or capped, the line's ITL there is below the target. Absent when the variant could not be priced: see `llmsm_slo_source`. | Compare with `kvCacheThreshold` (0.80 by default), the fill saturation prices a replica at before headroom. Lower: the target needs more replicas than the tier gives; [scaling-policy](scaling-policy.md#slo-observes-bounds-decode-packing) has the query for how many. At 0.80, the top of the clamp, the target does not bind; with a `kvCacheThreshold` above 0.80 it cannot show slack. |
 | `llmsm_slo_predicted_itl_seconds` | gauge | `namespace`, `model_name`, `variant_name` | The mean inter-token latency the variant's fitted line predicts at the fill it would actually run at, once `scaleUpThreshold` headroom is applied, never below the bottom of the fitted range. | It is the latency margin an SLO tier would really have. It differs per accelerator for the same `scaleUpThreshold`. |
 | `llmsm_slo_source` | gauge | `namespace`, `model_name`, `variant_name`, `source` | `1` for where the variant's SLO pricing came from, `0` for the others. See the source values below. Absent for a variant not priced for TPOT (a prefill variant). | See the source values below. |
-| `llmsm_slo_predicted_ttft_seconds` | gauge | `namespace`, `model_name`, `variant_name`, `statistic` | Shadow, prefill variants of a P/D model only. The TTFT predicted at the variant's current rate, at the objective's percentile. **It is an estimate, not a bound:** at the assumed prompt spread it reads high, and at the spread actually sent it reads low. Absent when the model refuses the rate, or when `llmsm_slo_ttft_reason` is a refusal. | Against `llmsm_slo_observed_seconds{objective="ttft"}`, with the query below. Nothing sizes from it. See [reading the TTFT prediction](#reading-the-ttft-prediction). |
-| `llmsm_slo_ttft_unmet` | gauge | `namespace`, `model_name`, `variant_name`, `statistic` | `1` when the current rate misses the target: the prediction is above it, or the rate is at or over the prefill knee or the decode flow-control onset, or above the prefill flow-control onset where the gate's wait is not priced (by default; with the opt-in `slo-ttft-router-wait` on, only past 0.9 of the prefill knee), or `llmsm_slo_ttft_reason` is `target-below-floor`, which is `1` at any rate unless only an assumed decode term puts the floor over the target. `0` only with a prediction, when it meets the target. Absent otherwise, which includes that assumed case. | `1` with no prediction: read `llmsm_slo_ttft_refused`, or the reason for `target-below-floor`. |
+| `llmsm_slo_predicted_ttft_seconds` | gauge | `namespace`, `model_name`, `variant_name`, `statistic`, `learner` | Shadow, prefill variants of a P/D model only. The TTFT predicted at the variant's current rate, at the objective's percentile, `learner="slo"`. For a model the v2 models run for, also `mean`, `p90` and `p95`, and the v2 model's figures under `learner="ttft-mixture"` (see [SLO analyzer v2 latency models](#slo-analyzer-v2-latency-models)). **It is an estimate, not a bound:** at the assumed prompt spread it reads high, and at the spread actually sent it reads low. Absent when the model refuses the rate, or when `llmsm_slo_ttft_reason` is a refusal. | Against `llmsm_slo_observed_seconds{objective="ttft"}`, with the query below. Nothing sizes from it. See [reading the TTFT prediction](#reading-the-ttft-prediction). |
+| `llmsm_slo_ttft_unmet` | gauge | `namespace`, `model_name`, `variant_name`, `statistic` | `1` when the current rate misses the target: the prediction is above it, or the rate is at or over the prefill knee or the decode flow-control onset, or above the prefill flow-control onset where the gate's wait is not priced (by default; with the opt-in `slo-ttft-router-wait` or `slo-ttft-router-wait-in-prefill` on, only past 0.9 of the prefill knee), or `llmsm_slo_ttft_reason` is `target-below-floor`, which is `1` at any rate unless only an assumed decode term puts the floor over the target. `0` only with a prediction, when it meets the target. Absent otherwise, which includes that assumed case. | `1` with no prediction: read `llmsm_slo_ttft_refused`, or the reason for `target-below-floor`. |
 | `llmsm_slo_ttft_replica_requests_per_second` | gauge | `namespace`, `model_name`, `variant_name`, `statistic` | The requests per second per prefill replica at which the TTFT meets the target, at the current replica count and imbalance. Absent unless the reason is `priced`. Carries the prediction's error: see below. | Below `rate(vllm:request_success_total[1m])` on the variant's prefill pods, per pod: the model says the target needs more prefill replicas. With several prefill variants the rate is the model's whole rate over all their replicas. |
 | `llmsm_slo_ttft_vp_source` | gauge | `namespace`, `model_name`, `variant_name`, `statistic`, `vp_source` | `1` for where the variant's prefill capacity `V_P` came from, `0` for the others: `busy-minutes`, `peak-under-queue`, `back-pressure-bound`, `inverted`, `service-line`, `none`. `inverted` is read from prefill pods whose engine queue stayed empty, and stands only where the three sources that need a queue have none. `service-line` is read from the prefill engines' own timing (prefill time against computed tokens a request) and appears only with the saturation analyzer's switch `prefill-vp-service-line`, off in the controller. | `peak-under-queue` and `back-pressure-bound` are lower bounds: the rate reads low, the safe side. `inverted` is no bound: within 5% over a fourfold load on the staircase, and 7 to 19% low under bursty arrivals, which asks for more prefill, the cost side. |
 | `llmsm_slo_ttft_reason` | gauge | `namespace`, `model_name`, `variant_name`, `statistic`, `reason` | `1` for the reason of the pricing, `0` for the others. See the reasons below. A refusal is a reason here, never a number. | Anything but `priced` means no per-replica rate this cycle. |
@@ -1496,7 +1496,7 @@ p90 and 7 at p95. Which way it errs depends on the prompt spread:
 To compare it with the router, with one prefill variant per model:
 
 ```promql
-max by (exported_namespace, model_name, statistic) (llmsm_slo_predicted_ttft_seconds)
+max by (exported_namespace, model_name, statistic) (llmsm_slo_predicted_ttft_seconds{learner="slo"})
   / on (exported_namespace, model_name, statistic)
 max by (exported_namespace, model_name, statistic) (llmsm_slo_observed_seconds{objective="ttft"})
 ```
@@ -1554,7 +1554,8 @@ model reads all of them `0`, including the two marked "on every answer":
 | `TierLoadUnmeasured` | Capacity planner only, never on this metric, and only with the replay switch `slo-ttft-tier-load` on (off by default): the prefill pods served 1% of the prompt or more from a host, disk or peer tier, and no KV transfer series priced loading it (`vllm:kv_offload_load_*`, `vllm:nixl_*`). TTFT leaves that load out and reads low by it. |
 | `TierSplitUnread` | Capacity planner only, never on this metric, and only with the replay switch `slo-ttft-tier-load` on: the prefill pods computed noticeably less than the whole prompt, and the recording has no cached tokens by tier (`vllm:prompt_tokens_cached_by_source`). Where those hits came from, and what they cost to load, is unknown: TTFT leaves any load out. |
 | `VPFromEarlierInWindow` | Capacity planner only, never on this metric: `V_P` is the peak under a prefill queue read earlier in the recording than the 6 hours the controller keeps; the assumed line says when. A lower bound. |
-| `KneeAtServedWork` | Capacity planner only, never on this metric: a prefill knee priced from a lower bound of `V_P` was raised to the rate the prefill Pods' sustained computed-token work (2 minutes, at the Pod count priced, in the last 6 hours) serves at the prompt priced. The knee is at least that rate. |
+| `KneeAtServedWork` | Capacity planner only, never on this metric: a prefill knee priced from a lower bound of `V_P` was raised to the rate the prefill Pods' sustained computed-token work (5 minutes with the prefill backlog not growing, at the Pod count priced, in the last 6 hours) serves at the prompt priced. The knee is at least that rate. |
+| `ServedWorkUnsteady` | Capacity planner only, never on this metric: a prefill knee priced from a lower bound of `V_P` was not raised to the work served, because at the Pod count priced the prefill Pods served 5 minutes only with their backlog growing. A burst carried with a queue building is not a rate they hold. The knee stays at its lower bound. |
 | `VPAtServedWork` | Capacity planner only, never on this metric, and only with the replay switch `prefill-vp-at-served-work` on (off by default): a prefill knee on a lower bound of `V_P` was floored at the prefill Pods' sustained work, and `V_P` was raised by the same ratio for the TTFT, so the TTFT is priced from the `V_P` the knee rests on. Still a lower bound. |
 | `PSByEngineConfig` | Capacity planner only, never on this metric, and only with the replay switch `slo-ttft-ps-by-engine` on (off by default): the prefill queue was priced as processor sharing because the prefill engine's flags say it shares its steps (chunked prefill with `--max-num-seqs` above 1). |
 | `PSSlotsExceeded` | Capacity planner only, with `PSByEngineConfig`: at the rate priced the busiest prefill Pod likely holds more prompts than `--max-num-seqs` times its data-parallel ranks, so the TTFT is the larger of processor sharing's and first come's. |
@@ -1586,28 +1587,50 @@ model reads all of them `0`, including the two marked "on every answer":
 | `DecodeSideOmitted`, `DecodeTTFTUnmeasured` | No decode line and no measured TTFT: decode's part is left out, so TTFT reads low. They always come together. |
 | `FlowControlInferredOff` | `slo.flowControl` is unset and the flow-control queue series does not exist. A scrape gap looks the same: declare it. |
 | `FlowControlMismatch` | The declared `slo.flowControl` contradicts the series. Priced as declared; the log says so. |
-| `AboveFlowControlOnset` | Past the prefill gate's onset where its wait is not priced: always by default, and past 0.9 of the prefill knee with the opt-in replay switch `slo-ttft-router-wait` on. A target read at that rate is counted as missed. The published rate is capped under it (bound `prefill flow-control onset`), so it never carries this flag: it shows only when the rate is refused and the flags published are the TTFT priced at the current rate's. |
-| `FlowControlWaitPriced` | Always 0 unless the opt-in replay switch `slo-ttft-router-wait` is on (off by default, as is the CLI's `--price-router-wait`). With it on, past the prefill gate's onset and up to 0.9 of the prefill knee: the gate's wait, at the router and behind the burst it sends to one prefill pod, is priced into the figure, the target is judged by the figure, and the published rate may stand there. Validated at one measured step that held, where it read at or above 0.9 of the client; it errs long. |
+| `AboveFlowControlOnset` | Past the prefill gate's onset where its wait is not priced: always by default, and past 0.9 of the prefill knee with the opt-in replay switch `slo-ttft-router-wait` or `slo-ttft-router-wait-in-prefill` on. A target read at that rate is counted as missed. The published rate is capped under it (bound `prefill flow-control onset`), so it never carries this flag: it shows only when the rate is refused and the flags published are the TTFT priced at the current rate's. |
+| `FlowControlWaitPriced` | Always 0 unless one of two opt-in replay switches is on: `slo-ttft-router-wait` or `slo-ttft-router-wait-in-prefill`. `slo-ttft-router-wait` is off by default, as is the CLI's `--price-router-wait`. With it on, past the prefill gate's onset and up to 0.9 of the prefill knee: the gate's wait, at the router and behind the burst it sends to one prefill pod, is priced into the figure, the target is judged by the figure, and the published rate may stand there. Validated at one measured step that held, where it read at or above 0.9 of the client; it errs long. `slo-ttft-router-wait-in-prefill` is off by default, unlike the CLI's `--router-wait-in-prefill`, which is on. With it on, over the same range the router's wait is taken as already inside the prefill figure, which does not move, and the target is judged by it, as the capacity planner judges it by default. Measured on llm-d-router v1.0.0 only, where the figure read 1.33 to 3.39 times the router's TTFT past the onset; on v0.11.0 it reads short. |
 | `HeldByDecodeAdmission` | The decode wait lowers the rate a little. Informational below `decode-bound`. |
 | `SpreadBeyondProcessorSharing` | The prompt spread is wider than cv 0.25, where processor sharing has not been checked against a run: TTFT is the higher of processor sharing and the first-come queue. The assumed spread of 2 always raises it. |
-| `PromptSpreadClamped` | The measured spread was above 3 or ran past the histogram: priced at 3. |
+| `PromptSpreadClamped` | The measured spread was above 3, or ran past the histogram with no context window to hold it: priced at 3. Where the prefill variant's `--max-model-len` is read, prompts past the histogram's last bound are held under it and the spread is read as an upper bound, without this flag. |
 | `PromptSpreadAbovePeak` | The spread, assumed or measured, is above the one that prices the longest prompt at this percentile (2.22 at p90, 1.66 at p85), so a wider spread reads a shorter floor. At p85 and below the assumed 2 sets it. |
 | `BelowFittedBand`, `KVBoundSlots` | Decode ran below its fitted band, or KV set its slots rather than the batch cap. |
 | `AssumedVP`, `DecodeOnsetUnchecked` | Always 0 here. Listed so the series set does not change. |
 
 ### SLO analyzer v2 latency models
 
-Shadow. The slo analyzer will price TTFT and TPOT with the capacity
-planner's v2 models (the rank-mixture TTFT, the renewal-lognormal TPOT) beside
-its own. It does not price with them yet: the models are still being
-validated. Today these series say which of the models' inputs your fleet
-exports. They are published for every passive model (`llmsm_passive_mode`
-not `active`) and, while the utilization share plans in shadow, for every
-model: the controller moves nothing for those, so the extra queries are the
-only cost. For an active model they need the slo analyzer's switch
-`slo-v2-inputs`, off from the constructor until the evidence from passive and
-shadow deployments turns it on. Active scaling decisions never read them.
-Design: [the proposal](../proposals/predicted-latency-in-controller.md).
+Shadow. The slo analyzer prices TTFT and TPOT with the capacity planner's v2
+models (the rank-mixture TTFT, the renewal-lognormal TPOT) beside its own, so
+you can compare both with what the router measured. They run for every
+passive model (`llmsm_passive_mode` not `active`) and, while the utilization
+share plans in shadow, for every model, where the model's policy lists the
+`slo` analyzer (which publishes them): the controller moves nothing for
+those, so the cost is the extra queries and fits. For an active model they
+need the slo analyzer's switch `slo-v2-inputs`, off from the constructor until
+the evidence from passive and shadow deployments turns it on. Active scaling
+decisions never read them. Design:
+[the proposal](../proposals/predicted-latency-in-controller.md); how to run
+it: [compare the v2 latency models](../guides/compare-v2-latency-models/).
+
+The v2 models fit on the model's last 13 hours of cycles, refit every 30
+minutes, and price the current load at most once a minute. The TTFT model
+calibrates its spread on 12 hours, the TPOT model needs 2: until the window
+holds that much, coverage reads `window-short`. A fit that fails its checks
+keeps the previous one for an hour. The window is forgotten when the
+model's prefill or decode variant or its engine arguments change, on the
+`llm-d.ai/forget-learned-state` annotation, and after the state timeout
+without a cycle. It is not kept across a controller restart: after one, the
+window fills again. A window keeps at most one cycle every 13 seconds, so
+it holds as much at a 5 s cycle as at the default 15 s one. The controller
+keeps the windows of at most 16 models at once, about 15 MiB each for a
+large P/D model, so that a fleet of passive models stays inside the
+controller's 512 MiB memory limit. A model past that reads coverage
+`model-limit` and publishes no v2 figures until a window is freed: a model
+leaves or is forgotten, or a model the v2 models no longer run for (it
+turned active, or its policy dropped the `slo` analyzer) has gone an hour
+without a cycle. A cycle whose variant pair or engine arguments do not
+read (variant states missing, several variants of a role during a
+migration) keeps the window and reads coverage `signal-missing`, for an
+hour; unread longer, the window starts again.
 
 Labels are `namespace` (the model's, scraped as `exported_namespace`) and
 `model_name`, plus `controller_instance` when `CONTROLLER_INSTANCE` is set.
@@ -1616,9 +1639,15 @@ longer reconciled, and every series when a cycle reconciles no model.
 
 | metric | type | labels | value |
 | --- | --- | --- | --- |
-| `llmsm_slo_model_coverage` | gauge | `objective`, `reason` | `1` for the one reason that holds, `0` for the others: `priced`; `abstained` (the model refused the window, as the planner would); `signal-missing` (an input was not read this cycle); `window-short` (every input was read, too few steps to fit yet); `not-built` (every input was read, and the analyzer does not price with the model yet) |
+| `llmsm_slo_model_coverage` | gauge | `objective`, `reason` | `1` for the one reason that holds, `0` for the others: `priced`; `abstained` (the model's checks refused the window, as the planner would, or the current rate); `signal-missing` (an input was not read this cycle and no fit prices); `window-short` (the window does not yet hold what the model fits on); `model-limit` (the controller already runs the v2 models for 16 models, so this one waits for one of them to leave) |
 | `llmsm_slo_model_input_missing` | gauge | `objective`, `signal` | `1` for each input not read this cycle; absent for one that was |
-| `llmsm_slo_predicted_tpot_seconds` | gauge | `variant_name`, `statistic` (`mean`, `p90`, `p95`), `learner` (`slo`, the analyzer's own; `tpot-distribution`, the v2 model) | the TPOT predicted for a decode variant at its current load, both models side by side, beside `llmsm_slo_predicted_ttft_seconds`. Registered, never published yet |
+| `llmsm_slo_predicted_ttft_seconds` | gauge | `variant_name`, `statistic` (`mean`, `p90`, `p95`, and the objective's percentile), `learner` | the TTFT at the prefill variant's current rate. `learner="slo"`: the analyzer's own model. `learner="ttft-mixture"`: the v2 rank mixture, at the serving prefill pods |
+| `llmsm_slo_predicted_tpot_seconds` | gauge | `variant_name`, `statistic` (`mean`, `p90`, `p95`), `learner` | the per-request TPOT of a decode variant (the serving variant on a fleet with no decode role) at its current load. `learner="slo"`: the mean is the analyzer's ITL line at the variant's current KV fill, and p90 and p95 are that mean times R_q, the planner's ratio read from the router's TPOT histograms over the window. `learner="tpot-distribution"`: p90 and p95 of the v2 distribution, placed around the same mean, which it does not publish again |
+
+Each v2 learner also reports under its own name on the learner series
+(`learner="ttft-mixture"`, `learner="tpot-distribution"`), with the source
+`fitted`, `held` or `none` and the admission counts `admitted`, `idle`,
+`refitted`, `held` and `over-budget`.
 
 The `signal` values, by objective. A signal is read when at least one
 serving pod of its role reports it, or the router does:
@@ -1632,14 +1661,36 @@ serving pod of its role reports it, or the router does:
 | `tpot` | router | `router-tpot-histogram`, `router-tpot-mean` |
 
 `prefill-pods` missing means the model has no prefill role: the TTFT model
-covers prefill/decode fleets only. A failed query the switch alone added is
-counted in `llmsm_metrics_collection_errors_total` under
-`query_type="slo_model_inputs"`.
+covers prefill/decode fleets only, with one prefill variant (and the TPOT
+model one decode variant); with several, it abstains. A failed query the
+switch alone added is counted in `llmsm_metrics_collection_errors_total`
+under `query_type="slo_model_inputs"`.
 
-Example: models whose TTFT model lacks an input, and which:
+Models whose TTFT model lacks an input, and which:
 
 ```promql
 llmsm_slo_model_input_missing{objective="ttft"} == 1
+```
+
+The v2 TTFT p90 against the default's, and against what the router measured:
+
+```promql
+max by (exported_namespace, model_name) (llmsm_slo_predicted_ttft_seconds{statistic="p90", learner="ttft-mixture"})
+  / on (exported_namespace, model_name)
+max by (exported_namespace, model_name) (llmsm_slo_predicted_ttft_seconds{statistic="p90", learner="slo"})
+
+max by (exported_namespace, model_name) (llmsm_slo_predicted_ttft_seconds{statistic="p90", learner="ttft-mixture"})
+  / on (exported_namespace, model_name)
+max by (exported_namespace, model_name) (llmsm_slo_observed_seconds{objective="ttft", statistic="p90"})
+```
+
+The prefill replicas the v2 TTFT model would ask for, beside the analyzers'
+own ask, for passive and shadow models:
+
+```promql
+llmsm_replicas_suggested{role="prefill", learner="ttft-mixture"}
+  - on (exported_namespace, model_name, variant_name, mode)
+llmsm_replicas_suggested{role="prefill", learner=""}
 ```
 
 ### Utilization-share optimizer metrics

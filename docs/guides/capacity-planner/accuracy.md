@@ -86,7 +86,11 @@ region, or at 99.1% outside it, beside the point answer
 fleet needed never cuts decode below that count, whatever the verdict:
 decode has a replica to spare only where one fewer still meets it. The
 label's `n=` gives the independent load levels first, then the raw
-readings.
+readings. The region does not bound the arrivals' Ca^2: a knee is a
+throughput, and how bursty the arrivals are does not move it, so a decode
+knee at the run's fleet and shape reads validated at any Ca^2, though the
+run sent Ca^2 1 (the row's shape). The label is all that moves; the knee
+does not.
 
 This table is generated from the rows the planner ships:
 
@@ -372,6 +376,64 @@ The hold given without the remainder spread is not refused, so each can
 still be compared alone, but `backtest`, `serve`, `at-replicas` and
 `day-plan` print a warning and the backtest's assumed line says so.
 
+A third mode builds on the remainder spread: the **remainder server**
+(`--rank-mixture-remainder-server`, `rankMixtureRemainderServer`), refused
+without `--experimental-ttft=v2nl-line` and `--rank-mixture-remainder-spread`
+and off by default. It does not move `fitMean` or `fitP90` either. Most of
+the router's remainder is the router calling a serving pod's `/render`
+endpoint, and that pod's API server handling the generation request before
+and after the engine's own time. The mode draws the remainder from those
+parts, each measured, in place of one line:
+
+- the router's own work outside its render call: its request-processing mean
+  less its render mean (`llm_d_epp_token_producer_render_duration_seconds`),
+  a constant;
+- the render call on the pod: its `/render` handler time
+  (`http_request_duration_seconds`), a line in the prompt;
+- the generation request's time in the pod's API server outside the engine:
+  its HTTP handler time less vLLM's end-to-end time
+  (`vllm:e2e_request_latency_seconds`), a line in the prompt. Optional: where
+  the pods do not record it, it is part of the rest;
+- the rest, which nothing measures (the sidecar, the network, the decode
+  pod's API server, the API server's output path): a line in the prompt,
+  fitted to what the parts above leave of each fit step's remainder.
+
+The pods read are the ones the variant prices (prefill pods); a decode pod's
+API server is never read, and is part of the rest. The router's work and the
+render are drawn on the remainder spread's measured law, scaled to their
+predicted mean, as the spread draws the router's processing. No part moves
+with the rate: a load-dependent term on the pods' API servers added nothing
+on two production recordings. `rankMixture.zParts.remainderServer` gives
+every fitted figure. The assumed line names the rest and its share of the fit
+window's remainder (`restShare`); where that share is over 0.5, a TTFT priced
+at a rate past the fit window's top (`topRate`) is flagged
+`RemainderRestPastFit`, since nothing says how the unmeasured part moves past
+the loads it was read over. The mode needs at least 12 fit steps that hold
+the router's processing and a pod's render or frontend: recordings made
+before these series were recorded, and every public recording here, hold
+none, and the remainder is then the plain spread, `zParts.remainderServerOff`
+says why and the assumed line says so.
+
+On a production P/D recording re-captured with these series (development
+window only), against the hold and the spread together, the remainder
+server:
+
+- read every p90 and p95 figure on the load split within 1.25 of measured,
+  where the hold and the spread together left several over it;
+- brought the busiest steps' p90 and p95 closer to measured, with fewer
+  figures over 1.25;
+- cost the time split a little: its p95 read slightly lower, and a few more
+  figures read under 0.8 than with the spread alone, though far fewer than
+  with every mode off;
+- read one more mean under 0.8 on the load split, on the same outlier step
+  the hold lowers (just under 0.8 now, just over it before).
+
+Its render, frontend and router-work figures matched the offline reference's
+within a few percent (the rest has the same mean, held as a constant), and
+the deltas above matched the reference's in direction. On every
+public recording, and on that recording as first captured (without the
+pods' series), the mode prices every figure exactly as the spread does.
+
 The 12-hour minimum, for v2 and the variant alike, is a default:
 `--rank-mixture-min-fit-window` (`rankMixtureMinFitWindow`) lowers it, on
 `backtest`, `serve`, `at-replicas` and `day-plan`. A model fitted on a shorter
@@ -412,10 +474,10 @@ their cut (`fold`).
 
 Each step is also scored at the histogram's resolution: the largest gap between
 the predicted and the measured share of requests under a bucket edge (`ks`), and
-whether the predicted p90 and p95 lie in the bucket the measured ones fell in.
-`shapeKs` is the same gap with the distribution placed at the measured mean, so
-it shows the shape's miss without the mean's. A note under the answer gives
-these figures beside the planner's own ratio.
+whether the predicted p90 and p95 lie in the measured ones' joint bracket (see
+below), or under it or over it. `shapeKs` is the same gap with the distribution
+placed at the measured mean, so it shows the shape's miss without the mean's. A
+note under the answer gives these figures beside the planner's own ratio.
 
 The model abstains on the whole backtest where `--max-num-seqs` is not read,
 where a slot queue would form, where under two hours of fit steps read the
@@ -429,6 +491,110 @@ distribution too. A distribution fitted on fewer than 24 steps reports
 `shortFit` and `minFitSteps`, and flags every percentile it prices
 `TPOTDistributionShortFit`: its renewal coefficient and its self-check folds
 read fewer steps.
+
+### Where a measured TPOT p90 or p95 lies: the joint bracket
+
+A step carries two histograms of each request's TPOT: the router's (edges 5,
+10, 20, 40, 60 and 80 ms) and the decode engines' own (vLLM's 10, 25, 50, 75
+and 100 ms). Each one pins the share of requests under each of its edges. The
+backtest reads the measured p90 and p95 from both at once:
+
+- **Where it lies.** The bracket is the tightest interval the percentile must
+  lie in under both histograms: from the largest edge the share is surely
+  under it at, to the smallest edge the share is surely at or over it at.
+  Each share is allowed two binomial standard errors either way, plus 0.005
+  for the two counting slightly different requests. A thin step therefore
+  gets a wider bracket than its bucket.
+- **The engines join above their first edge only.** Their first bucket is a
+  different population: it holds requests the router never times, and on a
+  P/D fleet an extra observation near zero for about half the requests. The
+  router and the engines disagree at their shared 10 ms edge on most steps.
+  So above 10 ms the engines' histogram gives the shape, anchored at the
+  router's share at 10 ms, and only where at least 50 requests lie above it.
+  The engines' histogram is a one-minute rate, so its requests, and with them
+  its noise and those 50, are counted over that minute, not over the
+  router's five.
+- **The figure inside.** The measured figure is read inside the merged
+  sub-bucket with the log of the share above it linear in the log of the
+  TPOT. Held out at the engines' 25 ms edge, predicted from the router alone,
+  this reading's tail ratio was 1.16 at the median. Linear reading inside the
+  bucket, which the backtest used before, gave 1.74.
+- **When the two disagree.** Where they cannot both hold at that noise, the
+  bracket is the router's own bucket, and the step counts as a conflict
+  (`conflicts`).
+
+This changes what "inside" means for the TPOT p90 and p95, in the checks and
+in the main backtest alike. A predicted figure is inside where it lies in the
+bracket; `p90Below`, `p90Above`, `p95Below` and `p95Above` count the rest. In
+the main backtest the bracket is the measured bucket: one wider than 20% of its
+lower edge leaves the pair `unresolvable` with the prediction near it, and a
+certain miss with the prediction more than 20% past it. With the router alone
+the bracket is its bucket, widened by the noise. The mean and the p50 are the
+router's own.
+
+What it removes: the linear reading inside a wide router bucket read the
+measured p90 and p95 high, which made the planner's and the model's figures
+look low. Against the joint bracket, the `=v2` model is almost never under the
+bracket, and is slightly over it at p95.
+
+**This changes the accuracy figures a backtest reports for TPOT p90 and p95,
+with no change to the planner.** The measured figure, and with it the ratio,
+`within`, `low`, the certain misses and the `unresolvable` count, now come
+from the bracket. Backtests from before this change are not comparable on
+those two rows. The change does not lean one way:
+
+- Where an engine edge falls inside the router's bucket, the bracket is
+  narrower, so a prediction that was `unresolvable` can now be a certain miss.
+- Where a step is thin, or its share sits near an edge, the noise widens the
+  bracket past the router's bucket. A prediction that was a certain miss can
+  then be `unresolvable`: the histograms cannot say it missed. It is not
+  counted within.
+- The figure inside a wide bucket is now read lower (the log-linear reading
+  above), so a planner that reads TPOT slow scores worse, and one that reads
+  it fast scores better.
+
+The mean and the p50 rows do not change.
+
+### Experimental: the per-length mixture (`--experimental-tpot=v2-mix`)
+
+`--experimental-tpot=v2-mix` (`tpotModel` `renewal-lognormal-per-length`)
+prices the same distribution as one lognormal per output-length group, in
+place of one lognormal at the lengths' mean `E[1/(L-1)]`:
+
+`P(TPOT <= x) = sum over groups of w_i Phi((log(x/m) + s_i^2/2) / s_i)`, with
+`s_i^2 = g^2 + C / (L_i - 1)` and `w_i` the group's share of the requests.
+
+Each output-length bucket is cut into up to 24 groups, log-even, with the
+lengths spread as `E[1/(L-1)]` spreads them. With one group it is the
+lognormal. `C` is fitted the same way, each fit step at its own lengths. The
+main view prices every rate at the source window's pooled lengths, as
+`=v2` prices at their pooled `E[1/(L-1)]`.
+
+It is off by default. It stays off until it passes a sealed test window.
+
+On the public lab recordings, each fitted and scored on its own steps (in
+sample), at the measured mean, the steps whose p90 or p95 lies in the measured
+one's bracket:
+
+| recordings | steps | `=v2` p90 | `=v2` p95 | `=v2-mix` p90 | `=v2-mix` p95 |
+|---|---|---|---|---|---|
+| Qwen3-32B staircase, 6 runs (q32j) | 136 | 135 | 133 | 135 | 133 |
+| Qwen3-32B warm-up (cpval-s2) | 29 | 24 | 21 | 27 | 25 |
+| Qwen3-32B warm-ups (q32h, q32f, repo-q32) | 71 | 53 | 38 | 65 | 60 |
+| Qwen3-0.6B staircases and warm-ups (4 runs) | 82 | 40 | 37 | 63 | 41 |
+
+An earlier count of this table read the engines' one-minute rates as if they
+held over the router's five minutes, which took five times their requests and
+too little noise. Counted over the minute, the engines join on fewer steps
+(cpval-s2 19 of 29 where it was 29, q32j 132 of 136 where it was 133), and
+none of the counts that table held moved. The q32h, q32f and repo-q32 row is
+new.
+
+Where `=v2` misses, it reads over the bracket: on Qwen3-0.6B, 41 p90s and 45
+p95s over it, against 18 and 40 for the mixture. The q32j runs barely tell the
+two apart: nearly every step is already inside. On Qwen3-0.6B most requests'
+TPOT is under 10 ms, where neither histogram has an edge; only finer vLLM
+buckets (`--custom-histogram-buckets`) would place those percentiles better.
 
 ## Adding a run
 

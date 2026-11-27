@@ -260,6 +260,21 @@ func (d Decode) lowestFillAt(k float64) (fill float64, extrapolated bool) {
 	return LowestFill(d.Band, d.Tier, d.Line, floor), true
 }
 
+// readFill is the fill d reads its line at for a replica at fill k: k,
+// raised to the floor at k's own count (lowestFillAt) where the line reads
+// under it. Every reader of the floor goes through it, so the knee, the
+// admission chain, the TPOT-target inversion, the TTFT's decode step and the
+// TPOT itself read one floor (issue
+// llm-d-incubation/llm-d-scaling-manager#485). It rises with k: the line and
+// the floor by count both do (itl.ValidModel needs A > 0). extrapolated
+// reports the floor read below every count it saw, at a fill the old
+// lowest-count floor would have held up (lowestFill above k), the cases
+// ExtrapolatedBelowFloor names.
+func (d Decode) readFill(k float64) (fill float64, extrapolated bool) {
+	lowest, ext := d.lowestFillAt(k)
+	return max(k, lowest), ext && d.lowestFill() > k
+}
+
 // fullPoint is where a replica saturates: the sequences it runs there, the
 // fill those occupy, and the fill the line is read at.
 type fullPoint struct {
@@ -271,14 +286,18 @@ type fullPoint struct {
 	// slotFill is the fill the slots occupy, c*KVreq/C: never above band.Hi.
 	slotFill float64
 	// fill is k_full, the fill the line is read at: slotFill, raised to
-	// lowestFill when the slots fill less than that (a line without a
-	// measured intercept is read no lower than the band's bottom).
+	// the floor at the slots' own count (readFill) when the slots fill less
+	// than that (a line without a measured intercept is read no lower than
+	// the band's bottom).
 	fill float64
 	// by is what set the slots.
 	by Bound
 	// belowBand is slotFill < band.Lo: the knee sits below the band the line
 	// was fitted over.
 	belowBand bool
+	// extrapolated is the knee read at the floor by count below every count
+	// the floor saw (readFill).
+	extrapolated bool
 }
 
 // full is the replica's saturation point. The knee and the admission chain
@@ -292,17 +311,24 @@ func (d Decode) full() fullPoint {
 	p.slotFill = p.slots * d.KVPerRequest / d.CapacityTokens
 	p.fill = min(p.slotFill, d.Band.Hi) // a rounding above Hi reads Hi, as chainMu does
 	if p.slotFill < d.Band.Lo {
-		p.fill, p.belowBand = max(p.slotFill, d.lowestFill()), true
+		p.fill, p.extrapolated = d.readFill(p.slotFill)
+		p.belowBand = true
 	}
 	return p
 }
 
-// flags is BelowFittedBand when the knee sits below the band.
+// flags is BelowFittedBand when the knee sits below the band, and
+// ExtrapolatedBelowFloor when it is read at the floor by count below every
+// count the floor saw.
 func (p fullPoint) flags() []Flag {
+	var flags []Flag
 	if p.belowBand {
-		return []Flag{BelowFittedBand}
+		flags = append(flags, BelowFittedBand)
 	}
-	return nil
+	if p.extrapolated {
+		flags = append(flags, ExtrapolatedBelowFloor)
+	}
+	return flags
 }
 
 // replicaRate is lambda_rep(k), one replica's request rate at fill k: the
@@ -378,13 +404,15 @@ func (d Decode) steps() float64 {
 }
 
 // chainMu is the rate a replica holding m sequences completes them:
-// m / residence(ITL(k_m)), OL * ITL(k_m) with no HeldBefore, with k_m = m*KVreq/C clamped to [lowestFill, band.Hi]
+// m / residence(ITL(k_m)), OL * ITL(k_m) with no HeldBefore, with k_m = m*KVreq/C raised to the floor at m's own
+// count (readFill) and clamped to band.Hi
 // (below the band only a measured intercept is read at the fill itself). The
 // admission chain's state m completes at chainMu(min(m, c)), and the knee is
 // N_d * chainMu(c): one formula, so the chain and the knee saturate at the
 // same rate by construction.
 func (d Decode) chainMu(m float64) float64 {
-	k := min(max(m*d.KVPerRequest/d.CapacityTokens, d.lowestFill()), d.Band.Hi)
+	k, _ := d.readFill(m * d.KVPerRequest / d.CapacityTokens)
+	k = min(k, d.Band.Hi)
 	return m / d.residence(d.itlAt(k))
 }
 
@@ -598,6 +626,44 @@ func (d Decode) fillForTPOT(t float64, r TPOTRatio, lo float64) (float64, bool) 
 	return lo, global
 }
 
+// tpotRead is the TPOT, times R_q, a request running at fill k prices: the
+// line read at readFill(k), held up by the floor at k's own count.
+func (d Decode) tpotRead(k float64, r TPOTRatio) float64 {
+	f, _ := d.readFill(k)
+	v, _ := d.tpotAtFill(f, r)
+	return v
+}
+
+// fillForTPOTRead is the fill k* at which tpotRead reaches t, the floor read
+// at each count searched. At and above lowestFill no floor by count holds
+// the line up (lowestFillAt never reads above lowestFill), so a target the
+// line meets there is fillForTPOT's, from lowestFill, as before. A target at
+// or under the line at lowestFill is met, if at all, at fewer sequences:
+// tpotRead rises with k, so k* is bisected on [0, lowestFill] and the side
+// below t returned, as fillForTPOT does. Its one caller has refused a
+// target at or under tpotRead(0).
+func (d Decode) fillForTPOTRead(t float64, r TPOTRatio) (float64, bool) {
+	lowest := d.lowestFill()
+	if at, _ := d.tpotAtFill(lowest, r); at < t {
+		return d.fillForTPOT(t, r, lowest)
+	}
+	lo, hi := 0.0, lowest
+	for range 200 {
+		mid := (lo + hi) / 2
+		if mid == lo || mid == hi {
+			break
+		}
+		if d.tpotRead(mid, r) < t {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	f, _ := d.readFill(lo)
+	_, global := r.At(f)
+	return lo, global
+}
+
 // RateQuery is question 1's input beyond the fleet.
 type RateQuery struct {
 	// Target is the TPOT service level.
@@ -614,15 +680,18 @@ type RateQuery struct {
 // (docs/proposals/slo-capacity-planner.md, "Question 1").
 //
 // It inverts ITL(k)*R_q(k) = t (fillForTPOT; k* = (t/R_q - B)/A with one R_q,
-// and R_q = 1 for the mean), refuses with TargetBelowFloor when the floor,
-// ITL(lowestFill)*R_q, already reaches t, clamps k* to k_full, and prices
-// N_d * lambda_rep(k*). The rate is then capped at the operating point,
-// headroom times the knee, because past it the admission wait is no longer
-// small; a headroom of 1 lifts the cap. A final fill below the band is flagged
-// BelowFittedBand.
+// and R_q = 1 for the mean), the line read through the floor at each count
+// searched (fillForTPOTRead), refuses with TargetBelowFloor when the floor at
+// the fewest sequences, tpotRead(0), already reaches t, clamps k* to k_full,
+// and prices N_d * lambda_rep(k*). The rate is then capped at the operating
+// point, headroom times the knee, because past it the admission wait is no
+// longer small; a headroom of 1 lifts the cap. A final fill below the band is
+// flagged BelowFittedBand, and one priced at the floor by count below every
+// count the floor saw ExtrapolatedBelowFloor, as SLOAtReplicas's TPOT is.
 //
 // Basis.Uncapped is the rate the target alone allows, Basis.Fill the fill the
-// answer runs at, and Basis.BoundBy what set the rate.
+// answer runs at, Basis.Floor the floor at its own count, and Basis.BoundBy
+// what set the rate.
 func RateForTPOT(d Decode, q RateQuery) Result {
 	if u := d.check(); u != nil {
 		return *u
@@ -638,12 +707,14 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	if !(q.Headroom > 0 && q.Headroom <= 1) {
 		return refuse(InvalidInput, fmt.Sprintf("headroom %g, want 0 < headroom <= 1 for question 1", q.Headroom))
 	}
-	floor, _ := d.tpotAtFill(d.lowestFill(), r)
-	if floor >= t.Seconds {
-		return refuse(TargetBelowFloor, fmt.Sprintf("target %.4g ms at or below the floor %.4g ms", 1000*t.Seconds, 1000*floor))
+	// The lowest TPOT any rate prices is the one at fill 0, read at the
+	// floor of the fewest sequences (readFill): under the floor's counts the
+	// floor by count sits below lowestFill's.
+	if least := d.tpotRead(0, r); least >= t.Seconds {
+		return refuse(TargetBelowFloor, fmt.Sprintf("target %.4g ms at or below the floor %.4g ms", 1000*t.Seconds, 1000*least))
 	}
 	p := d.full()
-	k, global := d.fillForTPOT(t.Seconds, r, d.lowestFill())
+	k, global := d.fillForTPOTRead(t.Seconds, r)
 	by := []Bound{BoundTPOT}
 	e := d.burstFill()
 	// Under a burst a target met at k_full itself is met at every fill a
@@ -658,7 +729,7 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	// burst alone has no rate.
 	if e > 0 && !clamped {
 		if k <= e {
-			burstFloor, _ := d.tpotAtFill(max(e, d.lowestFill()), r)
+			burstFloor := d.tpotRead(e, r)
 			return refuse(TargetBelowFloor, fmt.Sprintf("target %.4g ms at or below the TPOT the arrivals' clustering alone prices, %.4g ms",
 				1000*t.Seconds, 1000*burstFloor))
 		}
@@ -694,6 +765,13 @@ func RateForTPOT(d Decode, q RateQuery) Result {
 	}
 	if below {
 		flags = append(flags, BelowFittedBand)
+	}
+	// The floor is the one at the answer's own count, as tpotAt reports it.
+	seen := d.seenFill(k)
+	lowest, _ := d.lowestFillAt(seen)
+	floor, _ := d.tpotAtFill(lowest, r)
+	if _, extrapolated := d.readFill(seen); extrapolated {
+		flags = append(flags, ExtrapolatedBelowFloor)
 	}
 	// The thin bucket's stand-in matters only where the target sets the rate:
 	// k* is then the answer's fill.

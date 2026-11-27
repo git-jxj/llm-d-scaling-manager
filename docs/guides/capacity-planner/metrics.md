@@ -88,6 +88,8 @@ it.
 | `vllm:request_prefill_time_seconds_sum` | histogram sum | | mean prefill time, recorded | optional |
 | `vllm:request_prefill_time_seconds_count` | histogram count | | mean prefill time, recorded | optional |
 | `vllm:request_time_per_output_token_seconds_bucket` | histogram buckets | `le` | the engine's TPOT distribution, recorded | optional |
+| `vllm:kv_block_reuse_gap_seconds_bucket` | histogram buckets | `le` | the time since a cached block's last use, at each prefix-cache hit: the prefix hit at another prefill count (`--prefill-hit-at-count`); recorded (with `--kv-cache-metrics`) | optional |
+| `vllm:kv_block_idle_before_evict_seconds_bucket` | histogram buckets | `le` | how long an evicted block sat unused: the cache's horizon, for the same; recorded (with `--kv-cache-metrics`) | optional |
 | `vllm:nixl_xfer_time_seconds_sum` | histogram sum | | KV transfer time between prefill and decode | optional |
 | `vllm:nixl_xfer_time_seconds_count` | histogram count | | KV transfer time | optional |
 | `vllm:nixl_bytes_transferred_sum` | histogram sum | | bytes NIXL moved: with the transfer time above, a peer hit's load time per token; recorded | optional |
@@ -95,6 +97,10 @@ it.
 | `vllm:kv_offload_load_time_total` | counter | | seconds those loads took: a host, disk or peer hit's load time per token; recorded | optional |
 | `vllm:kv_offload_tiering_read_bytes_total` | counter | | bytes a tiering offload read from a peer or disk tier into its CPU tier; recorded (vLLM 0.28 and later) | optional |
 | `vllm:kv_offload_tiering_read_time_total` | counter | | seconds those reads took: added to a disk or peer hit's load time; recorded | optional |
+| `vllm:e2e_request_latency_seconds_sum` | histogram sum | | the engine's mean end-to-end time: with the HTTP handler's below, a pod's API-server time outside the engine, `--rank-mixture-remainder-server` | optional |
+| `vllm:e2e_request_latency_seconds_count` | histogram count | | as above | optional |
+| `http_request_duration_seconds_sum` | histogram sum | `handler` (no `model_name`) | the API server's mean handler time, on the generation endpoints and on their `/render`: `--rank-mixture-remainder-server` | optional |
+| `http_request_duration_seconds_count` | histogram count | `handler` (no `model_name`) | as above; the `/render` calls a second | optional |
 | `vllm:num_preemptions_total` | counter | | preemptions | optional |
 | `vllm:spec_decode_num_accepted_tokens_total` | counter | | accepted draft tokens: TPOT per token under speculative decoding | optional |
 
@@ -153,7 +159,7 @@ flow control and the router's own latency go unread.
 | `inference_extension_flow_control_queue_bytes` | gauge | | as above, older routers | optional |
 | `llm_d_epp_flow_control_request_enqueue_duration_seconds_count` | histogram count | `job` | arrival rate, with flow control on | optional |
 | `inference_extension_flow_control_request_enqueue_duration_seconds_count` | histogram count | `job` | as above, older routers | optional |
-| `llm_d_epp_scheduler_attempts_total` | counter | `status="success"` (no `model_name`) | arrival rate, with flow control off | optional |
+| `llm_d_epp_scheduler_attempts_total` | counter | `status="success"`, `target_model_name`, `endpoint_name` (no `model_name`) | arrival rate, with flow control off; recorded: requests placed per Pod | optional |
 | `inference_extension_scheduler_attempts_total` | counter | `status="success"` (no `model_name`) | as above, older routers | optional |
 | `llm_d_epp_flow_control_request_queue_duration_seconds_bucket` | histogram buckets | `le`, `outcome="Dispatched"` | flow-control wait | optional |
 | `llm_d_epp_flow_control_pool_saturation` | gauge | `inference_pool`, `stage` (no model labels) | pool saturation | optional |
@@ -161,11 +167,47 @@ flow control and the router's own latency go unread.
 | `llm_d_epp_request_processing_duration_seconds_bucket` | histogram buckets | `le` (no model labels) | the router's own time: `--rank-mixture-remainder-spread` | optional |
 | `llm_d_epp_request_processing_duration_seconds_sum` | histogram sum | (no model labels) | the router's mean own time: `--rank-mixture-remainder-spread` | optional |
 | `llm_d_epp_request_processing_duration_seconds_count` | histogram count | (no model labels) | as above | optional |
+| `llm_d_epp_token_producer_render_duration_seconds_sum` | histogram sum | (no model labels) | the router's mean render call, inside its own time: `--rank-mixture-remainder-server` | optional |
+| `llm_d_epp_token_producer_render_duration_seconds_count` | histogram count | (no model labels) | as above | optional |
+| `llm_d_epp_prefix_predicted_cached_tokens_sum` | histogram sum | `plugin_name`, `endpoint_role` (no model labels) | prefix duplication across prefill pods: `--prefill-hit-at-count` with the KV residency histograms | optional |
+| `llm_d_epp_prefix_best_available_cached_tokens_sum` | histogram sum | `plugin_name`, `endpoint_role` (no model labels) | as above | optional |
+| `llm_d_epp_prefix_best_predicted_cached_tokens_sum` | histogram sum | `plugin_name`, `endpoint_role` (no model labels) | recorded: the prefix producers' counts per role | optional |
+| `llm_d_epp_prefix_prompt_tokens_sum` | histogram sum | `plugin_name`, `endpoint_role` (no model labels) | as above | optional |
+| `llm_d_epp_prefix_predicted_cached_tokens_count` | histogram count | `plugin_name`, `endpoint_role` (no model labels) | as above | optional |
+| `llm_d_epp_per_endpoint_queue_size` | gauge | `model_server_endpoint` (no model labels) | recorded: each Pod's queue as the router read it | optional |
+| `llm_d_epp_inflight_requests` | gauge | `endpoint_name`, `producer_name` (no model labels) | recorded: the requests the router holds in flight per Pod | optional |
+| `llm_d_epp_inflight_tokens` | gauge | `endpoint_name`, `producer_name` (no model labels) | recorded: their uncached prompt tokens | optional |
 
-The request-processing series carry no model. A recording or a capture
-gives them to a model only where the router's TTFT names that model and no
-other in the namespace; with two models behind one namespace's routers,
-neither gets them.
+The request-processing and render series carry no model. A recording or a
+capture gives them to a model only where the router's TTFT names that model
+and no other in the namespace; with two models behind one namespace's
+routers, neither gets them. The two prefix producer series are joined the
+same way. The HTTP handler series carry no model either: they are read per
+Pod, for the Pods the model's own series name. A P/D router runs one prefix
+producer per profile, and each counts every prompt, so the producers are
+not summed: the planner reads the one that predicted the most cached
+tokens. The share it could have hit on the best endpoint and sent elsewhere
+is how much the routing duplicates a prefix across prefill pods, which the
+hit at another prefill count reads; without them the planner takes no
+duplication. Behind a P/D router the best available endpoint is chosen
+before the role filter, so it spans the decode pods too: a producer that
+indexes the decode pods' caches reads a larger loss, and a larger
+duplication, than the prefill routing gave up.
+
+A recording also keeps the router's view of each model-server Pod and each
+prefix producer's counts per role, each cycle. They are read only from the
+router Pods that serve the model: those whose placements in
+`llm_d_epp_scheduler_attempts_total` name that model and no other. A
+second router replica that routes another model, or routes nothing, is
+left out, so these join where the namespace holds two models. The router
+counts a placement on the primary profile's Pod only, which in P/D is the
+decode Pod: a prefill Pod has no placements, and reads as unknown there,
+not zero. The router publishes no TTFT per Pod, and its prefix series per
+role, not per Pod. Only the `llm_d_epp_*` names are read: a router older
+than v0.9.0, which exports only `inference_extension_scheduler_attempts_total`
+(with `pod_name`) and `inference_pool_per_pod_queue_size`, records no
+per-Pod view, and the recording holds none. The planner reads none of
+these yet.
 
 ## kube-state-metrics
 
@@ -178,8 +220,16 @@ capture says so.
 kube-state-metrics exports a Pod's or a node's labels only when its
 `--metric-labels-allowlist` names them. The planner reads two:
 `--metric-labels-allowlist=pods=[llm-d.ai/role],nodes=[nvidia.com/gpu.product]`.
-Without the first every variant reads as both roles; without the second, give
-`--accelerator`.
+Without the first, and with no `--role-of`, each variant's role is read from
+what its engine does: decode computes no prompt tokens or moves KV through
+NIXL, an aggregated (both) pod computes prompts and generates, and prefill
+makes about 1 output token a request. One token a request is also what an
+aggregated pod makes under one-token requests, so prefill is read only beside
+a variant of the same model that reads or is labelled decode, or where the
+pod's own KV moves through NIXL. The capture names the evidence per Pod, and a
+variant whose engine reads no role reads as both. A label or a `--role-of`
+wins, and the capture says when the engine reads another role. Without the
+second, give `--accelerator`.
 
 | Series | Type | Extra labels | Feeds | Need |
 | --- | --- | --- | --- | --- |
@@ -276,11 +326,11 @@ exports `lmcache:*` on the engine's own `/metrics`.
 | `vllm:kv_block_lifetime_seconds_bucket` | vLLM | `--kv-cache-metrics` | diagnostic | how long a cached prefix lives in the GPU cache, unseen |
 | `vllm:kv_block_lifetime_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
 | `vllm:kv_block_lifetime_seconds_count` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
-| `vllm:kv_block_idle_before_evict_seconds_bucket` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
-| `vllm:kv_block_idle_before_evict_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_idle_before_evict_seconds_bucket` | vLLM | `--kv-cache-metrics` | needed for TTFT on cached fleets | the prefix hit at another prefill count falls back to the floor and the held hit |
+| `vllm:kv_block_idle_before_evict_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | the mean idle time before an eviction, unseen |
 | `vllm:kv_block_idle_before_evict_seconds_count` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
-| `vllm:kv_block_reuse_gap_seconds_bucket` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
-| `vllm:kv_block_reuse_gap_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
+| `vllm:kv_block_reuse_gap_seconds_bucket` | vLLM | `--kv-cache-metrics` | needed for TTFT on cached fleets | as above |
+| `vllm:kv_block_reuse_gap_seconds_sum` | vLLM | `--kv-cache-metrics` | diagnostic | the mean reuse gap, unseen |
 | `vllm:kv_block_reuse_gap_seconds_count` | vLLM | `--kv-cache-metrics` | diagnostic | as above |
 | `vllm:hisparse_` | vLLM, builds with a decode host cache; every series whose name starts so, checked and saved as one | the host cache on | diagnostic | decode host-cache traffic unseen |
 | `vllm:nixl_bytes_transferred_sum` | vLLM 0.11.1+ | `NixlConnector` | needed for TTFT on cached fleets | no P/D transfer volume, so no time per byte |
@@ -309,10 +359,10 @@ exports `lmcache:*` on the engine's own `/metrics`.
 | `llm_d_epp_request_cached_tokens_sum` | llm-d router v1.0.0 | the engine reports cached tokens in its response (vLLM: `--enable-prompt-tokens-details`) | needed for TTFT on cached fleets | no fleet-wide cached tokens per request |
 | `llm_d_epp_request_cached_tokens_count` | llm-d router v1.0.0 | as above | needed for TTFT on cached fleets | as above |
 | `llm_d_epp_request_cached_tokens_bucket` | llm-d router v1.0.0 | as above | needed for TTFT on cached fleets | no spread of cached tokens per request |
-| `llm_d_epp_prefix_predicted_cached_tokens_sum` | llm-d router v1.0.0 | an `approx-prefix-cache-producer` or `precise-prefix-cache-producer` plugin | diagnostic | none |
+| `llm_d_epp_prefix_predicted_cached_tokens_sum` | llm-d router v1.0.0 | an `approx-prefix-cache-producer` or `precise-prefix-cache-producer` plugin | needed for TTFT on cached fleets | no prefix duplication across prefill pods: `--prefill-hit-at-count` takes none |
 | `llm_d_epp_prefix_predicted_cached_tokens_count` | llm-d router v1.0.0 | as above | diagnostic | none |
 | `llm_d_epp_prefix_best_predicted_cached_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
-| `llm_d_epp_prefix_best_available_cached_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
+| `llm_d_epp_prefix_best_available_cached_tokens_sum` | llm-d router v1.0.0 | as above | needed for TTFT on cached fleets | as above |
 | `llm_d_epp_prefix_prompt_tokens_sum` | llm-d router v1.0.0 | as above | diagnostic | none |
 | `llm_d_epp_prefix_best_predicted_cached_tokens_count` | llm-d router | as above | diagnostic | how much cache affinity the routing gives up under load, unseen |
 | `llm_d_epp_prefix_best_available_cached_tokens_count` | llm-d router | as above | diagnostic | as above |
@@ -342,7 +392,7 @@ that lacks one saves an empty answer.
 Collect these to explain the part of the router's TTFT that the engines'
 own TTFT does not cover: the router's processing and plugins, prompt
 rendering, the P/D sidecar, and the engine's HTTP front end. The planner
-does not price them; each row is **diagnostic: TTFT outside the engines**. The capture checks
+does not price them, except under an experimental mode the row names; each row is **diagnostic: TTFT outside the engines**. The capture checks
 each one and prints whether it was present, like the series above.
 
 | Series | Source and version | Produced with | Tier | Without it |
@@ -350,7 +400,7 @@ each one and prints whether it was present, like the series above.
 | `llm_d_epp_request_processing_duration_seconds_sum` | llm-d router v1.0.0; no model labels | on by default | diagnostic: TTFT outside the engines | the router's own time before it picks an endpoint unseen |
 | `llm_d_epp_request_processing_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
 | `llm_d_epp_request_processing_duration_seconds_bucket` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | no spread of the router's own time: `--rank-mixture-remainder-spread` draws the remainder as its line |
-| `llm_d_epp_token_producer_render_duration_seconds_sum` | llm-d router v1.0.0; `plugin_type`, `plugin_name`, `backend`, `result` | on by default; observed only when a token-producer plugin renders prompts | diagnostic: TTFT outside the engines | time spent rendering prompts for the prefix scorer unseen |
+| `llm_d_epp_token_producer_render_duration_seconds_sum` | llm-d router v1.0.0; `plugin_type`, `plugin_name`, `backend`, `result` | on by default; observed only when a token-producer plugin renders prompts | diagnostic: TTFT outside the engines | time spent rendering prompts for the prefix scorer unseen; `--rank-mixture-remainder-server` cannot take the render call out of the router's own time |
 | `llm_d_epp_token_producer_render_duration_seconds_count` | llm-d router v1.0.0 | as above | diagnostic: TTFT outside the engines | as above |
 | `llm_d_epp_plugin_duration_seconds_sum` | llm-d router v1.0.0; `extension_point`, `plugin_type`, `plugin_name` | on by default | diagnostic: TTFT outside the engines | no split of the router's time by plugin |
 | `llm_d_epp_plugin_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
@@ -360,11 +410,11 @@ each one and prints whether it was present, like the series above.
 | `llm_d_epp_request_duration_seconds_count` | llm-d router v1.0.0 | on by default | diagnostic: TTFT outside the engines | as above |
 | `llm_d_disagg_sidecar_prefill_duration_seconds_sum` | llm-d router v1.0.0 P/D sidecar; no model labels | off by default: start the sidecar with `--metrics-port` and scrape that port | diagnostic: TTFT outside the engines | the P/D prefill leg, as decode's sidecar sees it, unseen |
 | `llm_d_disagg_sidecar_prefill_duration_seconds_count` | llm-d router v1.0.0 P/D sidecar | as above | diagnostic: TTFT outside the engines | as above |
-| `vllm:e2e_request_latency_seconds_sum` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | no engine end-to-end latency to set the router's against |
+| `vllm:e2e_request_latency_seconds_sum` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | no engine end-to-end latency to set the router's against; with the HTTP handler's, no API-server time per Pod, so `--rank-mixture-remainder-server` draws the remainder as the plain spread |
 | `vllm:e2e_request_latency_seconds_count` | vLLM, all supported | on by default | diagnostic: TTFT outside the engines | as above |
 | `vllm:request_render_duration_seconds_sum` | vLLM 0.34.0+; `request_type` | on by default | diagnostic: TTFT outside the engines | chat-template and tokenization time read as queue or prefill |
 | `vllm:request_render_duration_seconds_count` | vLLM 0.34.0+ | on by default | diagnostic: TTFT outside the engines | as above |
-| `http_request_duration_seconds_sum` | vLLM's API server (prometheus-fastapi-instrumentator); `handler`, `method` | on by default; every handler is saved and checked, by `handler` | diagnostic: TTFT outside the engines | the engine's HTTP front end, before the scheduler, unseen |
+| `http_request_duration_seconds_sum` | vLLM's API server (prometheus-fastapi-instrumentator); `handler`, `method` | on by default; every handler is saved and checked, by `handler` | diagnostic: TTFT outside the engines | the engine's HTTP front end, before the scheduler, unseen: `--rank-mixture-remainder-server` draws the remainder as the plain spread |
 | `http_request_duration_seconds_count` | vLLM's API server | as above | diagnostic: TTFT outside the engines | as above |
 | `llm_d_epp_scheduler_e2e_duration_seconds_bucket` | llm-d router | on by default | diagnostic: TTFT outside the engines | no spread of the router's scheduling time |
 | `llm_d_epp_scheduler_e2e_duration_seconds_sum` | llm-d router | on by default | diagnostic: TTFT outside the engines | the router's scheduling time unseen |
@@ -463,10 +513,10 @@ the counter files the exporter ships: add them to a custom one.
 
 | Source | Series | required | TPOT | TTFT | optional |
 | --- | --- | --- | --- | --- | --- |
-| vLLM | 34 | 1 | 8 | 4 | 21 |
+| vLLM | 46 | 1 | 8 | 4 | 33 |
 | SGLang | 23 | 1 | 8 | 0 | 14 |
-| Router (EPP) | 20 | 0 | 1 | 2 | 17 |
+| Router (EPP) | 22 | 0 | 1 | 2 | 19 |
 | kube-state-metrics | 15 | 0 | 0 | 0 | 15 |
-| All | 92 | 2 | 17 | 6 | 67 |
+| All | 106 | 2 | 17 | 6 | 81 |
 
 A capture reads one engine's series, vLLM's or SGLang's, never both.

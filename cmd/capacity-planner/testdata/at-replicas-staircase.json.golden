@@ -128,6 +128,21 @@
             "utilization": 1.25551564245402,
             "unpriced": "ttftRefused",
             "setsTTFT": false
+          },
+          "kvSpread": {
+            "cycles": 279,
+            "median": 1.0624834176292275,
+            "p95": 1.2359758322199517,
+            "peak": 2,
+            "pods": {
+              "median": 2,
+              "min": 2,
+              "max": 2
+            },
+            "atLoad": 1.0173653157990623,
+            "atLoadCycles": 15,
+            "busiestFillPeak": 0.8209333039841514,
+            "meanFillPeak": 0.8121628740429624
           }
         },
         "prefill": {
@@ -185,8 +200,8 @@
           ],
           "validation": {
             "validated": false,
-            "label": "OUTSIDE VALIDATED REGION (arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25)",
-            "outside": "arrivals not measured (Poisson assumed), measured at Ca^2 0.8 to 1.25"
+            "label": "OUTSIDE VALIDATED REGION (--assume-vp stated, which the run did not price)",
+            "outside": "--assume-vp stated, which the run did not price"
           },
           "batchBeyondFit": {
             "priced": 110,
@@ -226,7 +241,7 @@
           "binds": "0.85 x fleet knee (scaleUpThreshold)",
           "concurrency": {
             "fleet": {
-              "value": 94.66604394328964,
+              "value": 94.66604393247923,
               "unit": "requests"
             },
             "prefill": {
@@ -244,11 +259,11 @@
           }
         },
         "maxAtSLO": {
-          "value": 29.70756999222337,
+          "value": 29.70756999335191,
           "unit": "r/s",
           "sensitivity": {
-            "lo": 29.079168813383017,
-            "hi": 29.89501459522385
+            "lo": 29.079168813677917,
+            "hi": 29.895014596855468
           },
           "boundBy": [
             "TTFT p90, end to end"
@@ -267,23 +282,23 @@
             "ExtrapolatedFill",
             "BatchBeyondFit"
           ],
-          "outputTokensPerSecond": 5941.147946642053,
+          "outputTokensPerSecond": 5941.147946867747,
           "binds": "TTFT p90, end to end",
           "concurrency": {
             "fleet": {
-              "value": 62.725951388993046,
+              "value": 62.725951401917946,
               "unit": "requests"
             },
             "prefill": {
-              "value": 2.9292694452101857,
+              "value": 2.929269445484446,
               "unit": "requests"
             },
             "decode": {
-              "value": 40.961653751293966,
+              "value": 40.96165375774135,
               "unit": "requests"
             },
             "decodePerPod": {
-              "value": 20.480826875646983,
+              "value": 20.480826878870676,
               "unit": "requests"
             }
           }
@@ -438,11 +453,11 @@
           "ttft": [
             {
               "statistic": "p50",
-              "value": 0.21508641112362786,
+              "value": 0.21508641111114746,
               "unit": "s",
               "sensitivity": {
-                "lo": 0.16943850897467938,
-                "hi": 0.47265857970142666
+                "lo": 0.16943850896502383,
+                "hi": 0.472658579675795
               },
               "floor": 0.05751910677833362,
               "flags": [
@@ -461,11 +476,11 @@
             },
             {
               "statistic": "p90",
-              "value": 1.9453040091712384,
+              "value": 1.945304008773421,
               "unit": "s",
               "sensitivity": {
-                "lo": 1.8541226605433114,
-                "hi": 2.2309577526519475
+                "lo": 1.8541226601616392,
+                "hi": 2.2309577522059794
               },
               "floor": 0.3410091209416446,
               "flags": [
@@ -507,12 +522,12 @@
             }
           },
           "e2eMeanSum": {
-            "value": 2.074558223659909,
+            "value": 2.0745582236547713,
             "unit": "s"
           },
           "concurrency": {
             "fleet": {
-              "value": 61.38577930244656,
+              "value": 61.38577930229454,
               "unit": "requests"
             },
             "prefill": {
@@ -531,11 +546,11 @@
           "cell": {
             "ttft": {
               "statistic": "p90",
-              "value": 1.9453040091712384,
+              "value": 1.945304008773421,
               "unit": "s",
               "sensitivity": {
-                "lo": 1.8541226605433114,
-                "hi": 2.2309577526519475
+                "lo": 1.8541226601616392,
+                "hi": 2.2309577522059794
               },
               "floor": 0.3410091209416446,
               "flags": [

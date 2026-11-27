@@ -57,10 +57,19 @@ The TTFT pricing's switches, each a `TTFTFleet` field and a replay switch:
   stays off until a cluster staircase with several held steps past the onset
   passes
   ([the router stage](../proposals/slo-capacity-planner-ttft.md#as-built-the-router-stage)).
-  The analyzer has no switch for `TTFTFleet.RouterWaitInPrefill`, which the
-  capacity planner turns on by default (`whatif.DefaultRouterWaitInPrefill`,
-  #287), so past the prefill onset the planner's flag is `FlowControlWaitPriced`
-  where the analyzer's is `AboveFlowControlOnset`.
+- `RouterWaitInPrefill` (`slo-ttft-router-wait-in-prefill`, off from the
+  constructor; the CLI's `--router-wait-in-prefill`, on by default there,
+  `whatif.DefaultRouterWaitInPrefill`, #287): over the same range takes the
+  router's wait as already inside the processor-sharing prefill price
+  (`ttftInputs.routerWaitInPrefill`, `TTFTFleet.RouterWaitInPrefill`). No
+  figure moves; the flag is `FlowControlWaitPriced` in place of
+  `AboveFlowControlOnset`, the verdict is read from the figure, and the
+  published rate may pass the onset. Off, past the prefill onset the planner's
+  flag is `FlowControlWaitPriced` where the analyzer's is
+  `AboveFlowControlOnset`; on, the analyzer prices the planner's fleet as the
+  planner does at its defaults
+  (`TestTTFT_TheRouterWaitInPrefillSwitchIsThePlannersPrice`, issue #367).
+  Turning it on by default waits for a live check with the controller.
 - `PSOnsets` (`slo-ttft-ps-onsets`, off, the CLI's `--ps-onsets` default):
   places the prefill onset on the processor-sharing stage
   (`prefillPlan.psMeanScore`, `ttftPlan.placement`) at `Prefill.RunningCap`.
@@ -102,6 +111,13 @@ it. On:
 - The planner nets an assumed prompt by a stated hit rate (`--prefix-hit`),
   else the prefill variant's, not the decode variant's
   (`pricedFleet.effectivePrompt`).
+- A backtest's step is priced at the prompt its own prefill pods computed,
+  their computed tokens over their requests
+  (`whatifapi.Knobs.PrefillComputedTokens`, `pricedFleet.stepComputedPrompt`),
+  and `h` is its whole prompt less that. Off, the step's whole prompt is
+  netted by the fit's hit, so a step that hit, tested against a fit that did
+  not, is priced as if it computed the whole prompt. A step's hit at or under
+  `MaterialPrefixHitMove` moves nothing.
 - The KV transfer scales with the tokens it moves, the whole prompt less the
   decode variant's hits (`pricedFleet.transferPerToken`).
 

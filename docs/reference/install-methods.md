@@ -189,8 +189,8 @@ yourself, or when a GitOps tool owns the manifests. Otherwise use Method 1.
 ```bash
 # Use the manifests of the release you install. A release checkout already
 # names its own image, so the image line below only makes it explicit.
-CONTROLLER_VERSION=v0.13.0
-CONTROLLER_IMAGE=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:d08f6a159fc8052442f6ce5af562e67ea7902b86ff1af0f77a8a3a6f56b3f8cd
+CONTROLLER_VERSION=v0.13.1
+CONTROLLER_IMAGE=ghcr.io/llm-d-incubation/llm-d-scaling-manager@sha256:a61b2dcec9d0e4c6de1a6c5cb7aad1e5705e748f3646bf8ab7b88d25abb213d3
 git checkout "$CONTROLLER_VERSION"
 
 # Set the controller image to the release tag or its digest from the release notes.
