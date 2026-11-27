@@ -10,50 +10,6 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 )
 
-// The router's policy, read from its own series: whether it scores the
-// endpoints by their prefix cache, by their load, both or neither. One
-// reader for the controller and the capacity planner: each cycle's
-// analyzer input is read into a RouterCycle (RouterCycleOf), cycles are
-// kept in a RouterPolicyWindow, and DetectRouterPolicy reads the policy
-// from the window. The controller keeps one window per model in its
-// Tracker (Tracker.ObserveRouter), the planner one per replay
-// (learnreplay.State.RouterPolicy), so both read the same policy from the
-// same cycles.
-//
-// What each verdict reads (issue llm-d-incubation/llm-d-scaling-manager#500):
-//
-//   - cache-aware: the share of the cached tokens the router kept, predicted
-//     on the endpoint chosen over the best available on any candidate
-//     (domain.RouterLatency's prefix pair), at the window's lightest load. A
-//     prefix-cache scorer keeps nearly all of it there, where no load
-//     scorer has a reason to send a request away from its prefix. A share
-//     well under that is a router that does not score the prefix.
-//   - load-aware, by hit: the kept share falling as the load rises. A
-//     router that scores load gives up prefix hit to spread the load; a
-//     load-blind one keeps the same share at any load.
-//   - load-aware, by spread: the placements and the in-flight requests
-//     across the endpoints the router places on (domain.RouterEndpoint). A
-//     router that scores load evens the in-flight requests out by placing
-//     unevenly; one that does not places evenly whatever the endpoints
-//     hold, and the in-flight requests then spread wider than the
-//     placements.
-//
-// Each verdict is "not detected" where its series are missing or do not
-// decide it: one candidate endpoint, too short a window, no range of load,
-// a share between the bounds. A kept share near 1 also follows from a
-// prefix every endpoint holds, which a cache-blind router keeps as well;
-// the verdict is read where the window says no more than that. In P/D the
-// router counts placements on the primary profile's endpoint, decode, so
-// the spread reads the decode profile, while the hit is the prefix
-// producer's, the prefill profile's where it predicts the most.
-//
-// It is a reading, not an input to any price yet: the controller logs it,
-// the planner names it in its inputs beside --load-aware-router, which
-// still sets the price. The series are collected only while a learner
-// recording is on (domain.RouterLatency.Endpoints), so a price that read
-// the policy would make a recorded run price apart from the same run
-// unrecorded until the collection is widened.
-
 // RouterVerdict is one side of the router's policy as its series read it.
 type RouterVerdict string
 
@@ -69,23 +25,43 @@ const (
 
 // The policies DetectRouterPolicy names, from its two verdicts.
 const (
+	// PolicyCacheAndLoadAware is a router that scores the prefix cache and
+	// the load.
 	PolicyCacheAndLoadAware = "cache-aware and load-aware"
-	PolicyCacheAware        = "cache-aware"
-	PolicyLoadAware         = "load-aware"
-	PolicyNeither           = "neither"
+	// PolicyCacheAware is a router that scores the prefix cache and not the
+	// load.
+	PolicyCacheAware = "cache-aware"
+	// PolicyLoadAware is a router that scores the load and not the prefix
+	// cache.
+	PolicyLoadAware = "load-aware"
+	// PolicyNeither is a router that scores neither.
+	PolicyNeither = "neither"
 	// PolicyNotDetected is a window that decides neither side.
 	PolicyNotDetected = "not detected"
-	// The policies with one side decided and the other not.
-	PolicyCacheAwareLoadNotDetected    = "cache-aware; load not detected"
-	PolicyCacheBlindLoadNotDetected    = "not cache-aware; load not detected"
-	PolicyLoadAwareCacheNotDetected    = "load-aware; cache not detected"
-	PolicyLoadBlindCacheNotDetected    = "not load-aware; cache not detected"
+	// PolicyCacheAwareLoadNotDetected is a cache-aware router whose load
+	// side is not detected.
+	PolicyCacheAwareLoadNotDetected = "cache-aware; load not detected"
+	// PolicyCacheBlindLoadNotDetected is a router that does not score the
+	// prefix cache, its load side not detected.
+	PolicyCacheBlindLoadNotDetected = "not cache-aware; load not detected"
+	// PolicyLoadAwareCacheNotDetected is a load-aware router whose cache
+	// side is not detected.
+	PolicyLoadAwareCacheNotDetected = "load-aware; cache not detected"
+	// PolicyLoadBlindCacheNotDetected is a router that does not score the
+	// load, its cache side not detected.
+	PolicyLoadBlindCacheNotDetected = "not load-aware; cache not detected"
+)
+
+// Why a verdict is not detected.
+const (
 	routerPolicyReasonNoSeries         = "no router prefix or per-endpoint series"
 	routerPolicyReasonOneCandidate     = "one candidate endpoint: every placement keeps the whole hit"
 	routerPolicyReasonShortWindow      = "too few cycles or too short a window"
+	routerPolicyReasonProducerChanged  = "the prefix producer read changed within the window"
 	routerPolicyReasonBetween          = "kept share between the bounds"
 	routerPolicyReasonNoLoadRange      = "the load did not range widely enough"
 	routerPolicyReasonFlat             = "kept share did not fall with the load"
+	routerPolicyReasonNotBothHalves    = "the fall with the load did not hold in both halves of the window"
 	routerPolicyReasonNoSpread         = "placements and in-flight requests both even, or spread alike"
 	routerPolicyReasonMixedSpread      = "the cycles' spreads disagree"
 	routerPolicyReasonSpreadNoEndpoint = "no per-endpoint placements with in-flight requests"
@@ -95,17 +71,37 @@ const (
 	// RouterPolicyWindowCycles is the most cycles a RouterPolicyWindow
 	// keeps: twelve hours at the controller's default 15 s cycle.
 	RouterPolicyWindowCycles = 2880
+	// RouterPolicyMaxAge is the oldest a cycle a RouterPolicyWindow keeps
+	// may be, behind the newest: after a router reconfiguration the policy
+	// reads the old configuration's cycles beside the new ones for up to
+	// this long.
+	RouterPolicyMaxAge = 12 * time.Hour
+	// RouterPolicyStaleAfter is how long a window reads no series before it
+	// forgets its cycles, so a router that stopped publishing them reads
+	// not detected rather than the policy it last showed.
+	RouterPolicyStaleAfter = time.Hour
+	// RouterPolicyDwell is how long a new policy must read on every cycle
+	// before the controller logs it as changed (Tracker.ObserveRouter).
+	RouterPolicyDwell = 10 * time.Minute
 	// RouterPolicyMinSpan is the least time a verdict is read over: four of
 	// the router's five-minute windows, so no one window decides it.
 	RouterPolicyMinSpan = 20 * time.Minute
 	// RouterPolicyMinCycles is the least cycles a verdict is read over.
 	RouterPolicyMinCycles = 8
+	// DefaultRouterWindowSeconds is the router's rate window a cycle is read
+	// at where its RouterLatency says none: the collector's five minutes.
+	DefaultRouterWindowSeconds = 300.0
 
 	// CacheAwareKeptShare is the least kept share, at the window's
-	// lightest load, read as a router that scores the prefix, and
-	// CacheBlindKeptShare the most read as one that does not.
+	// lightest load, read as a router that scores the prefix.
 	CacheAwareKeptShare = 0.9
+	// CacheBlindKeptShare is the most kept share, at the window's lightest
+	// load, read as a router that does not score the prefix.
 	CacheBlindKeptShare = 0.6
+	// ProducerPinShare is the least share of the cycles that read the
+	// prefix pair that must read it from the same producer: the hit is read
+	// from that producer's cycles alone.
+	ProducerPinShare = 2.0 / 3
 
 	// LoadRangeMin is the least ratio of the heaviest third's mean load to
 	// the lightest third's that the hit's fall is read over.
@@ -115,11 +111,17 @@ const (
 	// must also clear two standard errors of the difference.
 	KeptShareFallMin = 0.02
 
-	// SpreadMinCV is the least coefficient of variation across endpoints
-	// a spread is read at, and SpreadEvenRatio the most the other spread
-	// may be of it to read as even beside it.
-	SpreadMinCV     = 0.1
+	// SpreadMinCV is the least coefficient of variation across endpoints a
+	// spread is read at.
+	SpreadMinCV = 0.1
+	// SpreadEvenRatio is the most one spread's coefficient of variation may
+	// be of the other's to read as even beside it.
 	SpreadEvenRatio = 0.5
+	// SpreadNoiseMultiple is how many times the placements' sampling noise
+	// their spread must be to read as uneven: a router that places at
+	// random places n requests on an endpoint with a spread of about
+	// 1/sqrt(n), which is no load scoring.
+	SpreadNoiseMultiple = 2.0
 	// SpreadMinInFlight is the least mean in-flight requests per endpoint a
 	// cycle's spread is read at: under it the count is too small to spread.
 	SpreadMinInFlight = 1.0
@@ -131,9 +133,14 @@ const (
 // RouterCycle is one cycle's reading of the router's policy series
 // (RouterCycleOf).
 type RouterCycle struct {
+	// At is the cycle's clock.
 	At time.Time
-	// WindowSeconds is the router's rate window (domain.RouterLatency).
+	// WindowSeconds is the router's rate window (domain.RouterLatency),
+	// DefaultRouterWindowSeconds where it said none.
 	WindowSeconds float64
+	// Producer names the prefix producer the pair was read from,
+	// plugin/role, empty for the model-level pair.
+	Producer string
 	// Candidates is the serving pods of the role the prefix producer
 	// routes, and Load the model's requests a second over them.
 	Candidates int
@@ -146,12 +153,15 @@ type RouterCycle struct {
 	KeptKnown              bool
 	// PlacementCV and InFlightCV are the coefficients of variation, across
 	// SpreadEndpoints endpoints, of the requests placed on each and the
-	// requests in flight on each; SpreadKnown says at least two endpoints
-	// read both, at a mean in flight of at least SpreadMinInFlight.
-	PlacementCV     float64
-	InFlightCV      float64
-	SpreadEndpoints int
-	SpreadKnown     bool
+	// requests in flight on each, and PlacementsPerEndpoint the mean
+	// requests placed on one over the window; SpreadKnown says at least
+	// two endpoints read both, at a mean in flight of at least
+	// SpreadMinInFlight.
+	PlacementCV           float64
+	InFlightCV            float64
+	PlacementsPerEndpoint float64
+	SpreadEndpoints       int
+	SpreadKnown           bool
 }
 
 // Kept is the cycle's kept share, predicted over best available; 0 where
@@ -163,12 +173,23 @@ func (c RouterCycle) Kept() float64 {
 	return c.PredictedTokenRate / c.BestAvailableTokenRate
 }
 
+// placementNoise is the spread a router placing at random would give the
+// cycle's placements, 1/sqrt(placements per endpoint); +Inf with none.
+func (c RouterCycle) placementNoise() float64 {
+	if !(c.PlacementsPerEndpoint > 0) {
+		return math.Inf(1)
+	}
+	return 1 / math.Sqrt(c.PlacementsPerEndpoint)
+}
+
 // RouterCycleOf is one cycle of in as the router's policy reads it: the
 // prefix pair of the producer that predicted the most cached tokens (the
 // model-level pair where no producer was recorded), the serving pods of the
 // role it routes, and the spread of the placements and in-flight requests
 // across the endpoints the router placed on. It reads in.RouterLatency and
-// the cycle's rows only.
+// the cycle's rows only. A producer row is one the collector read whole
+// (domain.RouterPrefixProducer), and an endpoint no router has placed on
+// has no placement reading and is not in the spread.
 func RouterCycleOf(in domain.AnalyzerInput, at time.Time) RouterCycle {
 	c := RouterCycle{At: at}
 	r := in.RouterLatency
@@ -176,16 +197,22 @@ func RouterCycleOf(in domain.AnalyzerInput, at time.Time) RouterCycle {
 		return c
 	}
 	c.WindowSeconds = r.WindowSeconds
+	if !finite(c.WindowSeconds) || !(c.WindowSeconds > 0) {
+		c.WindowSeconds = DefaultRouterWindowSeconds
+	}
 	role, pr, ba := "", r.PrefixPredictedTokenRate, r.PrefixBestAvailableTokenRate
 	if p, ok := topProducer(r.PrefixProducers); ok {
 		role, pr, ba = p.Role, p.PredictedTokenRate, p.BestAvailableTokenRate
+		c.Producer = p.Plugin + "/" + p.Role
 	}
 	c.Candidates = candidates(in, role)
 	c.Load = loadOf(in)
 	if finite(pr) && finite(ba) && pr >= 0 && ba > 0 && pr <= ba*(1+1e-9) {
 		c.PredictedTokenRate, c.BestAvailableTokenRate, c.KeptKnown = pr, ba, true
 	}
-	c.PlacementCV, c.InFlightCV, c.SpreadEndpoints, c.SpreadKnown = spreadOf(r.Endpoints)
+	var placed float64
+	c.PlacementCV, c.InFlightCV, placed, c.SpreadEndpoints, c.SpreadKnown = spreadOf(r.Endpoints)
+	c.PlacementsPerEndpoint = placed * c.WindowSeconds
 	return c
 }
 
@@ -248,9 +275,10 @@ func loadOf(in domain.AnalyzerInput) float64 {
 }
 
 // spreadOf is the coefficients of variation of the placements and of the
-// in-flight requests across the endpoints that read both, and how many
-// did; known with at least two at a mean in flight of SpreadMinInFlight.
-func spreadOf(es []domain.RouterEndpoint) (placementCV, inFlightCV float64, n int, known bool) {
+// in-flight requests across the endpoints that read both, the mean
+// placement rate, and how many endpoints read both; known with at least
+// two at a mean in flight of SpreadMinInFlight.
+func spreadOf(es []domain.RouterEndpoint) (placementCV, inFlightCV, meanPlaced float64, n int, known bool) {
 	var pl, inf []float64
 	for _, e := range es {
 		if !e.PlacementKnown || !e.InFlightRequestsKnown || !finite(e.PlacementRate) || !finite(e.InFlightRequests) ||
@@ -262,14 +290,14 @@ func spreadOf(es []domain.RouterEndpoint) (placementCV, inFlightCV float64, n in
 	}
 	n = len(pl)
 	if n < 2 {
-		return 0, 0, n, false
+		return 0, 0, 0, n, false
 	}
 	pm, pcv := meanCV(pl)
 	im, icv := meanCV(inf)
 	if !(pm > 0) || !(im >= SpreadMinInFlight) {
-		return 0, 0, n, false
+		return 0, 0, 0, n, false
 	}
-	return pcv, icv, n, true
+	return pcv, icv, pm, n, true
 }
 
 // meanCV is xs' mean and coefficient of variation (population), the CV 0
@@ -289,22 +317,35 @@ func meanCV(xs []float64) (mean, cv float64) {
 	return mean, math.Sqrt(ss/float64(len(xs))) / mean
 }
 
-// RouterPolicyWindow is a model's latest RouterPolicyWindowCycles cycles
-// that read any of the router's policy series. A cycle that reads none
-// leaves it as it is, so a gap in the series does not forget the policy.
-// The zero value is an empty window.
+// RouterPolicyWindow is a model's latest cycles that read any of the
+// router's policy series: at most RouterPolicyWindowCycles, none older
+// than RouterPolicyMaxAge behind the newest. A cycle that reads none leaves
+// it as it is, so a gap in the series does not forget the policy, until
+// the window has read none for RouterPolicyStaleAfter: then it forgets
+// every cycle. The zero value is an empty window.
 type RouterPolicyWindow struct {
 	cycles []RouterCycle
+	// lastRead is the clock of the last cycle that read a series.
+	lastRead time.Time
 }
 
 // Note folds c into the window.
 func (w *RouterPolicyWindow) Note(c RouterCycle) {
 	if !c.KeptKnown && !c.SpreadKnown {
+		if !w.lastRead.IsZero() && c.At.Sub(w.lastRead) >= RouterPolicyStaleAfter {
+			w.cycles, w.lastRead = nil, time.Time{}
+		}
 		return
 	}
 	w.cycles = append(w.cycles, c)
-	if len(w.cycles) > RouterPolicyWindowCycles {
-		w.cycles = slices.Delete(w.cycles, 0, len(w.cycles)-RouterPolicyWindowCycles)
+	w.lastRead = c.At
+	drop := 0
+	for drop < len(w.cycles) && c.At.Sub(w.cycles[drop].At) > RouterPolicyMaxAge {
+		drop++
+	}
+	drop = max(drop, len(w.cycles)-RouterPolicyWindowCycles)
+	if drop > 0 {
+		w.cycles = slices.Delete(w.cycles, 0, drop)
 	}
 }
 
@@ -326,6 +367,8 @@ func (w *RouterPolicyWindow) Policy() RouterPolicy {
 
 // RouterPolicy is the router's policy as its series read it, with the
 // evidence each verdict was read from. A figure is 0 where it was not read.
+// The zero value is no reading: every verdict empty, which LoadAwareRouter
+// reads as not detected; DetectRouterPolicy always sets them.
 type RouterPolicy struct {
 	// Policy names the two verdicts together (PolicyCacheAndLoadAware and
 	// the others), and Cycles is the cycles that read any of the series.
@@ -345,29 +388,34 @@ type RouterPolicy struct {
 	LoadAwareBySpread RouterVerdict `json:"loadAwareBySpread"`
 	SpreadReason      string        `json:"spreadReason,omitempty"`
 
-	// HitCycles is the cycles the kept share was read over, and
-	// HitMinutes the time they span. KeptLight, KeptHeavy and Kept are the
-	// kept share over the lightest third of them by load per candidate,
-	// the heaviest third, and all, cached tokens over cached tokens;
-	// KeptFallSE is the standard error of the fall. LoadLight and
-	// LoadHeavy are the two thirds' mean requests a second per candidate,
-	// and Candidates the most candidates a cycle read.
-	HitCycles  int     `json:"hitCycles,omitempty"`
-	HitMinutes float64 `json:"hitMinutes,omitempty"`
-	KeptLight  float64 `json:"keptLight,omitempty"`
-	KeptHeavy  float64 `json:"keptHeavy,omitempty"`
-	Kept       float64 `json:"kept,omitempty"`
-	KeptFallSE float64 `json:"keptFallSE,omitempty"`
-	LoadLight  float64 `json:"loadLight,omitempty"`
-	LoadHeavy  float64 `json:"loadHeavy,omitempty"`
-	Candidates int     `json:"candidates,omitempty"`
+	// Producer is the prefix producer the hit was read from (plugin/role,
+	// empty for the model-level pair). HitCycles is the cycles the kept
+	// share was read over, and HitMinutes the time they span. KeptLight,
+	// KeptHeavy and Kept are the kept share over the lightest third of
+	// them by load per candidate, the heaviest third, and all, cached
+	// tokens over cached tokens; KeptFallSE is the standard error of the
+	// fall. LoadLight and LoadHeavy are the two thirds' mean requests a
+	// second per candidate, and Candidates the most candidates a cycle
+	// read. HalvesFalling is how many of the window's two halves, by time,
+	// show the fall on their own.
+	Producer      string  `json:"producer,omitempty"`
+	HitCycles     int     `json:"hitCycles,omitempty"`
+	HitMinutes    float64 `json:"hitMinutes,omitempty"`
+	KeptLight     float64 `json:"keptLight,omitempty"`
+	KeptHeavy     float64 `json:"keptHeavy,omitempty"`
+	Kept          float64 `json:"kept,omitempty"`
+	KeptFallSE    float64 `json:"keptFallSE,omitempty"`
+	LoadLight     float64 `json:"loadLight,omitempty"`
+	LoadHeavy     float64 `json:"loadHeavy,omitempty"`
+	Candidates    int     `json:"candidates,omitempty"`
+	HalvesFalling int     `json:"halvesFalling,omitempty"`
 
 	// SpreadCycles is the cycles the spread was read over, and
-	// SpreadBalancing and SpreadEven how many read placements uneven
-	// beside an even in-flight load, and placements even beside an uneven
-	// one. PlacementCV and InFlightCV are the median coefficients of
-	// variation over the judged cycles, and Endpoints the most endpoints a
-	// cycle read.
+	// SpreadBalancing and SpreadEven how many read placements uneven past
+	// their sampling noise beside an even in-flight load, and placements
+	// even beside an uneven one. PlacementCV and InFlightCV are the median
+	// coefficients of variation over the judged cycles, and Endpoints the
+	// most endpoints a cycle read.
 	SpreadCycles    int     `json:"spreadCycles,omitempty"`
 	SpreadBalancing int     `json:"spreadBalancing,omitempty"`
 	SpreadEven      int     `json:"spreadEven,omitempty"`
@@ -378,12 +426,48 @@ type RouterPolicy struct {
 
 // LoadAwareRouter is whether the router scores load, and whether the series
 // decided it: the detected counterpart of the planner's --load-aware-router.
+// Only a yes or a no is decided; the zero value is not.
 func (p RouterPolicy) LoadAwareRouter() (aware, detected bool) {
-	return p.LoadAware == RouterYes, p.LoadAware != RouterNotDetected
+	return p.LoadAware == RouterYes, p.LoadAware == RouterYes || p.LoadAware == RouterNo
 }
 
-// DetectRouterPolicy is the policy cycles read, oldest first (the package
-// comment above says what each verdict reads).
+// DetectRouterPolicy is the policy cycles read, oldest first: whether the
+// router scores the endpoints by their prefix cache, by their load, both
+// or neither (issue llm-d-incubation/llm-d-scaling-manager#500). It is the
+// one reader the controller (Tracker.ObserveRouter) and the capacity
+// planner (learnreplay.State.RouterPolicy) both read cycles with.
+//
+//   - cache-aware: the share of the cached tokens the router kept, predicted
+//     on the endpoint chosen over the best available on any candidate, at
+//     the window's lightest load, read from one prefix producer
+//     (ProducerPinShare). A prefix-cache scorer keeps nearly all of it
+//     there, where no load scorer has a reason to send a request away from
+//     its prefix. A share well under that is a router that does not score
+//     the prefix.
+//   - load-aware, by hit: the kept share falling as the load rises, in the
+//     window as a whole and in each of its halves by time. It is a
+//     correlation, not a test of the scorer: a change of the traffic mix
+//     with the time of day, a cold cache or eviction under load can lower
+//     the share at high load too, and the two halves only make one such
+//     episode less likely to decide it.
+//   - load-aware, by spread: the placements and the in-flight requests
+//     across the endpoints the router places on (domain.RouterEndpoint). A
+//     router that scores load evens the in-flight requests out by placing
+//     unevenly; one that does not places evenly whatever the endpoints
+//     hold, and the in-flight requests then spread wider. Placements read
+//     uneven only past SpreadNoiseMultiple times the spread a random router
+//     would give them.
+//
+// Each verdict is "not detected" where its series are missing or do not
+// decide it. A kept share near 1 also follows from a prefix every endpoint
+// holds, which a cache-blind router keeps as well. In P/D the router counts
+// placements on the primary profile's endpoint, decode, so the spread reads
+// the decode profile, while the hit is the prefix producer's.
+//
+// It is a reading, not an input to any price yet. The series are collected
+// only while a learner recording is on (domain.RouterLatency.Endpoints), so
+// a price that read the policy would make a recorded run price apart from
+// the same run unrecorded until the collection is widened.
 func DetectRouterPolicy(cycles []RouterCycle) RouterPolicy {
 	p := RouterPolicy{Cycles: len(cycles), CacheAware: RouterNotDetected, LoadAwareByHit: RouterNotDetected,
 		LoadAwareBySpread: RouterNotDetected}
@@ -450,18 +534,47 @@ func span(cycles []RouterCycle) time.Duration {
 	if len(cycles) == 0 {
 		return 0
 	}
-	at := func(c RouterCycle) time.Time { return c.At }
-	first := slices.MinFunc(cycles, func(a, b RouterCycle) int { return at(a).Compare(at(b)) })
-	last := slices.MaxFunc(cycles, func(a, b RouterCycle) int { return at(a).Compare(at(b)) })
+	first := slices.MinFunc(cycles, func(a, b RouterCycle) int { return a.At.Compare(b.At) })
+	last := slices.MaxFunc(cycles, func(a, b RouterCycle) int { return a.At.Compare(b.At) })
 	window := time.Duration(last.WindowSeconds * float64(time.Second))
 	return last.At.Sub(first.At) + window
+}
+
+// enough reports whether cycles are enough to read a verdict over.
+func enough(cycles []RouterCycle) bool {
+	return len(cycles) >= RouterPolicyMinCycles && span(cycles) >= RouterPolicyMinSpan
+}
+
+// pinnedProducer is the producer most of cycles read the pair from, and
+// whether it read at least ProducerPinShare of them.
+func pinnedProducer(cycles []RouterCycle) (string, bool) {
+	counts := map[string]int{}
+	for _, c := range cycles {
+		counts[c.Producer]++
+	}
+	best, n := "", -1
+	for k, v := range counts {
+		if v > n || (v == n && k < best) {
+			best, n = k, v
+		}
+	}
+	return best, float64(n) >= ProducerPinShare*float64(len(cycles))
 }
 
 // readHit reads the cache verdict and the hit's load verdict from the
 // cycles that read the prefix pair.
 func (p *RouterPolicy) readHit(cycles []RouterCycle) {
+	producer, pinned := pinnedProducer(cycles)
+	p.Producer = producer
+	if !pinned {
+		p.CacheReason, p.HitReason = routerPolicyReasonProducerChanged, routerPolicyReasonProducerChanged
+		return
+	}
 	var multi []RouterCycle
 	for _, c := range cycles {
+		if c.Producer != producer {
+			continue
+		}
 		p.Candidates = max(p.Candidates, c.Candidates)
 		if c.Candidates >= 2 && c.Load > 0 {
 			multi = append(multi, c)
@@ -472,20 +585,13 @@ func (p *RouterPolicy) readHit(cycles []RouterCycle) {
 		return
 	}
 	p.HitCycles, p.HitMinutes = len(multi), span(multi).Minutes()
-	if len(multi) < RouterPolicyMinCycles || span(multi) < RouterPolicyMinSpan {
+	if !enough(multi) {
 		p.CacheReason, p.HitReason = routerPolicyReasonShortWindow, routerPolicyReasonShortWindow
 		return
 	}
-	perPod := func(c RouterCycle) float64 { return c.Load / float64(c.Candidates) }
-	sorted := slices.Clone(multi)
-	slices.SortStableFunc(sorted, func(a, b RouterCycle) int { return cmp.Compare(perPod(a), perPod(b)) })
-	third := max(len(sorted)/3, 1)
-	light, heavy := sorted[:third], sorted[len(sorted)-third:]
-	p.Kept, _ = keptOf(sorted)
-	var lightVar, heavyVar float64
-	p.KeptLight, lightVar = keptOf(light)
-	p.KeptHeavy, heavyVar = keptOf(heavy)
-	p.LoadLight, p.LoadHeavy = meanOf(light, perPod), meanOf(heavy, perPod)
+	whole := readFall(multi)
+	p.Kept, p.KeptLight, p.KeptHeavy, p.KeptFallSE = whole.kept, whole.light, whole.heavy, whole.se
+	p.LoadLight, p.LoadHeavy = whole.loadLight, whole.loadHeavy
 
 	switch {
 	case p.KeptLight >= CacheAwareKeptShare:
@@ -495,24 +601,69 @@ func (p *RouterPolicy) readHit(cycles []RouterCycle) {
 	default:
 		p.CacheReason = routerPolicyReasonBetween
 	}
-
-	// The fall's standard error, each third's cycles counted as the
-	// independent router windows they span: cycles closer than the window
-	// read overlapping requests.
-	p.KeptFallSE = math.Sqrt(lightVar/independent(light) + heavyVar/independent(heavy))
-	fall := p.KeptLight - p.KeptHeavy
-	switch {
-	case p.CacheAware == RouterNo:
+	if p.CacheAware == RouterNo {
 		// A router that keeps little of the hit at light load has none to
 		// give up for load: the hit cannot show the load side.
 		p.HitReason = routerPolicyReasonBetween
-	case !(p.LoadLight > 0) || !(p.LoadHeavy >= LoadRangeMin*p.LoadLight):
-		p.HitReason = routerPolicyReasonNoLoadRange
-	case fall >= KeptShareFallMin && fall >= 2*p.KeptFallSE:
-		p.LoadAwareByHit = RouterYes
-	default:
-		p.HitReason = routerPolicyReasonFlat
+		return
 	}
+	if whole.reason != "" {
+		p.HitReason = whole.reason
+		return
+	}
+	// The same fall in each half of the window by time, so one stretch
+	// where the load and the share moved together for another reason does
+	// not decide it alone.
+	byTime := slices.Clone(multi)
+	slices.SortStableFunc(byTime, func(a, b RouterCycle) int { return a.At.Compare(b.At) })
+	half := len(byTime) / 2
+	for _, h := range [][]RouterCycle{byTime[:half], byTime[half:]} {
+		if enough(h) && readFall(h).reason == "" {
+			p.HalvesFalling++
+		}
+	}
+	if p.HalvesFalling < 2 {
+		p.HitReason = routerPolicyReasonNotBothHalves
+		return
+	}
+	p.LoadAwareByHit = RouterYes
+}
+
+// fall is the kept share's reading against the load over some cycles
+// (readFall): the shares over all, the lightest third and the heaviest
+// third by load per candidate, the fall's standard error, the thirds' mean
+// loads per candidate, and why the fall does not read as one, "" where it
+// does.
+type fall struct {
+	kept, light, heavy, se float64
+	loadLight, loadHeavy   float64
+	reason                 string
+}
+
+// readFall reads the kept share's fall with the load over cycles.
+func readFall(cycles []RouterCycle) fall {
+	perPod := func(c RouterCycle) float64 { return c.Load / float64(c.Candidates) }
+	sorted := slices.Clone(cycles)
+	slices.SortStableFunc(sorted, func(a, b RouterCycle) int { return cmp.Compare(perPod(a), perPod(b)) })
+	third := max(len(sorted)/3, 1)
+	light, heavy := sorted[:third], sorted[len(sorted)-third:]
+	var f fall
+	var lightVar, heavyVar float64
+	f.kept, _ = keptOf(sorted)
+	f.light, lightVar = keptOf(light)
+	f.heavy, heavyVar = keptOf(heavy)
+	f.loadLight, f.loadHeavy = meanOf(light, perPod), meanOf(heavy, perPod)
+	// Each third's cycles counted as the independent router windows they
+	// span: cycles closer than the window read overlapping requests.
+	f.se = math.Sqrt(lightVar/independent(light) + heavyVar/independent(heavy))
+	d := f.light - f.heavy
+	switch {
+	case !(f.loadLight > 0) || !(f.loadHeavy >= LoadRangeMin*f.loadLight):
+		f.reason = routerPolicyReasonNoLoadRange
+	case !(d >= KeptShareFallMin) || !(d >= 2*f.se):
+		f.reason = routerPolicyReasonFlat
+	}
+	return f
 }
 
 // keptOf is cycles' kept share, cached tokens over cached tokens, and the
@@ -535,21 +686,20 @@ func keptOf(cycles []RouterCycle) (kept, variance float64) {
 	return kept, ss / ba
 }
 
-// independent is how many independent router windows cycles hold: their
-// count, or the windows their own spacing fits in the time they span where
-// that is fewer; at least 1.
+// independent is how many independent router windows cycles hold: each
+// cycle is worth the share of a window its spacing to the one before it
+// covers, at most one, the first a whole one; at least 1 and at most the
+// cycles' count. A cycle's window is DefaultRouterWindowSeconds where it
+// says none, never no decorrelation at all.
 func independent(cycles []RouterCycle) float64 {
 	n := float64(len(cycles))
 	var window float64
 	for _, c := range cycles {
 		window = max(window, c.WindowSeconds)
 	}
-	if !(window > 0) {
-		return max(n, 1)
+	if !finite(window) || !(window > 0) {
+		window = DefaultRouterWindowSeconds
 	}
-	// The cycles of a third are not contiguous in time: each is worth the
-	// share of a window its spacing to the cycles around it covers,
-	// at most one.
 	ats := make([]time.Time, len(cycles))
 	for i, c := range cycles {
 		ats[i] = c.At
@@ -580,8 +730,9 @@ func (p *RouterPolicy) readSpread(cycles []RouterCycle) {
 	var judged []RouterCycle
 	for _, c := range cycles {
 		p.Endpoints = max(p.Endpoints, c.SpreadEndpoints)
+		uneven := max(SpreadMinCV, SpreadNoiseMultiple*c.placementNoise())
 		switch {
-		case c.PlacementCV >= SpreadMinCV && c.InFlightCV <= SpreadEvenRatio*c.PlacementCV:
+		case c.PlacementCV >= uneven && c.InFlightCV <= SpreadEvenRatio*c.PlacementCV:
 			p.SpreadBalancing++
 			judged = append(judged, c)
 		case c.InFlightCV >= SpreadMinCV && c.PlacementCV <= SpreadEvenRatio*c.InFlightCV:
@@ -590,7 +741,7 @@ func (p *RouterPolicy) readSpread(cycles []RouterCycle) {
 		}
 	}
 	p.SpreadCycles = len(cycles)
-	if len(cycles) < RouterPolicyMinCycles || span(cycles) < RouterPolicyMinSpan {
+	if !enough(cycles) {
 		p.SpreadReason = routerPolicyReasonShortWindow
 		return
 	}
@@ -600,7 +751,7 @@ func (p *RouterPolicy) readSpread(cycles []RouterCycle) {
 	}
 	n := float64(len(judged))
 	switch {
-	case len(judged) < RouterPolicyMinCycles || span(judged) < RouterPolicyMinSpan:
+	case !enough(judged):
 		p.SpreadReason = routerPolicyReasonNoSpread
 	case float64(p.SpreadBalancing) >= SpreadVerdictShare*n:
 		p.LoadAwareBySpread = RouterYes

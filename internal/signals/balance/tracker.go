@@ -60,10 +60,13 @@ type modelState struct {
 	// th is the thresholds Measure last read the model with: its policy.
 	// Observe and Failed take their timings from it.
 	th Thresholds
-	// router is the model's router policy cycles (ObserveRouter), and
-	// routerPolicy the policy it last named.
-	router       RouterPolicyWindow
-	routerPolicy string
+	// router is the model's router policy cycles (ObserveRouter);
+	// routerPolicy is the policy last reported changed, and routerPending
+	// a different one read on every cycle since routerPendingSince.
+	router             RouterPolicyWindow
+	routerPolicy       string
+	routerPending      string
+	routerPendingSince time.Time
 }
 
 type roleState struct {
@@ -212,22 +215,36 @@ func (t *Tracker) Observe(key string, dists map[string]Distribution, now time.Ti
 
 // ObserveRouter folds one cycle's input, read at now, into the router
 // policy window of the model named by key, and returns the policy the
-// window reads (RouterCycleOf, DetectRouterPolicy) and whether its name
-// changed on this cycle. The first policy a model reads is a change only
-// where it is detected, so a model whose router publishes none of the
-// series logs nothing.
+// window reads (RouterCycleOf, DetectRouterPolicy) and whether its name is
+// reported changed on this cycle. A new name is reported once it has read
+// on every cycle for RouterPolicyDwell, so a verdict that flickers at a
+// bound is not reported each time it crosses. A model starts at
+// PolicyNotDetected, so one whose router publishes none of the series
+// reports nothing; one whose series stop reads not detected again
+// RouterPolicyStaleAfter later (RouterPolicyWindow), reported after the
+// dwell. Call it every cycle, a nil RouterLatency included, so the window
+// sees the series stop.
 func (t *Tracker) ObserveRouter(key string, in domain.AnalyzerInput, now time.Time) (RouterPolicy, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	m := t.model(key)
 	m.router.Note(RouterCycleOf(in, now))
 	p := m.router.Policy()
-	was := m.routerPolicy
-	if was == "" {
-		was = PolicyNotDetected
+	if m.routerPolicy == "" {
+		m.routerPolicy = PolicyNotDetected
 	}
-	m.routerPolicy = p.Policy
-	return p, p.Policy != was
+	if p.Policy == m.routerPolicy {
+		m.routerPending = ""
+		return p, false
+	}
+	if p.Policy != m.routerPending {
+		m.routerPending, m.routerPendingSince = p.Policy, now
+	}
+	if now.Sub(m.routerPendingSince) < RouterPolicyDwell {
+		return p, false
+	}
+	m.routerPolicy, m.routerPending = p.Policy, ""
+	return p, true
 }
 
 // Failed records that the model named by key could not be collected at now,

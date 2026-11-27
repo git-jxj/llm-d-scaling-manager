@@ -88,14 +88,13 @@ func (e *Engine) observeLoadBalance(logger logr.Logger, namespace, modelID strin
 // cache, the load, both or neither, from the router's series on the
 // cycle's input (balance.RouterCycleOf, the reader the capacity planner
 // reads a recording with), and logs the policy on the cycle its name
-// changes. Observe only: no price reads it yet (#482, #384, #483). The
-// series are on the input only while a learner recording is on
+// changes, once the new one has held for balance.RouterPolicyDwell.
+// Observe only: no price reads it yet (#482, #384, #483). The series are on
+// the input only while a learner recording is on
 // (domain.RouterLatency.Endpoints); off, the policy stays not detected and
-// nothing is logged.
+// nothing is logged. Called with or without a router reading, so the
+// window sees the series stop (balance.RouterPolicyStaleAfter).
 func (e *Engine) observeRouterPolicy(logger logr.Logger, namespace, modelID string, in domain.AnalyzerInput, now time.Time) {
-	if in.RouterLatency == nil {
-		return
-	}
 	p, changed := e.loadBalanceTracker().ObserveRouter(utils.GetNamespacedKey(namespace, modelID), in, now)
 	if !changed {
 		return

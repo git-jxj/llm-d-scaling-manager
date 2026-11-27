@@ -11,15 +11,15 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 )
 
-// policyCycles is n cycles, the load rising evenly from
-// lo to hi requests a second over 4 prefill candidates, and the kept share
-// at each load from kept. endpoints, when not nil, gives each cycle's
+// policyCycles is n cycles, the load rising and falling between lo and hi
+// requests a second four times over them (loadAt), over 4 prefill
+// candidates, and the kept share at each load from kept. endpoints, when not nil, gives each cycle's
 // decode endpoints at its load.
 func policyCycles(n int, lo, hi float64, kept func(load float64) float64,
 	endpoints func(load float64) []domain.RouterEndpoint) []domain.AnalyzerInput {
 	out := make([]domain.AnalyzerInput, n)
 	for i := range out {
-		load := lo + (hi-lo)*float64(i)/float64(n-1)
+		load := loadAt(i, n, lo, hi)
 		r := &domain.RouterLatency{WindowSeconds: 300}
 		if kept != nil {
 			r.PrefixBestAvailableTokenRate = 1000 * load
@@ -31,6 +31,14 @@ func policyCycles(n int, lo, hi float64, kept func(load float64) float64,
 		out[i] = pdInput(4, 4, load, r)
 	}
 	return out
+}
+
+// loadAt is cycle i of n's load: a triangle wave between lo and hi, four
+// periods over the n cycles, so each half of the window by time spans the
+// whole range as a day of traffic does.
+func loadAt(i, n int, lo, hi float64) float64 {
+	phase := math.Mod(4*float64(i)/float64(n), 1)
+	return lo + (hi-lo)*(1-math.Abs(2*phase-1))
 }
 
 // pdInput is a cycle of a P/D model with pre prefill and dec decode pods
@@ -57,10 +65,10 @@ func detect(ins []domain.AnalyzerInput, step time.Duration) RouterPolicy {
 }
 
 // balancing is four decode endpoints a load-aware router places on: one
-// slow endpoint gets half the placements of the others, and the in-flight
+// slow endpoint gets a quarter of the placements of the others, and the in-flight
 // requests come out even.
 func balancing(load float64) []domain.RouterEndpoint {
-	share := []float64{1, 1, 1, 0.5}
+	share := []float64{1, 1, 1, 0.25}
 	return endpointsOf(load, share, []float64{4, 4, 4, 4})
 }
 
@@ -193,11 +201,17 @@ func TestDetectRouterPolicy_NotDetected(t *testing.T) {
 }
 
 // A fall that one outlier window makes is not read as one: the share is
-// flat but for the heaviest window's, and the fall it gives the heaviest
+// flat but for the heaviest-load window's, and the fall it gives the heaviest
 // third is inside two standard errors of the third's scatter.
 func TestDetectRouterPolicy_OneOutlierIsNoFall(t *testing.T) {
 	ins := policyCycles(60, 1, 8, func(float64) float64 { return 0.95 }, nil)
-	r := ins[len(ins)-1].RouterLatency
+	heaviest := 0
+	for i, in := range ins {
+		if in.ArrivalRate > ins[heaviest].ArrivalRate {
+			heaviest = i
+		}
+	}
+	r := ins[heaviest].RouterLatency
 	r.PrefixPredictedTokenRate = 0.2 * r.PrefixBestAvailableTokenRate
 	p := detect(ins, 5*time.Minute)
 	assert.Equal(t, RouterYes, p.CacheAware, "%+v", p)
@@ -245,6 +259,7 @@ func TestRouterCycleOf(t *testing.T) {
 	assert.True(t, c.SpreadKnown)
 	assert.Equal(t, 2, c.SpreadEndpoints)
 	assert.InDelta(t, 0.5, c.PlacementCV, 1e-12)
+	assert.InDelta(t, 600, c.PlacementsPerEndpoint, 1e-9, "2 a second over the 300 s window")
 	assert.InDelta(t, 0, c.InFlightCV, 1e-12)
 	assert.Equal(t, 2, candidates(in, ""))
 
@@ -279,6 +294,7 @@ func TestTracker_ObserveRouter(t *testing.T) {
 	require.NotEmpty(t, changes)
 	assert.Equal(t, PolicyCacheAndLoadAware, changes[len(changes)-1], "%v", changes)
 	assert.NotContains(t, changes, PolicyNotDetected, "not detected at the start is no change")
+	assert.LessOrEqual(t, len(changes), 2, "each name reported once, after the dwell: %v", changes)
 
 	_, changed := tr.ObserveRouter("ns/other", pdInput(4, 4, 1, nil), t0)
 	assert.False(t, changed, "a model with no series logs nothing")
