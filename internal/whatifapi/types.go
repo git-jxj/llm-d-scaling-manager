@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/balance"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 )
 
@@ -291,6 +292,12 @@ type PolicyInfo struct {
 	TPOT        *PolicyObjective `json:"tpot,omitempty"`
 	Headroom    float64          `json:"headroom"`
 	FlowControl string           `json:"flowControl"`
+	// Router is what the router scores, the prefix cache, the load, both or
+	// neither, read from its series (balance.DetectRouterPolicy), with the
+	// evidence; "not detected" where the source holds none of them. It
+	// sets no price: --load-aware-router (Assume.LoadAwareRouter) still
+	// does.
+	Router balance.RouterPolicy `json:"router"`
 }
 
 // PolicyObjective is one SLO objective: its statistic and target.

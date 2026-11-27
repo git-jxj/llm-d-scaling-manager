@@ -652,6 +652,7 @@ ahead
 aim
 alignment
 aligns
+alike
 all
 all-above-band-below-ksat
 all2all_backend
@@ -847,8 +848,11 @@ bytes
 c
 caFromSecret
 cache
+cache-aware
+cacheAware
 cacheKey.name
 cacheKey.namespace
+cacheReason
 cached
 calibrated
 called
@@ -857,6 +861,8 @@ calm
 came
 can
 cancelled
+candidate
+candidates
 cannot
 cap
 capBytes
@@ -1224,6 +1230,7 @@ enables
 encode
 encoding
 ended
+endpoint
 ends
 enforce_eager
 enforced
@@ -1513,6 +1520,8 @@ historyAgeSeconds
 historyKey
 historyWindowLen
 hit
+hitCycles
+hitReason
 hold
 hold-only
 holdCap
@@ -1748,6 +1757,8 @@ keeping
 keeps
 kept
 keptFor
+keptHeavy
+keptLight
 keptTokens
 key
 keyOutputTokens
@@ -1983,8 +1994,14 @@ lmcache_mp_lookup_request_hit_tokens_total
 lmcache_mp_lookup_requested_tokens_total
 lo
 load
+load-aware
+loadAware
+loadAwareByHit
+loadAwareBySpread
+loadHeavy
 loadImbalance
 loadImbalance.idleKvUsage
+loadLight
 loaded
 localQueueDemand
 locator.New
@@ -2466,6 +2483,7 @@ pendingSince
 pendingVariants
 per
 per-Pod
+per-endpoint
 per-model
 per-replica
 per-request
@@ -2501,6 +2519,7 @@ placed
 placement
 placement-timeout
 placementTimeout
+placements
 plan
 planned
 planner
@@ -3227,6 +3246,11 @@ spend
 spends
 spent
 spread
+spreadBalancing
+spreadCycles
+spreadEven
+spreadReason
+spreads
 stabilization.skipWaitsWhen
 stable
 stableCycles
@@ -3746,6 +3770,7 @@ whole-node
 wholeReplicaCoverage
 whose
 why
+widely
 will
 window
 windowDropped
