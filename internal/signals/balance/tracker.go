@@ -60,6 +60,10 @@ type modelState struct {
 	// th is the thresholds Measure last read the model with: its policy.
 	// Observe and Failed take their timings from it.
 	th Thresholds
+	// router is the model's router policy cycles (ObserveRouter), and
+	// routerPolicy the policy it last named.
+	router       RouterPolicyWindow
+	routerPolicy string
 }
 
 type roleState struct {
@@ -204,6 +208,26 @@ func (t *Tracker) Observe(key string, dists map[string]Distribution, now time.Ti
 	m.roles = next
 	sort.Slice(out, func(i, j int) bool { return out[i].Role < out[j].Role })
 	return out
+}
+
+// ObserveRouter folds one cycle's input, read at now, into the router
+// policy window of the model named by key, and returns the policy the
+// window reads (RouterCycleOf, DetectRouterPolicy) and whether its name
+// changed on this cycle. The first policy a model reads is a change only
+// where it is detected, so a model whose router publishes none of the
+// series logs nothing.
+func (t *Tracker) ObserveRouter(key string, in domain.AnalyzerInput, now time.Time) (RouterPolicy, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	m := t.model(key)
+	m.router.Note(RouterCycleOf(in, now))
+	p := m.router.Policy()
+	was := m.routerPolicy
+	if was == "" {
+		was = PolicyNotDetected
+	}
+	m.routerPolicy = p.Policy
+	return p, p.Policy != was
 }
 
 // Failed records that the model named by key could not be collected at now,
