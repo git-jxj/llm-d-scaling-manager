@@ -484,9 +484,11 @@ func costFromVA(ctx context.Context, va *llmdvariant.Variant) float64 {
 // "both" is the default when no role is declared, which is correct for a
 // non-disaggregated workload — it serves complete requests on its own.
 //
-// Where there is no label, the role is read from the pods' engine signals
-// instead (domain.ResolveRole), by the steady-state engine, which has the
-// cycle's rows: DeclaredRole tells it whether there was one.
+// With the steady-state engine's SwitchRolesFromSignals on, a scale target
+// that declares no role has it read from its pods' engine signals instead
+// (domain.ResolveRole), by the engine, which has the cycle's rows:
+// DeclaredRole tells it whether there was one. Off (the default), no label
+// is both, as here.
 func RoleFromScaleTarget(scaleTarget scaletarget.ScaleTargetAccessor) string {
 	if role, ok := DeclaredRole(scaleTarget); ok {
 		return role
@@ -496,7 +498,10 @@ func RoleFromScaleTarget(scaleTarget scaletarget.ScaleTargetAccessor) string {
 
 // DeclaredRole is the role the scale target's llm-d role label declares,
 // and whether it declares one: ok is false for no label, or one that is
-// not prefill, decode or both.
+// not prefill, decode or both. An unknown value declares nothing: it reads
+// both here, as before, and with the steady-state engine's
+// SwitchRolesFromSignals on its role is read from the engine signals as an
+// unlabelled variant's is.
 func DeclaredRole(scaleTarget scaletarget.ScaleTargetAccessor) (role string, ok bool) {
 	if scaleTarget == nil {
 		return "", false

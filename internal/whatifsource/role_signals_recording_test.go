@@ -52,11 +52,11 @@ func TestRoleFromSignals_LabRecordingsWithTheirLabelsStripped(t *testing.T) {
 			require.NotEmpty(t, rows)
 			require.Contains(t, slices.Collect(maps.Values(labelled)), domain.RolePrefill, "a P/D recording")
 			require.Contains(t, slices.Collect(maps.Values(labelled)), domain.RoleDecode, "a P/D recording")
-			signals := domain.RoleFromSignals(rows)
+			readings := domain.RoleFromSignals(rows).Read(nil)
 			for _, v := range slices.Sorted(maps.Keys(labelled)) {
-				role, note := domain.ResolveRole(v, "", false, signals[v])
+				role, note := domain.ResolveRole(v, "", false, readings[v])
 				assert.Equal(t, labelled[v], role, "variant %s stripped of its label: %s", v, note)
-				_, disagree := domain.ResolveRole(v, labelled[v], true, signals[v])
+				_, disagree := domain.ResolveRole(v, labelled[v], true, readings[v])
 				assert.Empty(t, disagree, "variant %s with its label", v)
 			}
 		})

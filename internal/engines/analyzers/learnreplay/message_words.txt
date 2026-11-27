@@ -1204,7 +1204,6 @@ effectiveNamespaceQuotas
 effective_max_batched_tokens
 either
 election
-else
 elsewhere
 emit
 emitted
@@ -1235,6 +1234,7 @@ enforces
 engine
 engine-agnostic
 engine-prefill-timing
+engine-roles-from-signals
 engineMeasured
 engineParams
 engineParamsSource
@@ -1581,6 +1581,7 @@ inference
 inference_extension_flow_control_queue_size
 inferencepool
 inferencepools
+inferred
 infers
 info
 infrastructure
@@ -2147,6 +2148,7 @@ mounted
 move
 moved
 moves
+moving
 ms
 mu
 mu-at-step-budget
@@ -2354,6 +2356,7 @@ one-minute
 one-pod
 one-sided
 one-sided-line
+one-token
 ones
 only
 onset
@@ -3292,6 +3295,7 @@ steadyHeld
 steadyHeldOverThreshold
 steadyHeldThreshold
 steadySpread
+steadystate
 steered
 step
 step-budget

@@ -115,15 +115,26 @@ func TestCapture_ARoleLabelWinsAndADisagreementIsFlagged(t *testing.T) {
 	}
 }
 
-func TestCapture_RoleOfByNameTakesTheSignalsRole(t *testing.T) {
-	// --role-of picked the Pods by name, with no labels to match: the
-	// selector's role is what the name suggests, and the signals decide.
+func TestCapture_RoleOfByNameWinsOverTheSignals(t *testing.T) {
+	// --role-of picked the Pods by name, with no labels to match: its role
+	// is the operator's statement and wins; the disagreement is flagged.
 	srv := signalFleet(t, decodePod)
 	opts := roleOfOpts(t, srv, "prefill=app=fleet-b")
 	d, _ := capture(t, opts)
 	assert.Contains(t, d.window.Flags, FlagRolesInferred)
-	assert.Equal(t, map[string]string{"fleet-b": domain.RoleDecode}, rolesOf(t, d))
-	assert.True(t, hasFlagPrefix(d.window.Flags, "variant fleet-b: role decode from engine signals, no role label: "),
+	assert.Equal(t, map[string]string{"fleet-b": domain.RolePrefill}, rolesOf(t, d))
+	assert.True(t, hasFlagPrefix(d.window.Flags, "variant fleet-b: labelled prefill, engine signals read decode: "),
+		"%q", d.window.Flags)
+}
+
+func TestCapture_OneTokenRequestsAloneDoNotReadPrefill(t *testing.T) {
+	// An aggregated fleet serving one-token requests (max_tokens=1, an
+	// output_len=1 benchmark) reads like prefill; with no decode variant
+	// beside it and no KV moving, it reads no role, and so both.
+	d := signalCapture(t, prefillPod)
+	assert.Equal(t, map[string]string{"fleet-a": ""}, rolesOf(t, d))
+	assert.True(t, hasFlagPrefix(d.window.Flags,
+		"variant fleet-a: no role label and engine signals read no role, read as both: fleet-a-1a2b-x1 prefill at 3 of 3"),
 		"%q", d.window.Flags)
 }
 

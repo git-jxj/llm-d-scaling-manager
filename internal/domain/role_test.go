@@ -16,21 +16,26 @@ func TestCanonicalRole(t *testing.T) {
 	}
 }
 
-// The readings of a busy pod of each role, as a P/D lab run reads them: a
-// prefill pod makes one token a request and computes the prompts; a decode
-// pod pulls the KV through NIXL and computes none; an aggregated pod
-// computes the prompts and generates.
+// The readings of a busy pod of each role, as a P/D lab run on vLLM's pull
+// connector reads them: a prefill pod makes one token a request and
+// computes the prompts; a decode pod pulls the KV through NIXL and computes
+// none; an aggregated pod computes the prompts and generates.
 var (
-	prefillReading = ReplicaMetrics{VariantName: "a", PodName: "a-1", AvgOutputTokens: 1,
+	prefillReading = ReplicaMetrics{ModelID: "m", VariantName: "a", PodName: "a-1", AvgOutputTokens: 1,
 		RequestRate: 6.7, RequestRateKnown: true, PrefillComputedTokenRate: 669, PrefillComputedTokenRateKnown: true,
 		KVTransferRates: []KVTransferRate{{Kind: KVTransferNIXL}}}
-	decodeReading = ReplicaMetrics{VariantName: "b", PodName: "b-1", AvgOutputTokens: 1198,
+	decodeReading = ReplicaMetrics{ModelID: "m", VariantName: "b", PodName: "b-1", AvgOutputTokens: 1198,
 		RequestRate: 5.9, RequestRateKnown: true, PrefillComputedTokenRateKnown: true,
 		KVTransferRates:   []KVTransferRate{{Kind: KVTransferNIXL, ByteRate: 2e8, SecondsRate: 0.1}},
 		AvgKVTransferTime: 0.02, AvgKVTransferTimeKnown: true}
-	bothReading = ReplicaMetrics{VariantName: "c", PodName: "c-1", AvgOutputTokens: 300,
+	bothReading = ReplicaMetrics{ModelID: "m", VariantName: "c", PodName: "c-1", AvgOutputTokens: 300,
 		RequestRate: 2, RequestRateKnown: true, PrefillComputedTokenRate: 1800, PrefillComputedTokenRateKnown: true}
 )
+
+// readOne is the role the tally of rows reads for variant.
+func readOne(rows []ReplicaMetrics, labels map[string]RoleLabel, variant string) RoleReading {
+	return RoleFromSignals(rows).Read(labels)[variant]
+}
 
 func TestRoleSignals_EachRoleFromItsReadings(t *testing.T) {
 	// A decode pod whose engine exports no KV-transfer series still reads
@@ -52,7 +57,7 @@ func TestRoleSignals_EachRoleFromItsReadings(t *testing.T) {
 		r    ReplicaMetrics
 		want string
 	}{
-		{"prefill", prefillReading, RolePrefill},
+		{"one token", prefillReading, RolePrefill},
 		{"decode", decodeReading, RoleDecode},
 		{"decode without KV series", decodeNoKV, RoleDecode},
 		{"decode prefilling locally", decodeLocal, RoleDecode},
@@ -63,8 +68,8 @@ func TestRoleSignals_EachRoleFromItsReadings(t *testing.T) {
 	} {
 		var s RoleSignals
 		s.Observe(c.r)
-		if got := s.Role(); got != c.want {
-			t.Errorf("%s: role %q, want %q (%+v)", c.name, got, c.want, s)
+		if got := s.read(); got != c.want {
+			t.Errorf("%s: read %q, want %q (%+v)", c.name, got, c.want, s)
 		}
 	}
 }
@@ -76,29 +81,29 @@ func TestRoleSignals_MajorityOfDecidedReadings(t *testing.T) {
 	}
 	s.Observe(bothReading)
 	s.Observe(ReplicaMetrics{})
-	if s.Role() != RolePrefill {
-		t.Fatalf("3 prefill readings of 4 decided: role %q", s.Role())
+	if s.read() != RolePrefill {
+		t.Fatalf("3 one-token readings of 4 decided: read %q", s.read())
 	}
 	if got, want := s.Evidence(), "prefill at 3 of 5 readings"; !strings.HasPrefix(got, want) {
 		t.Errorf("evidence %q, want it to start %q", got, want)
 	}
 	s.Observe(bothReading)
 	s.Observe(bothReading)
-	if s.Role() != "" {
-		t.Errorf("3 prefill, 3 both: role %q, want none", s.Role())
+	if s.read() != "" {
+		t.Errorf("3 one token, 3 both: read %q, want none", s.read())
 	}
 }
 
-func TestRoleFromSignals_PerVariantWithEachPodNamed(t *testing.T) {
+func TestRoleTally_PerVariantWithEachPodNamed(t *testing.T) {
 	second := decodeReading
 	second.PodName = "b-2"
-	got := RoleFromSignals([]ReplicaMetrics{prefillReading, decodeReading, second, bothReading, decodeReading})
+	got := RoleFromSignals([]ReplicaMetrics{prefillReading, decodeReading, second, bothReading, decodeReading}).Read(nil)
 	for v, want := range map[string]string{"a": RolePrefill, "b": RoleDecode, "c": RoleBoth} {
-		if got[v].Role() != want {
-			t.Errorf("variant %s: role %q, want %q", v, got[v].Role(), want)
+		if got[v].Role != want {
+			t.Errorf("variant %s: role %q, want %q", v, got[v].Role, want)
 		}
 	}
-	if n := got["b"]["b-1"].Readings; n != 2 {
+	if n := got["b"].Signals.Pods["b-1"].Readings; n != 2 {
 		t.Errorf("b-1 read %d times, want 2", n)
 	}
 	ev := got["b"].Evidence()
@@ -107,8 +112,53 @@ func TestRoleFromSignals_PerVariantWithEachPodNamed(t *testing.T) {
 	}
 }
 
+// One token a request is a prefill pod's, and an aggregated pod's under a
+// workload of one-token requests (max_tokens=1, an output_len=1
+// benchmark): prefill is read only where something corroborates it.
+func TestRoleTally_PrefillNeedsCorroboration(t *testing.T) {
+	alone := readOne([]ReplicaMetrics{prefillReading}, nil, "a")
+	if alone.Role != "" {
+		t.Errorf("one-token pods alone in their model read %q, want no role", alone.Role)
+	}
+	if !strings.Contains(alone.Evidence(), "no decode variant in the model and no KV moving") {
+		t.Errorf("evidence %q does not say why", alone.Evidence())
+	}
+	if r := readOne([]ReplicaMetrics{prefillReading, decodeReading}, nil, "a"); r.Role != RolePrefill {
+		t.Errorf("beside a decode variant: %q, want prefill", r.Role)
+	}
+	if r := readOne([]ReplicaMetrics{prefillReading}, map[string]RoleLabel{"b": {ModelID: "m", Role: RoleDecode}}, "a"); r.Role != RolePrefill {
+		t.Errorf("beside a variant labelled decode: %q, want prefill", r.Role)
+	}
+	other := decodeReading
+	other.ModelID = "other"
+	if r := readOne([]ReplicaMetrics{prefillReading, other}, nil, "a"); r.Role != "" {
+		t.Errorf("a decode variant of another model corroborates nothing: %q", r.Role)
+	}
+	// vLLM's push connector counts the transfer on the prefill side: KV
+	// leaving the pod corroborates it.
+	pushing := prefillReading
+	pushing.KVTransferRates = []KVTransferRate{{Kind: KVTransferNIXL, ByteRate: 2e8, SecondsRate: 0.1}}
+	if r := readOne([]ReplicaMetrics{pushing}, nil, "a"); r.Role != RolePrefill {
+		t.Errorf("KV leaving the pod: %q, want prefill", r.Role)
+	}
+}
+
+// SGLang publishes no computed-prompt counter and no NIXL series: its
+// decode pods read nothing, so nothing corroborates its prefill pods, and a
+// P/D deployment cannot read prefill and both.
+func TestRoleTally_SGLangPDReadsNoRole(t *testing.T) {
+	pre, dec := prefillReading, decodeReading
+	pre.PrefillComputedTokenRate, pre.PrefillComputedTokenRateKnown, pre.KVTransferRates = 0, false, nil
+	dec.PrefillComputedTokenRate, dec.PrefillComputedTokenRateKnown = 0, false
+	dec.KVTransferRates, dec.AvgKVTransferTime, dec.AvgKVTransferTimeKnown = nil, 0, false
+	got := RoleFromSignals([]ReplicaMetrics{pre, dec}).Read(nil)
+	if got["a"].Role != "" || got["b"].Role != "" {
+		t.Errorf("SGLang P/D read prefill %q, decode %q; want no role for both", got["a"].Role, got["b"].Role)
+	}
+}
+
 func TestResolveRole_LabelsWinAndDisagreementIsNoted(t *testing.T) {
-	sig := RoleFromSignals([]ReplicaMetrics{decodeReading})["b"]
+	sig := readOne([]ReplicaMetrics{decodeReading}, nil, "b")
 
 	role, note := ResolveRole("b", RoleDecode, true, sig)
 	if role != RoleDecode || note != "" {
@@ -125,11 +175,11 @@ func TestResolveRole_LabelsWinAndDisagreementIsNoted(t *testing.T) {
 	if role != RoleDecode || !strings.HasPrefix(note, "variant b: role decode from engine signals, no role label: b-1 decode") {
 		t.Errorf("unlabelled: %q %q", role, note)
 	}
-	role, note = ResolveRole("b", RoleBoth, false, RoleFromSignals([]ReplicaMetrics{{VariantName: "b", PodName: "b-1"}})["b"])
+	role, note = ResolveRole("b", RoleBoth, false, readOne([]ReplicaMetrics{{VariantName: "b", PodName: "b-1"}}, nil, "b"))
 	if role != RoleBoth || !strings.HasPrefix(note, "variant b: no role label and engine signals read no role, read as both") {
 		t.Errorf("undecided: %q %q", role, note)
 	}
-	if role, note = ResolveRole("b", RoleBoth, false, nil); role != RoleBoth || note != "" {
+	if role, note = ResolveRole("b", RoleBoth, false, RoleReading{}); role != RoleBoth || note != "" {
 		t.Errorf("no readings: %q %q", role, note)
 	}
 }

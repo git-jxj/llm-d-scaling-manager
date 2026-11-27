@@ -46,11 +46,10 @@ import (
 // The flags a capture can carry (learnreplay.CaptureWindow.Flags).
 const (
 	// FlagRolesInferred: a --role-of selector picked Pods by name, because
-	// kube-state-metrics exported no labels for them. Their role is the
-	// one their engine signals read where they read one, and the
-	// selector's where they do not (resolveRoles).
-	FlagRolesInferred = "Pods picked by name: kube-state-metrics exports no labels for them; " +
-		"roles from engine signals where they read one, else from --role-of"
+	// kube-state-metrics exported no labels for them. The role is the
+	// selector's, the operator's statement, and a further flag says where
+	// the Pods' engine signals read another (resolveRoles).
+	FlagRolesInferred = "roles inferred from Pod names: kube-state-metrics exports no labels for them"
 	// FlagNoReadiness: no kube-state-metrics, so every Pod was taken as
 	// Ready, with no Ready time or start time.
 	FlagNoReadiness = "admitted without readiness: no kube-state-metrics, every Pod read as Ready"
@@ -314,10 +313,10 @@ func (c *stepClock) Since(t time.Time) time.Duration { return c.at.Sub(t) }
 // variantInfo is what the window says of one variant.
 type variantInfo struct {
 	model, role string
-	// labelled is whether role is a label's: kube-state-metrics' role
-	// label, or a --role-of matched on the labels it exports. A role a
-	// --role-of gave by Pod name, or none, is not, and the Pods' engine
-	// signals decide it where they read one (resolveRoles).
+	// labelled is whether role was stated: kube-state-metrics' role label,
+	// or a --role-of, matched on the labels or by Pod name. A stated role
+	// wins over the Pods' engine signals; only a variant with none takes
+	// the role they read (resolveRoles).
 	labelled bool
 	// gpus counts the variant's Pods by their GPU request, and accels its
 	// Pods' accelerators; empty without kube-state-metrics.
@@ -490,9 +489,13 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 	// The cycles are held until the window is read: the window line, written
 	// first, carries each variant's role, and an unlabelled variant's role is
 	// read from its Pods' engine signals over every cycle (resolveRoles).
-	// MaxStepQueries bounds what is held.
+	// What is held is the capture itself, uncompressed: every cycle's rows,
+	// one per engine Pod per step. The step count is bounded by
+	// MaxStepQueries unless --force, so a capture holds at most
+	// MaxStepQueries / queries steps of the fleet's Pods; the signals are
+	// tallied as the cycles arrive, so the rows are not held twice.
 	var captured []stepCycle
-	var rows []domain.ReplicaMetrics
+	tally := domain.RoleTally{}
 	for _, at := range steps {
 		if ctx.Err() != nil {
 			return nil, captureErr(api, context.Cause(ctx))
@@ -510,7 +513,7 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 		}
 		for _, c := range cycles {
 			captured = append(captured, stepCycle{at: at, cycle: c})
-			rows = append(rows, c.Input.ReplicaMetrics...)
+			tally.Observe(c.Input.ReplicaMetrics...)
 			sum.Cycles++
 			sum.Rows += len(c.Input.ReplicaMetrics)
 			for _, r := range domain.EngineRows(c.Input.ReplicaMetrics) {
@@ -523,7 +526,7 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 	for _, v := range slices.Sorted(maps.Keys(absentITL)) {
 		sum.Notes = append(sum.Notes, fmt.Sprintf(NoteITLAbsentRanks, v, absentITL[v], sum.Cycles))
 	}
-	if notes, changed := scan.resolveRoles(rows); changed || len(notes) > 0 {
+	if notes, changed := scan.resolveRoles(tally); changed || len(notes) > 0 {
 		if changed {
 			variants, flags = windowVariants(scan, opts)
 			setCycleRoles(captured, variants)
@@ -654,7 +657,7 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 				scan.variants[p.variant] = v
 			}
 			scan.inferred = scan.inferred || p.inferred
-			v.labelled = v.labelled || (p.role != "" && !p.inferred)
+			v.labelled = v.labelled || p.role != ""
 			if p.ksm {
 				v.multiPod = v.multiPod || p.inGroup()
 				v.ungrouped = v.ungrouped || (p.inGroup() && p.group() == "")
@@ -702,16 +705,22 @@ type stepCycle struct {
 }
 
 // resolveRoles reads each variant's role from its Pods' engine signals in
-// rows, every cycle's (domain.RoleFromSignals), as the controller does
-// (domain.ResolveRole): a labelled variant keeps its label, and a note says
-// where the signals read another role; an unlabelled one takes the role the
-// signals read, and a note names the evidence, Pod by Pod. changed is
-// whether any variant's role changed.
-func (scan *windowScan) resolveRoles(rows []domain.ReplicaMetrics) (notes []string, changed bool) {
-	signals := domain.RoleFromSignals(rows)
+// tally, every cycle's (domain.RoleTally.Read), as the controller does with
+// its switch on (domain.ResolveRole): a variant with a stated role (a label
+// or a --role-of) keeps it, and a note says where the signals read another;
+// one with none takes the role the signals read, and a note names the
+// evidence, Pod by Pod. changed is whether any variant's role changed.
+func (scan *windowScan) resolveRoles(tally domain.RoleTally) (notes []string, changed bool) {
+	labels := map[string]domain.RoleLabel{}
+	for name, info := range scan.variants {
+		if info.labelled {
+			labels[name] = domain.RoleLabel{ModelID: info.model, Role: info.role}
+		}
+	}
+	readings := tally.Read(labels)
 	for _, name := range slices.Sorted(maps.Keys(scan.variants)) {
 		info := scan.variants[name]
-		role, note := domain.ResolveRole(name, info.role, info.labelled, signals[name])
+		role, note := domain.ResolveRole(name, info.role, info.labelled, readings[name])
 		if note != "" {
 			notes = append(notes, note)
 		}

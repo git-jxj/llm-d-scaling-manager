@@ -55,7 +55,7 @@ capacity the optimizer branches on.
 | `scaleDownBoundary` | Scale-down boundary for this analyzer (from config) |
 | `variants[].name` | Variant name |
 | `variants[].prc` | Per-replica capacity in analyzer units (tokens for saturation) |
-| `variants[].role` | P/D role: `prefill`, `decode`, or `both`. When the scale target has no `llm-d.ai/role` label it is the role the pods' engine signals read this cycle (prefill: about 1 output token a request; decode: no prompt tokens computed, or KV arriving through NIXL; both: prompt computed and tokens generated), and `both` when they read none or the analyzer does not set a role. A label always wins; the controller logs when the signals read another role. Saturation V2 charges waiting requests by this role, so you need it to read `demand` |
+| `variants[].role` | P/D role: `prefill`, `decode`, or `both`. It reads `both` when the scale target has no `llm-d.ai/role` label, and when the analyzer does not set a role. Saturation V2 charges waiting requests by this role, so you need it to read `demand` |
 | `variants[].reason` | How the variant's capacity was computed (see below) |
 | `variants[].observed` | Replicas that reported metrics this cycle, before any cap; compare with the target's ready replicas |
 | `roleRC`, `roleSC` | Per-role `rc` and `sc`; P/D models only. A role over its own threshold keeps the model scaling up even when the model-level `rc` is 0 |

@@ -51,49 +51,66 @@ const (
 )
 
 // RoleSignals tallies what one pod's engine readings say its role is, one
-// reading per row Observe is given (RoleFromSignals is the per-variant
-// form). A reading reads:
+// reading per row Observe is given. A reading reads:
 //
-//   - prefill: about one output token a request (AvgOutputTokens at most
-//     1.5) and no KV arriving;
-//   - decode: more than one output token a request, and KV arriving
-//     through NIXL or under one prompt token computed a request while
-//     serving (PrefillComputedTokenRate about 0);
+//   - one token: about one output token a request (AvgOutputTokens at
+//     most 1.5). That is a prefill pod's, and also an aggregated pod's
+//     under a workload of one-token requests, so the variant reads prefill
+//     only where something corroborates it (RoleTally.Read);
+//   - decode: more than one output token a request, and KV moving through
+//     NIXL or under one prompt token computed a request while serving
+//     (PrefillComputedTokenRate about 0);
 //   - both (aggregated): more than one output token a request, prompt
-//     tokens computed while serving, and no KV arriving;
+//     tokens computed while serving, and no KV moving;
 //   - nothing, else: an idle pod, or an engine that does not export the
-//     series (SGLang has no computed-prompt counter).
+//     series (SGLang has no computed-prompt counter and no NIXL series, so
+//     its decode and aggregated pods read nothing).
+//
+// KV moving is NIXL bytes or transfer time counted at the pod, in either
+// direction. vLLM counts a transfer on the side that issues it
+// (NixlKVConnectorStats.record_transfer, from _pop_done_transfers): with
+// the pull connector, NixlConnector, which llm-d's P/D deploys, that is the
+// decode pod, which reads the prompt's KV, and the prefill pod counts
+// neither the bytes nor the time; with the push connector
+// (NixlPushConnector, v0.34.0 and later) it is the prefill pod, which
+// writes it, and the decode pod counts nothing. Read as moving rather than
+// arriving, it serves both.
 //
 // The labels are the source of truth where they exist (ResolveRole); the
 // signals stand in where they do not, which is how both the controller and
 // the capacity planner tell an unlabelled pod's role without reading its
 // name.
 type RoleSignals struct {
-	// Readings counts every row observed, and Prefill, Decode and Both the
-	// ones that read each role.
-	Readings, Prefill, Decode, Both int
-	// KVArrived and NoPrompt count the decode readings by what read them:
-	// KV arriving through NIXL, and no prompt computed. A reading can count
-	// in both.
-	KVArrived, NoPrompt int
+	// Readings counts every row observed; OneToken, Decode and Both the
+	// ones that read each.
+	Readings, OneToken, Decode, Both int
+	// OneTokenKVMoved counts the one-token readings with KV moving at the
+	// pod: a prefill pod that pushes its KV, which corroborates prefill.
+	OneTokenKVMoved int
+	// KVMoved and NoPrompt count the decode readings by what read them. A
+	// reading can count in both.
+	KVMoved, NoPrompt int
 }
 
 // Observe adds one reading of the pod.
 func (s *RoleSignals) Observe(r ReplicaMetrics) {
 	s.Readings++
-	kvIn := kvArrived(r)
+	kv := kvMoved(r)
 	serving := r.RequestRateKnown && r.RequestRate > 0
 	computedKnown := serving && r.PrefillComputedTokenRateKnown
 	noPrompt := computedKnown && r.PrefillComputedTokenRate/r.RequestRate < minPromptTokensComputed
 	oneToken := r.AvgOutputTokens > 0 && r.AvgOutputTokens <= prefillMaxOutputTokens
 	generates := r.AvgOutputTokens > prefillMaxOutputTokens
 	switch {
-	case oneToken && !kvIn:
-		s.Prefill++
-	case generates && (kvIn || noPrompt):
+	case oneToken:
+		s.OneToken++
+		if kv {
+			s.OneTokenKVMoved++
+		}
+	case generates && (kv || noPrompt):
 		s.Decode++
-		if kvIn {
-			s.KVArrived++
+		if kv {
+			s.KVMoved++
 		}
 		if noPrompt {
 			s.NoPrompt++
@@ -103,11 +120,9 @@ func (s *RoleSignals) Observe(r ReplicaMetrics) {
 	}
 }
 
-// kvArrived reports whether KV arrived at the pod through NIXL in the
-// reading: a decode pod pulls the prompt's KV from prefill, so its NIXL
-// connector counts the bytes and the transfer time; the prefill pod that
-// serves them counts neither.
-func kvArrived(r ReplicaMetrics) bool {
+// kvMoved reports whether KV moved through NIXL at the pod in the reading,
+// in either direction (RoleSignals).
+func kvMoved(r ReplicaMetrics) bool {
 	for _, t := range r.KVTransferRates {
 		if t.Kind == KVTransferNIXL && t.ByteRate > 0 {
 			return true
@@ -118,20 +133,21 @@ func kvArrived(r ReplicaMetrics) bool {
 
 // add is s with o's readings added.
 func (s RoleSignals) add(o RoleSignals) RoleSignals {
-	return RoleSignals{Readings: s.Readings + o.Readings, Prefill: s.Prefill + o.Prefill,
-		Decode: s.Decode + o.Decode, Both: s.Both + o.Both,
-		KVArrived: s.KVArrived + o.KVArrived, NoPrompt: s.NoPrompt + o.NoPrompt}
+	return RoleSignals{Readings: s.Readings + o.Readings, OneToken: s.OneToken + o.OneToken,
+		Decode: s.Decode + o.Decode, Both: s.Both + o.Both, OneTokenKVMoved: s.OneTokenKVMoved + o.OneTokenKVMoved,
+		KVMoved: s.KVMoved + o.KVMoved, NoPrompt: s.NoPrompt + o.NoPrompt}
 }
 
-// Role is the role most of the readings that read one read, "" when no
-// role has more than half of them.
-func (s RoleSignals) Role() string {
-	decided := s.Prefill + s.Decode + s.Both
+// read is what most of the readings that read something read: prefill for
+// one token (to be corroborated), decode or both; "" when none has more
+// than half of them.
+func (s RoleSignals) read() string {
+	decided := s.OneToken + s.Decode + s.Both
 	best, n := "", 0
 	for _, c := range []struct {
 		role string
 		n    int
-	}{{RolePrefill, s.Prefill}, {RoleDecode, s.Decode}, {RoleBoth, s.Both}} {
+	}{{RolePrefill, s.OneToken}, {RoleDecode, s.Decode}, {RoleBoth, s.Both}} {
 		if c.n > n {
 			best, n = c.role, c.n
 		}
@@ -142,64 +158,135 @@ func (s RoleSignals) Role() string {
 	return best
 }
 
-// Evidence names what the readings say, in one phrase: the role and at how
-// many readings, and the signal that read it.
+// Evidence names what the readings say, in one phrase: what they read, at
+// how many readings, and the signal that read it.
 func (s RoleSignals) Evidence() string {
-	switch s.Role() {
+	switch s.read() {
 	case RolePrefill:
-		return fmt.Sprintf("prefill at %d of %d readings (about 1 output token a request, no KV arriving)",
-			s.Prefill, s.Readings)
+		return fmt.Sprintf("prefill at %d of %d readings (about 1 output token a request, KV moving at %d)",
+			s.OneToken, s.Readings, s.OneTokenKVMoved)
 	case RoleDecode:
-		return fmt.Sprintf("decode at %d of %d readings (KV arrived through NIXL at %d, no prompt computed at %d)",
-			s.Decode, s.Readings, s.KVArrived, s.NoPrompt)
+		return fmt.Sprintf("decode at %d of %d readings (KV moving through NIXL at %d, no prompt computed at %d)",
+			s.Decode, s.Readings, s.KVMoved, s.NoPrompt)
 	case RoleBoth:
 		return fmt.Sprintf("both at %d of %d readings (prompt computed and more than 1 output token a request)",
 			s.Both, s.Readings)
 	}
-	return fmt.Sprintf("no role at %d readings (prefill %d, decode %d, both %d)",
-		s.Readings, s.Prefill, s.Decode, s.Both)
+	return fmt.Sprintf("no role at %d readings (one token %d, decode %d, both %d)",
+		s.Readings, s.OneToken, s.Decode, s.Both)
 }
 
-// VariantRoleSignals is one variant's RoleSignals, by Pod name.
-type VariantRoleSignals map[string]RoleSignals
-
-// RoleFromSignals tallies each variant's Pods' readings in rows, by variant
-// name: one reading per row, so rows taken over several cycles read each
-// Pod at each of them.
-func RoleFromSignals(rows []ReplicaMetrics) map[string]VariantRoleSignals {
-	out := map[string]VariantRoleSignals{}
-	for _, r := range rows {
-		v := out[r.VariantName]
-		if v == nil {
-			v = VariantRoleSignals{}
-			out[r.VariantName] = v
-		}
-		s := v[r.PodName]
-		s.Observe(r)
-		v[r.PodName] = s
-	}
-	return out
+// VariantRoleSignals is one variant's RoleSignals, by Pod name, and its
+// model.
+type VariantRoleSignals struct {
+	ModelID string
+	Pods    map[string]RoleSignals
 }
 
-// Signals is every Pod's readings together.
-func (v VariantRoleSignals) Signals() RoleSignals {
+// Signals is every Pod's readings together; none for a nil v.
+func (v *VariantRoleSignals) Signals() RoleSignals {
 	var s RoleSignals
-	for _, p := range v {
+	if v == nil {
+		return s
+	}
+	for _, p := range v.Pods {
 		s = s.add(p)
 	}
 	return s
 }
 
-// Role is the role the variant's readings read together (RoleSignals.Role).
-func (v VariantRoleSignals) Role() string { return v.Signals().Role() }
-
 // Evidence names each Pod's evidence, in Pod order.
-func (v VariantRoleSignals) Evidence() string {
-	parts := make([]string, 0, len(v))
-	for _, pod := range slices.Sorted(maps.Keys(v)) {
-		parts = append(parts, pod+" "+v[pod].Evidence())
+func (v *VariantRoleSignals) Evidence() string {
+	if v == nil {
+		return "no readings"
+	}
+	parts := make([]string, 0, len(v.Pods))
+	for _, pod := range slices.Sorted(maps.Keys(v.Pods)) {
+		parts = append(parts, pod+" "+v.Pods[pod].Evidence())
 	}
 	return strings.Join(parts, "; ")
+}
+
+// RoleTally is each variant's RoleSignals, by variant name, as rows are
+// observed: one reading per row, so rows taken over several cycles read
+// each Pod at each of them.
+type RoleTally map[string]*VariantRoleSignals
+
+// Observe adds rows' readings.
+func (t RoleTally) Observe(rows ...ReplicaMetrics) {
+	for _, r := range rows {
+		v := t[r.VariantName]
+		if v == nil {
+			v = &VariantRoleSignals{ModelID: r.ModelID, Pods: map[string]RoleSignals{}}
+			t[r.VariantName] = v
+		}
+		s := v.Pods[r.PodName]
+		s.Observe(r)
+		v.Pods[r.PodName] = s
+	}
+}
+
+// RoleFromSignals is the tally of rows.
+func RoleFromSignals(rows []ReplicaMetrics) RoleTally {
+	t := RoleTally{}
+	t.Observe(rows...)
+	return t
+}
+
+// RoleReading is what a variant's engine signals read (RoleTally.Read).
+type RoleReading struct {
+	// Role is the role read, "" for none.
+	Role string
+	// Signals is the variant's readings; nil for none.
+	Signals *VariantRoleSignals
+	// uncorroborated is a variant whose readings read one token with
+	// nothing to say it is prefill.
+	uncorroborated bool
+}
+
+// Evidence names the evidence, Pod by Pod.
+func (r RoleReading) Evidence() string {
+	if r.uncorroborated {
+		return r.Signals.Evidence() + ", read as no role: no decode variant in the model and no KV moving " +
+			"to say it is prefill rather than aggregated under one-token requests"
+	}
+	return r.Signals.Evidence()
+}
+
+// RoleLabel is a variant's stated role and its model (RoleTally.Read).
+type RoleLabel struct {
+	ModelID, Role string
+}
+
+// Read is each tallied variant's reading. A variant read decode or both
+// reads so. One read prefill (one token a request) reads prefill only when
+// something corroborates it: KV moving at its own Pods, or a variant of the
+// same model that reads decode or is labelled decode (labels: each
+// labelled variant's label, by variant name, whether it has rows or not).
+// Without either it reads no role: a model serving one-token requests from
+// aggregated Pods reads the same.
+func (t RoleTally) Read(labels map[string]RoleLabel) map[string]RoleReading {
+	decodePeer := map[string]bool{}
+	for _, l := range labels {
+		if l.Role == RoleDecode {
+			decodePeer[l.ModelID] = true
+		}
+	}
+	for _, v := range t {
+		if v.Signals().read() == RoleDecode {
+			decodePeer[v.ModelID] = true
+		}
+	}
+	out := make(map[string]RoleReading, len(t))
+	for name, v := range t {
+		s := v.Signals()
+		r := RoleReading{Role: s.read(), Signals: v}
+		if r.Role == RolePrefill && s.OneTokenKVMoved == 0 && !decodePeer[v.ModelID] {
+			r.Role, r.uncorroborated = "", true
+		}
+		out[name] = r
+	}
+	return out
 }
 
 // ResolveRole is variant's role from its role label and its engine signals.
@@ -208,21 +295,20 @@ func (v VariantRoleSignals) Evidence() string {
 // decide where they read a role, and label (the caller's default) stands
 // where they do not; note names the evidence either way. note is "" when
 // there is nothing to say: a label the signals agree with, or no readings.
-func ResolveRole(variant, label string, labelled bool, sig VariantRoleSignals) (role, note string) {
-	read := sig.Role()
+func ResolveRole(variant, label string, labelled bool, r RoleReading) (role, note string) {
 	switch {
 	case labelled:
-		if read != "" && read != CanonicalRole(label) {
+		if r.Role != "" && r.Role != CanonicalRole(label) {
 			return label, fmt.Sprintf("variant %s: labelled %s, engine signals read %s: %s",
-				variant, CanonicalRole(label), read, sig.Evidence())
+				variant, CanonicalRole(label), r.Role, r.Evidence())
 		}
 		return label, ""
-	case read != "":
-		return read, fmt.Sprintf("variant %s: role %s from engine signals, no role label: %s",
-			variant, read, sig.Evidence())
-	case sig.Signals().Readings > 0:
+	case r.Role != "":
+		return r.Role, fmt.Sprintf("variant %s: role %s from engine signals, no role label: %s",
+			variant, r.Role, r.Evidence())
+	case r.Signals.Signals().Readings > 0:
 		return label, fmt.Sprintf("variant %s: no role label and engine signals read no role, read as %s: %s",
-			variant, CanonicalRole(label), sig.Evidence())
+			variant, CanonicalRole(label), r.Evidence())
 	}
 	return label, ""
 }

@@ -125,7 +125,7 @@ type Start struct {
 	Commit string
 	// Caveats is what the run could not see, one line each: a recording
 	// learnreplay's Generate mode made from a capture carries the capture's
-	// flags (rollouts not seen, Pods picked by name, engine
+	// flags (rollouts not seen, roles inferred from Pod names, engine
 	// parameters from flags, ...), so a golden made from it says so. Empty
 	// for a controller's recording.
 	Caveats []string `learnrec:"omitzero"`
