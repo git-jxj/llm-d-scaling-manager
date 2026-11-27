@@ -311,6 +311,7 @@ Mode
 Model
 N
 NANOSECONDS
+NIXL
 NVIDIA
 N_dec
 NaN
@@ -1140,6 +1141,7 @@ disables
 disaggregation_transfer_backend
 disagree
 disagreed
+disagrees
 discarded
 discarding
 discover
@@ -1232,6 +1234,7 @@ enforces
 engine
 engine-agnostic
 engine-prefill-timing
+engine-roles-from-signals
 engineMeasured
 engineParams
 engineParamsSource
@@ -2145,6 +2148,7 @@ mounted
 move
 moved
 moves
+moving
 ms
 mu
 mu-at-step-budget
@@ -2352,6 +2356,7 @@ one-minute
 one-pod
 one-sided
 one-sided-line
+one-token
 ones
 only
 onset
@@ -3112,6 +3117,7 @@ sightings
 sigma
 sigmaOK
 signal
+signals
 silent
 since
 single
@@ -3289,6 +3295,7 @@ steadyHeld
 steadyHeldOverThreshold
 steadyHeldThreshold
 steadySpread
+steadystate
 steered
 step
 step-budget
@@ -3371,6 +3378,7 @@ thisControllerGPUs
 those
 threshold
 thresholdPct
+through
 throughput
 throughput-demand-floor
 throughput-demand-floor-total
