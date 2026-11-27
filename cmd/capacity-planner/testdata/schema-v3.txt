@@ -448,6 +448,7 @@ roles[].ttft.routerPolicy.cacheReason string
 roles[].ttft.routerPolicy.candidates number
 roles[].ttft.routerPolicy.cycles number
 roles[].ttft.routerPolicy.endpoints number
+roles[].ttft.routerPolicy.halvesFalling number
 roles[].ttft.routerPolicy.hitCycles number
 roles[].ttft.routerPolicy.hitMinutes number
 roles[].ttft.routerPolicy.hitReason string
@@ -463,6 +464,7 @@ roles[].ttft.routerPolicy.loadHeavy number
 roles[].ttft.routerPolicy.loadLight number
 roles[].ttft.routerPolicy.placementCV number
 roles[].ttft.routerPolicy.policy string
+roles[].ttft.routerPolicy.producer string
 roles[].ttft.routerPolicy.spreadBalancing number
 roles[].ttft.routerPolicy.spreadCycles number
 roles[].ttft.routerPolicy.spreadEven number

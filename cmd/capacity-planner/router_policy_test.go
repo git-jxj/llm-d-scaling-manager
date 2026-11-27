@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/learnreplay"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/balance"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/whatifapi"
 )
@@ -97,22 +98,39 @@ func servedInputsOf(t *testing.T, dir string) whatifapi.InputsResponse {
 	return in
 }
 
+// A state that never read the router, a zero State as a source with no
+// router series replays to, gives a policy with no router block, never one
+// of empty verdicts, so its inputs document is as before.
+func TestRouterPolicy_PolicyOfZeroStateHasNoRouter(t *testing.T) {
+	p := policyOf(&answerFlags{}, &learnreplay.State{}, &pricedFleet{})
+	assert.Nil(t, p.Router)
+	b, err := json.Marshal(p)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), `"router"`)
+
+	st := &learnreplay.State{RouterPolicy: balance.DetectRouterPolicy([]balance.RouterCycle{{KeptKnown: true,
+		PredictedTokenRate: 1, BestAvailableTokenRate: 1}})}
+	p = policyOf(&answerFlags{}, st, &pricedFleet{})
+	require.NotNil(t, p.Router, "a source that read the series carries the block, decided or not")
+	assert.Equal(t, balance.PolicyNotDetected, p.Router.Policy)
+}
+
 // The planner names the router's policy as its series read it
 // (balance.DetectRouterPolicy, the controller's reader): in the inputs
-// document always, "not detected" with no series; in a TTFT answer, text
+// document and in a TTFT answer, text
 // and JSON, where the source holds the series. It moves no figure:
 // --load-aware-router still prices f, and where the two disagree the
 // answer says so.
 func TestRouterPolicy_NamedInInputsAndAnswer(t *testing.T) {
 	plain := servedInputsOf(t, q32Dir)
-	assert.Equal(t, balance.PolicyNotDetected, plain.Policy.Router.Policy, "%+v", plain.Policy.Router)
-	assert.Zero(t, plain.Policy.Router.Cycles, "the committed warm-up holds no prefix pair")
+	assert.Nil(t, plain.Policy.Router, "the committed warm-up holds no prefix pair: no router block")
 
 	dir := t.TempDir()
 	// A router that keeps the whole hit at light load and gives some up as
 	// the load rises: cache-aware and load-aware.
 	rec := routerPolicyRecording(t, dir, func(rate float64) float64 { return 0.99 - 0.01*rate })
 	got := servedInputsOf(t, dir).Policy.Router
+	require.NotNil(t, got)
 	assert.Equal(t, balance.PolicyCacheAndLoadAware, got.Policy, "%+v", got)
 	assert.Equal(t, balance.RouterYes, got.LoadAwareByHit)
 	assert.Equal(t, 2, got.Candidates)

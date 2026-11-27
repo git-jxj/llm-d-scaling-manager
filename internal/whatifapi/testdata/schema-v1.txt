@@ -638,6 +638,7 @@ inputs.policy.router.cacheReason string
 inputs.policy.router.candidates number
 inputs.policy.router.cycles number
 inputs.policy.router.endpoints number
+inputs.policy.router.halvesFalling number
 inputs.policy.router.hitCycles number
 inputs.policy.router.hitMinutes number
 inputs.policy.router.hitReason string
@@ -653,6 +654,7 @@ inputs.policy.router.loadHeavy number
 inputs.policy.router.loadLight number
 inputs.policy.router.placementCV number
 inputs.policy.router.policy string
+inputs.policy.router.producer string
 inputs.policy.router.spreadBalancing number
 inputs.policy.router.spreadCycles number
 inputs.policy.router.spreadEven number

@@ -119,7 +119,10 @@ func observedOf(pv *pricedVariant, pf *pricedFleet) whatifapi.Observed {
 // policyOf is the policy's SLO, the headroom the CLI reads, and the
 // flow-control state the fleet was priced at.
 func policyOf(f *answerFlags, st *learnreplay.State, pf *pricedFleet) whatifapi.PolicyInfo {
-	p := whatifapi.PolicyInfo{Headroom: f.headroomFor(st.Policy), FlowControl: pf.in.FlowControl, Router: st.RouterPolicy}
+	p := whatifapi.PolicyInfo{Headroom: f.headroomFor(st.Policy), FlowControl: pf.in.FlowControl}
+	if rp := st.RouterPolicy; rp.Cycles > 0 {
+		p.Router = &rp
+	}
 	if p.FlowControl == "" {
 		p.FlowControl = "not read"
 	}
