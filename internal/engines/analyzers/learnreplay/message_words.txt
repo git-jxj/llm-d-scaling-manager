@@ -1141,6 +1141,7 @@ disables
 disaggregation_transfer_backend
 disagree
 disagreed
+disagrees
 discarded
 discarding
 discover

@@ -2381,6 +2381,10 @@ func (e *Engine) assembleModelData(
 	for _, m := range variantMetadata {
 		variantStates = append(variantStates, m.ToReplicaState())
 	}
+	// An unlabelled variant's role from its pods' engine signals, before
+	// anything downstream reads a role (resolveRolesFromSignals).
+	variantStates, variantMetadata = resolveRolesFromSignals(ctx, modelID, replicaMetrics,
+		variantStates, variantMetadata, scaleTargets, variants)
 	e.applyStartSeeds(ctx, namespace, variantStates)
 	return &modelData{
 		modelID:         modelID,
