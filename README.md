@@ -139,7 +139,7 @@ kubeconfig, because the container runs no cloud CLI. For an API server at
 `127.0.0.1` (kind), add `--network host` to the `docker run`.
 
 ```bash
-TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools@sha256:308cd7c10752ee2bc50daac5f96602da5c9a259e1dce635ffa3505736c7d1200
+TOOLS=ghcr.io/llm-d-incubation/llm-d-scaling-manager/tools:v0.13.1
 mkdir -p ~/.smt && chmod 700 ~/.smt
 smt() { docker run --rm --user "$(id -u):$(id -g)" \
   -v "${SMT_KUBECONFIG:-$HOME/.smt/kubeconfig}:/kube/config:ro" -v "$PWD:/work" "$TOOLS" "$@"; }

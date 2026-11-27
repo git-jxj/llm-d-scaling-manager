@@ -136,8 +136,48 @@ changed, and there is no compatibility path. Reinstall.
 
 ### Upgrading from v0.13.0 to v0.13.1
 
-[Upgrade](#upgrade) as for any release. Scaling is unchanged.
+[Upgrade](#upgrade) as for any release. An existing install is unchanged: the
+controller's RBAC, settings and alerts are the same as in v0.13.0, and
+`make workload-patch` need not be run again.
 
+- **P/D verdicts and sizes can move.** On a P/D fleet whose prefill pods serve
+  part of the prompt from cache, v0.13.0's report priced the cached tokens as
+  computed at the load's shape, its default, and read the prefill knee low by
+  the cache hit. v0.13.1 nets the prompt by the prefill pods' own hit, so the
+  prefill knee rises, and a fleet v0.13.0 called UNDER-PROVISIONED, or sized
+  larger, can read as it serves. Aggregated fleets and a stated shape are
+  unchanged. On v0.13.0, `--shape measured` gives the right knee. A day plan's
+  buckets and a backtest's steps net the prompt the same way, so their sizes,
+  verdicts and figures move too.
+- **Recordings move forward only.** A learner recording or a capture made with
+  v0.13.1 keeps the router's request-processing histogram whenever the router
+  exports it, and a v0.13.0 `capacity-planner` refuses it with an unknown-field
+  error. Read it with the v0.13.1 planner, which reads every older recording.
+- **Backtests and the experimental models.** A backtest step is priced at its
+  own output spread; no flag gives the v0.13.0 figure back. With
+  `--experimental-ttft=v2`, the rank mixture prices with stratified service
+  moments by default; `--rank-mixture-stratified=false` prices the v0.13.0 way.
+- **More of the default model's answers move.** None has an opt-out.
+  - *Decode at light load.* The ITL floor is read at the number of sequences a
+    replica runs, so the TPOT mean, the decode knee, the admission wait and the
+    rate at a TPOT target move at light load. A TPOT target under v0.13.0's
+    floor is now answered instead of refused, flagged `ExtrapolatedBelowFloor`.
+  - *Long prompts.* The prompt spread is bounded by the engine's
+    `--max-model-len`, and the prefill imbalance is learned from pooled
+    minutes, so on a long-prompt fleet the rate at a TTFT target and the prefill
+    knee rise, often by a large factor. The controller's shadow TTFT uses the
+    same spread bound.
+  - *A lower-bound prefill knee* is floored only at work the pods held steady for
+    5 minutes, so it can read a little lower, flagged `ServedWorkUnsteady`.
+  - *Backtests* read the measured TPOT p90 and p95 from the router's and the
+    decode engines' histograms together, so TPOT scores and verdicts move.
+- **The in-cluster planner requests 1 CPU** (was 100m), and a request that
+  computes may run for 30 minutes. Behind an OpenShift Route or oauth-proxy,
+  raise their timeouts to `31m` as the in-cluster guide shows, or a day-long
+  recording's load is cut.
+- **The page** keeps the SLO targets, the safety margin, the request shape and
+  the assumed terms above the tabs, shared by every view. A saved link keeps
+  its values as assumptions.
 - **Two series gain a `learner` label.** For passive models, and for every
   model while the utilization share plans in shadow, the slo analyzer now
   also prices TTFT and TPOT with the capacity planner's v2 models
