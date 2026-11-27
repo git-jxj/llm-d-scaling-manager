@@ -1582,6 +1582,10 @@ report.shapes[].utilization.decode.kvSpread.meanFillPeak number
 report.shapes[].utilization.decode.kvSpread.median number
 report.shapes[].utilization.decode.kvSpread.p95 number
 report.shapes[].utilization.decode.kvSpread.peak number
+report.shapes[].utilization.decode.kvSpread.pods object
+report.shapes[].utilization.decode.kvSpread.pods.max number
+report.shapes[].utilization.decode.kvSpread.pods.median number
+report.shapes[].utilization.decode.kvSpread.pods.min number
 report.shapes[].utilization.decode.slots int64
 report.shapes[].utilization.decode.slotsOccupied Figure
 report.shapes[].utilization.decode.waitProbability Figure

@@ -29,16 +29,12 @@ func MeasuredTTFTAtLoad(series []SeriesSample, latency []LatencySample, fleet Fl
 	if len(series) != len(latency) || !(rate > 0) {
 		return 0, false
 	}
-	floor := rate
-	if stat == LoadMean {
-		floor = 0
-	}
 	pooled := map[float64]float64{}
 	var sum, count, window float64
 	n := 0
 	for i, x := range series {
 		l := latency[i].Router
-		if l == nil || !(x.Rate > 0) || x.Rate < floor || x.Prefill < fleet.Prefill || x.Decode < fleet.Decode {
+		if l == nil || !atLoadCycle(x, stat, rate) || x.Prefill < fleet.Prefill || x.Decode < fleet.Decode {
 			continue
 		}
 		for _, b := range l.TTFTBuckets {
@@ -71,17 +67,35 @@ func MeasuredTTFTAtLoad(series []SeriesSample, latency []LatencySample, fleet Fl
 	return v, true
 }
 
-// MinKVSpreadFill is the mean decode KV fill under which a cycle's
-// busiest/mean ratio is not read: on a nearly empty fleet one request more on
-// a pod reads as a large ratio that no decode price feels.
+// atLoadCycle says the cycle x is one a load judged at stat and rate was read
+// from: one with traffic for the mean, one at or above rate for the p95 and
+// the peak. MeasuredTTFTAtLoad and DecodeKVSpreadOf select by it alone.
+func atLoadCycle(x SeriesSample, stat string, rate float64) bool {
+	floor := rate
+	if stat == LoadMean {
+		floor = 0
+	}
+	return x.Rate > 0 && x.Rate >= floor
+}
+
+// MinKVSpreadFill is the mean decode KV fill, a fraction of each pod's KV
+// cache, under which a cycle's busiest/mean ratio is not read
+// (DecodeKVSpreadOf keeps a mean at or above it). On a nearly idle fleet a
+// pod's fill is a request or two, so the ratio is the count's noise: two
+// requests against one reads 2, at a fill no decode price feels. 0.05 is a
+// twentieth of the cache, far under any KV band the planner prices, so it
+// leaves out idle stretches and nothing a figure could rest on. It is a
+// fraction of the cache, not of any model's size.
 const MinKVSpreadFill = 0.05
 
 // DecodeKVSpreadOf is the decode pods' KV fill spread over series
-// (ReportKVSpread), and with an observed load at stat and rate the median
-// over the cycles that load was read from; nil where no cycle read two decode
-// pods filled to MinKVSpreadFill.
+// (ReportKVSpread), and with an observed load at stat and rate (above 0) the
+// median over the cycles that load was read from (atLoadCycle). A cycle is
+// read with two decode pods or more, a finite busiest fill and a finite mean
+// of MinKVSpreadFill or more; a recording made before the series kept the
+// fill reads no pod at any cycle. Nil where no cycle is read.
 func DecodeKVSpreadOf(series []SeriesSample, stat string, rate float64) *ReportKVSpread {
-	var all, atLoad []float64
+	var all, atLoad, pods []float64
 	out := &ReportKVSpread{}
 	for _, x := range series {
 		if x.DecodeKVPods < 2 || !whatif.Finite(x.DecodeKVMean) || x.DecodeKVMean < MinKVSpreadFill || !whatif.Finite(x.DecodeKVBusiest) {
@@ -89,8 +103,9 @@ func DecodeKVSpreadOf(series []SeriesSample, stat string, rate float64) *ReportK
 		}
 		ratio := x.DecodeKVBusiest / x.DecodeKVMean
 		all = append(all, ratio)
+		pods = append(pods, float64(x.DecodeKVPods))
 		out.BusiestFillPeak, out.MeanFillPeak = max(out.BusiestFillPeak, x.DecodeKVBusiest), max(out.MeanFillPeak, x.DecodeKVMean)
-		if rate > 0 && x.Rate > 0 && (stat == LoadMean || x.Rate >= rate) {
+		if rate > 0 && atLoadCycle(x, stat, rate) {
 			atLoad = append(atLoad, ratio)
 		}
 	}
@@ -98,6 +113,7 @@ func DecodeKVSpreadOf(series []SeriesSample, stat string, rate float64) *ReportK
 		return nil
 	}
 	out.Cycles, out.Median, out.P95, out.Peak = len(all), median(all), nearestRank(all, 0.95), slices.Max(all)
+	out.Pods = ReportKVSpreadPods{Median: median(pods), Min: int(slices.Min(pods)), Max: int(slices.Max(pods))}
 	if len(atLoad) > 0 {
 		m := median(atLoad)
 		out.AtLoad, out.AtLoadCycles = &m, len(atLoad)
@@ -105,11 +121,11 @@ func DecodeKVSpreadOf(series []SeriesSample, stat string, rate float64) *ReportK
 	return out
 }
 
-// ReportDecodeKVSpread sets each shape's decode KV spread
-// (ReportDecodeUse.KVSpread) from series, the cycles of the window the
-// report was read from, at the load judged where it was observed. It moves
-// no figure.
-func (r *ReportResponse) ReportDecodeKVSpread(series []SeriesSample) {
+// AttachKVSpread sets each shape's decode KV spread (ReportDecodeUse.KVSpread)
+// from series, the cycles of the window the report was read from, at the
+// load judged where it was observed. The spread is the window's, of the
+// fleet that ran, whatever fleet a shape is priced at. It moves no figure.
+func (r *ReportResponse) AttachKVSpread(series []SeriesSample) {
 	var rate float64
 	if r.Load.Seen != nil && r.Load.Source == "observed" {
 		rate = *r.Load.Seen
