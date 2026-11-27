@@ -2,6 +2,7 @@ package whatifapi
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -68,6 +69,59 @@ func MeasuredTTFTAtLoad(series []SeriesSample, latency []LatencySample, fleet Fl
 		return h.Top(), h.Top() > 0
 	}
 	return v, true
+}
+
+// MinKVSpreadFill is the mean decode KV fill under which a cycle's
+// busiest/mean ratio is not read: on a nearly empty fleet one request more on
+// a pod reads as a large ratio that no decode price feels.
+const MinKVSpreadFill = 0.05
+
+// DecodeKVSpreadOf is the decode pods' KV fill spread over series
+// (ReportKVSpread), and with an observed load at stat and rate the median
+// over the cycles that load was read from; nil where no cycle read two decode
+// pods filled to MinKVSpreadFill.
+func DecodeKVSpreadOf(series []SeriesSample, stat string, rate float64) *ReportKVSpread {
+	var all, atLoad []float64
+	out := &ReportKVSpread{}
+	for _, x := range series {
+		if x.DecodeKVPods < 2 || !whatif.Finite(x.DecodeKVMean) || x.DecodeKVMean < MinKVSpreadFill || !whatif.Finite(x.DecodeKVBusiest) {
+			continue
+		}
+		ratio := x.DecodeKVBusiest / x.DecodeKVMean
+		all = append(all, ratio)
+		out.BusiestFillPeak, out.MeanFillPeak = max(out.BusiestFillPeak, x.DecodeKVBusiest), max(out.MeanFillPeak, x.DecodeKVMean)
+		if rate > 0 && x.Rate > 0 && (stat == LoadMean || x.Rate >= rate) {
+			atLoad = append(atLoad, ratio)
+		}
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	out.Cycles, out.Median, out.P95, out.Peak = len(all), median(all), nearestRank(all, 0.95), slices.Max(all)
+	if len(atLoad) > 0 {
+		m := median(atLoad)
+		out.AtLoad, out.AtLoadCycles = &m, len(atLoad)
+	}
+	return out
+}
+
+// ReportDecodeKVSpread sets each shape's decode KV spread
+// (ReportDecodeUse.KVSpread) from series, the cycles of the window the
+// report was read from, at the load judged where it was observed. It moves
+// no figure.
+func (r *ReportResponse) ReportDecodeKVSpread(series []SeriesSample) {
+	var rate float64
+	if r.Load.Seen != nil && r.Load.Source == "observed" {
+		rate = *r.Load.Seen
+	}
+	spread := DecodeKVSpreadOf(series, r.Load.Statistic, rate)
+	if spread == nil {
+		return
+	}
+	for i := range r.Shapes {
+		s := *spread
+		r.Shapes[i].Utilization.Decode.KVSpread = &s
+	}
 }
 
 // bucketsOf is a pooled histogram, bound to rate, as buckets.

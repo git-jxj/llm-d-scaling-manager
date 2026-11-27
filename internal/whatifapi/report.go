@@ -365,6 +365,35 @@ type ReportDecodeUse struct {
 	// price is taken, which prices no pull stage: then with no wait
 	// (Unpriced says which). The KV fill and the slots leave it out.
 	KVPull *ReportKVPull `json:"kvPull,omitempty"`
+	// KVSpread is how much fuller the busiest decode pod ran than the mean
+	// pod over the window (DecodeKVSpreadOf). It is reported, not priced:
+	// KVFill is the mean pod's. Nil where no cycle read two decode pods
+	// filled to MinKVSpreadFill.
+	KVSpread *ReportKVSpread `json:"kvSpread,omitempty"`
+}
+
+// ReportKVSpread is the decode pods' KV fill spread the window measured: each
+// cycle's busiest pod's fill over the pods' mean, read on the cycles with
+// two or more decode pods and a mean fill of MinKVSpreadFill or more (issue
+// llm-d-incubation/llm-d-scaling-manager#483).
+type ReportKVSpread struct {
+	// Cycles is how many cycles were read; Median, P95 and Peak are their
+	// busiest/mean ratios.
+	Cycles int     `json:"cycles"`
+	Median float64 `json:"median"`
+	P95    float64 `json:"p95"`
+	Peak   float64 `json:"peak"`
+	// AtLoad is the median ratio over the cycles the load judged at was
+	// read from (every cycle with traffic for the mean, those at or above
+	// the rate for the p95 and the peak), AtLoadCycles how many; nil with a
+	// stated load or none read.
+	AtLoad       *float64 `json:"atLoad,omitempty"`
+	AtLoadCycles int      `json:"atLoadCycles,omitempty"`
+	// BusiestFillPeak is the highest fill a busiest pod ran at over the
+	// cycles read, MeanFillPeak the highest mean fill: a KV limit the first
+	// crosses and the second does not is one the mean pod hides.
+	BusiestFillPeak float64 `json:"busiestFillPeak"`
+	MeanFillPeak    float64 `json:"meanFillPeak"`
 }
 
 // ReportKVPull is the KV pull's load on the decode pods at the load judged.
@@ -671,6 +700,7 @@ func (s *Server) report(ctx context.Context, req ReportRequest) (*ReportResponse
 	// The source's self-check was read before this report stated anything.
 	out.SelfCheck = e.doc.SelfCheck.RanWithout(&Stated{Assume: q.Assume, ArrivalCV2: q.ArrivalCV2})
 	out.WithholdOverOnMeasured(e.series, e.latency)
+	out.ReportDecodeKVSpread(e.series)
 	out.JudgeTrust()
 	return out, nil
 }

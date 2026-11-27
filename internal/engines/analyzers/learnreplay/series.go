@@ -8,6 +8,7 @@ import (
 
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/engines/analyzers/saturation"
+	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/balance"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/learnrec"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/prefill"
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/signals/whatif"
@@ -80,6 +81,16 @@ type CycleSample struct {
 	// created, a ResourceQuota refusing its pod, is not in the recording
 	// and not counted. For a LeaderWorkerSet a replica is a group.
 	PrefillNotServing, DecodeNotServing int
+	// DecodeKVBusiest and DecodeKVMean are the counted decode pods' KV fill
+	// at the cycle (an unsplit variant's pods where the decode variant
+	// counted serves both roles), the busiest pod's and the pods' mean, as the load-balance
+	// diagnostic reads them (balance.Distribution: each serving pod's
+	// one-minute peak on its busiest engine rank), and DecodeKVPods how many
+	// pods read one; zero with none. Their ratio is how much fuller a
+	// cache-aware router leaves its hottest decode pod than the mean pod the
+	// planner prices (issue llm-d-incubation/llm-d-scaling-manager#483).
+	DecodeKVBusiest, DecodeKVMean float64
+	DecodeKVPods                  int
 }
 
 // SeriesVariants names the variants a series counts: the prefill and the
@@ -190,9 +201,12 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 	}
 	var weight, il, ol, hit, squared float64
 	everySquared := true
-	var prompted []domain.ReplicaMetrics
+	var prompted, decodeRows []domain.ReplicaMetrics
 	for _, rm := range in.ReplicaMetrics {
 		role := domain.CanonicalRole(roles[rm.VariantName])
+		if role == domain.RoleBoth && (v.Decode == "" || rm.VariantName == v.Decode) && prefill.Serving(rm) {
+			decodeRows = append(decodeRows, rm)
+		}
 		if !counted(rm.VariantName, role) {
 			if (role == domain.RolePrefill || role == domain.RoleDecode) && prefill.Serving(rm) {
 				s.OtherPods++
@@ -211,6 +225,7 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 				}
 			case domain.RoleDecode:
 				s.DecodePods++
+				decodeRows = append(decodeRows, rm)
 			}
 		}
 		if role != domain.RoleDecode {
@@ -232,6 +247,14 @@ func sampleOf(in domain.AnalyzerInput, at time.Time, v SeriesVariants) CycleSamp
 		} else {
 			everySquared = false
 		}
+	}
+	// Every row kept is read as decode: an unsplit pod's KV holds its decode.
+	asDecode := map[string]string{}
+	for _, rm := range decodeRows {
+		asDecode[rm.VariantName] = domain.RoleDecode
+	}
+	if d, ok := balance.Measure(decodeRows, asDecode, balance.Thresholds{}, at)[domain.RoleDecode]; ok {
+		s.DecodeKVBusiest, s.DecodeKVMean, s.DecodeKVPods = d.MaxKvUsage, d.MeanKvUsage, d.Ready
 	}
 	if pooled := whatif.PoolComputedBuckets(nil, prompted); len(pooled) > 0 {
 		s.PromptBuckets = pooled
