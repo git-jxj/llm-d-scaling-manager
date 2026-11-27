@@ -10,10 +10,11 @@ import (
 	"github.com/llm-d-incubation/llm-d-scaling-manager/internal/domain"
 )
 
-// routerEndpointQueries are the router queries only a learner recording
-// reads for domain.RouterLatency.Endpoints and PrefixProducers, besides the
-// prefix producer's predicted and best-available pair, which the recording
-// reads already.
+// routerEndpointQueries are the queries CollectRouterLatency adds, while a
+// learner recording is on, for domain.RouterLatency.Endpoints and
+// PrefixProducers. The producers also read the predicted and
+// best-available pair, which the recording asks for already and so is not
+// listed here.
 var routerEndpointQueries = []string{
 	registration.QuerySLORouterPrefixBestPredicted, registration.QuerySLORouterPrefixPrompt,
 	registration.QuerySLORouterPrefixRequests, registration.QuerySLORouterEndpointPlacements,
@@ -57,7 +58,9 @@ func routerEndpoints(results map[string]*source.MetricResult, modelID string) ([
 		return byPod[pod]
 	}
 	for _, v := range readableValues(placements) {
-		pod := v.Labels["endpoint_name"]
+		// The router names the Pod here; a rank-suffixed name is folded into
+		// its Pod as the gauges' are.
+		pod := endpointPod(v.Labels["endpoint_name"])
 		if !serving[v.Labels[routerPodLabel]] || eppSeriesModel(v.Labels) != modelID || pod == "" {
 			continue
 		}
@@ -157,9 +160,10 @@ func endpointGauge(result *source.MetricResult, serving map[string]bool, label s
 // routerPrefixProducers is the prefix producers' counts of the serving
 // router Pods, per producer (plugin_name, endpoint_role), summed over the
 // router Pods (each counts its own requests), sorted. Nil with any of the
-// five queries failed: a producer's rates are one reading, and a rate read
-// as zero because its query failed would read as a producer that counted
-// none.
+// five queries failed, and a producer is left out unless every one of the
+// five has a series for it: a producer's rates are one reading, and a rate
+// read as zero because its series was missing would read as a producer
+// that counted none.
 func routerPrefixProducers(results map[string]*source.MetricResult, serving map[string]bool) []domain.RouterPrefixProducer {
 	type field struct {
 		query string
@@ -179,6 +183,7 @@ func routerPrefixProducers(results map[string]*source.MetricResult, serving map[
 	}
 	type key struct{ plugin, role string }
 	byProducer := map[key]*domain.RouterPrefixProducer{}
+	seen := map[key]map[string]bool{}
 	for _, f := range fields {
 		for _, v := range readableValues(results[f.query]) {
 			if !serving[v.Labels[routerPodLabel]] {
@@ -187,13 +192,17 @@ func routerPrefixProducers(results map[string]*source.MetricResult, serving map[
 			k := key{v.Labels["plugin_name"], v.Labels["endpoint_role"]}
 			if byProducer[k] == nil {
 				byProducer[k] = &domain.RouterPrefixProducer{Plugin: k.plugin, Role: k.role}
+				seen[k] = map[string]bool{}
 			}
 			f.set(byProducer[k], v.Value)
+			seen[k][f.query] = true
 		}
 	}
 	var out []domain.RouterPrefixProducer
-	for _, p := range byProducer {
-		out = append(out, *p)
+	for k, p := range byProducer {
+		if len(seen[k]) == len(fields) {
+			out = append(out, *p)
+		}
 	}
 	slices.SortFunc(out, func(a, b domain.RouterPrefixProducer) int {
 		return cmp.Or(cmp.Compare(a.Plugin, b.Plugin), cmp.Compare(a.Role, b.Role))

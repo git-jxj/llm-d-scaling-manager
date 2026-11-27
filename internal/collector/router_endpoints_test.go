@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -48,8 +49,9 @@ func endpointResults() map[string]*source.MetricResult {
 		registration.QuerySLORouterEndpointPlacements: {Values: []source.MetricValue{
 			place("epp-a", "model-a", "decode-0", 3), place("epp-a", "model-a", "decode-1", 1),
 			place("epp-b", "model-a", "decode-0", 2),
-			// A placement on the decode-1 Pod's second rank: same Pod.
-			place("epp-b", "model-a", "decode-1", 0.5),
+			// A rank-suffixed endpoint name: the decode-1 Pod's second
+			// rank, folded into the same Pod.
+			place("epp-b", "model-a", "decode-1-rank-1", 0.5),
 			place("epp-c", "model-b", "other-0", 7),
 			// A standby replica: its counter is there, at rate 0.
 			place("epp-d", "model-a", "decode-0", 0),
@@ -157,6 +159,28 @@ func TestCollectRouterLatency_Endpoints(t *testing.T) {
 	assert.Equal(t, 5.0, got.Endpoints[0].PlacementRate)
 	assert.True(t, got.Endpoints[2].InFlightTokensKnown, "prefill-0 is still read from its in-flight series")
 	assert.NotNil(t, got.PrefixProducers)
+
+	// A producer missing from one of the five queries is left out, not
+	// given a zero there; the others stay.
+	partial := endpointResults()
+	prompt := partial[registration.QuerySLORouterPrefixPrompt]
+	prompt.Values = slices.DeleteFunc(prompt.Values, func(v source.MetricValue) bool {
+		return v.Labels["plugin_name"] == "decode-prefix"
+	})
+	got = collectEndpoints(t, partial, true)
+	require.NotNil(t, got)
+	require.Len(t, got.PrefixProducers, 1)
+	assert.Equal(t, "approx", got.PrefixProducers[0].Plugin)
+
+	// A Pod a serving router placed on before but not over the window: its
+	// counter stood still, and reads a known zero, not an unknown.
+	stale := endpointResults()
+	stale[registration.QuerySLORouterEndpointPlacements].Values = append(stale[registration.QuerySLORouterEndpointPlacements].Values,
+		routerSeries("epp-a", 0, seriesTargetModelLabel, "model-a", "endpoint_name", "decode-2"))
+	got = collectEndpoints(t, stale, true)
+	require.NotNil(t, got)
+	require.Len(t, got.Endpoints, 4)
+	assert.Equal(t, domain.RouterEndpoint{Pod: "decode-2", PlacementKnown: true}, got.Endpoints[2])
 
 	// A failed prefix query: no producer, rather than one that counted none.
 	failed = endpointResults()
