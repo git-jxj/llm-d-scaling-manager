@@ -311,6 +311,7 @@ Mode
 Model
 N
 NANOSECONDS
+NIXL
 NVIDIA
 N_dec
 NaN
@@ -1202,6 +1203,7 @@ effectiveNamespaceQuotas
 effective_max_batched_tokens
 either
 election
+else
 elsewhere
 emit
 emitted
@@ -1578,7 +1580,6 @@ inference
 inference_extension_flow_control_queue_size
 inferencepool
 inferencepools
-inferred
 infers
 info
 infrastructure
@@ -3112,6 +3113,7 @@ sightings
 sigma
 sigmaOK
 signal
+signals
 silent
 since
 single
@@ -3371,6 +3373,7 @@ thisControllerGPUs
 those
 threshold
 thresholdPct
+through
 throughput
 throughput-demand-floor
 throughput-demand-floor-total

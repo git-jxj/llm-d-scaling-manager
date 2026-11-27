@@ -199,8 +199,12 @@ capture says so.
 kube-state-metrics exports a Pod's or a node's labels only when its
 `--metric-labels-allowlist` names them. The planner reads two:
 `--metric-labels-allowlist=pods=[llm-d.ai/role],nodes=[nvidia.com/gpu.product]`.
-Without the first every variant reads as both roles; without the second, give
-`--accelerator`.
+Without the first, each variant's role is read from what its engine does:
+prefill makes about 1 output token a request, decode computes no prompt tokens
+while its KV arrives through NIXL, and an aggregated (both) pod does both. The
+capture names the evidence per Pod, and a variant whose engine reads no role
+reads as both. Where a label exists it wins, and the capture says when the
+engine reads another role. Without the second, give `--accelerator`.
 
 | Series | Type | Extra labels | Feeds | Need |
 | --- | --- | --- | --- | --- |

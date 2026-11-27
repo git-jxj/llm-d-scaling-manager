@@ -83,7 +83,7 @@ func TestCapture_WritesTheWindowAtItsStep(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, text, "captured 3 steps of llm")
 	assert.Contains(t, text, "m/m-dec  decode  1 GPU")
-	assert.Contains(t, text, "flag: roles inferred from Pod names")
+	assert.Contains(t, text, "flag: Pods picked by name")
 
 	// Every request a range query over exactly the window, at the step.
 	reqs := srv.Requests()
@@ -112,7 +112,7 @@ func TestCapture_WritesTheWindowAtItsStep(t *testing.T) {
 	text, err = runCLI("generate", "-in", out, "-o", rec)
 	require.NoError(t, err)
 	assert.Contains(t, text, "generated 3 steps")
-	assert.Contains(t, text, "caveat: roles inferred from Pod names")
+	assert.Contains(t, text, "caveat: Pods picked by name")
 	b, err := os.ReadFile(rec)
 	require.NoError(t, err)
 	rep, err := learnreplay.Replay(context.Background(), b, learnreplay.Options{Mode: learnreplay.Fidelity})

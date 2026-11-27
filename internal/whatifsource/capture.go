@@ -46,14 +46,19 @@ import (
 // The flags a capture can carry (learnreplay.CaptureWindow.Flags).
 const (
 	// FlagRolesInferred: a --role-of selector picked Pods by name, because
-	// kube-state-metrics exported no labels for them.
-	FlagRolesInferred = "roles inferred from Pod names: kube-state-metrics exports no labels for them"
+	// kube-state-metrics exported no labels for them. Their role is the
+	// one their engine signals read where they read one, and the
+	// selector's where they do not (resolveRoles).
+	FlagRolesInferred = "Pods picked by name: kube-state-metrics exports no labels for them; " +
+		"roles from engine signals where they read one, else from --role-of"
 	// FlagNoReadiness: no kube-state-metrics, so every Pod was taken as
 	// Ready, with no Ready time or start time.
 	FlagNoReadiness = "admitted without readiness: no kube-state-metrics, every Pod read as Ready"
 	// FlagNoRoleLabel: kube-state-metrics exports no llm-d.ai/role label
-	// and no --role-of named a role, so every variant reads as both.
-	FlagNoRoleLabel = "no llm-d.ai/role label in kube-state-metrics and no --role-of: every variant read as both"
+	// and no --role-of named a role, so each variant's role is the one its
+	// engine signals read, and both where they read none (resolveRoles).
+	FlagNoRoleLabel = "no llm-d.ai/role label in kube-state-metrics and no --role-of: " +
+		"roles from engine signals, both where they read none"
 	// FlagKSMGaps: kube-state-metrics listed no Pod at some steps; their
 	// Pods are attributed by --role-of alone and read as Ready. A format:
 	// the steps without, and all the steps.
@@ -234,8 +239,8 @@ type Summary struct {
 	// Variants is the window line's variants, and Flags its caveats.
 	Variants []learnreplay.CaptureVariant
 	Flags    []string
-	// Notes is what the cycles showed that the window line, written before
-	// them, could not say (NoteITLAbsentRanks).
+	// Notes is what the cycles showed that the window line does not
+	// record (NoteITLAbsentRanks).
 	Notes []string
 	// Optional is every optional series checked (OptionalSeriesList), as
 	// the window line records it.
@@ -309,6 +314,11 @@ func (c *stepClock) Since(t time.Time) time.Duration { return c.at.Sub(t) }
 // variantInfo is what the window says of one variant.
 type variantInfo struct {
 	model, role string
+	// labelled is whether role is a label's: kube-state-metrics' role
+	// label, or a --role-of matched on the labels it exports. A role a
+	// --role-of gave by Pod name, or none, is not, and the Pods' engine
+	// signals decide it where they read one (resolveRoles).
+	labelled bool
 	// gpus counts the variant's Pods by their GPU request, and accels its
 	// Pods' accelerators; empty without kube-state-metrics.
 	gpus   map[int]int
@@ -465,13 +475,7 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 	if err != nil {
 		return nil, err
 	}
-	rec := learnrec.New(gz, 0)
-	rec.Record(learnrec.KindStart, opts.From, start)
-	rec.Record(learnreplay.KindCaptureWindow, opts.From, learnreplay.CaptureWindow{
-		Namespace: opts.Namespace, From: opts.From, To: opts.To, Step: opts.Step,
-		Roles: roleSource(opts), Flags: flags, Variants: variants, Optional: optional,
-	})
-	sum := &Summary{Steps: len(steps), Variants: variants, Flags: flags, Optional: optional}
+	sum := &Summary{Steps: len(steps), Optional: optional}
 	byKey := map[string]learnreplay.CaptureVariant{}
 	models := map[string][]string{}
 	for _, v := range variants {
@@ -483,6 +487,12 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 	// row as the line reads it (domain.EngineRows), that read no ITL because
 	// one of their ranks had none (itlAbsentRank).
 	absentITL := map[string]int{}
+	// The cycles are held until the window is read: the window line, written
+	// first, carries each variant's role, and an unlabelled variant's role is
+	// read from its Pods' engine signals over every cycle (resolveRoles).
+	// MaxStepQueries bounds what is held.
+	var captured []stepCycle
+	var rows []domain.ReplicaMetrics
 	for _, at := range steps {
 		if ctx.Err() != nil {
 			return nil, captureErr(api, context.Cause(ctx))
@@ -499,7 +509,8 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 			return nil, fmt.Errorf("step %s: %w", at.Format(time.RFC3339), captureErr(api, err))
 		}
 		for _, c := range cycles {
-			rec.Record(learnreplay.KindCaptureCycle, at, c)
+			captured = append(captured, stepCycle{at: at, cycle: c})
+			rows = append(rows, c.Input.ReplicaMetrics...)
 			sum.Cycles++
 			sum.Rows += len(c.Input.ReplicaMetrics)
 			for _, r := range domain.EngineRows(c.Input.ReplicaMetrics) {
@@ -511,6 +522,24 @@ func Capture(ctx context.Context, opts Options, w io.Writer) (*Summary, error) {
 	}
 	for _, v := range slices.Sorted(maps.Keys(absentITL)) {
 		sum.Notes = append(sum.Notes, fmt.Sprintf(NoteITLAbsentRanks, v, absentITL[v], sum.Cycles))
+	}
+	if notes, changed := scan.resolveRoles(rows); changed || len(notes) > 0 {
+		if changed {
+			variants, flags = windowVariants(scan, opts)
+			setCycleRoles(captured, variants)
+		}
+		flags = append(flags, notes...)
+	}
+	sum.Variants, sum.Flags = variants, flags
+
+	rec := learnrec.New(gz, 0)
+	rec.Record(learnrec.KindStart, opts.From, start)
+	rec.Record(learnreplay.KindCaptureWindow, opts.From, learnreplay.CaptureWindow{
+		Namespace: opts.Namespace, From: opts.From, To: opts.To, Step: opts.Step,
+		Roles: roleSource(opts), Flags: flags, Variants: variants, Optional: optional,
+	})
+	for _, c := range captured {
+		rec.Record(learnreplay.KindCaptureCycle, c.at, c.cycle)
 	}
 	if err := rec.Err(); err != nil {
 		return nil, err
@@ -625,6 +654,7 @@ func scanWindow(ctx context.Context, api *windowAPI, src source.MetricsSource, o
 				scan.variants[p.variant] = v
 			}
 			scan.inferred = scan.inferred || p.inferred
+			v.labelled = v.labelled || (p.role != "" && !p.inferred)
 			if p.ksm {
 				v.multiPod = v.multiPod || p.inGroup()
 				v.ungrouped = v.ungrouped || (p.inGroup() && p.group() == "")
@@ -663,6 +693,50 @@ func mostCommon[K int | string](counts map[K]int) (best K, ok bool) {
 		}
 	}
 	return best, ok
+}
+
+// stepCycle is one captured cycle and the step it was captured at.
+type stepCycle struct {
+	at    time.Time
+	cycle learnreplay.CaptureCycle
+}
+
+// resolveRoles reads each variant's role from its Pods' engine signals in
+// rows, every cycle's (domain.RoleFromSignals), as the controller does
+// (domain.ResolveRole): a labelled variant keeps its label, and a note says
+// where the signals read another role; an unlabelled one takes the role the
+// signals read, and a note names the evidence, Pod by Pod. changed is
+// whether any variant's role changed.
+func (scan *windowScan) resolveRoles(rows []domain.ReplicaMetrics) (notes []string, changed bool) {
+	signals := domain.RoleFromSignals(rows)
+	for _, name := range slices.Sorted(maps.Keys(scan.variants)) {
+		info := scan.variants[name]
+		role, note := domain.ResolveRole(name, info.role, info.labelled, signals[name])
+		if note != "" {
+			notes = append(notes, note)
+		}
+		if role != info.role {
+			info.role, changed = role, true
+		}
+	}
+	return notes, changed
+}
+
+// setCycleRoles sets each cycle's variant states' roles to the window
+// line's variants'.
+func setCycleRoles(cycles []stepCycle, variants []learnreplay.CaptureVariant) {
+	roles := make(map[string]string, len(variants))
+	for _, v := range variants {
+		roles[v.Name] = v.Role
+	}
+	for _, c := range cycles {
+		for i := range c.cycle.Input.VariantStates {
+			vs := &c.cycle.Input.VariantStates[i]
+			if role, ok := roles[vs.VariantName]; ok {
+				vs.Role = role
+			}
+		}
+	}
 }
 
 // windowVariants is the window line's variants, in name order, and the
