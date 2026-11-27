@@ -44,7 +44,7 @@ func TestDetectRouterPolicy_RandomPlacementIsNotLoadAware(t *testing.T) {
 		return out
 	}
 	ins := policyCycles(60, 0.3, 0.5, nil, random)
-	var cvs []float64
+	cvs := make([]float64, 0, len(ins))
 	for _, in := range ins {
 		cvs = append(cvs, RouterCycleOf(in, t0).PlacementCV)
 	}
