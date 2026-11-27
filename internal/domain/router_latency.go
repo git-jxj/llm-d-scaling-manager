@@ -135,6 +135,10 @@ type RouterEndpoint struct {
 	// (llm_d_epp_scheduler_attempts_total, status success). The router
 	// counts the primary profile's endpoint only: in P/D that is the decode
 	// Pod, so a prefill Pod has no placements and PlacementKnown unset.
+	// It is unset as well for a decode or aggregated Pod no serving router
+	// has placed a request on since it started (no series at all); a Pod
+	// placed on before and idle over the whole window has a series that
+	// stood still, and reads a known rate of zero.
 	PlacementRate  float64 `learnrec:"omitzero"`
 	PlacementKnown bool    `learnrec:"omitzero"`
 
@@ -166,8 +170,9 @@ type RouterEndpoint struct {
 // model, over RouterLatency.WindowSeconds: the rates of the
 // llm_d_epp_prefix_* histograms' _sum, and of the predicted histogram's
 // _count. The router publishes them per producer and role, not per
-// endpoint. Present only where every one of the five was read, so a zero
-// here is a zero the router counted. Every field is new, so each is left
+// endpoint. Present only where each of the five queries was read and held
+// a series for this producer and role, so a zero here is a zero the router
+// counted. Every field is new, so each is left
 // out of a learner recording while zero.
 type RouterPrefixProducer struct {
 	// Plugin is the producer's plugin_name and Role its endpoint_role.

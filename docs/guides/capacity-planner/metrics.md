@@ -159,7 +159,7 @@ flow control and the router's own latency go unread.
 | `inference_extension_flow_control_queue_bytes` | gauge | | as above, older routers | optional |
 | `llm_d_epp_flow_control_request_enqueue_duration_seconds_count` | histogram count | `job` | arrival rate, with flow control on | optional |
 | `inference_extension_flow_control_request_enqueue_duration_seconds_count` | histogram count | `job` | as above, older routers | optional |
-| `llm_d_epp_scheduler_attempts_total` | counter | `status="success"`, `endpoint_name` (no `model_name`) | arrival rate, with flow control off; recorded: requests placed per Pod | optional |
+| `llm_d_epp_scheduler_attempts_total` | counter | `status="success"`, `target_model_name`, `endpoint_name` (no `model_name`) | arrival rate, with flow control off; recorded: requests placed per Pod | optional |
 | `inference_extension_scheduler_attempts_total` | counter | `status="success"` (no `model_name`) | as above, older routers | optional |
 | `llm_d_epp_flow_control_request_queue_duration_seconds_bucket` | histogram buckets | `le`, `outcome="Dispatched"` | flow-control wait | optional |
 | `llm_d_epp_flow_control_pool_saturation` | gauge | `inference_pool`, `stage` (no model labels) | pool saturation | optional |
@@ -174,7 +174,7 @@ flow control and the router's own latency go unread.
 | `llm_d_epp_prefix_best_predicted_cached_tokens_sum` | histogram sum | `plugin_name`, `endpoint_role` (no model labels) | recorded: the prefix producers' counts per role | optional |
 | `llm_d_epp_prefix_prompt_tokens_sum` | histogram sum | `plugin_name`, `endpoint_role` (no model labels) | as above | optional |
 | `llm_d_epp_prefix_predicted_cached_tokens_count` | histogram count | `plugin_name`, `endpoint_role` (no model labels) | as above | optional |
-| `llm_d_epp_per_endpoint_queue_size` | gauge | `name`, `model_server_endpoint` (no model labels) | recorded: each Pod's queue as the router read it | optional |
+| `llm_d_epp_per_endpoint_queue_size` | gauge | `model_server_endpoint` (no model labels) | recorded: each Pod's queue as the router read it | optional |
 | `llm_d_epp_inflight_requests` | gauge | `endpoint_name`, `producer_name` (no model labels) | recorded: the requests the router holds in flight per Pod | optional |
 | `llm_d_epp_inflight_tokens` | gauge | `endpoint_name`, `producer_name` (no model labels) | recorded: their uncached prompt tokens | optional |
 
@@ -203,7 +203,11 @@ left out, so these join where the namespace holds two models. The router
 counts a placement on the primary profile's Pod only, which in P/D is the
 decode Pod: a prefill Pod has no placements, and reads as unknown there,
 not zero. The router publishes no TTFT per Pod, and its prefix series per
-role, not per Pod. The planner reads none of these yet.
+role, not per Pod. Only the `llm_d_epp_*` names are read: a router older
+than v0.9.0, which exports only `inference_extension_scheduler_attempts_total`
+(with `pod_name`) and `inference_pool_per_pod_queue_size`, records no
+per-Pod view, and the recording holds none. The planner reads none of
+these yet.
 
 ## kube-state-metrics
 
